@@ -1,0 +1,17 @@
+{
+	"name": "@mu/core",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./dag": "./src/dag.ts",
+		"./events": "./src/events.ts",
+		"./jsonl": "./src/jsonl.ts",
+		"./spec": "./src/spec.ts",
+		"./store": "./src/store.ts"
+	},
+	"dependencies": {
+		"zod": "^4.1.9"
+	}
+}

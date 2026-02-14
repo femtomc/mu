@@ -6,6 +6,8 @@
 		"paths": {
 			"@mu/forum": ["./packages/forum/src/index.ts"],
 			"@mu/forum/*": ["./packages/forum/src/*"],
+			"@mu/core": ["./packages/core/src/index.ts"],
+			"@mu/core/*": ["./packages/core/src/*"],
 			"@mu/issue": ["./packages/issue/src/index.ts"],
 			"@mu/issue/*": ["./packages/issue/src/*"],
 			"@mu/orchestrator": ["./packages/orchestrator/src/index.ts"],
