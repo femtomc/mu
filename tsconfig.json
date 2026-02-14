@@ -1,0 +1,21 @@
+{
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"baseUrl": ".",
+		"paths": {
+			"@mu/forum": ["./packages/forum/src/index.ts"],
+			"@mu/forum/*": ["./packages/forum/src/*"],
+			"@mu/issue": ["./packages/issue/src/index.ts"],
+			"@mu/issue/*": ["./packages/issue/src/*"],
+			"@mu/orchestrator": ["./packages/orchestrator/src/index.ts"],
+			"@mu/orchestrator/*": ["./packages/orchestrator/src/*"],
+			"@mu/slack-bot": ["./packages/slack-bot/src/index.ts"],
+			"@mu/slack-bot/*": ["./packages/slack-bot/src/*"],
+			"@mu/cli": ["./packages/cli/src/index.ts"],
+			"@mu/cli/*": ["./packages/cli/src/*"]
+		}
+	},
+	"include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"],
+	"exclude": ["**/node_modules/**", "**/dist/**"]
+}

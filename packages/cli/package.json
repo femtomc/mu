@@ -1,0 +1,15 @@
+{
+	"name": "@mu/cli",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"bin": {
+		"mu": "./src/cli.ts"
+	},
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"@mu/orchestrator": "workspace:*"
+	}
+}

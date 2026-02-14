@@ -1,0 +1,13 @@
+{
+	"name": "@mu/orchestrator",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"@mu/forum": "workspace:*",
+		"@mu/issue": "workspace:*"
+	}
+}
