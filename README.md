@@ -7,14 +7,14 @@ mu gives AI agents (and humans) three primitives for structured work:
 - **Issue DAG** — decompose work into issues with parent/child and blocking
   dependencies. The DAG tracks status, priority, outcomes, and execution specs.
 - **Forum** — topic-keyed message log for communication between agents, reviewers,
-  and humans. Threads are cheap; create one per issue, per research topic, whatever.
+  and humans. Threads are cheap: create one per issue, per research topic, etc.
 - **Event log** — append-only audit trail. Every issue state change and forum post
   emits a structured event with run correlation IDs.
 
 All state lives in a `.mu/` directory at your repo root: three JSONL files
 (`issues.jsonl`, `forum.jsonl`, `events.jsonl`), a `roles/` directory for prompt
-templates, and a `logs/` directory for per-run output. No database, no server —
-just files you can grep, commit, and diff.
+templates (used by the orchestrator when marking issues for work), 
+and a `logs/` directory for per-run output.
 
 The **orchestrator** walks the DAG: it finds ready leaves (open issues with no
 unresolved blockers or open children), dispatches them to an LLM backend, and
