@@ -15,12 +15,12 @@ All state lives in a `.mu/` directory at your repo root: three JSONL files
 (`issues.jsonl`, `forum.jsonl`, `events.jsonl`) and a `logs/` directory for
 per-step backend output.
 
-mu has only two built-in roles: `orchestrator` and `worker`. Roles are built-in
-system prompts; mu does not support user-defined role template catalogs.
+mu has two built-in roles: `orchestrator` and `worker`. Roles are built-in
+system prompt.
 
-The **orchestrator** walks the DAG: it finds ready leaves (open issues with no
-unresolved blockers or open children), dispatches them to an LLM backend, and
-manages the full lifecycle — claim, execute, close/expand, repeat — until the
+The **orchestration engine** walks the DAG: it finds ready leaves (open issues with no
+unresolved blockers or open children), dispatches them to the agent backend, and
+manages the lifecycle — claim, execute, close/expand, repeat — until the
 root issue is terminal.
 
 ## Project Context And Skills
