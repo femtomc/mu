@@ -244,7 +244,9 @@ export async function run(
 		return ok(`${mainHelp()}\n`);
 	}
 	if (argv.includes("--version")) {
-		return ok("mu 0.0.0\n");
+		const pkgPath = join(dirname(new URL(import.meta.url).pathname), "..", "package.json");
+		const { version } = JSON.parse(await readFile(pkgPath, "utf8")) as { version: string };
+		return ok(`mu ${version}\n`);
 	}
 
 	const cmd = argv[0]!;
