@@ -91,6 +91,8 @@ export class PiSdkBackend implements BackendRunner {
 
 			let sawError = false;
 
+			const DELTA_TYPES = new Set(["thinking_delta", "toolcall_delta", "text_delta"]);
+
 			// Subscribe to events — serialize to JSONL for tee and error detection.
 			const unsub = session.subscribe((event) => {
 				const line = JSON.stringify(event);
@@ -99,10 +101,18 @@ export class PiSdkBackend implements BackendRunner {
 					sawError = true;
 				}
 
+				// onLine gets everything (CLI needs deltas for live rendering).
 				opts.onLine?.(line);
 
+				// Tee file: skip streaming deltas (they carry the full accumulated
+				// message state on every token, causing quadratic log growth).
+				// Structural events (message_start/end, turn_start/end, tool_execution_*,
+				// thinking_start/end, toolcall_start/end) are kept.
 				if (teeFh) {
-					teeFh.write(`${line}\n`).catch(() => {});
+					const aType = (event as any)?.assistantMessageEvent?.type;
+					if (!DELTA_TYPES.has(aType)) {
+						teeFh.write(`${line}\n`).catch(() => {});
+					}
 				}
 			});
 

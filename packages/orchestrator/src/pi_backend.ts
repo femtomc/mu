@@ -80,6 +80,7 @@ export class PiCliBackend implements BackendRunner {
 			proc.stderr?.pipe(merged);
 
 			let sawAssistantError = false;
+			const DELTA_TYPES = /^(?:thinking_delta|toolcall_delta|text_delta)$/;
 			const rl = createInterface({ input: merged, crlfDelay: Number.POSITIVE_INFINITY });
 
 			const readLoop = (async () => {
@@ -90,8 +91,20 @@ export class PiCliBackend implements BackendRunner {
 					}
 					opts.onLine?.(trimmed);
 					if (teeFh) {
-						// Preserve Python's JSONL tee behavior: write one line per line.
-						await teeFh.write(`${trimmed}\n`);
+						// Skip streaming deltas from the log — they carry the full
+						// accumulated message state on every token, causing quadratic
+						// log growth. Structural events are preserved.
+						let skip = false;
+						try {
+							const parsed = JSON.parse(trimmed) as any;
+							const aType = parsed?.assistantMessageEvent?.type;
+							if (typeof aType === "string" && DELTA_TYPES.test(aType)) {
+								skip = true;
+							}
+						} catch {}
+						if (!skip) {
+							await teeFh.write(`${trimmed}\n`);
+						}
 					}
 				}
 			})();
