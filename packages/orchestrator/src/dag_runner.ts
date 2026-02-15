@@ -92,6 +92,7 @@ export class DagRunner {
 	readonly #modelOverrides: ModelOverrides;
 
 	readonly #reorchestrateOutcomes = new Set(["failure", "needs_work"]);
+	readonly #attempts = new Map<string, number>();
 
 	public constructor(
 		store: IssueStore,
@@ -112,7 +113,12 @@ export class DagRunner {
 		return resolveModelConfig(this.#modelOverrides);
 	}
 
-	async #renderUserPrompt(issue: Pick<Issue, "id" | "title" | "body">, rootId: string, step: number) {
+	async #renderUserPrompt(
+		issue: Pick<Issue, "id" | "title" | "body">,
+		rootId: string,
+		step: number,
+		attempt: number = 1,
+	) {
 		let rendered = issue.title ?? "";
 		if (issue.body) {
 			rendered += `\n\n${issue.body}`;
@@ -123,6 +129,9 @@ export class DagRunner {
 		if (runId) {
 			rendered += `Run: ${runId}\n`;
 		}
+		if (attempt > 1) {
+			rendered += `\nAttempt: ${attempt} (previous attempt failed — check \`mu forum read issue:${issue.id}\` for context)\n`;
+		}
 		return rendered;
 	}
 
@@ -131,11 +140,11 @@ export class DagRunner {
 		cfg: ResolvedConfig,
 		rootId: string,
 		step: number,
-		opts: { logSuffix?: string; onLine?: (line: string) => void } = {},
+		opts: { logSuffix?: string; attempt?: number; onLine?: (line: string) => void } = {},
 	): Promise<{ exitCode: number; elapsedS: number }> {
 		const role: MuRole = parseMuRole(specRoleFromExecutionSpec(issue.execution_spec));
 		const logSuffix = opts.logSuffix ?? "";
-		const rendered = await this.#renderUserPrompt(issue, rootId, step);
+		const rendered = await this.#renderUserPrompt(issue, rootId, step, opts.attempt ?? 1);
 		const systemPrompt = systemPromptForRole(role);
 
 		const { logsDir } = getStorePaths(this.#repoRoot);
@@ -242,6 +251,8 @@ export class DagRunner {
 		for (const row of rows) {
 			if (!idsInScope.has(row.id)) continue;
 			if (row.status !== "closed") continue;
+			// Circuit breaker: skip issues that have exhausted their attempts.
+			if ((this.#attempts.get(row.id) ?? 0) >= 3) continue;
 
 			const outcome = row.outcome;
 			if (outcome && this.#reorchestrateOutcomes.has(outcome)) {
@@ -377,12 +388,17 @@ export class DagRunner {
 					});
 					await this.#store.claim(issueId);
 
+					// Track attempt count for circuit breaker.
+					const attempt = (this.#attempts.get(issueId) ?? 0) + 1;
+					this.#attempts.set(issueId, attempt);
+
 					// 4. Route + 5. Render + 6. Execute.
 					const cfg = await this.#resolveConfig(issue);
-					const logSuffix = "";
+					const logSuffix = attempt > 1 ? `attempt-${attempt}` : "";
 					const onBackendLine = hooks?.onBackendLine;
 					const { exitCode, elapsedS } = await this.#executeBackend(issue, cfg, rootId, step, {
 						logSuffix,
+						attempt,
 						onLine: onBackendLine
 							? (line) => onBackendLine({ rootId, step, issueId, logSuffix, line })
 							: undefined,
@@ -436,9 +452,11 @@ export class DagRunner {
 						},
 					});
 
-					// 9. Re-orchestrate on failure / needs_work.
+					// 9. Re-orchestrate on failure / needs_work (circuit breaker: max 3 attempts).
 					if (updated.outcome && this.#reorchestrateOutcomes.has(updated.outcome)) {
-						await this.#reopenForOrchestration(issueId, { reason: `outcome=${updated.outcome}`, step });
+						if (attempt < 3) {
+							await this.#reopenForOrchestration(issueId, { reason: `outcome=${updated.outcome}`, step });
+						}
 					}
 				}
 
