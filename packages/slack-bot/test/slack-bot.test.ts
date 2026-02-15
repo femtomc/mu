@@ -69,8 +69,8 @@ test("POST /slack/commands ready passes rootId and limit to workflow.ready()", a
 		async ready(opts) {
 			got = opts ?? null;
 			const issues = [
-				{ id: "inshallah-a", title: "A", priority: 2 },
-				{ id: "inshallah-b", title: "B", priority: 3 },
+				{ id: "mu-a", title: "A", priority: 2 },
+				{ id: "mu-b", title: "B", priority: 3 },
 			];
 			return issues.slice(0, opts?.limit ?? issues.length);
 		},
@@ -80,7 +80,7 @@ test("POST /slack/commands ready passes rootId and limit to workflow.ready()", a
 	const timestamp = 1_700_000_000;
 	const bot = createSlackBot({ signingSecret: secret, workflow, nowMs: () => timestamp * 1000 });
 
-	const body = new URLSearchParams({ command: "/mu", text: "ready inshallah-root --limit 1" }).toString();
+	const body = new URLSearchParams({ command: "/mu", text: "ready mu-root --limit 1" }).toString();
 	const req = slackRequest({
 		secret,
 		timestamp,
@@ -92,11 +92,11 @@ test("POST /slack/commands ready passes rootId and limit to workflow.ready()", a
 	const res = await bot.fetch(req);
 	expect(res.status).toBe(200);
 	const payload = (await res.json()) as any;
-	expect(payload.text).toContain("root=inshallah-root");
-	expect(payload.text).toContain("inshallah-a");
-	expect(payload.text).not.toContain("inshallah-b");
+	expect(payload.text).toContain("root=mu-root");
+	expect(payload.text).toContain("mu-a");
+	expect(payload.text).not.toContain("mu-b");
 
-	expect(got).toMatchObject({ rootId: "inshallah-root", limit: 1 });
+	expect(got).toMatchObject({ rootId: "mu-root", limit: 1 });
 });
 
 test("POST /slack/commands create parses title/body and calls workflow.createIssue()", async () => {
@@ -111,7 +111,7 @@ test("POST /slack/commands create parses title/body and calls workflow.createIss
 		},
 		async createIssue(title, opts) {
 			got = { title, body: opts?.body ?? "" };
-			return { id: "inshallah-new", title };
+			return { id: "mu-new", title };
 		},
 	};
 
@@ -131,7 +131,7 @@ test("POST /slack/commands create parses title/body and calls workflow.createIss
 	const res = await bot.fetch(req);
 	expect(res.status).toBe(200);
 	const payload = (await res.json()) as any;
-	expect(payload.text).toContain("created: inshallah-new");
+	expect(payload.text).toContain("created: mu-new");
 	expect(payload.text).toContain("title: Hello world");
 	expect(payload.text).toContain("body: Body line");
 

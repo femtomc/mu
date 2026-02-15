@@ -35,7 +35,7 @@ const issues = new IssueStore(new FsJsonlStore(paths.issuesPath), { events });
 const forum = new ForumStore(new FsJsonlStore(paths.forumPath), { events });
 
 const runner = new DagRunner(issues, forum, repoRoot);
-const result = await runner.run("inshallah-<root-id>");
+const result = await runner.run("mu-<root-id>");
 console.log(result);
 ```
 

@@ -103,7 +103,7 @@ app.innerHTML = `
 
 				<div class="muted">Post</div>
 				<div class="row">
-					<input data-testid="forum-topic" placeholder="Topic (e.g. issue:inshallah-123)" />
+					<input data-testid="forum-topic" placeholder="Topic (e.g. issue:mu-123)" />
 					<input data-testid="forum-author" placeholder="Author" value="worker" />
 				</div>
 				<textarea data-testid="forum-body" placeholder="Message body"></textarea>

@@ -1,6 +1,6 @@
 # @mu/cli
 
-Node CLI (and programmatic wrapper) for the mu `.inshallah/` issue DAG + forum store.
+Node CLI (and programmatic wrapper) for the mu `.mu/` issue DAG + forum store.
 
 ## Install
 
@@ -42,4 +42,4 @@ bun run typecheck
 ## Runtime
 
 - **Node-only** (ESM).
-- Reads/writes a `.inshallah/` store at the git repo root (use `mu init` to create it).
+- Reads/writes a `.mu/` store at the git repo root (use `mu init` to create it).

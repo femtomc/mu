@@ -38,7 +38,7 @@ export function findRepoRoot(start: string = process.cwd()): string {
 	let current = startDir;
 
 	while (true) {
-		const storeDir = join(current, ".inshallah");
+		const storeDir = join(current, ".mu");
 		if (isDirectory(storeDir)) {
 			return current;
 		}
@@ -52,7 +52,7 @@ export function findRepoRoot(start: string = process.cwd()): string {
 }
 
 export function getStorePaths(repoRoot: string): StorePaths {
-	const storeDir = join(repoRoot, ".inshallah");
+	const storeDir = join(repoRoot, ".mu");
 	return {
 		repoRoot,
 		storeDir,

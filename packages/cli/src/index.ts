@@ -164,7 +164,7 @@ function findRepoRoot(start: string): string {
 }
 
 async function listRolesJson(repoRoot: string): Promise<RoleJson[]> {
-	const rolesDir = join(repoRoot, ".inshallah", "roles");
+	const rolesDir = join(repoRoot, ".mu", "roles");
 	let entries: string[];
 	try {
 		entries = await readdir(rolesDir);
@@ -252,7 +252,7 @@ function mainHelp(): string {
 		"  mu <command> [args...]",
 		"",
 		"Commands:",
-		"  init [--force]                  Initialize .inshallah store + templates",
+		"  init [--force]                  Initialize .mu store + templates",
 		"  status [--json] [--pretty]      Show repo + DAG status",
 		"  roles [--json|--table]          List role templates",
 		"  issues <subcmd>                 Issue DAG commands (JSON)",
@@ -306,7 +306,7 @@ export async function run(argv: string[], opts: { cwd?: string } = {}): Promise<
 async function cmdInit(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
-			["mu init - initialize .inshallah state, templates, and logs", "", "Usage:", "  mu init [--force]"].join(
+			["mu init - initialize .mu state, templates, and logs", "", "Usage:", "  mu init [--force]"].join(
 				"\n",
 			) + "\n",
 		);
@@ -340,7 +340,7 @@ async function cmdInit(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 
 	const verb = force ? "Reinitialized" : "Initialized";
-	return ok(`${verb} .inshallah/ in ${ctx.repoRoot}\n`);
+	return ok(`${verb} .mu/ in ${ctx.repoRoot}\n`);
 }
 
 async function cmdStatus(argv: string[], ctx: CliCtx): Promise<RunResult> {
@@ -403,7 +403,7 @@ async function cmdRoles(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
 			[
-				"mu roles - list role templates from .inshallah/roles/*.md",
+				"mu roles - list role templates from .mu/roles/*.md",
 				"",
 				"Usage:",
 				"  mu roles [--json] [--table] [--pretty]",
@@ -1345,7 +1345,7 @@ async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
 					recovery: matches.slice(0, 10).map((m) => `mu replay ${m.replace(/\\.jsonl$/, "")}`),
 				});
 			} else {
-				return jsonError(`log not found: ${target}`, { recovery: ["mu status", "ls .inshallah/logs"] });
+				return jsonError(`log not found: ${target}`, { recovery: ["mu status", "ls .mu/logs"] });
 			}
 		}
 	}

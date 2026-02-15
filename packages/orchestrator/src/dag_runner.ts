@@ -93,7 +93,7 @@ export class DagRunner {
 
 		// Tier 2: role file frontmatter (role-specific defaults).
 		if (spec?.role) {
-			const rolePath = join(this.#repoRoot, ".inshallah", "roles", `${spec.role}.md`);
+			const rolePath = join(this.#repoRoot, ".mu", "roles", `${spec.role}.md`);
 			if (existsSync(rolePath)) {
 				const roleMeta = await readPromptMeta(rolePath);
 				if (typeof roleMeta.cli === "string") cli = roleMeta.cli;
@@ -186,7 +186,7 @@ export class DagRunner {
 	}
 
 	#hasReviewer(): boolean {
-		return existsSync(join(this.#repoRoot, ".inshallah", "roles", "reviewer.md"));
+		return existsSync(join(this.#repoRoot, ".mu", "roles", "reviewer.md"));
 	}
 
 	async #maybeReview(issue: Issue, rootId: string, step: number): Promise<Issue> {
@@ -327,7 +327,7 @@ export class DagRunner {
 			`All children of this issue have completed. Review whether their aggregate work satisfies the original specification above.\n\n` +
 			`If satisfied: no action needed (the issue will be marked successful).\n\n` +
 			`If NOT satisfied: mark the parent as needing work by running:\n\n` +
-			`  \`inshallah issues update ${issueId} --outcome needs_work\`\n\n` +
+			`  \`mu issues update ${issueId} --outcome needs_work\`\n\n` +
 			`Then explain the gaps in the forum topic (issue:${issueId}).\n\n` +
 			`Do NOT create child issues yourself; the orchestrator will re-expand the issue into remediation children.\n`;
 
@@ -456,7 +456,7 @@ export class DagRunner {
 						const diag =
 							`- open_issues: ${openIssues.length}\n` +
 							`- action: diagnose deadlocks or missing expansions and create executable leaf work\n` +
-							`- hint: run \`inshallah issues ready --root ${rootId}\` and \`inshallah issues list --root ${rootId}\`\n`;
+							`- hint: run \`mu issues ready --root ${rootId}\` and \`mu issues list --root ${rootId}\`\n`;
 
 						const repairIssue: Issue = {
 							...rootIssue,

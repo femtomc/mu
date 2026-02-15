@@ -108,7 +108,7 @@ function toPosixPath(path: string): string {
 }
 
 export async function buildRoleCatalog(repoRoot: string): Promise<string> {
-	const rolesDir = join(repoRoot, ".inshallah", "roles");
+	const rolesDir = join(repoRoot, ".mu", "roles");
 	let entries: string[];
 	try {
 		entries = await readdir(rolesDir);

@@ -38,7 +38,7 @@ packages/cli/dist/cli.js status
 
 ## Packages
 
-- [`@mu/cli`](packages/cli/README.md): Node CLI for `.inshallah/` issue DAG + forum.
+- [`@mu/cli`](packages/cli/README.md): Node CLI for `.mu/` issue DAG + forum.
 - [`@mu/core`](packages/core/README.md): core types/utilities, JSONL storage, and Node/browser adapters.
 - [`@mu/forum`](packages/forum/README.md): forum/message store on top of a JSONL store.
 - [`@mu/issue`](packages/issue/README.md): issue store + DAG helpers (ready leaves, validate, deps).

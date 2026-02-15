@@ -9,7 +9,7 @@ async function mkTempDir(): Promise<string> {
 }
 
 async function writeRole(repoRoot: string, name: string, frontmatter: string, body: string): Promise<void> {
-	const rolesDir = join(repoRoot, ".inshallah", "roles");
+	const rolesDir = join(repoRoot, ".mu", "roles");
 	await mkdir(rolesDir, { recursive: true });
 	await writeFile(join(rolesDir, `${name}.md`), `---\n${frontmatter}---\n${body}`, "utf8");
 }
@@ -44,7 +44,7 @@ describe("executionSpecFromDict", () => {
 		await writeRole(repoRoot, "worker", "cli: codex\n", "Worker.\n");
 
 		const spec = executionSpecFromDict({ role: "worker" }, repoRoot);
-		expect(spec.prompt_path).toBe(join(repoRoot, ".inshallah", "roles", "worker.md"));
+		expect(spec.prompt_path).toBe(join(repoRoot, ".mu", "roles", "worker.md"));
 	});
 
 	test("no auto resolve without repoRoot", () => {
@@ -54,7 +54,7 @@ describe("executionSpecFromDict", () => {
 
 	test("no auto resolve if role file missing", async () => {
 		const repoRoot = await mkTempDir();
-		await mkdir(join(repoRoot, ".inshallah", "roles"), { recursive: true });
+		await mkdir(join(repoRoot, ".mu", "roles"), { recursive: true });
 
 		const spec = executionSpecFromDict({ role: "missing" }, repoRoot);
 		expect(spec.prompt_path).toBeNull();

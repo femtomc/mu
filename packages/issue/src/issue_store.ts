@@ -101,7 +101,7 @@ export class IssueStore {
 	public async create(title: string, opts: CreateIssueOpts = {}): Promise<Issue> {
 		const now = nowTs();
 		const issueInput: Record<string, unknown> = {
-			id: `inshallah-${shortId()}`,
+			id: `mu-${shortId()}`,
 			title,
 			body: opts.body ?? "",
 			status: "open",

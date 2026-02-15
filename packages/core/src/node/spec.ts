@@ -12,7 +12,7 @@ export function executionSpecFromDict(d: Record<string, unknown>, repoRoot?: str
 
 	// Auto-resolve prompt_path from role name
 	if (!prompt_path && role && repoRoot) {
-		const candidate = join(repoRoot, ".inshallah", "roles", `${role}.md`);
+		const candidate = join(repoRoot, ".mu", "roles", `${role}.md`);
 		if (existsSync(candidate)) {
 			prompt_path = candidate;
 		}

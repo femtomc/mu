@@ -10,7 +10,7 @@ import { buildRoleCatalog, DagRunner, piStreamHasError, renderPromptTemplate } f
 
 async function mkTempRepo(): Promise<{ repoRoot: string; store: IssueStore; forum: ForumStore }> {
 	const repoRoot = await mkdtemp(join(tmpdir(), "mu-orchestrator-"));
-	await mkdir(join(repoRoot, ".inshallah"), { recursive: true });
+	await mkdir(join(repoRoot, ".mu"), { recursive: true });
 
 	const paths = getStorePaths(repoRoot);
 	const events = fsEventLog(paths.eventsPath);
@@ -32,14 +32,14 @@ async function writeRole(
 	if (opts.description) lines.push(`description: ${opts.description}`);
 	const frontmatter = lines.join("\n");
 
-	const rolesDir = join(repoRoot, ".inshallah", "roles");
+	const rolesDir = join(repoRoot, ".mu", "roles");
 	await mkdir(rolesDir, { recursive: true });
 	await writeFile(join(rolesDir, `${name}.md`), `---\n${frontmatter}\n---\n${body}`, "utf8");
 }
 
 async function writeOrchestratorPrompt(repoRoot: string): Promise<void> {
 	await writeFile(
-		join(repoRoot, ".inshallah", "orchestrator.md"),
+		join(repoRoot, ".mu", "orchestrator.md"),
 		`---\ncli: pi\nmodel: orch-model\nreasoning: orch-think\n---\n{{PROMPT}}\n\n{{ROLES}}\n`,
 		"utf8",
 	);
@@ -109,7 +109,7 @@ describe("prompt templates", () => {
 
 		const cat = await buildRoleCatalog(repoRoot);
 		expect(cat).toContain("### reviewer");
-		expect(cat).toContain("prompt: .inshallah/roles/reviewer.md");
+		expect(cat).toContain("prompt: .mu/roles/reviewer.md");
 		expect(cat).toContain("description_source: frontmatter");
 
 		const issue = await store.create("T", { body: "B" });

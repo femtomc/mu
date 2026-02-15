@@ -8,9 +8,9 @@ async function mkTempDir(): Promise<string> {
 	return await mkdtemp(join(tmpdir(), "mu-core-"));
 }
 
-test("findRepoRoot finds nearest ancestor with .inshallah/", async () => {
+test("findRepoRoot finds nearest ancestor with .mu/", async () => {
 	const repoRoot = await mkTempDir();
-	await mkdir(join(repoRoot, ".inshallah"), { recursive: true });
+	await mkdir(join(repoRoot, ".mu"), { recursive: true });
 
 	const nested = join(repoRoot, "a", "b", "c");
 	await mkdir(nested, { recursive: true });
@@ -27,7 +27,7 @@ test("getStorePaths points at standard files", async () => {
 	const repoRoot = await mkTempDir();
 	const p = getStorePaths(repoRoot);
 	expect(p.repoRoot).toBe(repoRoot);
-	expect(p.storeDir).toBe(join(repoRoot, ".inshallah"));
+	expect(p.storeDir).toBe(join(repoRoot, ".mu"));
 	expect(p.issuesPath.endsWith("issues.jsonl")).toBe(true);
 	expect(p.forumPath.endsWith("forum.jsonl")).toBe(true);
 });

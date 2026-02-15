@@ -11,7 +11,7 @@ async function mkTempDir(): Promise<string> {
 
 test("can read python-compatible issues.jsonl and forum.jsonl without schema errors", async () => {
 	const dir = await mkTempDir();
-	const storeDir = join(dir, ".inshallah");
+	const storeDir = join(dir, ".mu");
 	await mkdir(storeDir, { recursive: true });
 
 	const issuesPath = join(storeDir, "issues.jsonl");
@@ -19,7 +19,7 @@ test("can read python-compatible issues.jsonl and forum.jsonl without schema err
 
 	await writeJsonl(issuesPath, [
 		{
-			id: "inshallah-abc123",
+			id: "mu-abc123",
 			title: "root",
 			body: "",
 			status: "closed",
@@ -32,14 +32,14 @@ test("can read python-compatible issues.jsonl and forum.jsonl without schema err
 			updated_at: 123,
 		},
 		{
-			id: "inshallah-def456",
+			id: "mu-def456",
 			title: "child",
 			body: "do thing",
 			status: "open",
 			outcome: null,
 			tags: ["node:agent"],
 			deps: [
-				{ type: "parent", target: "inshallah-abc123" },
+				{ type: "parent", target: "mu-abc123" },
 				{ type: "relates", target: "workshop-some-other" },
 			],
 			execution_spec: { role: "worker" },
@@ -51,7 +51,7 @@ test("can read python-compatible issues.jsonl and forum.jsonl without schema err
 	]);
 
 	await writeJsonl(forumPath, [
-		{ topic: "issue:inshallah-def456", body: "hello", author: "worker", created_at: 200, extra: "ok" },
+		{ topic: "issue:mu-def456", body: "hello", author: "worker", created_at: 200, extra: "ok" },
 	]);
 
 	for (const row of await readJsonl(issuesPath)) {

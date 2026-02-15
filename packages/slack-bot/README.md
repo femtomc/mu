@@ -18,7 +18,7 @@ bun run packages/slack-bot/src/server.ts
 
 - `SLACK_SIGNING_SECRET` (required): Slack app signing secret.
 - `PORT` (optional, default `3000`): HTTP listen port.
-- `MU_REPO_ROOT` (optional): Path to the repo root containing `.inshallah/`. Defaults via
+- `MU_REPO_ROOT` (optional): Path to the repo root containing `.mu/`. Defaults via
   `findRepoRoot(process.cwd())`.
 
 ## Endpoints

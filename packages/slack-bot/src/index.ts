@@ -171,7 +171,7 @@ function helpText(): string {
 		"",
 		"Examples:",
 		"  /mu status",
-		"  /mu ready inshallah-d16f9960",
+		"  /mu ready mu-d16f9960",
 		"  /mu create Fix typecheck | bun run typecheck fails on Windows",
 	].join("\n");
 }
