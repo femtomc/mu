@@ -8,7 +8,6 @@ import type { ForumTopicSummary } from "@femtomc/mu-forum";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
 import type { BackendRunner, ModelOverrides } from "@femtomc/mu-orchestrator";
-import { DagRunner, PiStreamRenderer } from "@femtomc/mu-orchestrator";
 
 export type RunResult = {
 	stdout: string;
@@ -1171,6 +1170,8 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	// Used to keep progress headers from printing mid-line.
 	let lineOpen = false;
 
+	// Lazy-import the orchestrator to keep "mu status/issues/forum" fast.
+	const { DagRunner, PiStreamRenderer } = await import("@femtomc/mu-orchestrator");
 	const renderer = rawStream ? null : new PiStreamRenderer();
 
 	const hooks = streaming
@@ -1395,6 +1396,9 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	let lastStepIssueId: string | null = null;
 	let lastBackendIssueId: string | null = null;
 	let lineOpen = false;
+
+	// Lazy-import the orchestrator to keep "mu status/issues/forum" fast.
+	const { DagRunner, PiStreamRenderer } = await import("@femtomc/mu-orchestrator");
 	const renderer = rawStream ? null : new PiStreamRenderer();
 
 	const hooks = streaming
