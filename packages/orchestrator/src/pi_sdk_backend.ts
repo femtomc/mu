@@ -1,6 +1,7 @@
 import { mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
+	AuthStorage,
 	type CreateAgentSessionOptions,
 	SessionManager,
 	SettingsManager,
@@ -8,22 +9,36 @@ import {
 	createCodingTools,
 } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
-import { getModel, getModels, getProviders } from "@mariozechner/pi-ai";
+import { getModels, getProviders } from "@mariozechner/pi-ai";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { BackendRunOpts, BackendRunner } from "./pi_backend.js";
 import { piStreamHasError } from "./pi_backend.js";
 
 /**
- * Resolve a bare model ID (e.g. "gpt-5.3-codex") to a pi-ai Model object
- * by searching across all known providers.
+ * Resolve a bare model ID (e.g. "gpt-5.3-codex") to a pi-ai Model object.
+ *
+ * When multiple providers offer the same model ID, prefer providers that
+ * have auth configured (env var, OAuth, or stored API key).
  */
-function resolveModel(modelId: string): Model<any> | undefined {
+function resolveModel(modelId: string, authStorage: AuthStorage): Model<any> | undefined {
+	let fallback: Model<any> | undefined;
+
 	for (const provider of getProviders()) {
 		const models = getModels(provider);
 		const match = models.find((m) => m.id === modelId);
-		if (match) return match;
+		if (!match) continue;
+
+		// Prefer providers that have auth configured.
+		if (authStorage.hasAuth(provider)) {
+			return match;
+		}
+		// Keep first match as fallback.
+		if (!fallback) {
+			fallback = match;
+		}
 	}
-	return undefined;
+
+	return fallback;
 }
 
 /**
@@ -34,9 +49,13 @@ function resolveModel(modelId: string): Model<any> | undefined {
  */
 export class PiSdkBackend implements BackendRunner {
 	async run(opts: BackendRunOpts): Promise<number> {
-		const model = resolveModel(opts.model);
+		const authStorage = new AuthStorage();
+		const model = resolveModel(opts.model, authStorage);
 		if (!model) {
-			throw new Error(`Model "${opts.model}" not found in pi-ai registry`);
+			throw new Error(
+				`Model "${opts.model}" not found in pi-ai registry. ` +
+					`Available providers: ${getProviders().join(", ")}`,
+			);
 		}
 
 		const sessionOpts: CreateAgentSessionOptions = {
@@ -46,6 +65,7 @@ export class PiSdkBackend implements BackendRunner {
 			tools: createCodingTools(opts.cwd),
 			sessionManager: SessionManager.inMemory(opts.cwd),
 			settingsManager: SettingsManager.inMemory(),
+			authStorage,
 		};
 
 		const { session } = await createAgentSession(sessionOpts);
@@ -89,8 +109,6 @@ export class PiSdkBackend implements BackendRunner {
 
 			try {
 				await session.prompt(opts.prompt, { expandPromptTemplates: false });
-			} catch {
-				return 1;
 			} finally {
 				unsub();
 			}
