@@ -4,7 +4,7 @@
 
 mu is an agent orchestration framework which keeps it as simple and minimal as possible (and not an ounce more).
 You can think of it as a _long running harness_ (a "fire and forget" style UI): compared to interactive chat, 
-the idea is that you spend time thinking upfront about your prompt, and then 
+the idea is that you spend a good amount of time thinking upfront about your prompt, and then 
 expect to let `mu` run for many hours.
 
 The design of `mu` supports this mode of operation by allowing agents to carefully keep track and manage 
