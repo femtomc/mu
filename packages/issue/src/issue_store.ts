@@ -1,4 +1,4 @@
-import type { Issue, JsonlStore, ValidationResult } from "@mu/core";
+import type { Issue, JsonlStore, ValidationResult } from "@femtomc/mu-core";
 import {
 	collapsible as dagCollapsible,
 	subtreeIds as dagSubtreeIds,
@@ -9,7 +9,7 @@ import {
 	readyLeaves,
 	shortId,
 	validateDag,
-} from "@mu/core";
+} from "@femtomc/mu-core";
 
 export type CreateIssueOpts = {
 	body?: string;

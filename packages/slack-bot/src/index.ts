@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Buffer } from "node:buffer";
-import { FsJsonlStore, findRepoRoot, getStorePaths } from "@mu/core/node";
-import { IssueStore } from "@mu/issue";
+import { FsJsonlStore, findRepoRoot, getStorePaths } from "@femtomc/mu-core/node";
+import { IssueStore } from "@femtomc/mu-issue";
 
 export type MuStatus = {
 	repoRoot: string;

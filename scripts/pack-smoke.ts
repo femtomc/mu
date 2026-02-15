@@ -83,11 +83,11 @@ async function main(): Promise<void> {
 		await mkdir(projDir, { recursive: true });
 
 		const pkgs = [
-			{ name: "@mu/core", dir: join(repoRoot, "packages/core") },
-			{ name: "@mu/forum", dir: join(repoRoot, "packages/forum") },
-			{ name: "@mu/issue", dir: join(repoRoot, "packages/issue") },
-			{ name: "@mu/orchestrator", dir: join(repoRoot, "packages/orchestrator") },
-			{ name: "@mu/cli", dir: join(repoRoot, "packages/cli") },
+			{ name: "@femtomc/mu-core", dir: join(repoRoot, "packages/core") },
+			{ name: "@femtomc/mu-forum", dir: join(repoRoot, "packages/forum") },
+			{ name: "@femtomc/mu-issue", dir: join(repoRoot, "packages/issue") },
+			{ name: "@femtomc/mu-orchestrator", dir: join(repoRoot, "packages/orchestrator") },
+			{ name: "@femtomc/mu", dir: join(repoRoot, "packages/cli") },
 		] as const;
 
 		const tarballs: string[] = [];
@@ -107,24 +107,24 @@ async function main(): Promise<void> {
 			throw new Error(`npm install failed (code=${install.code})\n${install.stderr || install.stdout}`);
 		}
 
-		const smokeMjs = `import { newRunId } from "@mu/core";
-import { readJsonl } from "@mu/core/node";
-import { LocalStorageJsonlStore } from "@mu/core/browser";
-import { ForumStore } from "@mu/forum";
-import { IssueStore } from "@mu/issue";
-import { orchestratorHello } from "@mu/orchestrator";
-import { run } from "@mu/cli";
+		const smokeMjs = `import { newRunId } from "@femtomc/mu-core";
+import { readJsonl } from "@femtomc/mu-core/node";
+import { LocalStorageJsonlStore } from "@femtomc/mu-core/browser";
+import { ForumStore } from "@femtomc/mu-forum";
+import { IssueStore } from "@femtomc/mu-issue";
+import { orchestratorHello } from "@femtomc/mu-orchestrator";
+import { run } from "@femtomc/mu";
 
-if (typeof newRunId !== "function") throw new Error("@mu/core missing newRunId");
-if (typeof readJsonl !== "function") throw new Error("@mu/core/node missing readJsonl");
-if (typeof LocalStorageJsonlStore !== "function") throw new Error("@mu/core/browser missing LocalStorageJsonlStore");
-if (typeof ForumStore !== "function") throw new Error("@mu/forum missing ForumStore");
-if (typeof IssueStore !== "function") throw new Error("@mu/issue missing IssueStore");
-if (orchestratorHello() !== "orchestrator(forum,issue)") throw new Error("@mu/orchestrator returned unexpected value");
+if (typeof newRunId !== "function") throw new Error("@femtomc/mu-core missing newRunId");
+if (typeof readJsonl !== "function") throw new Error("@femtomc/mu-core/node missing readJsonl");
+if (typeof LocalStorageJsonlStore !== "function") throw new Error("@femtomc/mu-core/browser missing LocalStorageJsonlStore");
+if (typeof ForumStore !== "function") throw new Error("@femtomc/mu-forum missing ForumStore");
+if (typeof IssueStore !== "function") throw new Error("@femtomc/mu-issue missing IssueStore");
+if (orchestratorHello() !== "orchestrator(forum,issue)") throw new Error("@femtomc/mu-orchestrator returned unexpected value");
 
 const help = await run(["--help"]);
-if (help.exitCode !== 0) throw new Error("@mu/cli run(--help) failed");
-if (!help.stdout.includes("Usage:")) throw new Error("@mu/cli help missing Usage");
+if (help.exitCode !== 0) throw new Error("@femtomc/mu run(--help) failed");
+if (!help.stdout.includes("Usage:")) throw new Error("@femtomc/mu help missing Usage");
 
 console.log("ok");
 `;

@@ -1,5 +1,5 @@
-import type { ForumMessage, JsonlStore } from "@mu/core";
-import { EventLog, ForumMessageSchema, NullEventSink, nowTs } from "@mu/core";
+import type { ForumMessage, JsonlStore } from "@femtomc/mu-core";
+import { EventLog, ForumMessageSchema, NullEventSink, nowTs } from "@femtomc/mu-core";
 
 export type ForumTopicSummary = {
 	topic: string;

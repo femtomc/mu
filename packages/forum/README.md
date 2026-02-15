@@ -1,4 +1,4 @@
-# @mu/forum
+# @femtomc/mu-forum
 
 Forum/message store backed by a JSONL store, with helpers for posting, reading, and listing topics.
 
@@ -7,8 +7,8 @@ Forum/message store backed by a JSONL store, with helpers for posting, reading, 
 After publishing:
 
 ```bash
-npm install @mu/forum
-# or: bun add @mu/forum
+npm install @femtomc/mu-forum
+# or: bun add @femtomc/mu-forum
 ```
 
 From this repo:
@@ -22,8 +22,8 @@ bun run build
 ## Usage
 
 ```ts
-import { InMemoryJsonlStore } from "@mu/core";
-import { ForumStore } from "@mu/forum";
+import { InMemoryJsonlStore } from "@femtomc/mu-core";
+import { ForumStore } from "@femtomc/mu-forum";
 
 const forum = new ForumStore(new InMemoryJsonlStore());
 
@@ -44,4 +44,4 @@ bun run typecheck
 ## Runtime
 
 - Runtime-agnostic: works in Node or the browser.
-- You provide a `JsonlStore` implementation (see `@mu/core/node` for `FsJsonlStore`, or `@mu/core/browser` for IndexedDB/localStorage stores).
+- You provide a `JsonlStore` implementation (see `@femtomc/mu-core/node` for `FsJsonlStore`, or `@femtomc/mu-core/browser` for IndexedDB/localStorage stores).

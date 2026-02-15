@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
-import type { Issue } from "@mu/core";
+import type { Issue } from "@femtomc/mu-core";
 
 export type PromptMeta = Record<string, unknown>;
 

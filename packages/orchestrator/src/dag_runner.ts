@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { Issue, ValidationResult } from "@mu/core";
+import type { Issue, ValidationResult } from "@femtomc/mu-core";
 import {
 	currentRunId,
 	type EventLog,
@@ -10,9 +10,9 @@ import {
 	getStorePaths,
 	newRunId,
 	runContext,
-} from "@mu/core/node";
-import type { ForumStore } from "@mu/forum";
-import type { IssueStore } from "@mu/issue";
+} from "@femtomc/mu-core/node";
+import type { ForumStore } from "@femtomc/mu-forum";
+import type { IssueStore } from "@femtomc/mu-issue";
 import type { BackendRunner } from "./pi_backend.js";
 import { PiCliBackend } from "./pi_backend.js";
 import { readPromptMeta, renderPromptTemplate } from "./prompt.js";

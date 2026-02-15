@@ -1,7 +1,6 @@
 {
-	"name": "@mu/forum",
-	"version": "0.0.0",
-	"private": true,
+	"name": "@femtomc/mu-forum",
+	"version": "0.1.0",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -13,6 +12,6 @@
 	},
 	"files": ["dist/**"],
 	"dependencies": {
-		"@mu/core": "0.0.0"
+		"@femtomc/mu-core": "0.1.0"
 	}
 }

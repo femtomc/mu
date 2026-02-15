@@ -1,4 +1,4 @@
-# @mu/slack-bot
+# @femtomc/mu-slack-bot
 
 Minimal Slack slash-command + events handler for mu.
 

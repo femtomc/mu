@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ForumMessageSchema, IssueSchema } from "@mu/core";
-import { readJsonl, writeJsonl } from "@mu/core/node";
+import { ForumMessageSchema, IssueSchema } from "@femtomc/mu-core";
+import { readJsonl, writeJsonl } from "@femtomc/mu-core/node";
 
 async function mkTempDir(): Promise<string> {
 	return await mkdtemp(join(tmpdir(), "mu-core-"));

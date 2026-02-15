@@ -16,7 +16,8 @@
 		"web:dev": "cd packages/web && bun run dev",
 		"web:build": "cd packages/web && bun run build",
 		"web:test": "bun run web:build && cd packages/web && bun run e2e",
-		"check": "biome check --write --error-on-warnings . && bun run typecheck && bun run build && bun test"
+		"check": "biome check --write --error-on-warnings . && bun run typecheck && bun run build && bun test",
+		"publish:all": "bun run build && npm publish --access public -w packages/core && npm publish --access public -w packages/forum && npm publish --access public -w packages/issue && npm publish --access public -w packages/orchestrator && npm publish --access public -w packages/cli"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.5",

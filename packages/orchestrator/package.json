@@ -1,7 +1,6 @@
 {
-	"name": "@mu/orchestrator",
-	"version": "0.0.0",
-	"private": true,
+	"name": "@femtomc/mu-orchestrator",
+	"version": "0.1.0",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -13,8 +12,8 @@
 	},
 	"files": ["dist/**"],
 	"dependencies": {
-		"@mu/core": "0.0.0",
-		"@mu/forum": "0.0.0",
-		"@mu/issue": "0.0.0"
+		"@femtomc/mu-core": "0.1.0",
+		"@femtomc/mu-forum": "0.1.0",
+		"@femtomc/mu-issue": "0.1.0"
 	}
 }

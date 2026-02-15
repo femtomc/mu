@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
-import { createSlackBot, type MuWorkflow } from "@mu/slack-bot";
+import { createSlackBot, type MuWorkflow } from "@femtomc/mu-slack-bot";
 
 function slackSignature(signingSecret: string, timestamp: string, rawBody: string): string {
 	const baseString = `v0:${timestamp}:${rawBody}`;

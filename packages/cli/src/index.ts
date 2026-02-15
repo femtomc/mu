@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import type { Issue } from "@mu/core";
-import { type EventLog, FsJsonlStore, fsEventLog, getStorePaths, newRunId, runContext } from "@mu/core/node";
-import type { ForumTopicSummary } from "@mu/forum";
-import { ForumStore } from "@mu/forum";
-import { IssueStore } from "@mu/issue";
-import { DagRunner, extractDescription, splitFrontmatter } from "@mu/orchestrator";
+import type { Issue } from "@femtomc/mu-core";
+import { type EventLog, FsJsonlStore, fsEventLog, getStorePaths, newRunId, runContext } from "@femtomc/mu-core/node";
+import type { ForumTopicSummary } from "@femtomc/mu-forum";
+import { ForumStore } from "@femtomc/mu-forum";
+import { IssueStore } from "@femtomc/mu-issue";
+import { DagRunner, extractDescription, splitFrontmatter } from "@femtomc/mu-orchestrator";
 import { DEFAULT_ORCHESTRATOR_MD, DEFAULT_REVIEWER_ROLE_MD, DEFAULT_WORKER_ROLE_MD } from "./templates.js";
 
 export type RunResult = {

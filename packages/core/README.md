@@ -1,4 +1,4 @@
-# @mu/core
+# @femtomc/mu-core
 
 Core types and utilities shared across mu packages: JSONL store abstractions, event logging, DAG helpers, and spec schemas.
 
@@ -7,8 +7,8 @@ Core types and utilities shared across mu packages: JSONL store abstractions, ev
 After publishing:
 
 ```bash
-npm install @mu/core
-# or: bun add @mu/core
+npm install @femtomc/mu-core
+# or: bun add @femtomc/mu-core
 ```
 
 From this repo:
@@ -22,7 +22,7 @@ bun run build
 ## Usage
 
 ```ts
-import { EventLog, InMemoryJsonlStore, JsonlEventSink, newRunId, runContext } from "@mu/core/node";
+import { EventLog, InMemoryJsonlStore, JsonlEventSink, newRunId, runContext } from "@femtomc/mu-core/node";
 
 const jsonl = new InMemoryJsonlStore();
 const events = new EventLog(new JsonlEventSink(jsonl));
@@ -45,6 +45,6 @@ bun run typecheck
 
 ## Runtime
 
-- `@mu/core` is runtime-agnostic (no Node builtins).
-- `@mu/core/node` is **Node-only** (`node:fs`, `node:async_hooks`).
-- `@mu/core/browser` is **browser-only** (IndexedDB/localStorage).
+- `@femtomc/mu-core` is runtime-agnostic (no Node builtins).
+- `@femtomc/mu-core/node` is **Node-only** (`node:fs`, `node:async_hooks`).
+- `@femtomc/mu-core/browser` is **browser-only** (IndexedDB/localStorage).

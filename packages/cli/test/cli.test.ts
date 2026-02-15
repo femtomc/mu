@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { run } from "@mu/cli";
+import { run } from "@femtomc/mu";
 
 async function mkTempRepo(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "mu-cli-"));

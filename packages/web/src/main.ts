@@ -1,9 +1,9 @@
 import "./style.css";
 
-import { EventLog, JsonlEventSink } from "@mu/core";
-import { IndexedDbJsonlStore, LocalStorageJsonlStore } from "@mu/core/browser";
-import { ForumStore } from "@mu/forum";
-import { IssueStore } from "@mu/issue";
+import { EventLog, JsonlEventSink } from "@femtomc/mu-core";
+import { IndexedDbJsonlStore, LocalStorageJsonlStore } from "@femtomc/mu-core/browser";
+import { ForumStore } from "@femtomc/mu-forum";
+import { IssueStore } from "@femtomc/mu-issue";
 
 type Backend = "indexeddb" | "localstorage";
 

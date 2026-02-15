@@ -24,7 +24,7 @@ root issue is terminal.
 ## Quickstart
 
 ```bash
-npm install -g @mu/cli
+npm install -g @femtomc/mu
 cd /path/to/your/repo
 
 mu init          # create .mu/ with default templates
@@ -38,13 +38,13 @@ mu forum post research:topic -m "found something" --author worker
 
 | Package | Description |
 |---------|-------------|
-| [`@mu/core`](packages/core/README.md) | Types, JSONL persistence, DAG algorithms, event system. Runtime-agnostic core with Node and browser adapters. |
-| [`@mu/issue`](packages/issue/README.md) | Issue store — create, update, close, plus DAG queries (ready leaves, subtree, validate, collapsible). |
-| [`@mu/forum`](packages/forum/README.md) | Forum store — topic-keyed messages with read filtering and event emission. |
-| [`@mu/orchestrator`](packages/orchestrator/README.md) | DAG runner — walks the issue tree, dispatches to LLM backends, manages run lifecycle. |
-| [`@mu/cli`](packages/cli/README.md) | Node CLI wrapping the above into `mu` commands. |
-| [`@mu/web`](packages/web/README.md) | Browser demo — IndexedDB/localStorage backend, no server required. |
-| [`@mu/slack-bot`](packages/slack-bot/README.md) | Slack integration — slash commands for issue triage and creation. |
+| [`@femtomc/mu-core`](packages/core/README.md) | Types, JSONL persistence, DAG algorithms, event system. Runtime-agnostic core with Node and browser adapters. |
+| [`@femtomc/mu-issue`](packages/issue/README.md) | Issue store — create, update, close, plus DAG queries (ready leaves, subtree, validate, collapsible). |
+| [`@femtomc/mu-forum`](packages/forum/README.md) | Forum store — topic-keyed messages with read filtering and event emission. |
+| [`@femtomc/mu-orchestrator`](packages/orchestrator/README.md) | DAG runner — walks the issue tree, dispatches to LLM backends, manages run lifecycle. |
+| [`@femtomc/mu`](packages/cli/README.md) | Node CLI wrapping the above into `mu` commands. |
+| [`@femtomc/mu-web`](packages/web/README.md) | Browser demo — IndexedDB/localStorage backend, no server required. |
+| [`@femtomc/mu-slack-bot`](packages/slack-bot/README.md) | Slack integration — slash commands for issue triage and creation. |
 
 ## Development
 

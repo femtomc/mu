@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { collapsible, type Issue, IssueSchema, readyLeaves, subtreeIds, validateDag } from "@mu/core";
+import { collapsible, type Issue, IssueSchema, readyLeaves, subtreeIds, validateDag } from "@femtomc/mu-core";
 
 function mkIssue(overrides: Partial<Issue> & Pick<Issue, "id" | "title">): Issue {
 	const base: Issue = {

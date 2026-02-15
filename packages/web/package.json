@@ -1,5 +1,5 @@
 {
-	"name": "@mu/web",
+	"name": "@femtomc/mu-web",
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
@@ -9,9 +9,9 @@
 		"e2e": "bun scripts/e2e.ts"
 	},
 	"dependencies": {
-		"@mu/core": "workspace:*",
-		"@mu/forum": "workspace:*",
-		"@mu/issue": "workspace:*"
+		"@femtomc/mu-core": "workspace:*",
+		"@femtomc/mu-forum": "workspace:*",
+		"@femtomc/mu-issue": "workspace:*"
 	},
 	"devDependencies": {
 		"playwright": "^1.44.0",

@@ -14,63 +14,63 @@
       },
     },
     "packages/cli": {
-      "name": "@mu/cli",
-      "version": "0.0.0",
+      "name": "@femtomc/mu",
+      "version": "0.1.0",
       "bin": {
-        "mu": "./src/cli.ts",
+        "mu": "./dist/cli.js",
       },
       "dependencies": {
-        "@mu/core": "workspace:*",
-        "@mu/forum": "workspace:*",
-        "@mu/issue": "workspace:*",
-        "@mu/orchestrator": "workspace:*",
+        "@femtomc/mu-core": "0.1.0",
+        "@femtomc/mu-forum": "0.1.0",
+        "@femtomc/mu-issue": "0.1.0",
+        "@femtomc/mu-orchestrator": "0.1.0",
       },
     },
     "packages/core": {
-      "name": "@mu/core",
-      "version": "0.0.0",
+      "name": "@femtomc/mu-core",
+      "version": "0.1.0",
       "dependencies": {
         "zod": "^4.1.9",
       },
     },
     "packages/forum": {
-      "name": "@mu/forum",
-      "version": "0.0.0",
+      "name": "@femtomc/mu-forum",
+      "version": "0.1.0",
       "dependencies": {
-        "@mu/core": "workspace:*",
+        "@femtomc/mu-core": "0.1.0",
       },
     },
     "packages/issue": {
-      "name": "@mu/issue",
-      "version": "0.0.0",
+      "name": "@femtomc/mu-issue",
+      "version": "0.1.0",
       "dependencies": {
-        "@mu/core": "workspace:*",
+        "@femtomc/mu-core": "0.1.0",
       },
     },
     "packages/orchestrator": {
-      "name": "@mu/orchestrator",
-      "version": "0.0.0",
+      "name": "@femtomc/mu-orchestrator",
+      "version": "0.1.0",
       "dependencies": {
-        "@mu/core": "workspace:*",
-        "@mu/forum": "workspace:*",
-        "@mu/issue": "workspace:*",
+        "@femtomc/mu-core": "0.1.0",
+        "@femtomc/mu-forum": "0.1.0",
+        "@femtomc/mu-issue": "0.1.0",
       },
     },
     "packages/slack-bot": {
-      "name": "@mu/slack-bot",
+      "name": "@femtomc/mu-slack-bot",
       "version": "0.0.0",
       "dependencies": {
-        "@mu/core": "workspace:*",
-        "@mu/issue": "workspace:*",
+        "@femtomc/mu-core": "workspace:*",
+        "@femtomc/mu-issue": "workspace:*",
       },
     },
     "packages/web": {
-      "name": "@mu/web",
+      "name": "@femtomc/mu-web",
       "version": "0.0.0",
       "dependencies": {
-        "@mu/core": "workspace:*",
-        "@mu/forum": "workspace:*",
-        "@mu/issue": "workspace:*",
+        "@femtomc/mu-core": "workspace:*",
+        "@femtomc/mu-forum": "workspace:*",
+        "@femtomc/mu-issue": "workspace:*",
       },
       "devDependencies": {
         "playwright": "^1.44.0",
@@ -143,19 +143,19 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.21.5", "", { "os": "win32", "cpu": "x64" }, "sha512-tQd/1efJuzPC6rCFwEvLtci/xNFcTZknmXs98FYDfGE4wP9ClFV98nyKrzJKVPMhdDnjzLhdUyMX4PsQAPjwIw=="],
 
-    "@mu/cli": ["@mu/cli@workspace:packages/cli"],
+    "@femtomc/mu": ["@femtomc/mu@workspace:packages/cli"],
 
-    "@mu/core": ["@mu/core@workspace:packages/core"],
+    "@femtomc/mu-core": ["@femtomc/mu-core@workspace:packages/core"],
 
-    "@mu/forum": ["@mu/forum@workspace:packages/forum"],
+    "@femtomc/mu-forum": ["@femtomc/mu-forum@workspace:packages/forum"],
 
-    "@mu/issue": ["@mu/issue@workspace:packages/issue"],
+    "@femtomc/mu-issue": ["@femtomc/mu-issue@workspace:packages/issue"],
 
-    "@mu/orchestrator": ["@mu/orchestrator@workspace:packages/orchestrator"],
+    "@femtomc/mu-orchestrator": ["@femtomc/mu-orchestrator@workspace:packages/orchestrator"],
 
-    "@mu/slack-bot": ["@mu/slack-bot@workspace:packages/slack-bot"],
+    "@femtomc/mu-slack-bot": ["@femtomc/mu-slack-bot@workspace:packages/slack-bot"],
 
-    "@mu/web": ["@mu/web@workspace:packages/web"],
+    "@femtomc/mu-web": ["@femtomc/mu-web@workspace:packages/web"],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.57.1", "", { "os": "android", "cpu": "arm" }, "sha512-A6ehUVSiSaaliTxai040ZpZ2zTevHYbvu/lDoeAteHI8QnaosIzm4qwtezfRg1jOYaUmnzLX1AOD6Z+UJjtifg=="],
 

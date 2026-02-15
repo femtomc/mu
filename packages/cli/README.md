@@ -1,4 +1,4 @@
-# @mu/cli
+# @femtomc/mu
 
 Node CLI (and programmatic wrapper) for the mu `.mu/` issue DAG + forum store.
 
@@ -7,8 +7,8 @@ Node CLI (and programmatic wrapper) for the mu `.mu/` issue DAG + forum store.
 After publishing:
 
 ```bash
-npm install -g @mu/cli
-# or: bun add -g @mu/cli
+npm install -g @femtomc/mu
+# or: bun add -g @femtomc/mu
 ```
 
 From this repo:
@@ -23,7 +23,7 @@ packages/cli/dist/cli.js --help
 ## Usage
 
 ```ts
-import { run } from "@mu/cli";
+import { run } from "@femtomc/mu";
 
 const r = await run(["status", "--json"]);
 if (r.exitCode !== 0) throw new Error(r.stdout);

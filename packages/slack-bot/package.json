@@ -1,5 +1,5 @@
 {
-	"name": "@mu/slack-bot",
+	"name": "@femtomc/mu-slack-bot",
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
@@ -7,7 +7,7 @@
 		".": "./src/index.ts"
 	},
 	"dependencies": {
-		"@mu/core": "workspace:*",
-		"@mu/issue": "workspace:*"
+		"@femtomc/mu-core": "workspace:*",
+		"@femtomc/mu-issue": "workspace:*"
 	}
 }

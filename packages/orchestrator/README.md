@@ -1,14 +1,14 @@
-# @mu/orchestrator
+# @femtomc/mu-orchestrator
 
-Node DAG runner that drives `@mu/issue` and `@mu/forum` to execute ready leaf issues and log outcomes.
+Node DAG runner that drives `@femtomc/mu-issue` and `@femtomc/mu-forum` to execute ready leaf issues and log outcomes.
 
 ## Install
 
 After publishing:
 
 ```bash
-npm install @mu/orchestrator
-# or: bun add @mu/orchestrator
+npm install @femtomc/mu-orchestrator
+# or: bun add @femtomc/mu-orchestrator
 ```
 
 From this repo:
@@ -22,10 +22,10 @@ bun run build
 ## Usage
 
 ```ts
-import { FsJsonlStore, fsEventLog, getStorePaths } from "@mu/core/node";
-import { ForumStore } from "@mu/forum";
-import { IssueStore } from "@mu/issue";
-import { DagRunner } from "@mu/orchestrator";
+import { FsJsonlStore, fsEventLog, getStorePaths } from "@femtomc/mu-core/node";
+import { ForumStore } from "@femtomc/mu-forum";
+import { IssueStore } from "@femtomc/mu-issue";
+import { DagRunner } from "@femtomc/mu-orchestrator";
 
 const repoRoot = process.cwd();
 const paths = getStorePaths(repoRoot);

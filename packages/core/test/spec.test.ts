@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { executionSpecFromDict } from "@mu/core/node";
+import { executionSpecFromDict } from "@femtomc/mu-core/node";
 
 async function mkTempDir(): Promise<string> {
 	return await mkdtemp(join(tmpdir(), "mu-core-"));

@@ -1,4 +1,4 @@
-# @mu/issue
+# @femtomc/mu-issue
 
 Issue store backed by a JSONL store, with dependency edges and DAG helpers (ready leaves, validate, deps).
 
@@ -7,8 +7,8 @@ Issue store backed by a JSONL store, with dependency edges and DAG helpers (read
 After publishing:
 
 ```bash
-npm install @mu/issue
-# or: bun add @mu/issue
+npm install @femtomc/mu-issue
+# or: bun add @femtomc/mu-issue
 ```
 
 From this repo:
@@ -22,8 +22,8 @@ bun run build
 ## Usage
 
 ```ts
-import { InMemoryJsonlStore } from "@mu/core";
-import { IssueStore } from "@mu/issue";
+import { InMemoryJsonlStore } from "@femtomc/mu-core";
+import { IssueStore } from "@femtomc/mu-issue";
 
 const issues = new IssueStore(new InMemoryJsonlStore());
 
@@ -46,4 +46,4 @@ bun run typecheck
 ## Runtime
 
 - Runtime-agnostic: works in Node or the browser.
-- You provide a `JsonlStore` implementation (see `@mu/core/node` for `FsJsonlStore`, or `@mu/core/browser` for IndexedDB/localStorage stores).
+- You provide a `JsonlStore` implementation (see `@femtomc/mu-core/node` for `FsJsonlStore`, or `@femtomc/mu-core/browser` for IndexedDB/localStorage stores).

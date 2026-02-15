@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FsJsonlStore, fsEventLog, getStorePaths } from "@mu/core/node";
-import { ForumStore } from "@mu/forum";
-import { IssueStore } from "@mu/issue";
-import type { BackendRunner, BackendRunOpts } from "@mu/orchestrator";
-import { buildRoleCatalog, DagRunner, piStreamHasError, renderPromptTemplate } from "@mu/orchestrator";
+import { FsJsonlStore, fsEventLog, getStorePaths } from "@femtomc/mu-core/node";
+import { ForumStore } from "@femtomc/mu-forum";
+import { IssueStore } from "@femtomc/mu-issue";
+import type { BackendRunner, BackendRunOpts } from "@femtomc/mu-orchestrator";
+import { buildRoleCatalog, DagRunner, piStreamHasError, renderPromptTemplate } from "@femtomc/mu-orchestrator";
 
 async function mkTempRepo(): Promise<{ repoRoot: string; store: IssueStore; forum: ForumStore }> {
 	const repoRoot = await mkdtemp(join(tmpdir(), "mu-orchestrator-"));

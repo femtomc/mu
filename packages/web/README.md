@@ -1,6 +1,6 @@
-# @mu/web
+# @femtomc/mu-web
 
-Minimal browser demo (no backend) for `@mu/{core,issue,forum}` using IndexedDB (preferred) or localStorage (fallback).
+Minimal browser demo (no backend) for `@femtomc/mu-{core,issue,forum}` using IndexedDB (preferred) or localStorage (fallback).
 
 ## Install
 
@@ -14,10 +14,10 @@ bun install
 ## Usage
 
 ```ts
-import { EventLog, JsonlEventSink } from "@mu/core";
-import { IndexedDbJsonlStore } from "@mu/core/browser";
-import { ForumStore } from "@mu/forum";
-import { IssueStore } from "@mu/issue";
+import { EventLog, JsonlEventSink } from "@femtomc/mu-core";
+import { IndexedDbJsonlStore } from "@femtomc/mu-core/browser";
+import { ForumStore } from "@femtomc/mu-forum";
+import { IssueStore } from "@femtomc/mu-issue";
 
 const issuesJsonl = new IndexedDbJsonlStore({ dbName: "mu-demo", storeName: "issues" });
 const forumJsonl = new IndexedDbJsonlStore({ dbName: "mu-demo", storeName: "forum" });
