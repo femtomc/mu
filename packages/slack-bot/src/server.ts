@@ -16,4 +16,3 @@ Bun.serve({
 
 // eslint-disable-next-line no-console
 console.log(`mu slack-bot listening on :${port}`);
-

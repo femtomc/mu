@@ -23,6 +23,42 @@ export type DagResult = {
 	error: string;
 };
 
+export type DagRunnerStepStartEvent = {
+	rootId: string;
+	step: number;
+	issueId: string;
+	role: string | null;
+	title: string;
+};
+
+export type DagRunnerStepEndEvent = {
+	rootId: string;
+	step: number;
+	issueId: string;
+	exitCode: number;
+	elapsedS: number;
+	outcome: string | null;
+};
+
+export type DagRunnerBackendLineEvent = {
+	rootId: string;
+	step: number;
+	issueId: string;
+	logSuffix: string;
+	line: string;
+};
+
+export type DagRunnerHooks = {
+	onStepStart?: (ev: DagRunnerStepStartEvent) => void | Promise<void>;
+	onStepEnd?: (ev: DagRunnerStepEndEvent) => void | Promise<void>;
+	onBackendLine?: (ev: DagRunnerBackendLineEvent) => void;
+};
+
+export type DagRunnerRunOpts = {
+	review?: boolean;
+	hooks?: DagRunnerHooks;
+};
+
 type ResolvedConfig = {
 	cli: string;
 	model: string;
@@ -132,7 +168,7 @@ export class DagRunner {
 		issue: Pick<Issue, "id" | "title" | "body">,
 		cfg: ResolvedConfig,
 		rootId: string,
-		opts: { logSuffix?: string } = {},
+		opts: { logSuffix?: string; onLine?: (line: string) => void } = {},
 	): Promise<{ exitCode: number; elapsedS: number }> {
 		const logSuffix = opts.logSuffix ?? "";
 		const rendered = await this.#renderPrompt(issue, cfg.promptPath, rootId);
@@ -167,6 +203,7 @@ export class DagRunner {
 			promptPath: cfg.promptPath,
 			logSuffix,
 			teePath,
+			onLine: opts.onLine,
 		});
 		const elapsedS = (Date.now() - t0) / 1000;
 
@@ -189,7 +226,7 @@ export class DagRunner {
 		return existsSync(join(this.#repoRoot, ".mu", "roles", "reviewer.md"));
 	}
 
-	async #maybeReview(issue: Issue, rootId: string, step: number): Promise<Issue> {
+	async #maybeReview(issue: Issue, rootId: string, step: number, hooks?: DagRunnerHooks): Promise<Issue> {
 		const issueId = issue.id;
 
 		// Guards.
@@ -208,7 +245,12 @@ export class DagRunner {
 
 		const reviewIssue: Issue = { ...issue, execution_spec: { role: "reviewer" } as any };
 		const cfg = await this.#resolveConfig(reviewIssue);
-		const { exitCode, elapsedS } = await this.#executeBackend(reviewIssue, cfg, rootId, { logSuffix: "review" });
+		const logSuffix = "review";
+		const onBackendLine = hooks?.onBackendLine;
+		const { exitCode, elapsedS } = await this.#executeBackend(reviewIssue, cfg, rootId, {
+			logSuffix,
+			onLine: onBackendLine ? (line) => onBackendLine({ rootId, step, issueId, logSuffix, line }) : undefined,
+		});
 
 		await this.#forum.post(
 			`issue:${issueId}`,
@@ -299,7 +341,7 @@ export class DagRunner {
 		return true;
 	}
 
-	async #collapseReview(issue: Issue, rootId: string, step: number): Promise<void> {
+	async #collapseReview(issue: Issue, rootId: string, step: number, hooks?: DagRunnerHooks): Promise<void> {
 		const issueId = issue.id;
 
 		await this.#events.emit("dag.collapse_review.start", {
@@ -339,8 +381,11 @@ export class DagRunner {
 		};
 
 		const cfg = await this.#resolveConfig(reviewIssue);
+		const logSuffix = "collapse-review";
+		const onBackendLine = hooks?.onBackendLine;
 		const { exitCode, elapsedS } = await this.#executeBackend(reviewIssue, { ...cfg, promptPath: null }, rootId, {
-			logSuffix: "collapse-review",
+			logSuffix,
+			onLine: onBackendLine ? (line) => onBackendLine({ rootId, step, issueId, logSuffix, line }) : undefined,
 		});
 
 		await this.#forum.post(
@@ -399,8 +444,9 @@ export class DagRunner {
 		});
 	}
 
-	async run(rootId: string, maxSteps: number = 20, opts: { review?: boolean } = {}): Promise<DagResult> {
+	async run(rootId: string, maxSteps: number = 20, opts: DagRunnerRunOpts = {}): Promise<DagResult> {
 		const review = opts.review ?? true;
+		const hooks = opts.hooks;
 		const runId = currentRunId() ?? newRunId();
 
 		return await runContext({ runId }, async () => {
@@ -422,7 +468,7 @@ export class DagRunner {
 					if (review && this.#hasReviewer()) {
 						const collapsible = await this.#store.collapsible(rootId);
 						if (collapsible.length > 0) {
-							await this.#collapseReview(collapsible[0]!, rootId, step);
+							await this.#collapseReview(collapsible[0]!, rootId, step, hooks);
 							continue;
 						}
 					}
@@ -466,8 +512,13 @@ export class DagRunner {
 						};
 
 						const cfg = await this.#resolveConfig(repairIssue);
+						const logSuffix = "unstick";
+						const onBackendLine = hooks?.onBackendLine;
 						const { exitCode, elapsedS } = await this.#executeBackend(repairIssue, cfg, rootId, {
-							logSuffix: "unstick",
+							logSuffix,
+							onLine: onBackendLine
+								? (line) => onBackendLine({ rootId, step, issueId: rootId, logSuffix, line })
+								: undefined,
 						});
 
 						await this.#forum.post(
@@ -501,6 +552,15 @@ export class DagRunner {
 						payload: { root_id: rootId, step, title: issue.title ?? "" },
 					});
 
+						if (hooks?.onStepStart) {
+							const specRole =
+								typeof (issue.execution_spec as any)?.role === "string"
+									? ((issue.execution_spec as any).role as string)
+									: null;
+							const role = specRole ?? (issueId === rootId ? "orchestrator" : null);
+							await hooks.onStepStart({ rootId, step, issueId, role, title: issue.title ?? "" });
+						}
+
 					// 3. Claim.
 					await this.#events.emit("dag.claim", {
 						source: "dag_runner",
@@ -511,7 +571,14 @@ export class DagRunner {
 
 					// 4. Route + 5. Render + 6. Execute.
 					const cfg = await this.#resolveConfig(issue);
-					const { exitCode, elapsedS } = await this.#executeBackend(issue, cfg, rootId);
+					const logSuffix = "";
+					const onBackendLine = hooks?.onBackendLine;
+					const { exitCode, elapsedS } = await this.#executeBackend(issue, cfg, rootId, {
+						logSuffix,
+						onLine: onBackendLine
+							? (line) => onBackendLine({ rootId, step, issueId, logSuffix, line })
+							: undefined,
+					});
 
 					// 7. Check postconditions.
 					let updated = await this.#store.get(issueId);
@@ -526,7 +593,7 @@ export class DagRunner {
 
 					// 7b. Review phase.
 					if (review && updated.status === "closed") {
-						updated = await this.#maybeReview(updated, rootId, step);
+						updated = await this.#maybeReview(updated, rootId, step, hooks);
 					}
 
 					// 8. Log to forum.
@@ -542,6 +609,17 @@ export class DagRunner {
 						}),
 						"orchestrator",
 					);
+
+					if (hooks?.onStepEnd) {
+						await hooks.onStepEnd({
+							rootId,
+							step,
+							issueId,
+							exitCode,
+							elapsedS: roundTo(elapsedS, 3),
+							outcome: updated.outcome ?? null,
+						});
+					}
 
 					await this.#events.emit("dag.step.end", {
 						source: "dag_runner",

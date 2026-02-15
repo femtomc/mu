@@ -6,7 +6,13 @@ import { FsJsonlStore, fsEventLog, getStorePaths } from "@femtomc/mu-core/node";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
 import type { BackendRunner, BackendRunOpts } from "@femtomc/mu-orchestrator";
-import { buildRoleCatalog, DagRunner, piStreamHasError, renderPromptTemplate } from "@femtomc/mu-orchestrator";
+import {
+	buildRoleCatalog,
+	DagRunner,
+	PiStreamRenderer,
+	piStreamHasError,
+	renderPromptTemplate,
+} from "@femtomc/mu-orchestrator";
 
 async function mkTempRepo(): Promise<{ repoRoot: string; store: IssueStore; forum: ForumStore }> {
 	const repoRoot = await mkdtemp(join(tmpdir(), "mu-orchestrator-"));
@@ -120,6 +126,40 @@ describe("prompt templates", () => {
 		expect(rendered).toContain("T");
 		expect(rendered).toContain("B");
 		expect(rendered).toContain("### worker");
+	});
+});
+
+describe("PiStreamRenderer", () => {
+	test("renders assistant text deltas and a newline on assistant message_end", () => {
+		const r = new PiStreamRenderer();
+		const lines = [
+			`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hello"}}`,
+			`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":" world"}}`,
+			`{"type":"message_end","message":{"role":"assistant"}}`,
+		];
+		const out = lines
+			.map((l) => r.renderLine(l))
+			.filter((x): x is string => x != null)
+			.join("");
+		expect(out).toBe("Hello world\n");
+	});
+
+	test("passes through non-json lines", () => {
+		const r = new PiStreamRenderer();
+		expect(r.renderLine("warning: not json")).toBe("warning: not json\n");
+	});
+
+	test("renders tool start events when enabled", () => {
+		const r = new PiStreamRenderer({ showToolEvents: true });
+		const lines = [
+			`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hi"}}`,
+			`{"type":"tool_execution_start","toolName":"apply_patch"}`,
+		];
+		const out = lines
+			.map((l) => r.renderLine(l))
+			.filter((x): x is string => x != null)
+			.join("");
+		expect(out).toBe("Hi\n[tool] apply_patch\n");
 	});
 });
 
@@ -274,5 +314,58 @@ describe("DagRunner", () => {
 
 		const updatedParent = await store.get(parent.id);
 		expect(updatedParent?.outcome).toBe("success");
+	});
+
+	test("invokes step hooks and wires backend onLine (including reviewer streaming)", async () => {
+		const { repoRoot, store, forum } = await mkTempRepo();
+		await writeOrchestratorPrompt(repoRoot);
+		await writeRole(repoRoot, "worker", { cli: "pi", model: "worker-model", reasoning: "worker-think" }, "Worker.\n");
+		await writeRole(
+			repoRoot,
+			"reviewer",
+			{ cli: "pi", model: "reviewer-model", reasoning: "reviewer-think" },
+			"Reviewer.\n",
+		);
+
+		const root = await store.create("root", { tags: [] });
+		await store.update(root.id, { status: "closed", outcome: "expanded" });
+
+		const leaf = await store.create("leaf", { tags: ["node:agent"], executionSpec: { role: "worker" } });
+		await store.add_dep(leaf.id, "parent", root.id);
+
+		const backend = new StubBackend();
+		backend.on(leaf.id, async (opts) => {
+			if (opts.model === "worker-model") {
+				opts.onLine?.("L1");
+				opts.onLine?.("L2");
+				await store.close(leaf.id, "success");
+				return 0;
+			}
+			if (opts.model === "reviewer-model") {
+				opts.onLine?.("R1");
+				return 0;
+			}
+			return 0;
+		});
+
+		const calls: string[] = [];
+		const runner = new DagRunner(store, forum, repoRoot, { backend });
+		const result = await runner.run(root.id, 1, {
+			review: true,
+			hooks: {
+				onStepStart: ({ step, issueId }) => {
+					calls.push(`step.start:${step}:${issueId}`);
+				},
+				onBackendLine: ({ logSuffix, line }) => {
+					calls.push(`line:${logSuffix}:${line}`);
+				},
+				onStepEnd: ({ outcome }) => {
+					calls.push(`step.end:${outcome}`);
+				},
+			},
+		});
+
+		expect(result.status).toBe("max_steps_exhausted");
+		expect(calls).toEqual([`step.start:1:${leaf.id}`, "line::L1", "line::L2", "line:review:R1", "step.end:success"]);
 	});
 });

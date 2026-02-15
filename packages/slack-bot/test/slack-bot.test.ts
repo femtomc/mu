@@ -191,4 +191,3 @@ test("POST /slack/events url_verification returns challenge", async () => {
 	const payload = (await res.json()) as any;
 	expect(payload).toEqual({ challenge: "abc123" });
 });
-

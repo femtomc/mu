@@ -1,19 +1,29 @@
-import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import type { Issue } from "@femtomc/mu-core";
 import { type EventLog, FsJsonlStore, fsEventLog, getStorePaths, newRunId, runContext } from "@femtomc/mu-core/node";
 import type { ForumTopicSummary } from "@femtomc/mu-forum";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
-import { DagRunner, extractDescription, splitFrontmatter } from "@femtomc/mu-orchestrator";
+import type { BackendRunner } from "@femtomc/mu-orchestrator";
+import { DagRunner, extractDescription, PiStreamRenderer, splitFrontmatter } from "@femtomc/mu-orchestrator";
 import { DEFAULT_ORCHESTRATOR_MD, DEFAULT_REVIEWER_ROLE_MD, DEFAULT_WORKER_ROLE_MD } from "./templates.js";
 
 export type RunResult = {
 	stdout: string;
 	stderr: string;
 	exitCode: number;
+};
+
+type CliWriter = {
+	write: (chunk: string) => void;
+};
+
+type CliIO = {
+	stdout?: CliWriter;
+	stderr?: CliWriter;
 };
 
 type CliCtx = {
@@ -23,6 +33,8 @@ type CliCtx = {
 	forum: ForumStore;
 	events: EventLog;
 	paths: ReturnType<typeof getStorePaths>;
+	io?: CliIO;
+	backend?: BackendRunner;
 };
 
 type RoleJson = {
@@ -267,7 +279,10 @@ function mainHelp(): string {
 	].join("\n");
 }
 
-export async function run(argv: string[], opts: { cwd?: string } = {}): Promise<RunResult> {
+export async function run(
+	argv: string[],
+	opts: { cwd?: string; io?: CliIO; backend?: BackendRunner } = {},
+): Promise<RunResult> {
 	const cwd = opts.cwd ?? process.cwd();
 
 	if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
@@ -279,7 +294,8 @@ export async function run(argv: string[], opts: { cwd?: string } = {}): Promise<
 
 	const cmd = argv[0]!;
 	const rest = argv.slice(1);
-	const ctx = await ensureCtx(cwd);
+	const ctx0 = await ensureCtx(cwd);
+	const ctx: CliCtx = { ...ctx0, io: opts.io, backend: opts.backend };
 
 	switch (cmd) {
 		case "init":
@@ -310,9 +326,7 @@ export async function run(argv: string[], opts: { cwd?: string } = {}): Promise<
 async function cmdInit(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
-			["mu init - initialize .mu state, templates, and logs", "", "Usage:", "  mu init [--force]"].join(
-				"\n",
-			) + "\n",
+			["mu init - initialize .mu state, templates, and logs", "", "Usage:", "  mu init [--force]"].join("\n") + "\n",
 		);
 	}
 
@@ -1131,6 +1145,21 @@ async function forumTopics(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 	return ok(jsonText(topics, pretty));
 }
 
+function oneLine(text: string): string {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+function trimForHeader(text: string, maxLen: number): string {
+	const t = oneLine(text);
+	if (t.length <= maxLen) return t;
+	if (maxLen <= 3) return t.slice(0, maxLen);
+	return `${t.slice(0, maxLen - 3)}...`;
+}
+
+function ensureTrailingNewline(text: string): string {
+	return text.length > 0 && !text.endsWith("\n") ? `${text}\n` : text;
+}
+
 async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (argv.length === 0 || hasHelpFlag(argv)) {
 		return ok(
@@ -1138,7 +1167,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu run - create a root issue and run the DAG loop",
 				"",
 				"Usage:",
-				"  mu run <prompt...> [--max-steps N] [--review|--no-review] [--json]",
+				"  mu run <prompt...> [--max-steps N] [--review|--no-review] [--raw-stream] [--json]",
 			].join("\n") + "\n",
 		);
 	}
@@ -1146,12 +1175,17 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	let maxSteps = 20;
 	let review = true;
 	let jsonMode = false;
+	let rawStream = false;
 	const promptParts: string[] = [];
 
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i]!;
 		if (a === "--json") {
 			jsonMode = true;
+			continue;
+		}
+		if (a === "--raw-stream") {
+			rawStream = true;
 			continue;
 		}
 		if (a === "--review") {
@@ -1187,36 +1221,128 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 
 	const promptText = promptParts.join(" ").trim();
-	if (!promptText) {
-		return jsonError("missing prompt", { recovery: ['mu run "Break down and execute this goal"'] });
-	}
+		if (!promptText) {
+			return jsonError("missing prompt", { recovery: ['mu run "Break down and execute this goal"'] });
+		}
 
-	const runId = newRunId();
-	const { rootIssue, result } = await runContext({ runId }, async () => {
-		const rootIssue = await ctx.store.create(promptText, { tags: ["node:agent", "node:root"] });
-		const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot);
-		const result = await runner.run(rootIssue.id, maxSteps, { review });
-		return { rootIssue, result };
-	});
+		if (jsonMode && rawStream) {
+			return jsonError("cannot combine --json and --raw-stream", {
+				recovery: ['mu run "..." --json', 'mu run "..." --raw-stream'],
+			});
+		}
 
-	if (jsonMode) {
-		return {
-			stdout: jsonText(
-				{ status: result.status, steps: result.steps, error: result.error, root_id: rootIssue.id },
+		const runId = newRunId();
+		const io = ctx.io;
+		const streaming = io != null && !jsonMode;
+
+		let lastStepIssueId: string | null = null;
+		let lastBackendIssueId: string | null = null;
+
+		// Used to keep progress headers from printing mid-line.
+		let lineOpen = false;
+
+		const renderer = rawStream ? null : new PiStreamRenderer();
+
+		const hooks = streaming
+			? {
+					onStepStart: (ev: { step: number; rootId: string; issueId: string; role: string | null; title: string }) => {
+						lastStepIssueId = ev.issueId;
+						const role = ev.role ?? "?";
+						const title = trimForHeader(ev.title ?? "", 80);
+						if (lineOpen) {
+							io?.stderr?.write("\n");
+							lineOpen = false;
+						}
+						io?.stderr?.write(`Step ${ev.step}/${maxSteps}  ${ev.issueId}  role=${role}  ${title}\n`);
+					},
+					onBackendLine: (ev: { issueId: string; line: string }) => {
+						lastBackendIssueId = ev.issueId;
+						if (rawStream) {
+							const out = ensureTrailingNewline(ev.line);
+							io?.stdout?.write(out);
+							lineOpen = false;
+							return;
+						}
+						const out = renderer?.renderLine(ev.line);
+						if (out) {
+							io?.stdout?.write(out);
+							lineOpen = !out.endsWith("\n");
+						}
+					},
+					onStepEnd: (ev: { step: number; issueId: string; outcome: string | null; elapsedS: number; exitCode: number }) => {
+						const outcome = ev.outcome ?? "?";
+						const elapsed = Number.isFinite(ev.elapsedS) ? ev.elapsedS.toFixed(1) : String(ev.elapsedS);
+						if (lineOpen) {
+							io?.stderr?.write("\n");
+							lineOpen = false;
+						}
+						io?.stderr?.write(
+							`Done ${ev.step}/${maxSteps}  ${ev.issueId}  outcome=${outcome}  elapsed=${elapsed}s  exit=${ev.exitCode}\n`,
+						);
+					},
+				}
+			: undefined;
+
+		const { rootIssue, result } = await runContext({ runId }, async () => {
+			const rootIssue = await ctx.store.create(promptText, { tags: ["node:agent", "node:root"] });
+			if (streaming) {
+				io?.stderr?.write(`Root: ${rootIssue.id}  ${trimForHeader(String(rootIssue.title ?? ""), 80)}\n`);
+			}
+			const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot, { backend: ctx.backend, events: ctx.events });
+			const result = await runner.run(rootIssue.id, maxSteps, { review, hooks });
+			return { rootIssue, result };
+		});
+
+		if (jsonMode) {
+			return {
+				stdout: jsonText(
+					{ status: result.status, steps: result.steps, error: result.error, root_id: rootIssue.id },
 				true,
 			),
 			stderr: "",
-			exitCode: result.status === "root_final" ? 0 : 1,
-		};
-	}
+				exitCode: result.status === "root_final" ? 0 : 1,
+			};
+		}
 
-	let out = `Root: ${rootIssue.id} ${String(rootIssue.title ?? "").slice(0, 80)}\n`;
-	out += `Runner status: ${result.status}\n`;
-	if (result.error) {
-		out += `Error: ${result.error}\n`;
+		const exitCode = result.status === "root_final" ? 0 : 1;
+
+		if (streaming) {
+			io?.stderr?.write(`Runner status: ${result.status}\n`);
+			if (result.error) {
+				io?.stderr?.write(`Error: ${result.error}\n`);
+			}
+			if (exitCode !== 0) {
+				const replayId = lastBackendIssueId ?? lastStepIssueId ?? rootIssue.id;
+				const logsRel = relative(ctx.repoRoot, ctx.paths.logsDir).replaceAll("\\", "/");
+				io?.stderr?.write(
+					[
+						"",
+						"Recovery:",
+						`  mu replay ${replayId}`,
+						`  logs: ${logsRel}/${replayId}*.jsonl`,
+						`  resume: mu resume ${rootIssue.id} --max-steps ${maxSteps}`,
+						"",
+					].join("\n"),
+				);
+			}
+			return { stdout: "", stderr: "", exitCode };
+		}
+
+		let out = `Root: ${rootIssue.id} ${String(rootIssue.title ?? "").slice(0, 80)}\n`;
+		out += `Runner status: ${result.status}\n`;
+		if (result.error) {
+			out += `Error: ${result.error}\n`;
+		}
+		if (exitCode !== 0) {
+			const replayId = lastBackendIssueId ?? lastStepIssueId ?? rootIssue.id;
+			const logsRel = relative(ctx.repoRoot, ctx.paths.logsDir).replaceAll("\\", "/");
+			out += "\nRecovery:\n";
+			out += `  mu replay ${replayId}\n`;
+			out += `  logs: ${logsRel}/${replayId}*.jsonl\n`;
+			out += `  resume: mu resume ${rootIssue.id} --max-steps ${maxSteps}\n`;
+		}
+		return { stdout: out, stderr: "", exitCode };
 	}
-	return { stdout: out, stderr: "", exitCode: result.status === "root_final" ? 0 : 1 };
-}
 
 async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (argv.length === 0 || hasHelpFlag(argv)) {
@@ -1225,7 +1351,7 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu resume - resume an interrupted DAG loop",
 				"",
 				"Usage:",
-				"  mu resume <root-id> [--max-steps N] [--review|--no-review] [--json]",
+				"  mu resume <root-id> [--max-steps N] [--review|--no-review] [--raw-stream] [--json]",
 			].join("\n") + "\n",
 		);
 	}
@@ -1234,12 +1360,17 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	let maxSteps = 20;
 	let review = true;
 	let jsonMode = false;
+	let rawStream = false;
 	const rest = argv.slice(1);
 
 	for (let i = 0; i < rest.length; i++) {
 		const a = rest[i]!;
 		if (a === "--json") {
 			jsonMode = true;
+			continue;
+		}
+		if (a === "--raw-stream") {
+			rawStream = true;
 			continue;
 		}
 		if (a === "--review") {
@@ -1270,42 +1401,133 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			}
 			maxSteps = n;
 			continue;
+			}
+			return jsonError(`unknown arg: ${a}`, { recovery: ["mu resume --help"] });
 		}
-		return jsonError(`unknown arg: ${a}`, { recovery: ["mu resume --help"] });
-	}
 
-	const resolved = await resolveIssueId(ctx.store, rawId);
-	if (resolved.error) {
-		return { stdout: jsonText({ error: resolved.error }, false), stderr: "", exitCode: 1 };
-	}
-	const rootId = resolved.issueId!;
+		if (jsonMode && rawStream) {
+			return jsonError("cannot combine --json and --raw-stream", {
+				recovery: [`mu resume ${rawId} --json`, `mu resume ${rawId} --raw-stream`],
+			});
+		}
 
-	const reset = await ctx.store.reset_in_progress(rootId);
-	const runId = newRunId();
-	const result = await runContext({ runId }, async () => {
-		const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot);
-		return await runner.run(rootId, maxSteps, { review });
-	});
+		const resolved = await resolveIssueId(ctx.store, rawId);
+		if (resolved.error) {
+			return { stdout: jsonText({ error: resolved.error }, false), stderr: "", exitCode: 1 };
+		}
+		const rootId = resolved.issueId!;
 
-	if (jsonMode) {
-		return {
-			stdout: jsonText({ status: result.status, steps: result.steps, error: result.error, root_id: rootId }, true),
+		const reset = await ctx.store.reset_in_progress(rootId);
+		const runId = newRunId();
+		const io = ctx.io;
+		const streaming = io != null && !jsonMode;
+
+		let lastStepIssueId: string | null = null;
+		let lastBackendIssueId: string | null = null;
+		let lineOpen = false;
+		const renderer = rawStream ? null : new PiStreamRenderer();
+
+		const hooks = streaming
+			? {
+					onStepStart: (ev: { step: number; issueId: string; role: string | null; title: string }) => {
+						lastStepIssueId = ev.issueId;
+						const role = ev.role ?? "?";
+						const title = trimForHeader(ev.title ?? "", 80);
+						if (lineOpen) {
+							io?.stderr?.write("\n");
+							lineOpen = false;
+						}
+						io?.stderr?.write(`Step ${ev.step}/${maxSteps}  ${ev.issueId}  role=${role}  ${title}\n`);
+					},
+					onBackendLine: (ev: { issueId: string; line: string }) => {
+						lastBackendIssueId = ev.issueId;
+						if (rawStream) {
+							const out = ensureTrailingNewline(ev.line);
+							io?.stdout?.write(out);
+							lineOpen = false;
+							return;
+						}
+						const out = renderer?.renderLine(ev.line);
+						if (out) {
+							io?.stdout?.write(out);
+							lineOpen = !out.endsWith("\n");
+						}
+					},
+					onStepEnd: (ev: { step: number; issueId: string; outcome: string | null; elapsedS: number; exitCode: number }) => {
+						const outcome = ev.outcome ?? "?";
+						const elapsed = Number.isFinite(ev.elapsedS) ? ev.elapsedS.toFixed(1) : String(ev.elapsedS);
+						if (lineOpen) {
+							io?.stderr?.write("\n");
+							lineOpen = false;
+						}
+						io?.stderr?.write(
+							`Done ${ev.step}/${maxSteps}  ${ev.issueId}  outcome=${outcome}  elapsed=${elapsed}s  exit=${ev.exitCode}\n`,
+						);
+					},
+				}
+			: undefined;
+
+		const result = await runContext({ runId }, async () => {
+			if (streaming) {
+				if (reset.length > 0) {
+					io?.stderr?.write(`Reset ${reset.length} stale issue(s) to open: ${reset.join(", ")}\n`);
+				}
+				io?.stderr?.write(`Resuming ${rootId}\n`);
+			}
+			const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot, { backend: ctx.backend, events: ctx.events });
+			return await runner.run(rootId, maxSteps, { review, hooks });
+		});
+
+		if (jsonMode) {
+			return {
+				stdout: jsonText({ status: result.status, steps: result.steps, error: result.error, root_id: rootId }, true),
 			stderr: "",
-			exitCode: result.status === "root_final" ? 0 : 1,
-		};
-	}
+				exitCode: result.status === "root_final" ? 0 : 1,
+			};
+		}
 
-	let out = "";
-	if (reset.length > 0) {
-		out += `Reset ${reset.length} stale issue(s) to open: ${reset.join(", ")}\n`;
+		const exitCode = result.status === "root_final" ? 0 : 1;
+		if (streaming) {
+			io?.stderr?.write(`Runner status: ${result.status}\n`);
+			if (result.error) {
+				io?.stderr?.write(`Error: ${result.error}\n`);
+			}
+			if (exitCode !== 0) {
+				const replayId = lastBackendIssueId ?? lastStepIssueId ?? rootId;
+				const logsRel = relative(ctx.repoRoot, ctx.paths.logsDir).replaceAll("\\", "/");
+				io?.stderr?.write(
+					[
+						"",
+						"Recovery:",
+						`  mu replay ${replayId}`,
+						`  logs: ${logsRel}/${replayId}*.jsonl`,
+						`  resume: mu resume ${rootId} --max-steps ${maxSteps}`,
+						"",
+					].join("\n"),
+				);
+			}
+			return { stdout: "", stderr: "", exitCode };
+		}
+
+		let out = "";
+		if (reset.length > 0) {
+			out += `Reset ${reset.length} stale issue(s) to open: ${reset.join(", ")}\n`;
+		}
+		out += `Resuming ${rootId}\n`;
+		out += `Runner status: ${result.status}\n`;
+		if (result.error) {
+			out += `Error: ${result.error}\n`;
+		}
+		if (exitCode !== 0) {
+			const replayId = lastBackendIssueId ?? lastStepIssueId ?? rootId;
+			const logsRel = relative(ctx.repoRoot, ctx.paths.logsDir).replaceAll("\\", "/");
+			out += "\nRecovery:\n";
+			out += `  mu replay ${replayId}\n`;
+			out += `  logs: ${logsRel}/${replayId}*.jsonl\n`;
+			out += `  resume: mu resume ${rootId} --max-steps ${maxSteps}\n`;
+		}
+		return { stdout: out, stderr: "", exitCode };
 	}
-	out += `Resuming ${rootId}\n`;
-	out += `Runner status: ${result.status}\n`;
-	if (result.error) {
-		out += `Error: ${result.error}\n`;
-	}
-	return { stdout: out, stderr: "", exitCode: result.status === "root_final" ? 0 : 1 };
-}
 
 async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (argv.length === 0 || hasHelpFlag(argv)) {

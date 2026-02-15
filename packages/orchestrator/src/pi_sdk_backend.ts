@@ -1,17 +1,17 @@
 import { mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { Model } from "@mariozechner/pi-ai";
+import { getModels, getProviders } from "@mariozechner/pi-ai";
 import {
 	AuthStorage,
 	type CreateAgentSessionOptions,
-	SessionManager,
-	SettingsManager,
 	createAgentSession,
 	createCodingTools,
+	SessionManager,
+	SettingsManager,
 } from "@mariozechner/pi-coding-agent";
-import type { Model } from "@mariozechner/pi-ai";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
-import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import type { BackendRunOpts, BackendRunner } from "./pi_backend.js";
+import type { BackendRunner, BackendRunOpts } from "./pi_backend.js";
 import { piStreamHasError } from "./pi_backend.js";
 
 /**
@@ -53,8 +53,7 @@ export class PiSdkBackend implements BackendRunner {
 		const model = resolveModel(opts.model, authStorage);
 		if (!model) {
 			throw new Error(
-				`Model "${opts.model}" not found in pi-ai registry. ` +
-					`Available providers: ${getProviders().join(", ")}`,
+				`Model "${opts.model}" not found in pi-ai registry. ` + `Available providers: ${getProviders().join(", ")}`,
 			);
 		}
 

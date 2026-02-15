@@ -1,5 +1,5 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { Buffer } from "node:buffer";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { FsJsonlStore, findRepoRoot, getStorePaths } from "@femtomc/mu-core/node";
 import { IssueStore } from "@femtomc/mu-issue";
 
@@ -189,7 +189,9 @@ function formatReady(issues: readonly ReadyIssueSummary[], opts: { rootId?: stri
 	if (issues.length === 0) {
 		return "No ready issues.";
 	}
-	const header = opts.rootId ? `ready issues (root=${opts.rootId}, n=${issues.length})` : `ready issues (n=${issues.length})`;
+	const header = opts.rootId
+		? `ready issues (root=${opts.rootId}, n=${issues.length})`
+		: `ready issues (n=${issues.length})`;
 	const lines = issues.map((i) => `- ${i.id} (p${i.priority}) ${i.title}`);
 	return [header, ...lines].join("\n");
 }
@@ -240,10 +242,7 @@ function parseCreateArgs(rest: string): { title: string; body: string } {
 	return { title: trimmed.slice(0, idx).trim(), body: trimmed.slice(idx + 1).trim() };
 }
 
-async function handleSlackSlashCommand(
-	rawBody: string,
-	workflow: MuWorkflow,
-): Promise<Response> {
+async function handleSlackSlashCommand(rawBody: string, workflow: MuWorkflow): Promise<Response> {
 	const form = new URLSearchParams(rawBody);
 	const command = form.get("command") ?? "";
 	if (command && command !== "/mu") {

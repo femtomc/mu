@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "@femtomc/mu";
+import type { BackendRunOpts, BackendRunner } from "@femtomc/mu-orchestrator";
 
 async function mkTempRepo(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "mu-cli-"));
@@ -50,4 +51,83 @@ test("mu issues create outputs JSON and writes to store", async () => {
 
 	const forumText = await readFile(join(dir, ".mu", "forum.jsonl"), "utf8");
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
+});
+
+function mkCaptureIo(): { io: { stdout: { write: (s: string) => void }; stderr: { write: (s: string) => void } }; chunks: { stdout: string; stderr: string } } {
+	const chunks = { stdout: "", stderr: "" };
+	return {
+		chunks,
+		io: {
+			stdout: { write: (s: string) => void (chunks.stdout += s) },
+			stderr: { write: (s: string) => void (chunks.stderr += s) },
+		},
+	};
+}
+
+test("mu run streams step headers + rendered assistant output (default human mode)", async () => {
+	const dir = await mkTempRepo();
+	const init = await run(["init"], { cwd: dir });
+	expect(init.exitCode).toBe(0);
+
+	const backend: BackendRunner = {
+		run: async (opts: BackendRunOpts) => {
+			// Emit pi-style JSON events; CLI should render assistant text deltas.
+			opts.onLine?.(`{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"Hello\"}}`);
+			opts.onLine?.(`{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\"}}`);
+			return 0;
+		},
+	};
+
+	const { io, chunks } = mkCaptureIo();
+	const result = await run(["run", "Hello", "--max-steps", "1"], { cwd: dir, io, backend });
+
+	// The runner doesn't close the issue (stub backend), so the DagRunner marks failure.
+	expect(result.exitCode).toBe(1);
+
+	expect(chunks.stdout).toBe("Hello\n");
+	expect(chunks.stderr.includes("Step 1/1")).toBe(true);
+	expect(chunks.stderr.includes("role=")).toBe(true);
+	expect(chunks.stderr.includes("Done 1/1")).toBe(true);
+	expect(chunks.stderr.includes("outcome=failure")).toBe(true);
+	expect(chunks.stderr.includes("Recovery:")).toBe(true);
+	expect(chunks.stderr.includes("mu replay")).toBe(true);
+});
+
+test("mu run --raw-stream prints raw pi JSONL to stdout", async () => {
+	const dir = await mkTempRepo();
+	const init = await run(["init"], { cwd: dir });
+	expect(init.exitCode).toBe(0);
+
+	const backend: BackendRunner = {
+		run: async (opts: BackendRunOpts) => {
+			opts.onLine?.(`{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"Hello\"}}`);
+			opts.onLine?.(`{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\"}}`);
+			return 0;
+		},
+	};
+
+	const { io, chunks } = mkCaptureIo();
+	const result = await run(["run", "Hello", "--max-steps", "1", "--raw-stream"], { cwd: dir, io, backend });
+	expect(result.exitCode).toBe(1);
+
+	expect(chunks.stdout.includes(`\"type\":\"message_update\"`)).toBe(true);
+	expect(chunks.stdout.includes(`\"type\":\"message_end\"`)).toBe(true);
+	// Raw stream should not be the rendered assistant text.
+	expect(chunks.stdout).not.toBe("Hello\n");
+});
+
+test("mu run --json stays clean even when io is provided", async () => {
+	const dir = await mkTempRepo();
+	const init = await run(["init"], { cwd: dir });
+	expect(init.exitCode).toBe(0);
+
+	const backend: BackendRunner = { run: async () => 0 };
+	const { io, chunks } = mkCaptureIo();
+	const result = await run(["run", "Hello", "--max-steps", "1", "--json"], { cwd: dir, io, backend });
+
+	expect(chunks.stdout).toBe("");
+	expect(chunks.stderr).toBe("");
+
+	const payload = JSON.parse(result.stdout) as any;
+	expect(payload).toMatchObject({ root_id: expect.any(String), status: expect.any(String), steps: expect.any(Number) });
 });
