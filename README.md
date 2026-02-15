@@ -8,8 +8,7 @@ the idea is that you spend a good amount of time thinking upfront about your pro
 expect to let `mu` run for many hours.
 
 The design of `mu` supports this mode of operation by allowing agents to carefully keep track and manage 
-context using a CLI issue tracker, a forum, and an
-work orchestration pattern based on hierarchical planning.
+context using a CLI issue tracker, a forum, and a work orchestration pattern based on hierarchical planning.
 
 At the core, it provides AI agents (and humans) with three primitives for structured work:
 
