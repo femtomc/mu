@@ -2,12 +2,13 @@
 node_modules/
 
 # build output
-/dist/
+dist/
 
 # misc
 .DS_Store
 .env
 .env.*
+.inshallah/
 
 # editors
 .vscode/

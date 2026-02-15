@@ -2,7 +2,13 @@
 
 import { run } from "./index";
 
-const out = run(process.argv.slice(2));
-if (out.length > 0) {
-	console.log(out);
+const result = await run(process.argv.slice(2));
+
+if (result.stdout.length > 0) {
+	process.stdout.write(result.stdout);
 }
+if (result.stderr.length > 0) {
+	process.stderr.write(result.stderr);
+}
+
+process.exitCode = result.exitCode;

@@ -6,9 +6,12 @@
 		"packages/*"
 	],
 	"scripts": {
-		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p packages/web/tsconfig.json --noEmit",
 		"fmt": "biome format --write .",
 		"lint": "biome lint .",
+		"web:dev": "cd packages/web && bun run dev",
+		"web:build": "cd packages/web && bun run build",
+		"web:test": "bun run web:build && cd packages/web && bun run e2e",
 		"check": "biome check --write --error-on-warnings . && bun run typecheck && bun test"
 	},
 	"devDependencies": {

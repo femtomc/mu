@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { EventLog, newRunId, readJsonl, runContext } from "@mu/core";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fsEventLog, newRunId, readJsonl, runContext } from "@mu/core/node";
 
 async function mkTempDir(): Promise<string> {
 	return await mkdtemp(join(tmpdir(), "mu-core-"));
@@ -12,7 +12,7 @@ describe("EventLog", () => {
 	test("emit appends a versioned envelope to events.jsonl", async () => {
 		const dir = await mkTempDir();
 		const path = join(dir, ".inshallah", "events.jsonl");
-		const log = new EventLog(path);
+		const log = fsEventLog(path);
 
 		await log.emit("unit.test", { source: "test", payload: { a: 1 } });
 		await log.emit("unit.test2", { source: "test", payload: { b: 2 } });
@@ -30,7 +30,7 @@ describe("EventLog", () => {
 	test("emit respects runContext and explicit runId/issueId fields", async () => {
 		const dir = await mkTempDir();
 		const path = join(dir, ".inshallah", "events.jsonl");
-		const log = new EventLog(path);
+		const log = fsEventLog(path);
 
 		const runId = newRunId();
 		await runContext({ runId }, async () => {
@@ -60,11 +60,10 @@ describe("EventLog", () => {
 	test("emit rejects non-object payloads", async () => {
 		const dir = await mkTempDir();
 		const path = join(dir, ".inshallah", "events.jsonl");
-		const log = new EventLog(path);
+		const log = fsEventLog(path);
 
-		await expect(
-			log.emit("bad.payload", { source: "test", payload: [] as any }),
-		).rejects.toThrow("payload must be an object");
+		await expect(log.emit("bad.payload", { source: "test", payload: [] as any })).rejects.toThrow(
+			"payload must be an object",
+		);
 	});
 });
-

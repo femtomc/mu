@@ -10,6 +10,9 @@
 		".": "./src/index.ts"
 	},
 	"dependencies": {
+		"@mu/core": "workspace:*",
+		"@mu/forum": "workspace:*",
+		"@mu/issue": "workspace:*",
 		"@mu/orchestrator": "workspace:*"
 	}
 }

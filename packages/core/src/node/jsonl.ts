@@ -1,16 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, open, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join, parse as parsePath } from "node:path";
 import { createInterface } from "node:readline";
-
-export function shortId(): string {
-	return randomUUID().replaceAll("-", "").slice(0, 8);
-}
-
-export function nowTs(): number {
-	return Math.floor(Date.now() / 1000);
-}
+import type { JsonlStore } from "../persistence";
 
 function tmpPathFor(path: string): string {
 	const parsed = parsePath(path);
@@ -79,3 +71,22 @@ export async function appendJsonl(path: string, row: unknown): Promise<void> {
 	}
 }
 
+export class FsJsonlStore<T = unknown> implements JsonlStore<T> {
+	public readonly path: string;
+
+	public constructor(path: string) {
+		this.path = path;
+	}
+
+	public async read(): Promise<T[]> {
+		return (await readJsonl(this.path)) as T[];
+	}
+
+	public async write(rows: readonly T[]): Promise<void> {
+		await writeJsonl(this.path, rows as readonly unknown[]);
+	}
+
+	public async append(row: T): Promise<void> {
+		await appendJsonl(this.path, row as unknown);
+	}
+}

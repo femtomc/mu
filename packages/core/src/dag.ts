@@ -109,9 +109,7 @@ export function collapsible(issues: readonly Issue[], rootId: string): Issue[] {
 		if (kids.length === 0) {
 			continue;
 		}
-		if (
-			kids.every((kid) => kid.status === "closed" && kid.outcome != null && terminalOutcomes.has(kid.outcome))
-		) {
+		if (kids.every((kid) => kid.status === "closed" && kid.outcome != null && terminalOutcomes.has(kid.outcome))) {
 			result.push(node);
 		}
 	}
@@ -134,9 +132,7 @@ export function validateDag(issues: readonly Issue[], rootId: string): Validatio
 	const needsReorch = [...ids]
 		.filter((issueId) => {
 			const issue = byId.get(issueId);
-			return (
-				issue?.status === "closed" && (issue.outcome === "failure" || issue.outcome === "needs_work")
-			);
+			return issue?.status === "closed" && (issue.outcome === "failure" || issue.outcome === "needs_work");
 		})
 		.sort();
 	if (needsReorch.length > 0) {
@@ -176,4 +172,3 @@ export function validateDag(issues: readonly Issue[], rootId: string): Validatio
 
 	return { is_final: false, reason: "in progress" };
 }
-

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { findRepoRoot, getStorePaths } from "@mu/core";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { findRepoRoot, getStorePaths } from "@mu/core/node";
 
 async function mkTempDir(): Promise<string> {
 	return await mkdtemp(join(tmpdir(), "mu-core-"));

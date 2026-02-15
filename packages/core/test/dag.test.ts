@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { collapsible, readyLeaves, subtreeIds, validateDag } from "@mu/core";
-import { IssueSchema, type Issue } from "@mu/core";
+import { collapsible, type Issue, IssueSchema, readyLeaves, subtreeIds, validateDag } from "@mu/core";
 
 function mkIssue(overrides: Partial<Issue> & Pick<Issue, "id" | "title">): Issue {
 	const base: Issue = {
@@ -263,4 +262,3 @@ describe("collapsible", () => {
 		expect(out.map((i) => i.id)).toEqual([child.id]);
 	});
 });
-

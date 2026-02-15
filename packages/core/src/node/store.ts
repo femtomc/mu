@@ -64,4 +64,3 @@ export function getStorePaths(repoRoot: string): StorePaths {
 		orchestratorPath: join(storeDir, "orchestrator.md"),
 	};
 }
-

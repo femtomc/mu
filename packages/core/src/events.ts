@@ -1,29 +1,6 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
-import { mkdir, open } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import type { JsonlStore } from "./persistence";
 
 export const EVENT_VERSION = 1;
-
-const runIdStore = new AsyncLocalStorage<string | null>();
-
-export function nowTsMs(): number {
-	// Milliseconds since Unix epoch.
-	return Date.now();
-}
-
-export function newRunId(): string {
-	// Python uses uuid4().hex (no dashes).
-	return randomUUID().replaceAll("-", "");
-}
-
-export function currentRunId(): string | null {
-	return runIdStore.getStore() ?? null;
-}
-
-export function runContext<T>(opts: { runId: string | null }, fn: () => T): T {
-	return runIdStore.run(opts.runId, fn);
-}
 
 export type EventEnvelope = {
 	v: number;
@@ -35,15 +12,69 @@ export type EventEnvelope = {
 	issue_id?: string;
 };
 
-export class EventLog {
-	public readonly path: string;
+export type RunIdProvider = () => string | null;
 
-	public constructor(path: string) {
-		this.path = path;
+export type EventSink = {
+	emit(event: EventEnvelope): Promise<void>;
+};
+
+export class NullEventSink implements EventSink {
+	public async emit(_event: EventEnvelope): Promise<void> {}
+}
+
+export class JsonlEventSink implements EventSink {
+	readonly #store: Pick<JsonlStore<EventEnvelope>, "append">;
+
+	public constructor(store: Pick<JsonlStore<EventEnvelope>, "append">) {
+		this.#store = store;
 	}
 
-	public static fromRepoRoot(repoRoot: string): EventLog {
-		return new EventLog(join(repoRoot, ".inshallah", "events.jsonl"));
+	public async emit(event: EventEnvelope): Promise<void> {
+		await this.#store.append(event);
+	}
+}
+
+const runIdStack: (string | null)[] = [];
+
+export function currentRunId(): string | null {
+	if (runIdStack.length === 0) {
+		return null;
+	}
+	return runIdStack[runIdStack.length - 1] ?? null;
+}
+
+export function runContext<T>(opts: { runId: string | null }, fn: () => T): T;
+export function runContext<T>(opts: { runId: string | null }, fn: () => Promise<T>): Promise<T>;
+export function runContext<T>(opts: { runId: string | null }, fn: () => T | Promise<T>): T | Promise<T> {
+	runIdStack.push(opts.runId);
+	let popped = false;
+	const pop = () => {
+		if (!popped) {
+			popped = true;
+			runIdStack.pop();
+		}
+	};
+
+	try {
+		const out = fn();
+		if (out && typeof (out as any).then === "function") {
+			return (out as Promise<T>).finally(pop);
+		}
+		pop();
+		return out;
+	} catch (err) {
+		pop();
+		throw err;
+	}
+}
+
+export class EventLog {
+	readonly #sink: EventSink;
+	readonly #runIdProvider: RunIdProvider;
+
+	public constructor(sink: EventSink, opts: { runIdProvider?: RunIdProvider } = {}) {
+		this.#sink = sink;
+		this.#runIdProvider = opts.runIdProvider ?? currentRunId;
 	}
 
 	public async emit(
@@ -61,10 +92,10 @@ export class EventLog {
 			throw new TypeError("payload must be an object");
 		}
 
-		const resolvedRunId = opts.runId != null ? opts.runId : currentRunId();
+		const resolvedRunId = opts.runId != null ? opts.runId : this.#runIdProvider();
 		const event: EventEnvelope = {
 			v: EVENT_VERSION,
-			ts_ms: Math.trunc(opts.tsMs ?? nowTsMs()),
+			ts_ms: Math.trunc(opts.tsMs ?? Date.now()),
 			type: eventType,
 			source: opts.source,
 			payload,
@@ -76,29 +107,7 @@ export class EventLog {
 			event.issue_id = opts.issueId;
 		}
 
-		await this.#append(event);
+		await this.#sink.emit(event);
 		return event;
 	}
-
-	async #append(event: EventEnvelope): Promise<void> {
-		// Keep each event to a single JSON line.
-		const line = `${JSON.stringify(event)}\n`;
-		const data = Buffer.from(line, "utf8");
-
-		await mkdir(dirname(this.path), { recursive: true });
-		const fh = await open(this.path, "a");
-		try {
-			let written = 0;
-			while (written < data.length) {
-				const { bytesWritten } = await fh.write(data, written, data.length - written);
-				if (bytesWritten <= 0) {
-					throw new Error("short write while appending event log");
-				}
-				written += bytesWritten;
-			}
-		} finally {
-			await fh.close();
-		}
-	}
 }
-
