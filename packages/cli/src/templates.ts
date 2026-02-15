@@ -25,7 +25,7 @@ export const DEFAULT_ORCHESTRATOR_MD =
 	`\n` +
 	`1. Investigate the assigned issue and its history (issue + forum + children).\n` +
 	`2. Decompose into child issues and close with \`outcome=expanded\`.\n` +
-	`3. Assign a role to each child via \`execution_spec.role\`.\n` +
+	`3. Assign an executable role to each child via \`execution_spec.role\` (typically \`worker\`). NEVER create child issues with \`role=reviewer\` (review is handled automatically by the runner).\n` +
 	`4. Use \`blocks\` dependencies for sequential ordering.\n` +
 	`5. Keep decomposition deterministic and minimal.\n` +
 	`\n` +

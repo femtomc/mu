@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "@femtomc/mu";
-import type { BackendRunOpts, BackendRunner } from "@femtomc/mu-orchestrator";
+import type { BackendRunner, BackendRunOpts } from "@femtomc/mu-orchestrator";
 
 async function mkTempRepo(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "mu-cli-"));
@@ -53,13 +53,24 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
 });
 
-function mkCaptureIo(): { io: { stdout: { write: (s: string) => void }; stderr: { write: (s: string) => void } }; chunks: { stdout: string; stderr: string } } {
+function mkCaptureIo(): {
+	io: { stdout: { write: (s: string) => void }; stderr: { write: (s: string) => void } };
+	chunks: { stdout: string; stderr: string };
+} {
 	const chunks = { stdout: "", stderr: "" };
 	return {
 		chunks,
 		io: {
-			stdout: { write: (s: string) => void (chunks.stdout += s) },
-			stderr: { write: (s: string) => void (chunks.stderr += s) },
+			stdout: {
+				write: (s: string) => {
+					chunks.stdout += s;
+				},
+			},
+			stderr: {
+				write: (s: string) => {
+					chunks.stderr += s;
+				},
+			},
 		},
 	};
 }
@@ -72,8 +83,8 @@ test("mu run streams step headers + rendered assistant output (default human mod
 	const backend: BackendRunner = {
 		run: async (opts: BackendRunOpts) => {
 			// Emit pi-style JSON events; CLI should render assistant text deltas.
-			opts.onLine?.(`{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"Hello\"}}`);
-			opts.onLine?.(`{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\"}}`);
+			opts.onLine?.(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hello"}}`);
+			opts.onLine?.(`{"type":"message_end","message":{"role":"assistant"}}`);
 			return 0;
 		},
 	};
@@ -100,8 +111,8 @@ test("mu run --raw-stream prints raw pi JSONL to stdout", async () => {
 
 	const backend: BackendRunner = {
 		run: async (opts: BackendRunOpts) => {
-			opts.onLine?.(`{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"Hello\"}}`);
-			opts.onLine?.(`{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\"}}`);
+			opts.onLine?.(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hello"}}`);
+			opts.onLine?.(`{"type":"message_end","message":{"role":"assistant"}}`);
 			return 0;
 		},
 	};
@@ -110,8 +121,8 @@ test("mu run --raw-stream prints raw pi JSONL to stdout", async () => {
 	const result = await run(["run", "Hello", "--max-steps", "1", "--raw-stream"], { cwd: dir, io, backend });
 	expect(result.exitCode).toBe(1);
 
-	expect(chunks.stdout.includes(`\"type\":\"message_update\"`)).toBe(true);
-	expect(chunks.stdout.includes(`\"type\":\"message_end\"`)).toBe(true);
+	expect(chunks.stdout.includes(`"type":"message_update"`)).toBe(true);
+	expect(chunks.stdout.includes(`"type":"message_end"`)).toBe(true);
 	// Raw stream should not be the rendered assistant text.
 	expect(chunks.stdout).not.toBe("Hello\n");
 });
@@ -129,5 +140,9 @@ test("mu run --json stays clean even when io is provided", async () => {
 	expect(chunks.stderr).toBe("");
 
 	const payload = JSON.parse(result.stdout) as any;
-	expect(payload).toMatchObject({ root_id: expect.any(String), status: expect.any(String), steps: expect.any(Number) });
+	expect(payload).toMatchObject({
+		root_id: expect.any(String),
+		status: expect.any(String),
+		steps: expect.any(Number),
+	});
 });

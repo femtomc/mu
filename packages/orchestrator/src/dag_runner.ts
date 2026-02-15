@@ -71,6 +71,15 @@ function roundTo(n: number, digits: number): number {
 	return Math.round(n * f) / f;
 }
 
+function specRoleFromExecutionSpec(execution_spec: unknown): string | null {
+	const role = (execution_spec as any)?.role;
+	if (typeof role !== "string") {
+		return null;
+	}
+	const trimmed = role.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
 function relPath(repoRoot: string, path: string): string {
 	try {
 		const rel = relative(repoRoot, path);
@@ -276,7 +285,41 @@ export class DagRunner {
 	}
 
 	async #reopenForOrchestration(issueId: string, opts: { reason: string; step: number }): Promise<void> {
-		const reopened = await this.#store.update(issueId, { status: "open", outcome: null, execution_spec: null });
+		const before = await this.#store.get(issueId);
+		if (!before) {
+			return;
+		}
+
+		// Reviewer is a runner-managed phase. Leaf issues with `role=reviewer` are not meant to be executable and can
+		// otherwise trigger failure -> reorchestrate loops. Treat them as no-op terminal leaves.
+		const beforeRole = specRoleFromExecutionSpec(before.execution_spec);
+		if (beforeRole === "reviewer") {
+			const healed = await this.#store.update(issueId, { status: "closed", outcome: "skipped" });
+			await this.#events.emit("dag.reorchestrate.skip_reviewer_leaf", {
+				source: "dag_runner",
+				issueId,
+				payload: { reason: opts.reason, step: opts.step, previous_outcome: before.outcome },
+			});
+			await this.#forum.post(
+				`issue:${issueId}`,
+				JSON.stringify({
+					step: opts.step,
+					issue_id: issueId,
+					title: healed.title ?? "",
+					type: "skip-reviewer-leaf",
+					reason: opts.reason,
+					note: "leaf issue has execution_spec.role=reviewer; review is handled automatically by the runner",
+				}),
+				"orchestrator",
+			);
+			return;
+		}
+
+		const reopened = await this.#store.update(issueId, {
+			status: "open",
+			outcome: null,
+			execution_spec: { role: "orchestrator" } as any,
+		});
 		await this.#events.emit("dag.unstick.reopen", {
 			source: "dag_runner",
 			issueId,
@@ -552,14 +595,14 @@ export class DagRunner {
 						payload: { root_id: rootId, step, title: issue.title ?? "" },
 					});
 
-						if (hooks?.onStepStart) {
-							const specRole =
-								typeof (issue.execution_spec as any)?.role === "string"
-									? ((issue.execution_spec as any).role as string)
-									: null;
-							const role = specRole ?? (issueId === rootId ? "orchestrator" : null);
-							await hooks.onStepStart({ rootId, step, issueId, role, title: issue.title ?? "" });
-						}
+					if (hooks?.onStepStart) {
+						const specRole =
+							typeof (issue.execution_spec as any)?.role === "string"
+								? ((issue.execution_spec as any).role as string)
+								: null;
+						const role = specRole ?? "orchestrator";
+						await hooks.onStepStart({ rootId, step, issueId, role, title: issue.title ?? "" });
+					}
 
 					// 3. Claim.
 					await this.#events.emit("dag.claim", {
@@ -568,6 +611,55 @@ export class DagRunner {
 						payload: { root_id: rootId, step },
 					});
 					await this.#store.claim(issueId);
+
+					// Reviewer is a runner-managed phase (see #maybeReview / #collapseReview). If the orchestrator created
+					// an explicit leaf reviewer issue, auto-close it to avoid failure -> reorchestrate loops.
+					const issueRole = specRoleFromExecutionSpec(issue.execution_spec);
+					if (issueRole === "reviewer") {
+						const updated = await this.#store.close(issueId, "skipped");
+
+						await this.#forum.post(
+							`issue:${issueId}`,
+							JSON.stringify({
+								step,
+								issue_id: issueId,
+								title: issue.title,
+								exit_code: 0,
+								outcome: updated.outcome,
+								elapsed_s: 0,
+								type: "skip-reviewer-leaf",
+								note: "leaf issue has execution_spec.role=reviewer; review is handled automatically by the runner",
+							}),
+							"orchestrator",
+						);
+
+						if (hooks?.onStepEnd) {
+							await hooks.onStepEnd({
+								rootId,
+								step,
+								issueId,
+								exitCode: 0,
+								elapsedS: 0,
+								outcome: updated.outcome ?? null,
+							});
+						}
+
+						await this.#events.emit("dag.step.end", {
+							source: "dag_runner",
+							issueId,
+							payload: {
+								root_id: rootId,
+								step,
+								exit_code: 0,
+								elapsed_s: 0,
+								outcome: updated.outcome,
+								skipped: true,
+								skipped_reason: "role=reviewer leaf",
+							},
+						});
+
+						continue;
+					}
 
 					// 4. Route + 5. Render + 6. Execute.
 					const cfg = await this.#resolveConfig(issue);

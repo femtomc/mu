@@ -185,10 +185,65 @@ describe("DagRunner", () => {
 		const updated = await store.get(leaf.id);
 		expect(updated?.status).toBe("open");
 		expect(updated?.outcome).toBeNull();
-		expect(updated?.execution_spec).toBeNull();
+		expect((updated?.execution_spec as any)?.role).toBe("orchestrator");
 
 		const msgs = await forum.read(`issue:${leaf.id}`, 10);
 		expect(msgs.some((m) => m.author === "orchestrator")).toBe(true);
+	});
+
+	test("auto-skips explicit leaf reviewer issues (review is runner-managed)", async () => {
+		const { repoRoot, store, forum } = await mkTempRepo();
+		await writeOrchestratorPrompt(repoRoot);
+		await writeRole(
+			repoRoot,
+			"reviewer",
+			{ cli: "pi", model: "reviewer-model", reasoning: "reviewer-think" },
+			"Reviewer.\n",
+		);
+
+		const root = await store.create("root", { tags: [] });
+		await store.update(root.id, { status: "closed", outcome: "expanded" });
+
+		const leaf = await store.create("review leaf", { tags: ["node:agent"], executionSpec: { role: "reviewer" } });
+		await store.add_dep(leaf.id, "parent", root.id);
+
+		const backend = new StubBackend();
+
+		const runner = new DagRunner(store, forum, repoRoot, { backend });
+		const result = await runner.run(root.id, 2, { review: false });
+		expect(result.status).toBe("root_final");
+
+		// No backend execution: leaf is auto-closed as a no-op terminal node.
+		expect(backend.runs.length).toBe(0);
+
+		const updated = await store.get(leaf.id);
+		expect(updated?.status).toBe("closed");
+		expect(updated?.outcome).toBe("skipped");
+
+		const msgs = await forum.read(`issue:${leaf.id}`, 20);
+		expect(msgs.some((m) => m.body.includes('"type":"skip-reviewer-leaf"'))).toBe(true);
+	});
+
+	test("heals reviewer failures to skipped instead of reopening for orchestration", async () => {
+		const { repoRoot, store, forum } = await mkTempRepo();
+		await writeOrchestratorPrompt(repoRoot);
+
+		const root = await store.create("root", { tags: [] });
+		await store.update(root.id, { status: "closed", outcome: "expanded" });
+
+		const leaf = await store.create("review leaf", { tags: ["node:agent"], executionSpec: { role: "reviewer" } });
+		await store.add_dep(leaf.id, "parent", root.id);
+		await store.update(leaf.id, { status: "closed", outcome: "failure" });
+
+		const backend = new StubBackend();
+		const runner = new DagRunner(store, forum, repoRoot, { backend });
+		const result = await runner.run(root.id, 1, { review: false });
+		expect(result.status).toBe("root_final");
+		expect(backend.runs.length).toBe(0);
+
+		const updated = await store.get(leaf.id);
+		expect(updated?.status).toBe("closed");
+		expect(updated?.outcome).toBe("skipped");
 	});
 
 	test("reviewer can set needs_work which triggers re-orchestration", async () => {
@@ -227,7 +282,7 @@ describe("DagRunner", () => {
 
 		const updated = await store.get(leaf.id);
 		expect(updated?.status).toBe("open");
-		expect(updated?.execution_spec).toBeNull();
+		expect((updated?.execution_spec as any)?.role).toBe("orchestrator");
 		expect(updated?.outcome).toBeNull();
 
 		const msgs = await forum.read(`issue:${leaf.id}`, 20);
