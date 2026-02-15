@@ -10,9 +10,6 @@ import {
 	createAgentSession,
 	createBashTool,
 	createEditTool,
-	createFindTool,
-	createGrepTool,
-	createLsTool,
 	createReadTool,
 	createWriteTool,
 	DefaultResourceLoader,
@@ -83,14 +80,10 @@ export class PiSdkBackend implements BackendRunner {
 		await resourceLoader.reload();
 
 		const tools = [
-			// Mu expects these built-in tools to exist at least for role=orchestrator.
-			createReadTool(opts.cwd),
 			createBashTool(opts.cwd),
-			createEditTool(opts.cwd),
+			createReadTool(opts.cwd),
 			createWriteTool(opts.cwd),
-			createGrepTool(opts.cwd),
-			createFindTool(opts.cwd),
-			createLsTool(opts.cwd),
+			createEditTool(opts.cwd),
 		];
 
 		const sessionOpts: CreateAgentSessionOptions = {
