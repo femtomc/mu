@@ -1,6 +1,6 @@
 # @femtomc/mu-web
 
-Minimal browser demo (no backend) for `@femtomc/mu-{core,issue,forum}` using IndexedDB (preferred) or localStorage (fallback).
+Web frontend for the mu orchestration system. Provides a browser-based interface to manage issues and forum messages through the mu-server API.
 
 ## Install
 
@@ -13,34 +13,49 @@ bun install
 
 ## Usage
 
-```ts
-import { EventLog, JsonlEventSink } from "@femtomc/mu-core";
-import { IndexedDbJsonlStore } from "@femtomc/mu-core/browser";
-import { ForumStore } from "@femtomc/mu-forum";
-import { IssueStore } from "@femtomc/mu-issue";
+The web UI is typically started via the main mu CLI:
 
-const issuesJsonl = new IndexedDbJsonlStore({ dbName: "mu-demo", storeName: "issues" });
-const forumJsonl = new IndexedDbJsonlStore({ dbName: "mu-demo", storeName: "forum" });
-const eventsJsonl = new IndexedDbJsonlStore({ dbName: "mu-demo", storeName: "events" });
-
-const events = new EventLog(new JsonlEventSink(eventsJsonl));
-const issues = new IssueStore(issuesJsonl, { events });
-const forum = new ForumStore(forumJsonl, { events });
+```bash
+mu serve              # Start server and open browser
+mu serve --no-open    # Start without opening browser
+mu serve --port 8080  # Use custom port
 ```
+
+For development:
+
+```bash
+cd packages/web
+bun run dev           # Start vite dev server
+```
+
+## Architecture
+
+The frontend connects to mu-server's REST API endpoints:
+
+- `/api/status` - Server status and repository info
+- `/api/issues/*` - Issue DAG operations
+- `/api/forum/*` - Forum message operations
+
+## Configuration
+
+- **Development**: Uses `VITE_API_URL` from `.env.development` (default: `http://localhost:3000`)
+- **Production**: API URL can be configured via environment variable
 
 ## Run / Test / Typecheck
 
 From the `mu/` repo root:
 
 ```bash
-bun run web:dev
-bun run web:build
-bun run web:test
+bun run web:dev       # Start dev server
+bun run web:build     # Build for production
+bun run web:test      # Run e2e tests
 
-bun run typecheck
+bun run typecheck     # Check types
 ```
 
-## Runtime
+## Features
 
-- **Browser app** (Vite). Data persists in your browser storage across reload.
-- E2E uses **Playwright** and serves `dist/` via `Bun.serve` (so `web:test` requires Bun, not Node).
+- **Issue Management**: Create, list, and view issue status
+- **Forum Interface**: Post and read messages by topic
+- **Real-time Updates**: Refresh to see latest DAG state
+- **Connection Status**: Visual indicator for server connectivity

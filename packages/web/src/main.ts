@@ -1,22 +1,10 @@
 import "./style.css";
+import { api, ApiError } from "./api.js";
 
-import { EventLog, JsonlEventSink } from "@femtomc/mu-core";
-import { IndexedDbJsonlStore, LocalStorageJsonlStore } from "@femtomc/mu-core/browser";
-import { ForumStore } from "@femtomc/mu-forum";
-import { IssueStore } from "@femtomc/mu-issue";
+const LAST_TOPIC_KEY = "mu-web:last_topic";
 
-type Backend = "indexeddb" | "localstorage";
-
-const DEMO_DB_NAME = "mu-demo";
-const LAST_TOPIC_KEY = `${DEMO_DB_NAME}:last_topic`;
-const STORES = ["issues", "forum", "events"] as const;
-
-function backend(): Backend {
-	return (globalThis as any).indexedDB ? "indexeddb" : "localstorage";
-}
-
-function safeLocalStorage(): any | null {
-	return (globalThis as any).localStorage ?? null;
+function safeLocalStorage(): Storage | null {
+	return typeof localStorage !== "undefined" ? localStorage : null;
 }
 
 function loadLastTopic(): string | null {
@@ -40,25 +28,6 @@ function saveLastTopic(topic: string): void {
 	} catch {}
 }
 
-function makeStore(storeName: (typeof STORES)[number]) {
-	if (backend() === "indexeddb") {
-		return new IndexedDbJsonlStore({
-			dbName: DEMO_DB_NAME,
-			storeName,
-			ensureStores: STORES,
-		});
-	}
-	return new LocalStorageJsonlStore({ key: `${DEMO_DB_NAME}:${storeName}` });
-}
-
-const issuesJsonl = makeStore("issues");
-const forumJsonl = makeStore("forum");
-const eventsJsonl = makeStore("events");
-
-const events = new EventLog(new JsonlEventSink(eventsJsonl));
-const issues = new IssueStore(issuesJsonl, { events });
-const forum = new ForumStore(forumJsonl, { events });
-
 const appEl = document.querySelector<HTMLDivElement>("#app");
 if (!appEl) {
 	throw new Error("missing #app");
@@ -67,12 +36,11 @@ const app = appEl;
 
 app.innerHTML = `
 	<div class="container">
-		<h1>mu browser demo</h1>
+		<h1>mu</h1>
 		<div class="row muted">
-			<span class="pill" data-testid="backend-pill"></span>
-			<button data-testid="reset">Reset</button>
+			<span class="pill" data-testid="status-pill">Connecting...</span>
 			<button data-testid="refresh">Refresh</button>
-			<span class="muted">Data persists in your browser storage across reload.</span>
+			<span class="muted" data-testid="repo-root"></span>
 		</div>
 
 		<div class="grid">
@@ -129,7 +97,6 @@ app.innerHTML = `
 
 				<p class="muted">
 					Topics: <span data-testid="topics-count">0</span>
-					Events: <span data-testid="events-count">0</span>
 				</p>
 
 				<div class="grid" style="grid-template-columns: 1fr; gap: 10px;">
@@ -160,9 +127,8 @@ function q<T extends HTMLElement = HTMLElement>(testId: string): T {
 	return el as T;
 }
 
-const backendPill = q("backend-pill");
-backendPill.textContent = `storage=${backend()} db=${DEMO_DB_NAME}`;
-
+const statusPill = q("status-pill");
+const repoRootSpan = q("repo-root");
 const errorsPre = q<HTMLPreElement>("errors");
 const initialLastTopic = loadLastTopic();
 if (initialLastTopic) {
@@ -174,6 +140,10 @@ function setError(err: unknown) {
 		errorsPre.textContent = "";
 		return;
 	}
+	if (err instanceof ApiError) {
+		errorsPre.textContent = `API Error (${err.status}): ${err.message}`;
+		return;
+	}
 	if (err instanceof Error) {
 		errorsPre.textContent = `${err.name}: ${err.message}\n${err.stack ?? ""}`.trim();
 		return;
@@ -181,19 +151,40 @@ function setError(err: unknown) {
 	errorsPre.textContent = String(err);
 }
 
+async function checkConnection() {
+	try {
+		const status = await api.getStatus();
+		statusPill.textContent = `Connected to ${new URL(import.meta.env.VITE_API_URL || "http://localhost:3000").host}`;
+		statusPill.classList.add("success");
+		statusPill.classList.remove("error");
+		repoRootSpan.textContent = status.repo_root || "";
+		return true;
+	} catch (err) {
+		statusPill.textContent = "Connection failed";
+		statusPill.classList.add("error");
+		statusPill.classList.remove("success");
+		repoRootSpan.textContent = "";
+		setError(err);
+		return false;
+	}
+}
+
 async function refresh(opts: { readTopic?: string } = {}) {
 	try {
 		setError(null);
-		const allIssues = await issues.list();
-		const ready = await issues.ready(null);
-		const topicsPrefix = q<HTMLInputElement>("topics-prefix").value.trim() || null;
-		const topics = await forum.topics(topicsPrefix);
-		const eventsRows = await eventsJsonl.read();
+		
+		const [allIssues, ready, status] = await Promise.all([
+			api.listIssues(),
+			api.getReadyIssues(),
+			api.getStatus()
+		]);
+		
+		const topicsPrefix = q<HTMLInputElement>("topics-prefix").value.trim() || undefined;
+		const topics = await api.listTopics(topicsPrefix);
 
 		q("issues-count").textContent = String(allIssues.length);
 		q("ready-count").textContent = String(ready.length);
 		q("topics-count").textContent = String(topics.length);
-		q("events-count").textContent = String(eventsRows.length);
 
 		q("issues-json").textContent = JSON.stringify(allIssues, null, 2);
 		q("ready-json").textContent = JSON.stringify(ready, null, 2);
@@ -208,7 +199,7 @@ async function refresh(opts: { readTopic?: string } = {}) {
 			}
 		}
 		if (readTopic) {
-			const msgs = await forum.read(readTopic, 50);
+			const msgs = await api.readMessages(readTopic, 50);
 			q("messages-json").textContent = JSON.stringify(msgs, null, 2);
 		} else {
 			q("messages-json").textContent = "[]";
@@ -241,7 +232,7 @@ q("create-issue").addEventListener("click", () => {
 	}
 
 	void (async () => {
-		await issues.create(title, { tags: ["node:agent"] });
+		await api.createIssue({ title, tags: ["node:agent"] });
 		input.value = "";
 		await refresh();
 	})();
@@ -258,7 +249,7 @@ q("forum-post").addEventListener("click", () => {
 	}
 
 	void (async () => {
-		await forum.post(topic, body, author);
+		await api.postMessage(topic, body, author);
 		saveLastTopic(topic);
 		q<HTMLTextAreaElement>("forum-body").value = "";
 		q<HTMLInputElement>("read-topic").value = topic;
@@ -266,18 +257,10 @@ q("forum-post").addEventListener("click", () => {
 	})();
 });
 
-q("reset").addEventListener("click", () => {
-	void (async () => {
-		await issuesJsonl.write([]);
-		await forumJsonl.write([]);
-		await eventsJsonl.write([]);
-		try {
-			safeLocalStorage()?.removeItem(LAST_TOPIC_KEY);
-		} catch {}
-		q<HTMLInputElement>("read-topic").value = "";
+// Initial connection check and render.
+void (async () => {
+	const connected = await checkConnection();
+	if (connected) {
 		await refresh();
-	})();
-});
-
-// Initial render.
-void refresh();
+	}
+})();

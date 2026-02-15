@@ -104,3 +104,15 @@ pre {
 	color: #a6b4c2;
 }
 
+.pill.success {
+	background: #0d3b16;
+	border-color: #1e5c2f;
+	color: #5cb85c;
+}
+
+.pill.error {
+	background: #3b0d16;
+	border-color: #5c1e2f;
+	color: #d9534f;
+}
+

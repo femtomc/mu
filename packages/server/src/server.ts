@@ -43,9 +43,21 @@ export function createServer(options: ServerOptions = {}) {
 		const url = new URL(request.url);
 		const path = url.pathname;
 		
+		// CORS headers for development
+		const headers = new Headers({
+			"Access-Control-Allow-Origin": "*",
+			"Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type",
+		});
+		
+		// Handle preflight requests
+		if (request.method === "OPTIONS") {
+			return new Response(null, { status: 204, headers });
+		}
+		
 		// Health check
 		if (path === "/healthz" || path === "/health") {
-			return new Response("ok", { status: 200 });
+			return new Response("ok", { status: 200, headers });
 		}
 		
 		// Status endpoint
@@ -58,20 +70,26 @@ export function createServer(options: ServerOptions = {}) {
 				repo_root: context.repoRoot,
 				open_count: openIssues.length,
 				ready_count: readyIssues.length
-			});
+			}, { headers });
 		}
 		
 		// Issue routes
 		if (path.startsWith("/api/issues")) {
-			return issueRoutes(request, context);
+			const response = await issueRoutes(request, context);
+			// Add CORS headers to the response
+			headers.forEach((value, key) => response.headers.set(key, value));
+			return response;
 		}
 		
 		// Forum routes
 		if (path.startsWith("/api/forum")) {
-			return forumRoutes(request, context);
+			const response = await forumRoutes(request, context);
+			// Add CORS headers to the response
+			headers.forEach((value, key) => response.headers.set(key, value));
+			return response;
 		}
 		
-		return new Response("Not Found", { status: 404 });
+		return new Response("Not Found", { status: 404, headers });
 	};
 	
 	const server = {

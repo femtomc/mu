@@ -1,6 +1,6 @@
 # @femtomc/mu-server
 
-HTTP JSON API server for mu issue and forum stores.
+HTTP JSON API server for mu issue and forum stores. Provides the backend for the mu web UI and can also be used standalone for programmatic access.
 
 ## Installation
 
@@ -86,7 +86,19 @@ Bun.serve(server);
 
 ## Running the Server
 
-### CLI
+### With Web UI (Recommended)
+
+The easiest way to run the server with the web interface:
+
+```bash
+# From any mu repository
+mu serve
+
+# Or with custom ports
+mu serve --port 8080 --api-port 3001
+```
+
+### Standalone Server
 
 ```bash
 # Install globally

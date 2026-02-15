@@ -45,11 +45,28 @@ npm install -g @femtomc/mu
 cd /path/to/your/repo
 
 mu init          # create .mu/ store
-mu status        # show DAG state
+mu serve         # start server and open web UI
+mu status        # show DAG state (CLI)
 mu issues create "build the thing" --body "details here" --pretty
 mu issues ready  # show executable leaf issues
 mu forum post research:topic -m "found something" --author worker
 ```
+
+### Web UI
+
+The easiest way to interact with mu is through the web interface:
+
+```bash
+mu serve              # Start server and open browser
+mu serve --no-open    # Headless mode (shows SSH forwarding instructions)
+mu serve --port 8080  # Custom web UI port
+```
+
+The `mu serve` command:
+- Starts the API server on port 3000 (configurable with `--api-port`)
+- Starts the web UI on port 5173 (configurable with `--port`)
+- Opens your browser automatically (unless `--no-open` or headless)
+- Shows SSH port forwarding instructions in headless environments
 
 ## Packages
 
@@ -60,7 +77,8 @@ mu forum post research:topic -m "found something" --author worker
 | [`@femtomc/mu-forum`](packages/forum/README.md) | Forum store — topic-keyed messages with read filtering and event emission. |
 | [`@femtomc/mu-orchestrator`](packages/orchestrator/README.md) | DAG runner — walks the issue tree, dispatches to LLM backends, manages run lifecycle. |
 | [`@femtomc/mu`](packages/cli/README.md) | Node CLI wrapping the above into `mu` commands. |
-| [`@femtomc/mu-web`](packages/web/README.md) | Browser demo — IndexedDB/localStorage backend, no server required. |
+| [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — REST endpoints for issue and forum operations. |
+| [`@femtomc/mu-web`](packages/web/README.md) | Web UI — browser frontend for managing issues and forum through the API. |
 | [`@femtomc/mu-slack-bot`](packages/slack-bot/README.md) | Slack integration — slash commands for issue triage and creation. |
 
 ## Development
@@ -103,14 +121,4 @@ project, verifies imports under Node, and verifies the `mu` CLI runs.
 All files are newline-delimited JSON. The store is discovered by walking up from
 the current directory until a `.mu/` directory is found.
 
-## Browser
 
-The web demo at `packages/web/` runs entirely client-side:
-
-```bash
-bun run web:dev      # dev server
-bun run web:build    # static build
-bun run web:test     # headless e2e (Playwright)
-```
-
-Data lives in IndexedDB (`mu-demo` database) with a localStorage fallback.
