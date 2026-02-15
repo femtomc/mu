@@ -53,9 +53,8 @@ Bun.serve(server);
   {
     "title": "Issue title",
     "body": "Issue description",
-    "tags": ["bug", "priority"],
-    "priority": 2,
-    "execution_spec": { ... }
+    "tags": ["bug", "priority", "role:worker"],
+    "priority": 2
   }
   ```
 - `PATCH /api/issues/:id` - Update issue

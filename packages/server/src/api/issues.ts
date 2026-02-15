@@ -39,17 +39,16 @@ export async function issueRoutes(request: Request, context: ServerContext): Pro
 		// Create issue - POST /api/issues
 		if (path === "/" && method === "POST") {
 			const body = await request.json() as any;
-			const { title, body: issueBody, tags, priority, execution_spec } = body;
-			
+			const { title, body: issueBody, tags, priority } = body;
+
 			if (!title) {
 				return new Response("Title is required", { status: 400 });
 			}
-			
+
 			const issue = await context.issueStore.create(title, {
 				body: issueBody,
 				tags,
 				priority,
-				execution_spec
 			});
 			
 			return Response.json(issue, { status: 201 });

@@ -1,11 +1,5 @@
 import { z } from "zod";
 
-/** @deprecated Use `role:worker` / `role:orchestrator` tags instead. Kept for backward compat with stored JSONL. */
-export type ExecutionSpec = {
-	role: string | null;
-	review?: boolean;
-};
-
 export const DepSchema = z
 	.object({
 		type: z.string().min(1),

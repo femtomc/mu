@@ -45,7 +45,7 @@ export const api = {
 		return fetchJson(`/api/issues/${id}`);
 	},
 	
-	async createIssue(data: { title: string; body?: string; tags?: string[]; priority?: number; execution_spec?: any }) {
+	async createIssue(data: { title: string; body?: string; tags?: string[]; priority?: number }) {
 		return fetchJson("/api/issues", {
 			method: "POST",
 			body: JSON.stringify(data),
