@@ -2,8 +2,8 @@
 
 **Keep-it-simple agent work orchestration.**
 
-mu is an agent orchestration simple which aspires to be as simple and minimal as possible (and not an ounce more). 
-It provides AI agents (and humans) with three primitives for structured work:
+mu is an agent orchestration framework which keeps it as simple and minimal as possible (and not an ounce more).
+You can think of it as a _long running harness_. It provides AI agents (and humans) with three primitives for structured work:
 
 - **Issue DAG** — decompose work into issues with parent/child and blocking
   dependencies. The DAG tracks status, priority, outcomes, and execution specs.
