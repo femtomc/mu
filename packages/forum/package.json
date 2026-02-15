@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-forum",
-	"version": "26.2.15",
+	"version": "26.2.16",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -12,6 +12,6 @@
 	},
 	"files": ["dist/**"],
 	"dependencies": {
-		"@femtomc/mu-core": "26.2.15"
+		"@femtomc/mu-core": "26.2.16"
 	}
 }
