@@ -104,6 +104,46 @@ test("mu run streams step headers + rendered assistant output (default human mod
 	expect(chunks.stderr.includes("mu replay")).toBe(true);
 });
 
+test("mu run pretty TTY mode renders markdown + tool events", async () => {
+	const dir = await mkTempRepo();
+	const init = await run(["init"], { cwd: dir });
+	expect(init.exitCode).toBe(0);
+
+	const backend: BackendRunner = {
+		run: async (opts: BackendRunOpts) => {
+			opts.onLine?.(`{"type":"tool_execution_start","toolCallId":"t1","toolName":"bash","args":{"command":"echo hi"}}`);
+			opts.onLine?.(
+				`{"type":"tool_execution_end","toolCallId":"t1","toolName":"bash","result":[],"isError":false}`,
+			);
+			opts.onLine?.(
+				'{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"# Hello\\n\\n- a\\n- b\\n\\n`code`\\n"}}',
+			);
+			opts.onLine?.(`{"type":"message_end","message":{"role":"assistant"}}`);
+			return 0;
+		},
+	};
+
+	const { io, chunks } = mkCaptureIo();
+	// Mark these as TTY so the CLI switches into pretty rendering mode.
+	(io.stdout as any).isTTY = true;
+	(io.stderr as any).isTTY = true;
+
+	const result = await run(["run", "Hello", "--max-steps", "1"], { cwd: dir, io, backend });
+	expect(result.exitCode).toBe(1);
+
+	// Tool events go to stderr and should be concise.
+	expect(chunks.stderr.includes("bash")).toBe(true);
+	expect(chunks.stderr.includes("echo hi")).toBe(true);
+
+	// Assistant markdown should be rendered (no raw '# ' heading marker) and styled with ANSI.
+	expect(chunks.stdout.includes("\u001b[")).toBe(process.env.NO_COLOR == null);
+	const plain = chunks.stdout.replaceAll(/\u001b\[[0-9;]*m/g, "");
+	expect(plain.includes("# Hello")).toBe(false);
+	expect(plain.includes("Hello")).toBe(true);
+	expect(plain.includes("- a")).toBe(true);
+	expect(plain.includes("code")).toBe(true);
+});
+
 test("mu run --raw-stream prints raw pi JSONL to stdout", async () => {
 	const dir = await mkTempRepo();
 	const init = await run(["init"], { cwd: dir });

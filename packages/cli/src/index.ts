@@ -8,6 +8,7 @@ import type { ForumTopicSummary } from "@femtomc/mu-forum";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
 import type { BackendRunner, ModelOverrides } from "@femtomc/mu-orchestrator";
+import { PiPrettyStreamRenderer } from "./pi_pretty_stream_renderer.js";
 
 export type RunResult = {
 	stdout: string;
@@ -1172,7 +1173,9 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 	// Lazy-import the orchestrator to keep "mu status/issues/forum" fast.
 	const { DagRunner, PiStreamRenderer } = await import("@femtomc/mu-orchestrator");
-	const renderer = rawStream ? null : new PiStreamRenderer();
+	const usePretty = Boolean((io?.stdout as any)?.isTTY && (io?.stderr as any)?.isTTY);
+	const pretty = rawStream || !usePretty ? null : new PiPrettyStreamRenderer({ color: process.env.NO_COLOR == null });
+	const renderer = rawStream || usePretty ? null : new PiStreamRenderer();
 
 	const hooks = streaming
 		? {
@@ -1200,6 +1203,14 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 						lineOpen = false;
 						return;
 					}
+					const rendered = pretty?.renderLine(ev.line);
+					if (rendered) {
+						if (rendered.stderr) io?.stderr?.write(rendered.stderr);
+						if (rendered.stdout) io?.stdout?.write(rendered.stdout);
+						const tail = rendered.stdout ?? rendered.stderr ?? "";
+						lineOpen = tail.length > 0 && !tail.endsWith("\n");
+						return;
+					}
 					const out = renderer?.renderLine(ev.line);
 					if (out) {
 						io?.stdout?.write(out);
@@ -1213,6 +1224,12 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 					elapsedS: number;
 					exitCode: number;
 				}) => {
+					const flush = pretty?.finish();
+					if (flush) {
+						if (flush.stderr) io?.stderr?.write(flush.stderr);
+						if (flush.stdout) io?.stdout?.write(flush.stdout);
+						lineOpen = false;
+					}
 					const outcome = ev.outcome ?? "?";
 					const elapsed = Number.isFinite(ev.elapsedS) ? ev.elapsedS.toFixed(1) : String(ev.elapsedS);
 					if (lineOpen) {
@@ -1399,7 +1416,9 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 	// Lazy-import the orchestrator to keep "mu status/issues/forum" fast.
 	const { DagRunner, PiStreamRenderer } = await import("@femtomc/mu-orchestrator");
-	const renderer = rawStream ? null : new PiStreamRenderer();
+	const usePretty = Boolean((io?.stdout as any)?.isTTY && (io?.stderr as any)?.isTTY);
+	const pretty = rawStream || !usePretty ? null : new PiPrettyStreamRenderer({ color: process.env.NO_COLOR == null });
+	const renderer = rawStream || usePretty ? null : new PiStreamRenderer();
 
 	const hooks = streaming
 		? {
@@ -1421,6 +1440,14 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 						lineOpen = false;
 						return;
 					}
+					const rendered = pretty?.renderLine(ev.line);
+					if (rendered) {
+						if (rendered.stderr) io?.stderr?.write(rendered.stderr);
+						if (rendered.stdout) io?.stdout?.write(rendered.stdout);
+						const tail = rendered.stdout ?? rendered.stderr ?? "";
+						lineOpen = tail.length > 0 && !tail.endsWith("\n");
+						return;
+					}
 					const out = renderer?.renderLine(ev.line);
 					if (out) {
 						io?.stdout?.write(out);
@@ -1434,6 +1461,12 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 					elapsedS: number;
 					exitCode: number;
 				}) => {
+					const flush = pretty?.finish();
+					if (flush) {
+						if (flush.stderr) io?.stderr?.write(flush.stderr);
+						if (flush.stdout) io?.stdout?.write(flush.stdout);
+						lineOpen = false;
+					}
 					const outcome = ev.outcome ?? "?";
 					const elapsed = Number.isFinite(ev.elapsedS) ? ev.elapsedS.toFixed(1) : String(ev.elapsedS);
 					if (lineOpen) {
