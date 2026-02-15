@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-server",
-  "version": "26.2.19",
+  "version": "26.2.20",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -22,8 +22,8 @@
     "start": "bun run dist/cli.js"
   },
   "dependencies": {
-    "@femtomc/mu-core": "26.2.19",
-    "@femtomc/mu-issue": "26.2.19",
-    "@femtomc/mu-forum": "26.2.19"
+    "@femtomc/mu-core": "26.2.20",
+    "@femtomc/mu-issue": "26.2.20",
+    "@femtomc/mu-forum": "26.2.20"
   }
 }

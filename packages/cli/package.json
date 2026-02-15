@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu",
-  "version": "26.2.19",
+  "version": "26.2.20",
   "type": "module",
   "bin": {
     "mu": "./dist/cli.js"
@@ -17,11 +17,11 @@
     "dist/**"
   ],
   "dependencies": {
-    "@femtomc/mu-core": "26.2.19",
-    "@femtomc/mu-forum": "26.2.19",
-    "@femtomc/mu-issue": "26.2.19",
-    "@femtomc/mu-orchestrator": "26.2.19",
-    "@femtomc/mu-server": "26.2.19",
+    "@femtomc/mu-core": "26.2.20",
+    "@femtomc/mu-forum": "26.2.20",
+    "@femtomc/mu-issue": "26.2.20",
+    "@femtomc/mu-orchestrator": "26.2.20",
+    "@femtomc/mu-server": "26.2.20",
     "@mariozechner/pi-coding-agent": "^0.52.12",
     "@mariozechner/pi-ai": "^0.52.12"
   }
