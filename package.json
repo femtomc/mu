@@ -7,9 +7,9 @@
 	],
 	"scripts": {
 		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p packages/web/tsconfig.json --noEmit",
-		"clean": "rm -rf packages/core/dist packages/forum/dist packages/issue/dist packages/orchestrator/dist packages/cli/dist",
-		"build": "bun run clean && bun run build:packages && chmod +x packages/cli/dist/cli.js",
-		"build:packages": "tsc -p packages/core/tsconfig.build.json && tsc -p packages/forum/tsconfig.build.json && tsc -p packages/issue/tsconfig.build.json && tsc -p packages/orchestrator/tsconfig.build.json && tsc -p packages/cli/tsconfig.build.json",
+		"clean": "rm -rf packages/core/dist packages/forum/dist packages/issue/dist packages/orchestrator/dist packages/cli/dist packages/server/dist",
+		"build": "bun run clean && bun run build:packages && chmod +x packages/cli/dist/cli.js && chmod +x packages/server/dist/cli.js",
+		"build:packages": "tsc -p packages/core/tsconfig.build.json && tsc -p packages/forum/tsconfig.build.json && tsc -p packages/issue/tsconfig.build.json && tsc -p packages/orchestrator/tsconfig.build.json && tsc -p packages/cli/tsconfig.build.json && tsc -p packages/server/tsconfig.build.json",
 		"pack:smoke": "bun run build && bun run scripts/pack-smoke.ts",
 		"fmt": "biome format --write .",
 		"lint": "biome lint .",
@@ -17,7 +17,7 @@
 		"web:build": "cd packages/web && bun run build",
 		"web:test": "bun run web:build && cd packages/web && bun run e2e",
 		"check": "biome check --write --error-on-warnings . && bun run typecheck && bun run build && bun test",
-		"publish:all": "bun run build && npm publish --access public -w packages/core && npm publish --access public -w packages/forum && npm publish --access public -w packages/issue && npm publish --access public -w packages/orchestrator && npm publish --access public -w packages/cli"
+		"publish:all": "bun run build && npm publish --access public -w packages/core && npm publish --access public -w packages/forum && npm publish --access public -w packages/issue && npm publish --access public -w packages/orchestrator && npm publish --access public -w packages/cli && npm publish --access public -w packages/server"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.5",

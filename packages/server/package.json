@@ -1,0 +1,27 @@
+{
+	"name": "@femtomc/mu-server",
+	"version": "26.2.18",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"mu-server": "./dist/cli.js"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": ["dist/**"],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test": "bun test",
+		"start": "bun run dist/cli.js"
+	},
+	"dependencies": {
+		"@femtomc/mu-core": "26.2.18",
+		"@femtomc/mu-issue": "26.2.18",
+		"@femtomc/mu-forum": "26.2.18"
+	}
+}
