@@ -6,7 +6,9 @@ import { FsJsonlStore, fsEventLog, getStorePaths } from "@femtomc/mu-core/node";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
 import type { BackendRunner, BackendRunOpts } from "@femtomc/mu-orchestrator";
-import { createMuResourceLoader, DagRunner, PiStreamRenderer, piStreamHasError } from "@femtomc/mu-orchestrator";
+import { createMuResourceLoader, DagRunner, PiStreamRenderer, piStreamHasError, resolveModelConfig } from "@femtomc/mu-orchestrator";
+
+const TEST_MODEL_OVERRIDES = { model: "gpt-5.3-codex" };
 
 async function mkTempRepo(): Promise<{ repoRoot: string; store: IssueStore; forum: ForumStore }> {
 	const repoRoot = await mkdtemp(join(tmpdir(), "mu-orchestrator-"));
@@ -128,7 +130,7 @@ describe("DagRunner", () => {
 		const backend = new StubBackend();
 		// Intentionally do nothing: runner should close as failure, then reopen for orchestration.
 
-		const runner = new DagRunner(store, forum, repoRoot, { backend });
+		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: TEST_MODEL_OVERRIDES });
 		const result = await runner.run(root.id, 1);
 		expect(result.status).toBe("max_steps_exhausted");
 
@@ -160,7 +162,7 @@ describe("DagRunner", () => {
 			return 0;
 		});
 
-		const runner = new DagRunner(store, forum, repoRoot, { backend });
+		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: TEST_MODEL_OVERRIDES });
 		await runner.run(root.id, 1);
 
 		expect(backend.runs.length).toBe(1);
@@ -190,7 +192,7 @@ describe("DagRunner", () => {
 			return 0;
 		});
 
-		const runner = new DagRunner(store, forum, repoRoot, { backend });
+		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: TEST_MODEL_OVERRIDES });
 		await runner.run(root.id, 1);
 
 		expect(backend.runs.length).toBe(1);
@@ -209,7 +211,7 @@ describe("DagRunner", () => {
 		await store.add_dep(leaf.id, "parent", root.id);
 
 		const backend = new StubBackend();
-		const runner = new DagRunner(store, forum, repoRoot, { backend });
+		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: TEST_MODEL_OVERRIDES });
 		const result = await runner.run(root.id, 1);
 
 		expect(result.status).toBe("error");
@@ -253,7 +255,7 @@ describe("DagRunner", () => {
 			return 0;
 		});
 
-		const runner = new DagRunner(store, forum, repoRoot, { backend });
+		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: TEST_MODEL_OVERRIDES });
 		const result = await runner.run(root.id, 10);
 		expect(result.status).toBe("root_final");
 
@@ -279,7 +281,7 @@ describe("DagRunner", () => {
 		});
 
 		const calls: string[] = [];
-		const runner = new DagRunner(store, forum, repoRoot, { backend });
+		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: TEST_MODEL_OVERRIDES });
 		const result = await runner.run(root.id, 1, {
 			hooks: {
 				onStepStart: ({ step, issueId }) => {
@@ -296,5 +298,23 @@ describe("DagRunner", () => {
 
 		expect(result.status).toBe("max_steps_exhausted");
 		expect(calls).toEqual([`step.start:1:${leaf.id}`, "line::L1", "line::L2", "step.end:success"]);
+	});
+});
+
+describe("resolveModelConfig", () => {
+	test("resolves explicit model", () => {
+		const cfg = resolveModelConfig({ model: "gpt-5.3-codex" });
+		expect(cfg.cli).toBe("pi");
+		expect(cfg.model).toBe("gpt-5.3-codex");
+		expect(typeof cfg.reasoning).toBe("string");
+	});
+
+	test("throws for unknown model", () => {
+		expect(() => resolveModelConfig({ model: "nonexistent-model-xyz" })).toThrow(/not found/);
+	});
+
+	test("passes explicit reasoning level through", () => {
+		const cfg = resolveModelConfig({ model: "gpt-5.3-codex", reasoning: "medium" });
+		expect(cfg.reasoning).toBe("medium");
 	});
 });

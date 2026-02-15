@@ -7,6 +7,8 @@ export type {
 	DagRunnerStepStartEvent,
 } from "./dag_runner.js";
 export { DagRunner } from "./dag_runner.js";
+export type { ModelOverrides, ResolvedModelConfig } from "./model_resolution.js";
+export { resolveModelConfig } from "./model_resolution.js";
 export type { BackendRunner, BackendRunOpts } from "./pi_backend.js";
 export { PiCliBackend, piStreamHasError } from "./pi_backend.js";
 export { createMuResourceLoader, PiSdkBackend } from "./pi_sdk_backend.js";

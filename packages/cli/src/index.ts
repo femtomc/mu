@@ -7,7 +7,7 @@ import { type EventLog, FsJsonlStore, fsEventLog, getStorePaths, newRunId, runCo
 import type { ForumTopicSummary } from "@femtomc/mu-forum";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
-import type { BackendRunner } from "@femtomc/mu-orchestrator";
+import type { BackendRunner, ModelOverrides } from "@femtomc/mu-orchestrator";
 import { DagRunner, PiStreamRenderer } from "@femtomc/mu-orchestrator";
 
 export type RunResult = {
@@ -1067,7 +1067,12 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu run - create a root issue and run the DAG loop",
 				"",
 				"Usage:",
-				"  mu run <prompt...> [--max-steps N] [--raw-stream] [--json]",
+				"  mu run <prompt...> [--max-steps N] [--model ID] [--provider ID] [--reasoning LVL] [--raw-stream] [--json]",
+				"",
+				"Model flags:",
+				"  --model <id>        Model ID (e.g. gpt-5.3-codex, claude-opus-4-6)",
+				"  --provider <id>     Provider (e.g. anthropic, openai-codex)",
+				"  --reasoning <lvl>   Thinking level (minimal|low|medium|high|xhigh)",
 			].join("\n") + "\n",
 		);
 	}
@@ -1075,6 +1080,9 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	let maxSteps = 20;
 	let jsonMode = false;
 	let rawStream = false;
+	let modelFlag: string | undefined;
+	let providerFlag: string | undefined;
+	let reasoningFlag: string | undefined;
 	const promptParts: string[] = [];
 
 	for (let i = 0; i < argv.length; i++) {
@@ -1108,8 +1116,37 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			maxSteps = n;
 			continue;
 		}
+		if (a === "--model") {
+			modelFlag = argv[++i];
+			continue;
+		}
+		if (a.startsWith("--model=")) {
+			modelFlag = a.slice("--model=".length);
+			continue;
+		}
+		if (a === "--provider") {
+			providerFlag = argv[++i];
+			continue;
+		}
+		if (a.startsWith("--provider=")) {
+			providerFlag = a.slice("--provider=".length);
+			continue;
+		}
+		if (a === "--reasoning") {
+			reasoningFlag = argv[++i];
+			continue;
+		}
+		if (a.startsWith("--reasoning=")) {
+			reasoningFlag = a.slice("--reasoning=".length);
+			continue;
+		}
 		promptParts.push(a);
 	}
+
+	const modelOverrides: ModelOverrides = {};
+	if (modelFlag) modelOverrides.model = modelFlag;
+	if (providerFlag) modelOverrides.provider = providerFlag;
+	if (reasoningFlag) modelOverrides.reasoning = reasoningFlag;
 
 	const promptText = promptParts.join(" ").trim();
 	if (!promptText) {
@@ -1191,7 +1228,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		if (streaming) {
 			io?.stderr?.write(`Root: ${rootIssue.id}  ${trimForHeader(String(rootIssue.title ?? ""), 80)}\n`);
 		}
-		const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot, { backend: ctx.backend, events: ctx.events });
+		const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot, { backend: ctx.backend, events: ctx.events, modelOverrides });
 		const result = await runner.run(rootIssue.id, maxSteps, { hooks });
 		return { rootIssue, result };
 	});
@@ -1254,7 +1291,12 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu resume - resume an interrupted DAG loop",
 				"",
 				"Usage:",
-				"  mu resume <root-id> [--max-steps N] [--raw-stream] [--json]",
+				"  mu resume <root-id> [--max-steps N] [--model ID] [--provider ID] [--reasoning LVL] [--raw-stream] [--json]",
+				"",
+				"Model flags:",
+				"  --model <id>        Model ID (e.g. gpt-5.3-codex, claude-opus-4-6)",
+				"  --provider <id>     Provider (e.g. anthropic, openai-codex)",
+				"  --reasoning <lvl>   Thinking level (minimal|low|medium|high|xhigh)",
 			].join("\n") + "\n",
 		);
 	}
@@ -1263,6 +1305,9 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	let maxSteps = 20;
 	let jsonMode = false;
 	let rawStream = false;
+	let modelFlag: string | undefined;
+	let providerFlag: string | undefined;
+	let reasoningFlag: string | undefined;
 	const rest = argv.slice(1);
 
 	for (let i = 0; i < rest.length; i++) {
@@ -1296,8 +1341,37 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			maxSteps = n;
 			continue;
 		}
+		if (a === "--model") {
+			modelFlag = rest[++i];
+			continue;
+		}
+		if (a.startsWith("--model=")) {
+			modelFlag = a.slice("--model=".length);
+			continue;
+		}
+		if (a === "--provider") {
+			providerFlag = rest[++i];
+			continue;
+		}
+		if (a.startsWith("--provider=")) {
+			providerFlag = a.slice("--provider=".length);
+			continue;
+		}
+		if (a === "--reasoning") {
+			reasoningFlag = rest[++i];
+			continue;
+		}
+		if (a.startsWith("--reasoning=")) {
+			reasoningFlag = a.slice("--reasoning=".length);
+			continue;
+		}
 		return jsonError(`unknown arg: ${a}`, { recovery: ["mu resume --help"] });
 	}
+
+	const modelOverrides: ModelOverrides = {};
+	if (modelFlag) modelOverrides.model = modelFlag;
+	if (providerFlag) modelOverrides.provider = providerFlag;
+	if (reasoningFlag) modelOverrides.reasoning = reasoningFlag;
 
 	if (jsonMode && rawStream) {
 		return jsonError("cannot combine --json and --raw-stream", {
@@ -1374,7 +1448,7 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			}
 			io?.stderr?.write(`Resuming ${rootId}\n`);
 		}
-		const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot, { backend: ctx.backend, events: ctx.events });
+		const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot, { backend: ctx.backend, events: ctx.events, modelOverrides });
 		return await runner.run(rootId, maxSteps, { hooks });
 	});
 

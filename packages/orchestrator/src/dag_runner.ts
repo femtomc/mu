@@ -11,6 +11,8 @@ import {
 } from "@femtomc/mu-core/node";
 import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
+import type { ModelOverrides, ResolvedModelConfig } from "./model_resolution.js";
+import { resolveModelConfig } from "./model_resolution.js";
 import { type MuRole, parseMuRole, systemPromptForRole } from "./mu_roles.js";
 import type { BackendRunner } from "./pi_backend.js";
 import { PiSdkBackend } from "./pi_sdk_backend.js";
@@ -56,11 +58,7 @@ export type DagRunnerRunOpts = {
 	hooks?: DagRunnerHooks;
 };
 
-type ResolvedConfig = {
-	cli: string;
-	model: string;
-	reasoning: string;
-};
+type ResolvedConfig = ResolvedModelConfig;
 
 function roundTo(n: number, digits: number): number {
 	const f = 10 ** digits;
@@ -86,16 +84,12 @@ function relPath(repoRoot: string, path: string): string {
 }
 
 export class DagRunner {
-	// Hardcoded fallbacks (mu does not support per-issue config overrides).
-	readonly #fallbackCli = "pi";
-	readonly #fallbackModel = "gpt-5.3-codex";
-	readonly #fallbackReasoning = "xhigh";
-
 	readonly #store: IssueStore;
 	readonly #forum: ForumStore;
 	readonly #repoRoot: string;
 	readonly #events: EventLog;
 	readonly #backend: BackendRunner;
+	readonly #modelOverrides: ModelOverrides;
 
 	readonly #reorchestrateOutcomes = new Set(["failure", "needs_work"]);
 
@@ -103,22 +97,19 @@ export class DagRunner {
 		store: IssueStore,
 		forum: ForumStore,
 		repoRoot: string,
-		opts: { backend?: BackendRunner; events?: EventLog } = {},
+		opts: { backend?: BackendRunner; events?: EventLog; modelOverrides?: ModelOverrides } = {},
 	) {
 		this.#store = store;
 		this.#forum = forum;
 		this.#repoRoot = repoRoot;
 		this.#events = opts.events ?? fsEventLogFromRepoRoot(repoRoot);
 		this.#backend = opts.backend ?? new PiSdkBackend();
+		this.#modelOverrides = opts.modelOverrides ?? {};
 	}
 
 	async #resolveConfig(issue: Pick<Issue, "execution_spec">): Promise<ResolvedConfig> {
 		void issue;
-		return {
-			cli: this.#fallbackCli,
-			model: this.#fallbackModel,
-			reasoning: this.#fallbackReasoning,
-		};
+		return resolveModelConfig(this.#modelOverrides);
 	}
 
 	async #renderUserPrompt(issue: Pick<Issue, "id" | "title" | "body">, rootId: string, step: number) {
