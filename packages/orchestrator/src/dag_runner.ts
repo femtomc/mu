@@ -14,7 +14,7 @@ import {
 import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
 import type { BackendRunner } from "./pi_backend.js";
-import { PiCliBackend } from "./pi_backend.js";
+import { PiSdkBackend } from "./pi_sdk_backend.js";
 import { readPromptMeta, renderPromptTemplate } from "./prompt.js";
 
 export type DagResult = {
@@ -68,7 +68,7 @@ export class DagRunner {
 		this.#forum = forum;
 		this.#repoRoot = repoRoot;
 		this.#events = opts.events ?? fsEventLogFromRepoRoot(repoRoot);
-		this.#backend = opts.backend ?? new PiCliBackend();
+		this.#backend = opts.backend ?? new PiSdkBackend();
 	}
 
 	async #resolveConfig(issue: Pick<Issue, "execution_spec">): Promise<ResolvedConfig> {

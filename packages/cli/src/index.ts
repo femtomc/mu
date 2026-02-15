@@ -1,3 +1,4 @@
+import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
@@ -259,6 +260,7 @@ function mainHelp(): string {
 		"  forum <subcmd>                  Forum commands (JSON)",
 		"  run <prompt...>                 Create root + run DAG loop",
 		"  resume <root-id>                Resume a DAG loop",
+		"  login [<provider>] [--list]      Authenticate with an AI provider",
 		"  replay <id|path> [--backend pi] Replay a logged run (pi-only)",
 		"",
 		"Run `mu <command> --help` for details.",
@@ -294,6 +296,8 @@ export async function run(argv: string[], opts: { cwd?: string } = {}): Promise<
 			return await cmdRun(rest, ctx);
 		case "resume":
 			return await cmdResume(rest, ctx);
+		case "login":
+			return await cmdLogin(rest);
 		case "replay":
 			return await cmdReplay(rest, ctx);
 		default:
@@ -1352,4 +1356,119 @@ async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 	const text = await readFile(path, "utf8");
 	return ok(text.length > 0 && !text.endsWith("\n") ? `${text}\n` : text);
+}
+
+function readLine(prompt: string): Promise<string> {
+	const rl = createInterface({ input: process.stdin, output: process.stderr });
+	return new Promise<string>((resolve) => {
+		rl.question(prompt, (answer) => {
+			rl.close();
+			resolve(answer);
+		});
+	});
+}
+
+async function cmdLogin(argv: string[]): Promise<RunResult> {
+	if (hasHelpFlag(argv)) {
+		return ok(
+			[
+				"mu login - authenticate with an AI provider via OAuth",
+				"",
+				"Usage:",
+				"  mu login [<provider>] [--list] [--logout]",
+				"",
+				"Examples:",
+				"  mu login --list                 List available OAuth providers",
+				"  mu login openai-codex           Login to OpenAI (ChatGPT Plus)",
+				"  mu login anthropic              Login to Anthropic (Claude Pro/Max)",
+				"  mu login github-copilot         Login to GitHub Copilot",
+				"  mu login google-gemini-cli      Login to Google Gemini CLI",
+				"  mu login openai-codex --logout  Remove stored credentials",
+				"",
+				"Credentials are stored in ~/.pi/agent/auth.json (shared with pi CLI).",
+			].join("\n") + "\n",
+		);
+	}
+
+	// Lazy-import pi SDK to avoid loading it for every mu command.
+	const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
+	const { getOAuthProviders } = await import("@mariozechner/pi-ai");
+
+	const authStorage = new AuthStorage();
+	const providers = getOAuthProviders();
+
+	const { present: listMode, rest: argv0 } = popFlag(argv, "--list");
+	const { present: logoutMode, rest: argv1 } = popFlag(argv0, "--logout");
+
+	if (listMode || argv1.length === 0) {
+		const lines: string[] = ["Available OAuth providers:", ""];
+		for (const p of providers) {
+			const hasAuth = authStorage.hasAuth(p.id);
+			const status = hasAuth ? "[authenticated]" : "[not configured]";
+			lines.push(`  ${p.id.padEnd(24)} ${p.name.padEnd(30)} ${status}`);
+		}
+		lines.push("", "Environment variable auth (no login needed):");
+		lines.push("  Set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.");
+		return ok(`${lines.join("\n")}\n`);
+	}
+
+	const providerId = argv1[0]!;
+	const rest = argv1.slice(1);
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { recovery: ["mu login --help"] });
+	}
+
+	const provider = providers.find((p) => p.id === providerId);
+	if (!provider) {
+		const available = providers.map((p) => p.id).join(", ");
+		return jsonError(`unknown provider: ${providerId}`, {
+			recovery: [`mu login --list`, `Available: ${available}`],
+		});
+	}
+
+	if (logoutMode) {
+		authStorage.logout(providerId);
+		return ok(`Logged out from ${provider.name} (${providerId})\n`);
+	}
+
+	try {
+		await authStorage.login(providerId, {
+			onAuth: (info) => {
+				process.stderr.write(`\nOpen this URL to authenticate:\n  ${info.url}\n\n`);
+				if (info.instructions) {
+					process.stderr.write(`${info.instructions}\n\n`);
+				}
+				// Try to open browser automatically.
+				const open = (cmd: string, args: string[]) => {
+					try {
+						const { spawn } = require("node:child_process");
+						spawn(cmd, args, { detached: true, stdio: "ignore" }).unref();
+					} catch {}
+				};
+				if (process.platform === "darwin") {
+					open("open", [info.url]);
+				} else if (process.platform === "linux") {
+					open("xdg-open", [info.url]);
+				}
+			},
+			onPrompt: async (prompt) => {
+				const msg = prompt.placeholder ? `${prompt.message} [${prompt.placeholder}]: ` : `${prompt.message}: `;
+				const answer = await readLine(msg);
+				if (!answer && prompt.placeholder) return prompt.placeholder;
+				return answer;
+			},
+			onProgress: (message) => {
+				process.stderr.write(`${message}\n`);
+			},
+			onManualCodeInput: async () => {
+				return await readLine("Paste the authorization code or callback URL: ");
+			},
+		});
+	} catch (err) {
+		return jsonError(`login failed: ${err instanceof Error ? err.message : String(err)}`, {
+			recovery: [`mu login ${providerId}`],
+		});
+	}
+
+	return ok(`Authenticated with ${provider.name} (${providerId})\n`);
 }
