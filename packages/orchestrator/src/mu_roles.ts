@@ -1,18 +1,19 @@
 export type MuRole = "orchestrator" | "worker";
 
-export function parseMuRole(role: string | null | undefined): MuRole {
-	if (role == null) {
-		return "orchestrator";
+/**
+ * Determine role from tags, falling back to execution_spec for backward
+ * compatibility with stored JSONL issues that predate tag-based roles.
+ */
+export function roleFromTags(tags: readonly string[], executionSpec?: unknown): MuRole {
+	for (const tag of tags) {
+		if (tag === "role:worker") return "worker";
+		if (tag === "role:orchestrator") return "orchestrator";
 	}
-
-	const trimmed = role.trim();
-	if (trimmed === "orchestrator" || trimmed === "worker") {
-		return trimmed;
-	}
-
-	throw new Error(
-		`unsupported execution_spec.role=${JSON.stringify(trimmed)} (only "orchestrator" and "worker" are supported)`,
-	);
+	// Backward compat: fall back to execution_spec
+	const specRole = (executionSpec as any)?.role;
+	if (specRole === "worker") return "worker";
+	if (specRole === "orchestrator") return "orchestrator";
+	return "orchestrator";
 }
 
 /* ------------------------------------------------------------------ */
@@ -99,6 +100,18 @@ export function systemPromptForRole(role: MuRole): string {
 			"- Use only roles: orchestrator, worker.",
 			"- Assign executable leaves to role=worker.",
 			"- If a child requires further decomposition, assign role=orchestrator.",
+			"",
+			"## Review Pattern",
+			"",
+			"For work that benefits from verification, create a review issue:",
+			"1. Create worker issues for implementation.",
+			"2. Create a review issue (`--role orchestrator`) blocked by the workers.",
+			"3. The review runs after workers complete — verify, test, or expand further.",
+			"",
+			"Example:",
+			'  mu issues create "Implement X" --parent <id> --role worker',
+			'  mu issues create "Review X" --parent <id> --role orchestrator',
+			"  mu issues dep <worker-id> blocks <review-id>",
 			"",
 			MU_CLI_REFERENCE,
 		].join("\n");

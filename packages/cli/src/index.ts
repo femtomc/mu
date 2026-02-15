@@ -491,14 +491,6 @@ async function issuesGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	return ok(jsonText(issueJson(issue), pretty));
 }
 
-function buildExecutionSpec(fields: {
-	role?: string | null;
-}): Record<string, string> | null {
-	const spec: Record<string, string> = {};
-	if (fields.role) spec.role = fields.role;
-	return Object.keys(spec).length > 0 ? spec : null;
-}
-
 function normalizeMuRole(role: string): "orchestrator" | "worker" | null {
 	const trimmed = role.trim();
 	if (trimmed === "orchestrator" || trimmed === "worker") {
@@ -566,9 +558,9 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 		});
 	}
 
-	const execution_spec = buildExecutionSpec({
-		role: roleNorm,
-	});
+	if (roleNorm != null) {
+		tags.push(`role:${roleNorm}`);
+	}
 
 	let parentId: string | null = null;
 	if (parentRaw) {
@@ -582,7 +574,7 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	let issue = await ctx.store.create(title, {
 		body: resolvedBody,
 		tags,
-		execution_spec,
+		execution_spec: null,
 		priority,
 	});
 
@@ -601,7 +593,7 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"mu issues update - patch fields and routing metadata",
 				"",
 				"Usage:",
-				"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--add-tag TAG] [--remove-tag TAG] [--role ROLE] [--clear-execution-spec] [--pretty]",
+				"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--add-tag TAG] [--remove-tag TAG] [--role ROLE] [--pretty]",
 			].join("\n") + "\n",
 		);
 	}
@@ -627,8 +619,7 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	const { values: addTags, rest: argv5 } = getRepeatFlagValues(argv4, ["--add-tag"]);
 	const { values: removeTags, rest: argv6 } = getRepeatFlagValues(argv5, ["--remove-tag"]);
 
-	const { value: role, rest: argv7 } = getFlagValue(argv6, "--role");
-	const { present: clearExecutionSpec, rest } = popFlag(argv7, "--clear-execution-spec");
+	const { value: role, rest } = getFlagValue(argv6, "--role");
 
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues update --help"] });
@@ -664,18 +655,19 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 		fields.tags = tags;
 	}
 
-	const routingTouched = role != null;
-	if (clearExecutionSpec) {
-		fields.execution_spec = null;
-	} else if (routingTouched) {
-		const normalized = normalizeMuRole(role!);
+	if (role != null) {
+		const normalized = normalizeMuRole(role);
 		if (normalized == null) {
 			return jsonError(`invalid --role: ${JSON.stringify(role)} (supported: orchestrator, worker)`, {
 				pretty,
 				recovery: [`mu issues update ${issueId} --role worker`],
 			});
 		}
-		fields.execution_spec = buildExecutionSpec({ role: normalized });
+		// Update tags: remove existing role:* tags and add the new one.
+		let currentTags = (fields.tags as string[] | undefined) ?? [...(issue.tags ?? [])];
+		currentTags = currentTags.filter((t) => !t.startsWith("role:"));
+		currentTags.push(`role:${normalized}`);
+		fields.tags = currentTags;
 	}
 
 	if (Object.keys(fields).length === 0) {

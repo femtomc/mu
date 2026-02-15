@@ -142,7 +142,7 @@ describe("DagRunner", () => {
 		const root = await store.create("root", { tags: [] });
 		await store.update(root.id, { status: "closed", outcome: "expanded" });
 
-		const leaf = await store.create("leaf", { tags: ["node:agent"], executionSpec: { role: "worker" } });
+		const leaf = await store.create("leaf", { tags: ["node:agent", "role:worker"] });
 		await store.add_dep(leaf.id, "parent", root.id);
 
 		const backend = new StubBackend();
@@ -155,7 +155,7 @@ describe("DagRunner", () => {
 		const updated = await store.get(leaf.id);
 		expect(updated?.status).toBe("open");
 		expect(updated?.outcome).toBeNull();
-		expect((updated?.execution_spec as any)?.role).toBe("orchestrator");
+		expect(updated?.tags.includes("role:orchestrator")).toBe(true);
 
 		const msgs = await forum.read(`issue:${leaf.id}`, 10);
 		expect(msgs.some((m) => m.author === "orchestrator")).toBe(true);
@@ -168,9 +168,8 @@ describe("DagRunner", () => {
 		await store.update(root.id, { status: "closed", outcome: "expanded" });
 
 		const leaf = await store.create("leaf-title", {
-			tags: ["node:agent"],
+			tags: ["node:agent", "role:worker"],
 			body: "leaf-body",
-			executionSpec: { role: "worker" },
 		});
 		await store.add_dep(leaf.id, "parent", root.id);
 
@@ -201,7 +200,7 @@ describe("DagRunner", () => {
 		const root = await store.create("root", { tags: [] });
 		await store.update(root.id, { status: "closed", outcome: "expanded" });
 
-		const leaf = await store.create("leaf", { tags: ["node:agent"], executionSpec: { role: "worker" } });
+		const leaf = await store.create("leaf", { tags: ["node:agent", "role:worker"] });
 		await store.add_dep(leaf.id, "parent", root.id);
 
 		const { provider, modelId } = pickProviderModel();
@@ -221,7 +220,7 @@ describe("DagRunner", () => {
 		expect(run.model).toBe(modelId);
 	});
 
-	test("defaults role to orchestrator when execution_spec.role is missing", async () => {
+	test("defaults role to orchestrator when no role tag present", async () => {
 		const { repoRoot, store, forum } = await mkTempRepo();
 
 		const root = await store.create("root", { tags: [] });
@@ -245,24 +244,6 @@ describe("DagRunner", () => {
 		expect(run.systemPrompt).toContain("mu's orchestrator");
 	});
 
-	test("rejects unknown roles (fails fast)", async () => {
-		const { repoRoot, store, forum } = await mkTempRepo();
-
-		const root = await store.create("root", { tags: [] });
-		await store.update(root.id, { status: "closed", outcome: "expanded" });
-
-		const leaf = await store.create("leaf", { tags: ["node:agent"], executionSpec: { role: "reviewer" } });
-		await store.add_dep(leaf.id, "parent", root.id);
-
-		const backend = new StubBackend();
-		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: TEST_MODEL_OVERRIDES });
-		const result = await runner.run(root.id, 1);
-
-		expect(result.status).toBe("error");
-		expect(result.error).toContain('only "orchestrator" and "worker" are supported');
-		expect(backend.runs.length).toBe(0);
-	});
-
 	test("unstick repair pass runs orchestrator on root when there are no executable leaves", async () => {
 		const { repoRoot, store, forum } = await mkTempRepo();
 
@@ -273,10 +254,10 @@ describe("DagRunner", () => {
 		const blocker = await store.create("blocker", { tags: [] });
 		await store.add_dep(blocker.id, "parent", root.id);
 
-		const parent = await store.create("parent", { tags: ["node:agent"], executionSpec: { role: "worker" } });
+		const parent = await store.create("parent", { tags: ["node:agent", "role:worker"] });
 		await store.add_dep(parent.id, "parent", root.id);
 
-		const child = await store.create("child", { tags: ["node:agent"], executionSpec: { role: "worker" } });
+		const child = await store.create("child", { tags: ["node:agent", "role:worker"] });
 		await store.add_dep(child.id, "parent", parent.id);
 
 		// blocker blocks child until blocker is closed.
@@ -313,7 +294,7 @@ describe("DagRunner", () => {
 		const root = await store.create("root", { tags: [] });
 		await store.update(root.id, { status: "closed", outcome: "expanded" });
 
-		const leaf = await store.create("leaf", { tags: ["node:agent"], executionSpec: { role: "worker" } });
+		const leaf = await store.create("leaf", { tags: ["node:agent", "role:worker"] });
 		await store.add_dep(leaf.id, "parent", root.id);
 
 		const backend = new StubBackend();

@@ -13,7 +13,7 @@ import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
 import type { ModelOverrides, ResolvedModelConfig } from "./model_resolution.js";
 import { resolveModelConfig } from "./model_resolution.js";
-import { type MuRole, parseMuRole, systemPromptForRole } from "./mu_roles.js";
+import { type MuRole, roleFromTags, systemPromptForRole } from "./mu_roles.js";
 import type { BackendRunner } from "./pi_backend.js";
 import { PiSdkBackend } from "./pi_sdk_backend.js";
 
@@ -65,15 +65,6 @@ function roundTo(n: number, digits: number): number {
 	return Math.round(n * f) / f;
 }
 
-function specRoleFromExecutionSpec(execution_spec: unknown): string | null {
-	const role = (execution_spec as any)?.role;
-	if (typeof role !== "string") {
-		return null;
-	}
-	const trimmed = role.trim();
-	return trimmed.length > 0 ? trimmed : null;
-}
-
 function relPath(repoRoot: string, path: string): string {
 	try {
 		const rel = relative(repoRoot, path);
@@ -108,8 +99,7 @@ export class DagRunner {
 		this.#modelOverrides = opts.modelOverrides ?? {};
 	}
 
-	async #resolveConfig(issue: Pick<Issue, "execution_spec">): Promise<ResolvedConfig> {
-		void issue;
+	async #resolveConfig(): Promise<ResolvedConfig> {
 		return resolveModelConfig(this.#modelOverrides);
 	}
 
@@ -136,13 +126,13 @@ export class DagRunner {
 	}
 
 	async #executeBackend(
-		issue: Pick<Issue, "id" | "title" | "body" | "execution_spec">,
+		issue: Pick<Issue, "id" | "title" | "body" | "tags" | "execution_spec">,
 		cfg: ResolvedConfig,
 		rootId: string,
 		step: number,
 		opts: { logSuffix?: string; attempt?: number; onLine?: (line: string) => void } = {},
 	): Promise<{ exitCode: number; elapsedS: number }> {
-		const role: MuRole = parseMuRole(specRoleFromExecutionSpec(issue.execution_spec));
+		const role: MuRole = roleFromTags(issue.tags, issue.execution_spec);
 		const logSuffix = opts.logSuffix ?? "";
 		const rendered = await this.#renderUserPrompt(issue, rootId, step, opts.attempt ?? 1);
 		const systemPrompt = systemPromptForRole(role);
@@ -208,7 +198,7 @@ export class DagRunner {
 		const reopened = await this.#store.update(issueId, {
 			status: "open",
 			outcome: null,
-			execution_spec: { role: "orchestrator" } as any,
+			tags: [...before.tags.filter((t) => !t.startsWith("role:")), "role:orchestrator"],
 		});
 		await this.#events.emit("dag.unstick.reopen", {
 			source: "dag_runner",
@@ -333,7 +323,7 @@ export class DagRunner {
 							execution_spec: null,
 						};
 
-						const cfg = await this.#resolveConfig(repairIssue);
+						const cfg = await this.#resolveConfig();
 						const logSuffix = "unstick";
 						const onBackendLine = hooks?.onBackendLine;
 						const { exitCode, elapsedS } = await this.#executeBackend(repairIssue, cfg, rootId, step, {
@@ -367,8 +357,7 @@ export class DagRunner {
 
 					const issue = candidates[0]!;
 					const issueId = issue.id;
-					// Validate role early so we don't claim/work an unsupported leaf.
-					const role = parseMuRole(specRoleFromExecutionSpec(issue.execution_spec));
+					const role = roleFromTags(issue.tags, issue.execution_spec);
 
 					await this.#events.emit("dag.step.start", {
 						source: "dag_runner",
@@ -393,7 +382,7 @@ export class DagRunner {
 					this.#attempts.set(issueId, attempt);
 
 					// 4. Route + 5. Render + 6. Execute.
-					const cfg = await this.#resolveConfig(issue);
+					const cfg = await this.#resolveConfig();
 					const logSuffix = attempt > 1 ? `attempt-${attempt}` : "";
 					const onBackendLine = hooks?.onBackendLine;
 					const { exitCode, elapsedS } = await this.#executeBackend(issue, cfg, rootId, step, {
@@ -412,6 +401,11 @@ export class DagRunner {
 					}
 
 					if (updated.status !== "closed") {
+						await this.#events.emit("dag.step.force_close", {
+							source: "dag_runner",
+							issueId,
+							payload: { root_id: rootId, step, role, attempt, reason: "agent_did_not_close" },
+						});
 						updated = await this.#store.close(issueId, "failure");
 					}
 
@@ -456,6 +450,12 @@ export class DagRunner {
 					if (updated.outcome && this.#reorchestrateOutcomes.has(updated.outcome)) {
 						if (attempt < 3) {
 							await this.#reopenForOrchestration(issueId, { reason: `outcome=${updated.outcome}`, step });
+						} else {
+							await this.#events.emit("dag.circuit_breaker", {
+								source: "dag_runner",
+								issueId,
+								payload: { root_id: rootId, step, attempt, outcome: updated.outcome },
+							});
 						}
 					}
 				}
