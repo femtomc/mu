@@ -29,8 +29,6 @@ export type StorePaths = {
 	forumPath: string;
 	eventsPath: string;
 	logsDir: string;
-	rolesDir: string;
-	orchestratorPath: string;
 };
 
 export function findRepoRoot(start: string = process.cwd()): string {
@@ -60,7 +58,5 @@ export function getStorePaths(repoRoot: string): StorePaths {
 		forumPath: join(storeDir, "forum.jsonl"),
 		eventsPath: join(storeDir, "events.jsonl"),
 		logsDir: join(storeDir, "logs"),
-		rolesDir: join(storeDir, "roles"),
-		orchestratorPath: join(storeDir, "orchestrator.md"),
 	};
 }

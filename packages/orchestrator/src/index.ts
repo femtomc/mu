@@ -9,7 +9,7 @@ export type {
 export { DagRunner } from "./dag_runner.js";
 export type { BackendRunner, BackendRunOpts } from "./pi_backend.js";
 export { PiCliBackend, piStreamHasError } from "./pi_backend.js";
-export { PiSdkBackend } from "./pi_sdk_backend.js";
+export { createMuResourceLoader, PiSdkBackend } from "./pi_sdk_backend.js";
 export type { PiStreamRendererOpts } from "./pi_stream_renderer.js";
 export { PiStreamRenderer } from "./pi_stream_renderer.js";
 export type { PromptMeta } from "./prompt.js";

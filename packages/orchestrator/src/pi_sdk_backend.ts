@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
 import { mkdir, open } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
@@ -7,7 +8,14 @@ import {
 	AuthStorage,
 	type CreateAgentSessionOptions,
 	createAgentSession,
-	createCodingTools,
+	createBashTool,
+	createEditTool,
+	createFindTool,
+	createGrepTool,
+	createLsTool,
+	createReadTool,
+	createWriteTool,
+	DefaultResourceLoader,
 	SessionManager,
 	SettingsManager,
 } from "@mariozechner/pi-coding-agent";
@@ -57,13 +65,33 @@ export class PiSdkBackend implements BackendRunner {
 			);
 		}
 
+		const settingsManager = SettingsManager.inMemory();
+		const resourceLoader = createMuResourceLoader({
+			cwd: opts.cwd,
+			systemPrompt: opts.systemPrompt,
+			settingsManager,
+		});
+		await resourceLoader.reload();
+
+		const tools = [
+			// Mu expects these built-in tools to exist at least for role=orchestrator.
+			createReadTool(opts.cwd),
+			createBashTool(opts.cwd),
+			createEditTool(opts.cwd),
+			createWriteTool(opts.cwd),
+			createGrepTool(opts.cwd),
+			createFindTool(opts.cwd),
+			createLsTool(opts.cwd),
+		];
+
 		const sessionOpts: CreateAgentSessionOptions = {
 			cwd: opts.cwd,
 			model,
 			thinkingLevel: opts.thinking as ThinkingLevel,
-			tools: createCodingTools(opts.cwd),
+			tools,
 			sessionManager: SessionManager.inMemory(opts.cwd),
-			settingsManager: SettingsManager.inMemory(),
+			settingsManager,
+			resourceLoader,
 			authStorage,
 		};
 
@@ -130,4 +158,36 @@ export class PiSdkBackend implements BackendRunner {
 			}
 		}
 	}
+}
+
+export type CreateMuResourceLoaderOpts = {
+	cwd: string;
+	systemPrompt: string;
+	agentDir?: string;
+	settingsManager?: SettingsManager;
+	additionalSkillPaths?: string[];
+};
+
+export function createMuResourceLoader(opts: CreateMuResourceLoaderOpts): DefaultResourceLoader {
+	const skillPaths = new Set<string>();
+	for (const p of opts.additionalSkillPaths ?? []) {
+		skillPaths.add(p);
+	}
+
+	// If a repo has a top-level `skills/` dir (like workshop/), load it.
+	const repoSkills = join(opts.cwd, "skills");
+	if (existsSync(repoSkills)) {
+		skillPaths.add(repoSkills);
+	}
+
+	return new DefaultResourceLoader({
+		cwd: opts.cwd,
+		agentDir: opts.agentDir,
+		settingsManager: opts.settingsManager ?? SettingsManager.inMemory(),
+		additionalSkillPaths: [...skillPaths],
+		systemPromptOverride: (_base) => opts.systemPrompt,
+		agentsFilesOverride: (base) => ({
+			agentsFiles: base.agentsFiles.filter((f) => basename(f.path) === "AGENTS.md"),
+		}),
+	});
 }

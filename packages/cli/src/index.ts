@@ -8,8 +8,7 @@ import type { ForumTopicSummary } from "@femtomc/mu-forum";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
 import type { BackendRunner } from "@femtomc/mu-orchestrator";
-import { DagRunner, extractDescription, PiStreamRenderer, splitFrontmatter } from "@femtomc/mu-orchestrator";
-import { DEFAULT_ORCHESTRATOR_MD, DEFAULT_REVIEWER_ROLE_MD, DEFAULT_WORKER_ROLE_MD } from "./templates.js";
+import { DagRunner, PiStreamRenderer } from "@femtomc/mu-orchestrator";
 
 export type RunResult = {
 	stdout: string;
@@ -35,16 +34,6 @@ type CliCtx = {
 	paths: ReturnType<typeof getStorePaths>;
 	io?: CliIO;
 	backend?: BackendRunner;
-};
-
-type RoleJson = {
-	name: string;
-	prompt_path: string;
-	cli: string;
-	model: string;
-	reasoning: string;
-	description: string;
-	description_source: string;
 };
 
 function ok(stdout: string = "", exitCode: number = 0): RunResult {
@@ -176,39 +165,6 @@ function findRepoRoot(start: string): string {
 	}
 }
 
-async function listRolesJson(repoRoot: string): Promise<RoleJson[]> {
-	const rolesDir = join(repoRoot, ".mu", "roles");
-	let entries: string[];
-	try {
-		entries = await readdir(rolesDir);
-	} catch {
-		return [];
-	}
-
-	const mdFiles = entries.filter((e) => e.endsWith(".md")).sort();
-	const out: RoleJson[] = [];
-	for (const file of mdFiles) {
-		const abs = join(rolesDir, file);
-		const text = await readFile(abs, "utf8");
-		const { meta, body } = splitFrontmatter(text);
-		const { description, source } = extractDescription(meta, body);
-
-		const name = file.replace(/\.md$/, "");
-		const prompt_path = relative(repoRoot, abs).replaceAll("\\", "/");
-
-		out.push({
-			name,
-			prompt_path,
-			cli: typeof meta.cli === "string" ? meta.cli : "",
-			model: typeof meta.model === "string" ? meta.model : "",
-			reasoning: typeof meta.reasoning === "string" ? meta.reasoning : "",
-			description,
-			description_source: source,
-		});
-	}
-	return out;
-}
-
 function issueJson(issue: Issue): Record<string, unknown> {
 	return {
 		id: issue.id,
@@ -265,9 +221,8 @@ function mainHelp(): string {
 		"  mu <command> [args...]",
 		"",
 		"Commands:",
-		"  init [--force]                  Initialize .mu store + templates",
+		"  init [--force]                  Initialize .mu store + logs",
 		"  status [--json] [--pretty]      Show repo + DAG status",
-		"  roles [--json|--table]          List role templates",
 		"  issues <subcmd>                 Issue DAG commands (JSON)",
 		"  forum <subcmd>                  Forum commands (JSON)",
 		"  run <prompt...>                 Create root + run DAG loop",
@@ -302,8 +257,6 @@ export async function run(
 			return await cmdInit(rest, ctx);
 		case "status":
 			return await cmdStatus(rest, ctx);
-		case "roles":
-			return await cmdRoles(rest, ctx);
 		case "issues":
 			return await cmdIssues(rest, ctx);
 		case "forum":
@@ -326,7 +279,7 @@ export async function run(
 async function cmdInit(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
-			["mu init - initialize .mu state, templates, and logs", "", "Usage:", "  mu init [--force]"].join("\n") + "\n",
+			["mu init - initialize .mu store and logs", "", "Usage:", "  mu init [--force]"].join("\n") + "\n",
 		);
 	}
 
@@ -336,26 +289,17 @@ async function cmdInit(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 
 	await mkdir(ctx.paths.storeDir, { recursive: true });
-	await writeFile(ctx.paths.issuesPath, "", { encoding: "utf8", flag: "a" });
-	await writeFile(ctx.paths.forumPath, "", { encoding: "utf8", flag: "a" });
-	await writeFile(ctx.paths.eventsPath, "", { encoding: "utf8", flag: "a" });
+	if (force) {
+		await writeFile(ctx.paths.issuesPath, "", { encoding: "utf8" });
+		await writeFile(ctx.paths.forumPath, "", { encoding: "utf8" });
+		await writeFile(ctx.paths.eventsPath, "", { encoding: "utf8" });
+	} else {
+		await writeFile(ctx.paths.issuesPath, "", { encoding: "utf8", flag: "a" });
+		await writeFile(ctx.paths.forumPath, "", { encoding: "utf8", flag: "a" });
+		await writeFile(ctx.paths.eventsPath, "", { encoding: "utf8", flag: "a" });
+	}
 
 	await mkdir(ctx.paths.logsDir, { recursive: true });
-
-	if (force || !existsSync(ctx.paths.orchestratorPath)) {
-		await writeFile(ctx.paths.orchestratorPath, DEFAULT_ORCHESTRATOR_MD, "utf8");
-	}
-
-	const rolesDir = ctx.paths.rolesDir;
-	await mkdir(rolesDir, { recursive: true });
-	const workerPath = join(rolesDir, "worker.md");
-	if (force || !existsSync(workerPath)) {
-		await writeFile(workerPath, DEFAULT_WORKER_ROLE_MD, "utf8");
-	}
-	const reviewerPath = join(rolesDir, "reviewer.md");
-	if (force || !existsSync(reviewerPath)) {
-		await writeFile(reviewerPath, DEFAULT_REVIEWER_ROLE_MD, "utf8");
-	}
 
 	const verb = force ? "Reinitialized" : "Initialized";
 	return ok(`${verb} .mu/ in ${ctx.repoRoot}\n`);
@@ -378,7 +322,6 @@ async function cmdStatus(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const openIssues = await ctx.store.list({ status: "open" });
 	const ready = await ctx.store.ready(null, { tags: ["node:agent"] });
 	const topics = await ctx.forum.topics("issue:");
-	const roles = await listRolesJson(ctx.repoRoot);
 
 	const payload = {
 		repo_root: ctx.repoRoot,
@@ -387,7 +330,6 @@ async function cmdStatus(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		ready_count: ready.length,
 		ready: ready.slice(0, 10).map(issueJson),
 		recent_topics: topics.slice(0, 10),
-		roles,
 	};
 
 	if (jsonMode) {
@@ -398,7 +340,6 @@ async function cmdStatus(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	out += `Root issues: ${roots.length}\n`;
 	out += `Open issues: ${openIssues.length}\n`;
 	out += `Ready issues: ${ready.length}\n`;
-	out += `Roles: ${roles.length}\n`;
 
 	if (ready.length > 0) {
 		out += "\nReady:\n";
@@ -415,45 +356,6 @@ async function cmdStatus(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 
 	return ok(out);
-}
-
-async function cmdRoles(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	if (hasHelpFlag(argv)) {
-		return ok(
-			[
-				"mu roles - list role templates from .mu/roles/*.md",
-				"",
-				"Usage:",
-				"  mu roles [--json] [--table] [--pretty]",
-				"",
-				"Defaults to JSON output for automation.",
-			].join("\n") + "\n",
-		);
-	}
-
-	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-	const { present: tableMode, rest: argv1 } = popFlag(argv0, "--table");
-	const { present: jsonFlag, rest } = popFlag(argv1, "--json");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { recovery: ["mu roles --help"] });
-	}
-
-	const jsonMode = jsonFlag || !tableMode;
-	const roles = await listRolesJson(ctx.repoRoot);
-
-	if (jsonMode) {
-		return ok(jsonText(roles, pretty));
-	}
-
-	// Simple ASCII table.
-	const lines: string[] = [];
-	lines.push("Name\tCLI\tModel\tReasoning\tPrompt");
-	for (const role of roles) {
-		lines.push(
-			[role.name, role.cli || "-", role.model || "-", role.reasoning || "-", role.prompt_path || "-"].join("\t"),
-		);
-	}
-	return ok(`${lines.join("\n")}\n`);
 }
 
 async function cmdIssues(argv: string[], ctx: CliCtx): Promise<RunResult> {
@@ -586,18 +488,18 @@ async function issuesGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 
 function buildExecutionSpec(fields: {
 	role?: string | null;
-	cli?: string | null;
-	model?: string | null;
-	reasoning?: string | null;
-	prompt_path?: string | null;
 }): Record<string, string> | null {
 	const spec: Record<string, string> = {};
 	if (fields.role) spec.role = fields.role;
-	if (fields.cli) spec.cli = fields.cli;
-	if (fields.model) spec.model = fields.model;
-	if (fields.reasoning) spec.reasoning = fields.reasoning;
-	if (fields.prompt_path) spec.prompt_path = fields.prompt_path;
 	return Object.keys(spec).length > 0 ? spec : null;
+}
+
+function normalizeMuRole(role: string): "orchestrator" | "worker" | null {
+	const trimmed = role.trim();
+	if (trimmed === "orchestrator" || trimmed === "worker") {
+		return trimmed;
+	}
+	return null;
 }
 
 async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
@@ -607,7 +509,7 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"mu issues create - create a new issue (adds node:agent tag automatically)",
 				"",
 				"Usage:",
-				"  mu issues create <title> [--body TEXT] [--parent ID] [--tag TAG] [--role ROLE] [--cli NAME] [--model NAME] [--reasoning LEVEL] [--prompt-path PATH] [--priority N] [--pretty]",
+				"  mu issues create <title> [--body TEXT] [--parent ID] [--tag TAG] [--role ROLE] [--priority N] [--pretty]",
 			].join("\n") + "\n",
 		);
 	}
@@ -628,11 +530,7 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	const { values: tags0, rest: argv3 } = getRepeatFlagValues(argv2, ["--tag", "-t"]);
 	const { value: role, rest: argv4 } = getFlagValue(argv3, "--role");
 	const { value: roleShort, rest: argv5 } = getFlagValue(argv4, "-r");
-	const { value: cli, rest: argv6 } = getFlagValue(argv5, "--cli");
-	const { value: model, rest: argv7 } = getFlagValue(argv6, "--model");
-	const { value: reasoning, rest: argv8 } = getFlagValue(argv7, "--reasoning");
-	const { value: promptPath, rest: argv9 } = getFlagValue(argv8, "--prompt-path");
-	const { value: priorityRaw, rest } = getFlagValue(argv9, "--priority");
+	const { value: priorityRaw, rest } = getFlagValue(argv5, "--priority");
 
 	const { value: priorityShortRaw, rest: rest2 } = getFlagValue(rest, "-p");
 	const restFinal = rest2;
@@ -654,12 +552,17 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 		tags.push("node:agent");
 	}
 
+	const roleRaw = role ?? roleShort ?? null;
+	const roleNorm = roleRaw != null ? normalizeMuRole(roleRaw) : null;
+	if (roleRaw != null && roleNorm == null) {
+		return jsonError(`invalid --role: ${JSON.stringify(roleRaw)} (supported: orchestrator, worker)`, {
+			pretty,
+			recovery: [`mu issues create "${title}" --role worker`],
+		});
+	}
+
 	const execution_spec = buildExecutionSpec({
-		role: role ?? roleShort ?? null,
-		cli: cli ?? null,
-		model: model ?? null,
-		reasoning: reasoning ?? null,
-		prompt_path: promptPath ?? null,
+		role: roleNorm,
 	});
 
 	let parentId: string | null = null;
@@ -693,7 +596,7 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"mu issues update - patch fields and routing metadata",
 				"",
 				"Usage:",
-				"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--add-tag TAG] [--remove-tag TAG] [--role ROLE] [--cli NAME] [--model NAME] [--reasoning LEVEL] [--prompt-path PATH] [--clear-execution-spec] [--pretty]",
+				"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--add-tag TAG] [--remove-tag TAG] [--role ROLE] [--clear-execution-spec] [--pretty]",
 			].join("\n") + "\n",
 		);
 	}
@@ -720,11 +623,7 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	const { values: removeTags, rest: argv6 } = getRepeatFlagValues(argv5, ["--remove-tag"]);
 
 	const { value: role, rest: argv7 } = getFlagValue(argv6, "--role");
-	const { value: cli, rest: argv8 } = getFlagValue(argv7, "--cli");
-	const { value: model, rest: argv9 } = getFlagValue(argv8, "--model");
-	const { value: reasoning, rest: argv10 } = getFlagValue(argv9, "--reasoning");
-	const { value: promptPath, rest: argv11 } = getFlagValue(argv10, "--prompt-path");
-	const { present: clearExecutionSpec, rest } = popFlag(argv11, "--clear-execution-spec");
+	const { present: clearExecutionSpec, rest } = popFlag(argv7, "--clear-execution-spec");
 
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues update --help"] });
@@ -760,17 +659,18 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 		fields.tags = tags;
 	}
 
-	const routingTouched = [role, cli, model, reasoning, promptPath].some((v) => v != null);
+	const routingTouched = role != null;
 	if (clearExecutionSpec) {
 		fields.execution_spec = null;
 	} else if (routingTouched) {
-		const spec = { ...(issue.execution_spec ?? {}) } as Record<string, unknown>;
-		if (role != null) spec.role = role;
-		if (cli != null) spec.cli = cli;
-		if (model != null) spec.model = model;
-		if (reasoning != null) spec.reasoning = reasoning;
-		if (promptPath != null) spec.prompt_path = promptPath;
-		fields.execution_spec = Object.keys(spec).length > 0 ? spec : null;
+		const normalized = normalizeMuRole(role!);
+		if (normalized == null) {
+			return jsonError(`invalid --role: ${JSON.stringify(role)} (supported: orchestrator, worker)`, {
+				pretty,
+				recovery: [`mu issues update ${issueId} --role worker`],
+			});
+		}
+		fields.execution_spec = buildExecutionSpec({ role: normalized });
 	}
 
 	if (Object.keys(fields).length === 0) {
@@ -1167,13 +1067,12 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu run - create a root issue and run the DAG loop",
 				"",
 				"Usage:",
-				"  mu run <prompt...> [--max-steps N] [--review|--no-review] [--raw-stream] [--json]",
+				"  mu run <prompt...> [--max-steps N] [--raw-stream] [--json]",
 			].join("\n") + "\n",
 		);
 	}
 
 	let maxSteps = 20;
-	let review = true;
 	let jsonMode = false;
 	let rawStream = false;
 	const promptParts: string[] = [];
@@ -1186,14 +1085,6 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		}
 		if (a === "--raw-stream") {
 			rawStream = true;
-			continue;
-		}
-		if (a === "--review") {
-			review = true;
-			continue;
-		}
-		if (a === "--no-review") {
-			review = false;
 			continue;
 		}
 		if (a === "--max-steps") {
@@ -1301,7 +1192,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			io?.stderr?.write(`Root: ${rootIssue.id}  ${trimForHeader(String(rootIssue.title ?? ""), 80)}\n`);
 		}
 		const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot, { backend: ctx.backend, events: ctx.events });
-		const result = await runner.run(rootIssue.id, maxSteps, { review, hooks });
+		const result = await runner.run(rootIssue.id, maxSteps, { hooks });
 		return { rootIssue, result };
 	});
 
@@ -1363,14 +1254,13 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu resume - resume an interrupted DAG loop",
 				"",
 				"Usage:",
-				"  mu resume <root-id> [--max-steps N] [--review|--no-review] [--raw-stream] [--json]",
+				"  mu resume <root-id> [--max-steps N] [--raw-stream] [--json]",
 			].join("\n") + "\n",
 		);
 	}
 
 	const rawId = argv[0]!;
 	let maxSteps = 20;
-	let review = true;
 	let jsonMode = false;
 	let rawStream = false;
 	const rest = argv.slice(1);
@@ -1383,14 +1273,6 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		}
 		if (a === "--raw-stream") {
 			rawStream = true;
-			continue;
-		}
-		if (a === "--review") {
-			review = true;
-			continue;
-		}
-		if (a === "--no-review") {
-			review = false;
 			continue;
 		}
 		if (a === "--max-steps") {
@@ -1493,7 +1375,7 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			io?.stderr?.write(`Resuming ${rootId}\n`);
 		}
 		const runner = new DagRunner(ctx.store, ctx.forum, ctx.repoRoot, { backend: ctx.backend, events: ctx.events });
-		return await runner.run(rootId, maxSteps, { review, hooks });
+		return await runner.run(rootId, maxSteps, { hooks });
 	});
 
 	if (jsonMode) {

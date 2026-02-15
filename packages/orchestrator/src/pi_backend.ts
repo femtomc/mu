@@ -3,15 +3,17 @@ import { mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
+import type { MuRole } from "./mu_roles.js";
 
 export type BackendRunOpts = {
 	issueId: string;
+	role: MuRole;
+	systemPrompt: string;
 	prompt: string;
 	model: string;
 	thinking: string;
 	cwd: string;
 	cli: string;
-	promptPath: string | null;
 	logSuffix: string;
 	onLine?: (line: string) => void;
 	teePath?: string;

@@ -2,10 +2,6 @@ import { z } from "zod";
 
 export type ExecutionSpec = {
 	role: string | null;
-	prompt_path: string | null;
-	cli: string | null;
-	model: string | null;
-	reasoning: string | null;
 };
 
 export const DepSchema = z

@@ -1,11 +1,9 @@
-import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { Issue, ValidationResult } from "@femtomc/mu-core";
 import {
 	currentRunId,
 	type EventLog,
-	executionSpecFromDict,
 	fsEventLogFromRepoRoot,
 	getStorePaths,
 	newRunId,
@@ -13,9 +11,9 @@ import {
 } from "@femtomc/mu-core/node";
 import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
+import { type MuRole, parseMuRole, systemPromptForRole } from "./mu_roles.js";
 import type { BackendRunner } from "./pi_backend.js";
 import { PiSdkBackend } from "./pi_sdk_backend.js";
-import { readPromptMeta, renderPromptTemplate } from "./prompt.js";
 
 export type DagResult = {
 	status: "root_final" | "no_executable_leaf" | "max_steps_exhausted" | "error";
@@ -55,7 +53,6 @@ export type DagRunnerHooks = {
 };
 
 export type DagRunnerRunOpts = {
-	review?: boolean;
 	hooks?: DagRunnerHooks;
 };
 
@@ -63,7 +60,6 @@ type ResolvedConfig = {
 	cli: string;
 	model: string;
 	reasoning: string;
-	promptPath: string | null;
 };
 
 function roundTo(n: number, digits: number): number {
@@ -90,7 +86,7 @@ function relPath(repoRoot: string, path: string): string {
 }
 
 export class DagRunner {
-	// Hardcoded fallbacks if neither execution_spec nor orchestrator.md provide config.
+	// Hardcoded fallbacks (mu does not support per-issue config overrides).
 	readonly #fallbackCli = "pi";
 	readonly #fallbackModel = "gpt-5.3-codex";
 	readonly #fallbackReasoning = "xhigh";
@@ -117,70 +113,39 @@ export class DagRunner {
 	}
 
 	async #resolveConfig(issue: Pick<Issue, "execution_spec">): Promise<ResolvedConfig> {
-		let cli = this.#fallbackCli;
-		let model = this.#fallbackModel;
-		let reasoning = this.#fallbackReasoning;
-		let promptPath: string | null = null;
-
-		// Tier 1: orchestrator.md frontmatter (global defaults).
-		const { orchestratorPath } = getStorePaths(this.#repoRoot);
-		if (existsSync(orchestratorPath)) {
-			const meta = await readPromptMeta(orchestratorPath);
-			if (typeof meta.cli === "string") cli = meta.cli;
-			if (typeof meta.model === "string") model = meta.model;
-			if (typeof meta.reasoning === "string") reasoning = meta.reasoning;
-			promptPath = orchestratorPath;
-		}
-
-		// Parse execution spec (may set role + explicit fields).
-		const specDict = issue.execution_spec ?? null;
-		const spec = specDict ? executionSpecFromDict(specDict, this.#repoRoot) : null;
-
-		// Tier 2: role file frontmatter (role-specific defaults).
-		if (spec?.role) {
-			const rolePath = join(this.#repoRoot, ".mu", "roles", `${spec.role}.md`);
-			if (existsSync(rolePath)) {
-				const roleMeta = await readPromptMeta(rolePath);
-				if (typeof roleMeta.cli === "string") cli = roleMeta.cli;
-				if (typeof roleMeta.model === "string") model = roleMeta.model;
-				if (typeof roleMeta.reasoning === "string") reasoning = roleMeta.reasoning;
-			}
-		}
-
-		// Tier 3: execution_spec explicit fields (highest priority).
-		if (spec) {
-			if (spec.cli != null) cli = spec.cli;
-			if (spec.model != null) model = spec.model;
-			if (spec.reasoning != null) reasoning = spec.reasoning;
-			if (spec.prompt_path != null) promptPath = spec.prompt_path;
-		}
-
-		return { cli, model, reasoning, promptPath };
+		void issue;
+		return {
+			cli: this.#fallbackCli,
+			model: this.#fallbackModel,
+			reasoning: this.#fallbackReasoning,
+		};
 	}
 
-	async #renderPrompt(issue: Pick<Issue, "id" | "title" | "body">, promptPath: string | null, rootId: string) {
-		let rendered: string;
-		if (promptPath && existsSync(promptPath)) {
-			rendered = await renderPromptTemplate(promptPath, issue, { repoRoot: this.#repoRoot });
-		} else {
-			rendered = issue.title;
-			if (issue.body) {
-				rendered += `\n\n${issue.body}`;
-			}
+	async #renderUserPrompt(issue: Pick<Issue, "id" | "title" | "body">, rootId: string, step: number) {
+		let rendered = issue.title ?? "";
+		if (issue.body) {
+			rendered += `\n\n${issue.body}`;
 		}
 
-		rendered += `\n\n## Inshallah Context\nRoot: ${rootId}\nAssigned issue: ${issue.id}\n`;
+		const runId = currentRunId();
+		rendered += `\n\n## Mu Run Context\nRoot: ${rootId}\nAssigned issue: ${issue.id}\nStep: ${step}\n`;
+		if (runId) {
+			rendered += `Run: ${runId}\n`;
+		}
 		return rendered;
 	}
 
 	async #executeBackend(
-		issue: Pick<Issue, "id" | "title" | "body">,
+		issue: Pick<Issue, "id" | "title" | "body" | "execution_spec">,
 		cfg: ResolvedConfig,
 		rootId: string,
+		step: number,
 		opts: { logSuffix?: string; onLine?: (line: string) => void } = {},
 	): Promise<{ exitCode: number; elapsedS: number }> {
+		const role: MuRole = parseMuRole(specRoleFromExecutionSpec(issue.execution_spec));
 		const logSuffix = opts.logSuffix ?? "";
-		const rendered = await this.#renderPrompt(issue, cfg.promptPath, rootId);
+		const rendered = await this.#renderUserPrompt(issue, rootId, step);
+		const systemPrompt = systemPromptForRole(role);
 
 		const { logsDir } = getStorePaths(this.#repoRoot);
 		await mkdir(logsDir, { recursive: true });
@@ -192,10 +157,10 @@ export class DagRunner {
 			source: "backend",
 			issueId: issue.id,
 			payload: {
+				role,
 				cli: cfg.cli,
 				model: cfg.model,
 				reasoning: cfg.reasoning,
-				prompt_path: cfg.promptPath,
 				tee_path: relPath(this.#repoRoot, teePath),
 				log_suffix: logSuffix,
 			},
@@ -204,12 +169,13 @@ export class DagRunner {
 		const t0 = Date.now();
 		const exitCode = await this.#backend.run({
 			issueId: issue.id,
+			role,
+			systemPrompt,
 			prompt: rendered,
 			model: cfg.model,
 			thinking: cfg.reasoning,
 			cwd: this.#repoRoot,
 			cli: cfg.cli,
-			promptPath: cfg.promptPath,
 			logSuffix,
 			teePath,
 			onLine: opts.onLine,
@@ -231,87 +197,9 @@ export class DagRunner {
 		return { exitCode, elapsedS };
 	}
 
-	#hasReviewer(): boolean {
-		return existsSync(join(this.#repoRoot, ".mu", "roles", "reviewer.md"));
-	}
-
-	async #maybeReview(issue: Issue, rootId: string, step: number, hooks?: DagRunnerHooks): Promise<Issue> {
-		const issueId = issue.id;
-
-		// Guards.
-		if (issue.outcome !== "success") {
-			return issue;
-		}
-		if (!this.#hasReviewer()) {
-			return issue;
-		}
-
-		await this.#events.emit("dag.review.start", {
-			source: "dag_runner",
-			issueId,
-			payload: { root_id: rootId, step },
-		});
-
-		const reviewIssue: Issue = { ...issue, execution_spec: { role: "reviewer" } as any };
-		const cfg = await this.#resolveConfig(reviewIssue);
-		const logSuffix = "review";
-		const onBackendLine = hooks?.onBackendLine;
-		const { exitCode, elapsedS } = await this.#executeBackend(reviewIssue, cfg, rootId, {
-			logSuffix,
-			onLine: onBackendLine ? (line) => onBackendLine({ rootId, step, issueId, logSuffix, line }) : undefined,
-		});
-
-		await this.#forum.post(
-			`issue:${issueId}`,
-			JSON.stringify({
-				step,
-				issue_id: issueId,
-				title: issue.title,
-				exit_code: exitCode,
-				elapsed_s: roundTo(elapsedS, 1),
-				type: "review",
-			}),
-			"reviewer",
-		);
-
-		const updated = (await this.#store.get(issueId)) ?? issue;
-		await this.#events.emit("dag.review.end", {
-			source: "dag_runner",
-			issueId,
-			payload: { root_id: rootId, step, outcome: updated.outcome },
-		});
-
-		return updated;
-	}
-
 	async #reopenForOrchestration(issueId: string, opts: { reason: string; step: number }): Promise<void> {
 		const before = await this.#store.get(issueId);
 		if (!before) {
-			return;
-		}
-
-		// Reviewer is a runner-managed phase. Leaf issues with `role=reviewer` are not meant to be executable and can
-		// otherwise trigger failure -> reorchestrate loops. Treat them as no-op terminal leaves.
-		const beforeRole = specRoleFromExecutionSpec(before.execution_spec);
-		if (beforeRole === "reviewer") {
-			const healed = await this.#store.update(issueId, { status: "closed", outcome: "skipped" });
-			await this.#events.emit("dag.reorchestrate.skip_reviewer_leaf", {
-				source: "dag_runner",
-				issueId,
-				payload: { reason: opts.reason, step: opts.step, previous_outcome: before.outcome },
-			});
-			await this.#forum.post(
-				`issue:${issueId}`,
-				JSON.stringify({
-					step: opts.step,
-					issue_id: issueId,
-					title: healed.title ?? "",
-					type: "skip-reviewer-leaf",
-					reason: opts.reason,
-					note: "leaf issue has execution_spec.role=reviewer; review is handled automatically by the runner",
-				}),
-				"orchestrator",
-			);
 			return;
 		}
 
@@ -384,111 +272,7 @@ export class DagRunner {
 		return true;
 	}
 
-	async #collapseReview(issue: Issue, rootId: string, step: number, hooks?: DagRunnerHooks): Promise<void> {
-		const issueId = issue.id;
-
-		await this.#events.emit("dag.collapse_review.start", {
-			source: "dag_runner",
-			issueId,
-			payload: { root_id: rootId, step },
-		});
-
-		const kids = await this.#store.children(issueId);
-		const lines: string[] = [];
-		for (const kid of kids) {
-			lines.push(`- [${kid.outcome ?? "?"}] ${kid.id}: ${kid.title}`);
-		}
-		const childrenSummary = lines.join("\n");
-
-		const originalBody = issue.body || "";
-		const collapsePrompt =
-			`# Collapse Review\n\n` +
-			`## Original Specification\n\n` +
-			`**${issue.title}**\n\n` +
-			`${originalBody}\n\n` +
-			`## Children Outcomes\n\n` +
-			`${childrenSummary}\n\n` +
-			`## Instructions\n\n` +
-			`All children of this issue have completed. Review whether their aggregate work satisfies the original specification above.\n\n` +
-			`If satisfied: no action needed (the issue will be marked successful).\n\n` +
-			`If NOT satisfied: mark the parent as needing work by running:\n\n` +
-			`  \`mu issues update ${issueId} --outcome needs_work\`\n\n` +
-			`Then explain the gaps in the forum topic (issue:${issueId}).\n\n` +
-			`Do NOT create child issues yourself; the orchestrator will re-expand the issue into remediation children.\n`;
-
-		const reviewIssue: Issue = {
-			...issue,
-			title: `Collapse review: ${issue.title}`,
-			body: collapsePrompt,
-			execution_spec: { role: "reviewer" } as any,
-		};
-
-		const cfg = await this.#resolveConfig(reviewIssue);
-		const logSuffix = "collapse-review";
-		const onBackendLine = hooks?.onBackendLine;
-		const { exitCode, elapsedS } = await this.#executeBackend(reviewIssue, { ...cfg, promptPath: null }, rootId, {
-			logSuffix,
-			onLine: onBackendLine ? (line) => onBackendLine({ rootId, step, issueId, logSuffix, line }) : undefined,
-		});
-
-		await this.#forum.post(
-			`issue:${issueId}`,
-			JSON.stringify({
-				step,
-				issue_id: issueId,
-				title: issue.title,
-				exit_code: exitCode,
-				elapsed_s: roundTo(elapsedS, 1),
-				type: "collapse-review",
-			}),
-			"reviewer",
-		);
-
-		const newKids = await this.#store.children(issueId);
-		const openKids = newKids.filter((k) => k.status !== "closed");
-		const updated = (await this.#store.get(issueId)) ?? issue;
-
-		if (updated.status !== "closed") {
-			await this.#events.emit("dag.collapse_review.end", {
-				source: "dag_runner",
-				issueId,
-				payload: { root_id: rootId, step, status: updated.status, outcome: updated.outcome },
-			});
-			return;
-		}
-		if (updated.outcome && this.#reorchestrateOutcomes.has(updated.outcome)) {
-			await this.#events.emit("dag.collapse_review.end", {
-				source: "dag_runner",
-				issueId,
-				payload: { root_id: rootId, step, status: updated.status, outcome: updated.outcome },
-			});
-			return;
-		}
-		if (openKids.length > 0) {
-			await this.#events.emit("dag.collapse_review.end", {
-				source: "dag_runner",
-				issueId,
-				payload: {
-					root_id: rootId,
-					step,
-					status: updated.status,
-					outcome: updated.outcome,
-					open_kids: openKids.length,
-				},
-			});
-			return;
-		}
-
-		await this.#store.update(issueId, { outcome: "success" });
-		await this.#events.emit("dag.collapse_review.end", {
-			source: "dag_runner",
-			issueId,
-			payload: { root_id: rootId, step, outcome: "success" },
-		});
-	}
-
 	async run(rootId: string, maxSteps: number = 20, opts: DagRunnerRunOpts = {}): Promise<DagResult> {
-		const review = opts.review ?? true;
 		const hooks = opts.hooks;
 		const runId = currentRunId() ?? newRunId();
 
@@ -496,7 +280,7 @@ export class DagRunner {
 			await this.#events.emit("dag.run.start", {
 				source: "dag_runner",
 				issueId: rootId,
-				payload: { root_id: rootId, max_steps: maxSteps, review },
+				payload: { root_id: rootId, max_steps: maxSteps },
 			});
 
 			let final: DagResult | null = null;
@@ -506,15 +290,6 @@ export class DagRunner {
 
 					// 0. Unstick: failures / needs_work trigger re-orchestration.
 					await this.#maybeUnstick(rootId, step);
-
-					// 1. Collapse review (before termination check).
-					if (review && this.#hasReviewer()) {
-						const collapsible = await this.#store.collapsible(rootId);
-						if (collapsible.length > 0) {
-							await this.#collapseReview(collapsible[0]!, rootId, step, hooks);
-							continue;
-						}
-					}
 
 					// 2. Check termination.
 					const v: ValidationResult = await this.#store.validate(rootId);
@@ -557,7 +332,7 @@ export class DagRunner {
 						const cfg = await this.#resolveConfig(repairIssue);
 						const logSuffix = "unstick";
 						const onBackendLine = hooks?.onBackendLine;
-						const { exitCode, elapsedS } = await this.#executeBackend(repairIssue, cfg, rootId, {
+						const { exitCode, elapsedS } = await this.#executeBackend(repairIssue, cfg, rootId, step, {
 							logSuffix,
 							onLine: onBackendLine
 								? (line) => onBackendLine({ rootId, step, issueId: rootId, logSuffix, line })
@@ -588,6 +363,8 @@ export class DagRunner {
 
 					const issue = candidates[0]!;
 					const issueId = issue.id;
+					// Validate role early so we don't claim/work an unsupported leaf.
+					const role = parseMuRole(specRoleFromExecutionSpec(issue.execution_spec));
 
 					await this.#events.emit("dag.step.start", {
 						source: "dag_runner",
@@ -596,11 +373,6 @@ export class DagRunner {
 					});
 
 					if (hooks?.onStepStart) {
-						const specRole =
-							typeof (issue.execution_spec as any)?.role === "string"
-								? ((issue.execution_spec as any).role as string)
-								: null;
-						const role = specRole ?? "orchestrator";
 						await hooks.onStepStart({ rootId, step, issueId, role, title: issue.title ?? "" });
 					}
 
@@ -612,60 +384,11 @@ export class DagRunner {
 					});
 					await this.#store.claim(issueId);
 
-					// Reviewer is a runner-managed phase (see #maybeReview / #collapseReview). If the orchestrator created
-					// an explicit leaf reviewer issue, auto-close it to avoid failure -> reorchestrate loops.
-					const issueRole = specRoleFromExecutionSpec(issue.execution_spec);
-					if (issueRole === "reviewer") {
-						const updated = await this.#store.close(issueId, "skipped");
-
-						await this.#forum.post(
-							`issue:${issueId}`,
-							JSON.stringify({
-								step,
-								issue_id: issueId,
-								title: issue.title,
-								exit_code: 0,
-								outcome: updated.outcome,
-								elapsed_s: 0,
-								type: "skip-reviewer-leaf",
-								note: "leaf issue has execution_spec.role=reviewer; review is handled automatically by the runner",
-							}),
-							"orchestrator",
-						);
-
-						if (hooks?.onStepEnd) {
-							await hooks.onStepEnd({
-								rootId,
-								step,
-								issueId,
-								exitCode: 0,
-								elapsedS: 0,
-								outcome: updated.outcome ?? null,
-							});
-						}
-
-						await this.#events.emit("dag.step.end", {
-							source: "dag_runner",
-							issueId,
-							payload: {
-								root_id: rootId,
-								step,
-								exit_code: 0,
-								elapsed_s: 0,
-								outcome: updated.outcome,
-								skipped: true,
-								skipped_reason: "role=reviewer leaf",
-							},
-						});
-
-						continue;
-					}
-
 					// 4. Route + 5. Render + 6. Execute.
 					const cfg = await this.#resolveConfig(issue);
 					const logSuffix = "";
 					const onBackendLine = hooks?.onBackendLine;
-					const { exitCode, elapsedS } = await this.#executeBackend(issue, cfg, rootId, {
+					const { exitCode, elapsedS } = await this.#executeBackend(issue, cfg, rootId, step, {
 						logSuffix,
 						onLine: onBackendLine
 							? (line) => onBackendLine({ rootId, step, issueId, logSuffix, line })
@@ -681,11 +404,6 @@ export class DagRunner {
 
 					if (updated.status !== "closed") {
 						updated = await this.#store.close(issueId, "failure");
-					}
-
-					// 7b. Review phase.
-					if (review && updated.status === "closed") {
-						updated = await this.#maybeReview(updated, rootId, step, hooks);
 					}
 
 					// 8. Log to forum.
