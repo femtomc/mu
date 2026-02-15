@@ -1,22 +1,24 @@
 {
-	"name": "@femtomc/mu-orchestrator",
-	"version": "26.2.18",
-	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"default": "./dist/index.js"
-		}
-	},
-	"files": ["dist/**"],
-	"dependencies": {
-		"@femtomc/mu-core": "26.2.18",
-		"@femtomc/mu-forum": "26.2.18",
-		"@femtomc/mu-issue": "26.2.18",
-		"@mariozechner/pi-agent-core": "^0.52.12",
-		"@mariozechner/pi-coding-agent": "^0.52.12",
-		"@mariozechner/pi-ai": "^0.52.12"
-	}
+  "name": "@femtomc/mu-orchestrator",
+  "version": "26.2.19",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**"
+  ],
+  "dependencies": {
+    "@femtomc/mu-core": "26.2.19",
+    "@femtomc/mu-forum": "26.2.19",
+    "@femtomc/mu-issue": "26.2.19",
+    "@mariozechner/pi-agent-core": "^0.52.12",
+    "@mariozechner/pi-coding-agent": "^0.52.12",
+    "@mariozechner/pi-ai": "^0.52.12"
+  }
 }

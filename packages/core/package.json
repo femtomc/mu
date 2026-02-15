@@ -1,25 +1,27 @@
 {
-	"name": "@femtomc/mu-core",
-	"version": "26.2.18",
-	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"default": "./dist/index.js"
-		},
-		"./browser": {
-			"types": "./dist/browser/index.d.ts",
-			"default": "./dist/browser/index.js"
-		},
-		"./node": {
-			"types": "./dist/node/index.d.ts",
-			"default": "./dist/node/index.js"
-		}
-	},
-	"files": ["dist/**"],
-	"dependencies": {
-		"zod": "^4.1.9"
-	}
+  "name": "@femtomc/mu-core",
+  "version": "26.2.19",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "default": "./dist/browser/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    }
+  },
+  "files": [
+    "dist/**"
+  ],
+  "dependencies": {
+    "zod": "^4.1.9"
+  }
 }
