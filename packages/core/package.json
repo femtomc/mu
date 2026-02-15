@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-core",
-  "version": "26.2.20",
+  "version": "26.2.21",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

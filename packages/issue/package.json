@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-issue",
-  "version": "26.2.20",
+  "version": "26.2.21",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,6 +14,6 @@
     "dist/**"
   ],
   "dependencies": {
-    "@femtomc/mu-core": "26.2.20"
+    "@femtomc/mu-core": "26.2.21"
   }
 }
