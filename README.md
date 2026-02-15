@@ -1,13 +1,14 @@
 # mu
 
-Agent work orchestration as a flat-file SDK.
+**Keep-it-simple agent work orchestration.**
 
-mu gives AI agents (and humans) three primitives for structured work:
+mu is an agent orchestration simple which aspires to be as simple and minimal as possible (and not an ounce more). 
+It provides AI agents (and humans) with three primitives for structured work:
 
 - **Issue DAG** — decompose work into issues with parent/child and blocking
   dependencies. The DAG tracks status, priority, outcomes, and execution specs.
 - **Forum** — topic-keyed message log for communication between agents and humans.
-  Threads are cheap: create one per issue, per research topic, etc.
+  Threads are cheap: one per issue, per research topic, etc.
 - **Event log** — append-only audit trail. Every issue state change and forum post
   emits a structured event with run correlation IDs.
 
