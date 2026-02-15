@@ -10,6 +10,7 @@ export type BackendRunOpts = {
 	role: MuRole;
 	systemPrompt: string;
 	prompt: string;
+	provider: string;
 	model: string;
 	thinking: string;
 	cwd: string;

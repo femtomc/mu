@@ -10,6 +10,7 @@ export type ModelOverrides = {
 
 export type ResolvedModelConfig = {
 	cli: string;
+	provider: string;
 	model: string;
 	reasoning: string;
 };
@@ -59,9 +60,14 @@ function resolveExplicitModel(
 	reasoningOverride: string | undefined,
 	auth: AuthStorage,
 ): ResolvedModelConfig {
-	let fallback: Model<any> | undefined;
+	const providers = getProviders();
+	if (providerConstraint && !providers.includes(providerConstraint as any)) {
+		throw new Error(`Unknown provider "${providerConstraint}". Available: ${providers.join(", ")}`);
+	}
 
-	for (const provider of getProviders()) {
+	let fallback: { provider: string; model: Model<any> } | undefined;
+
+	for (const provider of providers) {
 		if (providerConstraint && provider !== providerConstraint) continue;
 
 		const models = getModels(provider);
@@ -69,15 +75,20 @@ function resolveExplicitModel(
 		if (!match) continue;
 
 		if (auth.hasAuth(provider)) {
-			return { cli: "pi", model: match.id, reasoning: pickReasoning(match, reasoningOverride) };
+			return { cli: "pi", provider, model: match.id, reasoning: pickReasoning(match, reasoningOverride) };
 		}
 		if (!fallback) {
-			fallback = match;
+			fallback = { provider, model: match };
 		}
 	}
 
 	if (fallback) {
-		return { cli: "pi", model: fallback.id, reasoning: pickReasoning(fallback, reasoningOverride) };
+		return {
+			cli: "pi",
+			provider: fallback.provider,
+			model: fallback.model.id,
+			reasoning: pickReasoning(fallback.model, reasoningOverride),
+		};
 	}
 
 	const scope = providerConstraint ? ` in provider "${providerConstraint}"` : "";
@@ -104,21 +115,28 @@ function resolveFromProvider(
 	}
 
 	const best = [...models].sort((a, b) => rankModel(b) - rankModel(a))[0]!;
-	return { cli: "pi", model: best.id, reasoning: pickReasoning(best, reasoningOverride) };
+	return { cli: "pi", provider: providerId, model: best.id, reasoning: pickReasoning(best, reasoningOverride) };
 }
 
 function autoDetect(reasoningOverride: string | undefined, auth: AuthStorage): ResolvedModelConfig {
-	const authedModels: Model<any>[] = [];
+	const authedModels: Array<{ provider: string; model: Model<any> }> = [];
 
 	for (const provider of getProviders()) {
 		if (!auth.hasAuth(provider)) continue;
-		authedModels.push(...getModels(provider));
+		for (const model of getModels(provider)) {
+			authedModels.push({ provider, model });
+		}
 	}
 
 	if (authedModels.length === 0) {
 		throw new Error("No authenticated providers. Run `mu login` to authenticate.");
 	}
 
-	const best = authedModels.sort((a, b) => rankModel(b) - rankModel(a))[0]!;
-	return { cli: "pi", model: best.id, reasoning: pickReasoning(best, reasoningOverride) };
+	const best = authedModels.sort((a, b) => rankModel(b.model) - rankModel(a.model))[0]!;
+	return {
+		cli: "pi",
+		provider: best.provider,
+		model: best.model.id,
+		reasoning: pickReasoning(best.model, reasoningOverride),
+	};
 }

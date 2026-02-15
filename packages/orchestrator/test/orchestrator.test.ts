@@ -5,10 +5,28 @@ import { basename, join } from "node:path";
 import { FsJsonlStore, fsEventLog, getStorePaths } from "@femtomc/mu-core/node";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
+import { getModels, getProviders } from "@mariozechner/pi-ai";
 import type { BackendRunner, BackendRunOpts } from "@femtomc/mu-orchestrator";
 import { createMuResourceLoader, DagRunner, PiStreamRenderer, piStreamHasError, resolveModelConfig } from "@femtomc/mu-orchestrator";
 
 const TEST_MODEL_OVERRIDES = { model: "gpt-5.3-codex" };
+
+function pickProviderModel(): { provider: string; modelId: string } {
+	const providers = getProviders();
+	const preferredProvider = "openai-codex";
+	const ordered = providers.includes(preferredProvider as any)
+		? [preferredProvider, ...providers.filter((p) => p !== preferredProvider)]
+		: providers;
+
+	for (const provider of ordered) {
+		const models = getModels(provider as any);
+		if (models.length === 0) continue;
+		const preferredModel = models.find((m) => m.id === "gpt-5.3-codex")?.id;
+		return { provider, modelId: preferredModel ?? models[0]!.id };
+	}
+
+	throw new Error("No providers with models in pi-ai registry.");
+}
 
 async function mkTempRepo(): Promise<{ repoRoot: string; store: IssueStore; forum: ForumStore }> {
 	const repoRoot = await mkdtemp(join(tmpdir(), "mu-orchestrator-"));
@@ -177,6 +195,32 @@ describe("DagRunner", () => {
 		expect(run.prompt).not.toContain("ORCH_TEMPLATE_MARKER");
 	});
 
+	test("threads resolved provider through to backend opts", async () => {
+		const { repoRoot, store, forum } = await mkTempRepo();
+
+		const root = await store.create("root", { tags: [] });
+		await store.update(root.id, { status: "closed", outcome: "expanded" });
+
+		const leaf = await store.create("leaf", { tags: ["node:agent"], executionSpec: { role: "worker" } });
+		await store.add_dep(leaf.id, "parent", root.id);
+
+		const { provider, modelId } = pickProviderModel();
+
+		const backend = new StubBackend();
+		backend.on(leaf.id, async () => {
+			await store.close(leaf.id, "success");
+			return 0;
+		});
+
+		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: { model: modelId, provider } });
+		await runner.run(root.id, 1);
+
+		expect(backend.runs.length).toBe(1);
+		const run = backend.runs[0]!;
+		expect(run.provider).toBe(provider);
+		expect(run.model).toBe(modelId);
+	});
+
 	test("defaults role to orchestrator when execution_spec.role is missing", async () => {
 		const { repoRoot, store, forum } = await mkTempRepo();
 
@@ -305,8 +349,23 @@ describe("resolveModelConfig", () => {
 	test("resolves explicit model", () => {
 		const cfg = resolveModelConfig({ model: "gpt-5.3-codex" });
 		expect(cfg.cli).toBe("pi");
+		expect(typeof cfg.provider).toBe("string");
 		expect(cfg.model).toBe("gpt-5.3-codex");
 		expect(typeof cfg.reasoning).toBe("string");
+	});
+
+	test("resolves provider-constrained model and preserves provider", () => {
+		const { provider, modelId } = pickProviderModel();
+		const cfg = resolveModelConfig({ model: modelId, provider });
+		expect(cfg.provider).toBe(provider);
+		expect(cfg.model).toBe(modelId);
+	});
+
+	test("resolves provider-only override and includes provider", () => {
+		const { provider } = pickProviderModel();
+		const authStub = { hasAuth: (p: string) => p === provider } as any;
+		const cfg = resolveModelConfig({ provider }, authStub);
+		expect(cfg.provider).toBe(provider);
 	});
 
 	test("throws for unknown model", () => {

@@ -150,6 +150,7 @@ export class DagRunner {
 			payload: {
 				role,
 				cli: cfg.cli,
+				provider: cfg.provider,
 				model: cfg.model,
 				reasoning: cfg.reasoning,
 				tee_path: relPath(this.#repoRoot, teePath),
@@ -163,6 +164,7 @@ export class DagRunner {
 			role,
 			systemPrompt,
 			prompt: rendered,
+			provider: cfg.provider,
 			model: cfg.model,
 			thinking: cfg.reasoning,
 			cwd: this.#repoRoot,

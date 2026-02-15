@@ -28,7 +28,17 @@ import { piStreamHasError } from "./pi_backend.js";
  * When multiple providers offer the same model ID, prefer providers that
  * have auth configured (env var, OAuth, or stored API key).
  */
-function resolveModel(modelId: string, authStorage: AuthStorage): Model<any> | undefined {
+function resolveModel(modelId: string, authStorage: AuthStorage, providerConstraint?: string): Model<any> | undefined {
+	if (providerConstraint) {
+		const providers = getProviders();
+		if (!providers.includes(providerConstraint as any)) {
+			throw new Error(`Unknown provider "${providerConstraint}". Available: ${providers.join(", ")}`);
+		}
+
+		const models = getModels(providerConstraint as any);
+		return models.find((m) => m.id === modelId);
+	}
+
 	let fallback: Model<any> | undefined;
 
 	for (const provider of getProviders()) {
@@ -58,11 +68,10 @@ function resolveModel(modelId: string, authStorage: AuthStorage): Model<any> | u
 export class PiSdkBackend implements BackendRunner {
 	async run(opts: BackendRunOpts): Promise<number> {
 		const authStorage = new AuthStorage();
-		const model = resolveModel(opts.model, authStorage);
+		const model = resolveModel(opts.model, authStorage, opts.provider);
 		if (!model) {
-			throw new Error(
-				`Model "${opts.model}" not found in pi-ai registry. ` + `Available providers: ${getProviders().join(", ")}`,
-			);
+			const scope = opts.provider ? ` in provider "${opts.provider}"` : "";
+			throw new Error(`Model "${opts.model}" not found${scope} in pi-ai registry.`);
 		}
 
 		const settingsManager = SettingsManager.inMemory();
