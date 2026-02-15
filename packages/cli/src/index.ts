@@ -7,7 +7,7 @@ import type { ForumTopicSummary } from "@mu/forum";
 import { ForumStore } from "@mu/forum";
 import { IssueStore } from "@mu/issue";
 import { DagRunner, extractDescription, splitFrontmatter } from "@mu/orchestrator";
-import { DEFAULT_ORCHESTRATOR_MD, DEFAULT_REVIEWER_ROLE_MD, DEFAULT_WORKER_ROLE_MD } from "./templates";
+import { DEFAULT_ORCHESTRATOR_MD, DEFAULT_REVIEWER_ROLE_MD, DEFAULT_WORKER_ROLE_MD } from "./templates.js";
 
 export type RunResult = {
 	stdout: string;

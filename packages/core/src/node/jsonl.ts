@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, open, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join, parse as parsePath } from "node:path";
 import { createInterface } from "node:readline";
-import type { JsonlStore } from "../persistence";
+import type { JsonlStore } from "../persistence.js";
 
 function tmpPathFor(path: string): string {
 	const parsed = parsePath(path);

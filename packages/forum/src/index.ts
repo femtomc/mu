@@ -1,2 +1,2 @@
-export type { ForumTopicSummary } from "./forum_store";
-export { ForumStore } from "./forum_store";
+export type { ForumTopicSummary } from "./forum_store.js";
+export { ForumStore } from "./forum_store.js";

@@ -22,8 +22,14 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      - name: Build
+        run: bun run build
+
       - name: Test
         run: bun test
 
       - name: Typecheck
         run: bun run typecheck
+
+      - name: Pack Smoke
+        run: bun run pack:smoke

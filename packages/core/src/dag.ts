@@ -1,4 +1,4 @@
-import type { Issue } from "./spec";
+import type { Issue } from "./spec.js";
 
 export type ValidationResult = {
 	is_final: boolean;

@@ -1,4 +1,4 @@
-import type { JsonlStore } from "./persistence";
+import type { JsonlStore } from "./persistence.js";
 
 export const EVENT_VERSION = 1;
 

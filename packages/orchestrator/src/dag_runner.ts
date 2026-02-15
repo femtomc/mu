@@ -13,9 +13,9 @@ import {
 } from "@mu/core/node";
 import type { ForumStore } from "@mu/forum";
 import type { IssueStore } from "@mu/issue";
-import type { BackendRunner } from "./pi_backend";
-import { PiCliBackend } from "./pi_backend";
-import { readPromptMeta, renderPromptTemplate } from "./prompt";
+import type { BackendRunner } from "./pi_backend.js";
+import { PiCliBackend } from "./pi_backend.js";
+import { readPromptMeta, renderPromptTemplate } from "./prompt.js";
 
 export type DagResult = {
 	status: "root_final" | "no_executable_leaf" | "max_steps_exhausted" | "error";

@@ -1,4 +1,4 @@
-import type { JsonlStore } from "../persistence";
+import type { JsonlStore } from "../persistence.js";
 
 function invariant(cond: unknown, msg: string): asserts cond {
 	if (!cond) {

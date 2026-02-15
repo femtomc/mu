@@ -4,15 +4,21 @@
 	"private": true,
 	"type": "module",
 	"bin": {
-		"mu": "./src/cli.ts"
+		"mu": "./dist/cli.js"
 	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
 	"exports": {
-		".": "./src/index.ts"
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
 	},
+	"files": ["dist/**"],
 	"dependencies": {
-		"@mu/core": "workspace:*",
-		"@mu/forum": "workspace:*",
-		"@mu/issue": "workspace:*",
-		"@mu/orchestrator": "workspace:*"
+		"@mu/core": "0.0.0",
+		"@mu/forum": "0.0.0",
+		"@mu/issue": "0.0.0",
+		"@mu/orchestrator": "0.0.0"
 	}
 }

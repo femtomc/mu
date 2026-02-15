@@ -1,5 +1,4 @@
-export type { IndexedDbJsonlStoreOpts } from "./idb";
-export { IndexedDbJsonlStore } from "./idb";
-export type { LocalStorageJsonlStoreOpts } from "./local_storage";
-export { LocalStorageJsonlStore } from "./local_storage";
-
+export type { IndexedDbJsonlStoreOpts } from "./idb.js";
+export { IndexedDbJsonlStore } from "./idb.js";
+export type { LocalStorageJsonlStoreOpts } from "./local_storage.js";
+export { LocalStorageJsonlStore } from "./local_storage.js";

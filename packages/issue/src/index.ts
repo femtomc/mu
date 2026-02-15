@@ -1,2 +1,2 @@
-export type { CreateIssueOpts, ListIssueOpts } from "./issue_store";
-export { IssueStore } from "./issue_store";
+export type { CreateIssueOpts, ListIssueOpts } from "./issue_store.js";
+export { IssueStore } from "./issue_store.js";

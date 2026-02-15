@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import type { ExecutionSpec } from "../spec";
+import type { ExecutionSpec } from "../spec.js";
 
 function emptyStringToNull(value: unknown): string | null {
 	return typeof value === "string" && value.length > 0 ? value : null;

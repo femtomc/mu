@@ -8,7 +8,7 @@ dist/
 .DS_Store
 .env
 .env.*
-.inshallah/
+.mu/
 
 # editors
 .vscode/

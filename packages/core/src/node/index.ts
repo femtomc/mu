@@ -1,13 +1,13 @@
-export { appendJsonl, FsJsonlStore, readJsonl, streamJsonl, writeJsonl } from "./jsonl";
-export { currentRunId, runContext } from "./run_context";
-export { executionSpecFromDict } from "./spec";
-export type { StorePaths } from "./store";
-export { findRepoRoot, getStorePaths } from "./store";
+export { appendJsonl, FsJsonlStore, readJsonl, streamJsonl, writeJsonl } from "./jsonl.js";
+export { currentRunId, runContext } from "./run_context.js";
+export { executionSpecFromDict } from "./spec.js";
+export type { StorePaths } from "./store.js";
+export { findRepoRoot, getStorePaths } from "./store.js";
 
-import { EventLog, JsonlEventSink } from "../events";
-import { FsJsonlStore } from "./jsonl";
-import { currentRunId } from "./run_context";
-import { getStorePaths } from "./store";
+import { EventLog, JsonlEventSink } from "../events.js";
+import { FsJsonlStore } from "./jsonl.js";
+import { currentRunId } from "./run_context.js";
+import { getStorePaths } from "./store.js";
 
 export function fsEventLog(path: string): EventLog {
 	return new EventLog(new JsonlEventSink(new FsJsonlStore(path)), { runIdProvider: currentRunId });
@@ -17,7 +17,7 @@ export function fsEventLogFromRepoRoot(repoRoot: string): EventLog {
 	return fsEventLog(getStorePaths(repoRoot).eventsPath);
 }
 
-export * from "../dag";
+export * from "../dag.js";
 // Re-export the node-free surface so node code can import from a single place.
 export {
 	EVENT_VERSION,
@@ -27,7 +27,7 @@ export {
 	JsonlEventSink,
 	NullEventSink,
 	type RunIdProvider,
-} from "../events";
-export { newRunId, nowTs, nowTsMs, randomHex, shortId } from "../ids";
-export { InMemoryJsonlStore, type JsonlStore } from "../persistence";
-export * from "../spec";
+} from "../events.js";
+export { newRunId, nowTs, nowTsMs, randomHex, shortId } from "../ids.js";
+export { InMemoryJsonlStore, type JsonlStore } from "../persistence.js";
+export * from "../spec.js";
