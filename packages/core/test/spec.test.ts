@@ -27,5 +27,31 @@ describe("executionSpecFromDict", () => {
 		const spec = executionSpecFromDict({ role: "" });
 		expect(spec.role).toBeNull();
 	});
+
+	test("review defaults to false", () => {
+		const spec = executionSpecFromDict({ role: "worker" });
+		expect(spec.review).toBe(false);
+	});
+
+	test("review can be set to true", () => {
+		const spec = executionSpecFromDict({ role: "worker", review: true });
+		expect(spec.review).toBe(true);
+	});
+
+	test("review can be explicitly set to false", () => {
+		const spec = executionSpecFromDict({ role: "worker", review: false });
+		expect(spec.review).toBe(false);
+	});
+
+	test("non-boolean review values default to false", () => {
+		const spec1 = executionSpecFromDict({ role: "worker", review: "yes" });
+		expect(spec1.review).toBe(false);
+
+		const spec2 = executionSpecFromDict({ role: "worker", review: 1 });
+		expect(spec2.review).toBe(false);
+
+		const spec3 = executionSpecFromDict({ role: "worker", review: null });
+		expect(spec3.review).toBe(false);
+	});
 });
 

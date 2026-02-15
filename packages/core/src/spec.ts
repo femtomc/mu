@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export type ExecutionSpec = {
 	role: string | null;
+	review?: boolean;
 };
 
 export const DepSchema = z
