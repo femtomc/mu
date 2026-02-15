@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu",
-	"version": "26.2.16",
+	"version": "26.2.17",
 	"type": "module",
 	"bin": {
 		"mu": "./dist/cli.js"
@@ -13,7 +13,9 @@
 			"default": "./dist/index.js"
 		}
 	},
-	"files": ["dist/**"],
+	"files": [
+		"dist/**"
+	],
 	"dependencies": {
 		"@femtomc/mu-core": "26.2.16",
 		"@femtomc/mu-forum": "26.2.16",
