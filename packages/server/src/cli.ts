@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { createServer } from "./server.js";
 import { findRepoRoot } from "@femtomc/mu-core/node";

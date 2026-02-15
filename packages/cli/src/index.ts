@@ -1677,17 +1677,13 @@ async function cmdLogin(argv: string[]): Promise<RunResult> {
 					process.stderr.write(`${info.instructions}\n\n`);
 				}
 				// Try to open browser automatically.
-				const open = (cmd: string, args: string[]) => {
-					try {
-						const { spawn } = require("node:child_process");
-						spawn(cmd, args, { detached: true, stdio: "ignore" }).unref();
-					} catch {}
-				};
-				if (process.platform === "darwin") {
-					open("open", [info.url]);
-				} else if (process.platform === "linux") {
-					open("xdg-open", [info.url]);
-				}
+				try {
+					if (process.platform === "darwin") {
+						Bun.spawn(["open", info.url], { stdout: "ignore", stderr: "ignore" });
+					} else if (process.platform === "linux") {
+						Bun.spawn(["xdg-open", info.url], { stdout: "ignore", stderr: "ignore" });
+					}
+				} catch {}
 			},
 			onPrompt: async (prompt) => {
 				const msg = prompt.placeholder ? `${prompt.message} [${prompt.placeholder}]: ` : `${prompt.message}: `;
@@ -1735,14 +1731,14 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const { value: portRaw, rest: argv0 } = getFlagValue(argv, "--port");
 	const { value: apiPortRaw, rest: argv1 } = getFlagValue(argv0, "--api-port");
 	const { present: noOpen, rest } = popFlag(argv1, "--no-open");
-	
+
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { recovery: ["mu serve --help"] });
 	}
 
 	const webPort = portRaw ? ensureInt(portRaw, { name: "--port", min: 1, max: 65535 }) : 5173;
 	const apiPort = apiPortRaw ? ensureInt(apiPortRaw, { name: "--api-port", min: 1, max: 65535 }) : 3000;
-	
+
 	if (webPort == null) {
 		return jsonError("port must be 1-65535", { recovery: ["mu serve --port 5173"] });
 	}
@@ -1751,70 +1747,16 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 
 	const io = ctx.io;
-	
-	// Lazy import server and child_process
+
+	// Lazy-import server to keep "mu status/issues/forum" fast.
 	const { createServer } = await import("../../server/dist/index.js");
-	const { spawn } = await import("node:child_process");
-	const { createServer: createHttpServer } = await import("node:http");
-	const { join } = await import("node:path");
-	const { fileURLToPath } = await import("node:url");
-	
+
 	// Start the API server
-	const server = createServer({ repoRoot: ctx.repoRoot, port: apiPort });
+	const serverConfig = createServer({ repoRoot: ctx.repoRoot, port: apiPort });
 	io?.stderr?.write(`Starting API server on port ${apiPort}...\n`);
-	
-	// Use Bun.serve if available, otherwise fall back to Node's http
-	let apiServer: any;
-	if (typeof Bun !== "undefined" && Bun.serve) {
-		apiServer = Bun.serve(server);
-	} else {
-		// Create Node.js compatible server
-		const nodeServer = createHttpServer(async (req, res) => {
-			try {
-				// Convert Node request to Web API Request
-				const url = `http://${req.headers.host}${req.url}`;
-				const headers = new Headers();
-				for (const [key, value] of Object.entries(req.headers as Record<string, string | string[] | undefined>)) {
-					if (value) headers.set(key, Array.isArray(value) ? value[0] : String(value));
-				}
-				
-				let body: Buffer | undefined;
-				if (req.method !== "GET" && req.method !== "HEAD") {
-					body = await new Promise<Buffer>((resolve) => {
-						const chunks: Buffer[] = [];
-						req.on("data", (chunk) => chunks.push(chunk));
-						req.on("end", () => resolve(Buffer.concat(chunks)));
-					});
-				}
-				
-				const request = new Request(url, {
-					method: req.method,
-					headers,
-					body: body && body.length > 0 ? body : undefined,
-				});
-				
-				// Call the handler
-				const response = await server.fetch(request);
-				
-				// Convert Response back to Node response
-				res.statusCode = response.status;
-				response.headers.forEach((value, key) => {
-					res.setHeader(key, value);
-				});
-				
-				const responseBody = await response.arrayBuffer();
-				res.end(Buffer.from(responseBody));
-			} catch (err) {
-				console.error("Server error:", err);
-				res.statusCode = 500;
-				res.end(JSON.stringify({ error: "Internal server error" }));
-			}
-		});
-		
-		nodeServer.listen(apiPort, "0.0.0.0");
-		apiServer = nodeServer;
-	}
-	
+
+	const apiServer = Bun.serve(serverConfig);
+
 	io?.stderr?.write(`API server running at http://localhost:${apiPort}\n`);
 
 	// Check if we're in a headless environment
@@ -1823,87 +1765,87 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 	// Start the web UI (development mode using vite)
 	io?.stderr?.write(`Starting web UI on port ${webPort}...\n`);
-	
+
 	// Get the web package directory
-	const __dirname = fileURLToPath(new URL(".", import.meta.url));
+	const __dirname = new URL(".", import.meta.url).pathname;
 	const webDir = join(__dirname, "..", "..", "web");
-	
-	// Check if we have vite available
-	const viteProcess = spawn("npx", ["vite", "--host", "127.0.0.1", "--port", String(webPort)], {
+
+	const viteProcess = Bun.spawn(["bunx", "vite", "--host", "127.0.0.1", "--port", String(webPort)], {
 		cwd: webDir,
 		env: {
 			...process.env,
 			VITE_API_URL: `http://localhost:${apiPort}`,
 		},
-		stdio: "pipe",
+		stdout: "pipe",
+		stderr: "pipe",
 	});
-	
+
 	// Handle vite output
-	viteProcess.stdout?.on("data", (data) => {
-		const text = data.toString();
-		// Only print vite's "ready" message and errors
-		if (text.includes("ready in") || text.includes("Local:")) {
-			io?.stderr?.write(text);
+	(async () => {
+		if (!viteProcess.stdout) return;
+		const reader = viteProcess.stdout.getReader();
+		const decoder = new TextDecoder();
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			const text = decoder.decode(value);
+			if (text.includes("ready in") || text.includes("Local:")) {
+				io?.stderr?.write(text);
+			}
 		}
-	});
-	
-	viteProcess.stderr?.on("data", (data) => {
-		io?.stderr?.write(data.toString());
-	});
-	
+	})();
+
+	(async () => {
+		if (!viteProcess.stderr) return;
+		const reader = viteProcess.stderr.getReader();
+		const decoder = new TextDecoder();
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			io?.stderr?.write(decoder.decode(value));
+		}
+	})();
+
 	// Handle process termination
 	const cleanup = () => {
 		viteProcess.kill();
-		if (apiServer && typeof apiServer.close === "function") {
-			apiServer.close();
-		} else if (apiServer && typeof apiServer.stop === "function") {
-			apiServer.stop();
-		}
+		apiServer.stop();
 		process.exit(0);
 	};
-	
+
 	process.on("SIGINT", cleanup);
 	process.on("SIGTERM", cleanup);
-	
+
 	// Wait a bit for vite to start
-	await new Promise(resolve => setTimeout(resolve, 2000));
-	
+	await new Promise((resolve) => setTimeout(resolve, 2000));
+
 	io?.stderr?.write(`\nWeb UI available at http://localhost:${webPort}\n`);
 	io?.stderr?.write(`API server at http://localhost:${apiPort}\n\n`);
-	
+
 	if (isHeadless) {
 		io?.stderr?.write("Headless environment detected. Use SSH port forwarding:\n");
-		io?.stderr?.write(`  ssh -L ${webPort}:localhost:${webPort} -L ${apiPort}:localhost:${apiPort} <your-server>\n\n`);
+		io?.stderr?.write(
+			`  ssh -L ${webPort}:localhost:${webPort} -L ${apiPort}:localhost:${apiPort} <your-server>\n\n`,
+		);
 	} else if (shouldOpen) {
 		// Try to open browser
 		const url = `http://localhost:${webPort}`;
-		let openCmd: string;
-		let openArgs: string[];
-		
-		if (process.platform === "darwin") {
-			openCmd = "open";
-			openArgs = [url];
-		} else if (process.platform === "win32") {
-			openCmd = "cmd";
-			openArgs = ["/c", "start", url];
-		} else {
-			// Linux
-			openCmd = "xdg-open";
-			openArgs = [url];
-		}
-		
 		try {
-			spawn(openCmd, openArgs, { detached: true, stdio: "ignore" }).unref();
+			if (process.platform === "darwin") {
+				Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
+			} else {
+				Bun.spawn(["xdg-open", url], { stdout: "ignore", stderr: "ignore" });
+			}
 			io?.stderr?.write(`Opening ${url} in browser...\n`);
 		} catch {
 			io?.stderr?.write(`Could not open browser. Please visit ${url}\n`);
 		}
 	}
-	
+
 	io?.stderr?.write("Press Ctrl+C to stop\n");
-	
+
 	// Keep the process running
 	await new Promise(() => {});
-	
+
 	return ok();
 }
