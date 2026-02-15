@@ -17,7 +17,6 @@ export const IssueSchema = z
 		outcome: z.string().nullable(),
 		tags: z.array(z.string()),
 		deps: z.array(DepSchema),
-		execution_spec: z.record(z.string(), z.unknown()).nullable(),
 		priority: z.number().int(),
 		created_at: z.number().int(),
 		updated_at: z.number().int(),

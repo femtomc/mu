@@ -174,7 +174,6 @@ function issueJson(issue: Issue): Record<string, unknown> {
 		outcome: issue.outcome ?? null,
 		tags: issue.tags ?? [],
 		deps: issue.deps ?? [],
-		execution_spec: issue.execution_spec ?? null,
 		priority: issue.priority ?? 3,
 		created_at: issue.created_at ?? 0,
 		updated_at: issue.updated_at ?? 0,
@@ -574,7 +573,6 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	let issue = await ctx.store.create(title, {
 		body: resolvedBody,
 		tags,
-		execution_spec: null,
 		priority,
 	});
 

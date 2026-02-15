@@ -126,13 +126,13 @@ export class DagRunner {
 	}
 
 	async #executeBackend(
-		issue: Pick<Issue, "id" | "title" | "body" | "tags" | "execution_spec">,
+		issue: Pick<Issue, "id" | "title" | "body" | "tags">,
 		cfg: ResolvedConfig,
 		rootId: string,
 		step: number,
 		opts: { logSuffix?: string; attempt?: number; onLine?: (line: string) => void } = {},
 	): Promise<{ exitCode: number; elapsedS: number }> {
-		const role: MuRole = roleFromTags(issue.tags, issue.execution_spec);
+		const role: MuRole = roleFromTags(issue.tags);
 		const logSuffix = opts.logSuffix ?? "";
 		const rendered = await this.#renderUserPrompt(issue, rootId, step, opts.attempt ?? 1);
 		const systemPrompt = systemPromptForRole(role);
@@ -320,7 +320,6 @@ export class DagRunner {
 							...rootIssue,
 							title: `Repair stuck DAG: ${rootIssue.title}`,
 							body: `${(rootIssue.body || "").trim()}\n\n## Runner Diagnostics\n\n${diag}`.trim(),
-							execution_spec: null,
 						};
 
 						const cfg = await this.#resolveConfig();
@@ -357,7 +356,7 @@ export class DagRunner {
 
 					const issue = candidates[0]!;
 					const issueId = issue.id;
-					const role = roleFromTags(issue.tags, issue.execution_spec);
+					const role = roleFromTags(issue.tags);
 
 					await this.#events.emit("dag.step.start", {
 						source: "dag_runner",

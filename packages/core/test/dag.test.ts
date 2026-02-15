@@ -10,7 +10,6 @@ function mkIssue(overrides: Partial<Issue> & Pick<Issue, "id" | "title">): Issue
 		outcome: null,
 		tags: ["node:agent"],
 		deps: [],
-		execution_spec: null,
 		priority: 3,
 		created_at: 1,
 		updated_at: 1,

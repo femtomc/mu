@@ -150,7 +150,7 @@ describe("IssueStore", () => {
 				outcome: "expanded",
 				tags: ["node:root"],
 				deps: [],
-				execution_spec: null,
+	
 				priority: 3,
 				created_at: 1,
 				updated_at: 1,
@@ -163,7 +163,7 @@ describe("IssueStore", () => {
 				outcome: null,
 				tags: ["node:agent"],
 				deps: [{ type: "parent", target: "mu-root" }],
-				execution_spec: null,
+	
 				priority: 2,
 				created_at: 2,
 				updated_at: 2,
@@ -176,7 +176,7 @@ describe("IssueStore", () => {
 				outcome: null,
 				tags: ["node:agent", "x"],
 				deps: [{ type: "parent", target: "mu-root" }],
-				execution_spec: null,
+	
 				priority: 1,
 				created_at: 3,
 				updated_at: 3,
@@ -189,7 +189,7 @@ describe("IssueStore", () => {
 				outcome: null,
 				tags: [],
 				deps: [{ type: "blocks", target: "mu-leaf2" }],
-				execution_spec: null,
+	
 				priority: 3,
 				created_at: 4,
 				updated_at: 4,
@@ -244,7 +244,7 @@ describe("IssueStore", () => {
 				outcome: null,
 				tags: [],
 				deps: [],
-				execution_spec: null,
+	
 				priority: 3,
 				created_at: 1,
 				updated_at: 1,

@@ -14,7 +14,6 @@ import {
 export type CreateIssueOpts = {
 	body?: string;
 	tags?: string[];
-	execution_spec?: Record<string, unknown> | null;
 	priority?: number;
 };
 
@@ -107,7 +106,6 @@ export class IssueStore {
 			outcome: null,
 			tags: opts.tags ?? [],
 			deps: [],
-			execution_spec: opts.execution_spec ?? null,
 			priority: opts.priority ?? 3,
 			created_at: now,
 			updated_at: now,

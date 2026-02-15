@@ -1,18 +1,11 @@
 export type MuRole = "orchestrator" | "worker";
 
-/**
- * Determine role from tags, falling back to execution_spec for backward
- * compatibility with stored JSONL issues that predate tag-based roles.
- */
-export function roleFromTags(tags: readonly string[], executionSpec?: unknown): MuRole {
+/** Determine role from tags. Defaults to orchestrator if no role tag present. */
+export function roleFromTags(tags: readonly string[]): MuRole {
 	for (const tag of tags) {
 		if (tag === "role:worker") return "worker";
 		if (tag === "role:orchestrator") return "orchestrator";
 	}
-	// Backward compat: fall back to execution_spec
-	const specRole = (executionSpec as any)?.role;
-	if (specRole === "worker") return "worker";
-	if (specRole === "orchestrator") return "orchestrator";
 	return "orchestrator";
 }
 
