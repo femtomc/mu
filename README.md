@@ -1,50 +1,50 @@
 # mu
 
-Bun + TypeScript monorepo for `mu`: an issue DAG + forum store, plus a Node CLI and runner.
+Agent work orchestration as a flat-file SDK.
 
-- Dev tooling uses **Bun** (CI uses Bun `1.3.9`).
-- Built packages target **Node-compatible ESM** with **`.d.ts`** typings.
+mu gives AI agents (and humans) three primitives for structured work:
 
-## Packaging Target
+- **Issue DAG** — decompose work into issues with parent/child and blocking
+  dependencies. The DAG tracks status, priority, outcomes, and execution specs.
+- **Forum** — topic-keyed message log for communication between agents, reviewers,
+  and humans. Threads are cheap; create one per issue, per research topic, whatever.
+- **Event log** — append-only audit trail. Every issue state change and forum post
+  emits a structured event with run correlation IDs.
 
-`mu` packages are built as **Node-compatible ESM** with **`.d.ts`** typings.
-Published/packed entrypoints come from `dist/` (not `src/`).
+All state lives in a `.mu/` directory at your repo root: three JSONL files
+(`issues.jsonl`, `forum.jsonl`, `events.jsonl`), a `roles/` directory for prompt
+templates, and a `logs/` directory for per-run output. No database, no server —
+just files you can grep, commit, and diff.
+
+The **orchestrator** walks the DAG: it finds ready leaves (open issues with no
+unresolved blockers or open children), dispatches them to an LLM backend, and
+manages the full lifecycle — claim, execute, close/expand, repeat — until the
+root issue is terminal.
 
 ## Quickstart
 
-### Use the CLI (after publishing)
-
 ```bash
 npm install -g @mu/cli
-cd /path/to/your/git/repo
+cd /path/to/your/repo
 
-mu init
-mu status
-mu issues create "hello world" --body "first task" --pretty
-```
-
-### From this repo
-
-```bash
-cd mu
-bun install
-bun run build
-
-# run the built CLI (Node ESM)
-packages/cli/dist/cli.js --help
-packages/cli/dist/cli.js init
-packages/cli/dist/cli.js status
+mu init          # create .mu/ with default templates
+mu status        # show DAG state
+mu issues create "build the thing" --body "details here" --pretty
+mu issues ready  # show executable leaf issues
+mu forum post research:topic -m "found something" --author worker
 ```
 
 ## Packages
 
-- [`@mu/cli`](packages/cli/README.md): Node CLI for `.mu/` issue DAG + forum.
-- [`@mu/core`](packages/core/README.md): core types/utilities, JSONL storage, and Node/browser adapters.
-- [`@mu/forum`](packages/forum/README.md): forum/message store on top of a JSONL store.
-- [`@mu/issue`](packages/issue/README.md): issue store + DAG helpers (ready leaves, validate, deps).
-- [`@mu/orchestrator`](packages/orchestrator/README.md): Node DAG runner (defaults to `pi` backend).
-- [`@mu/web`](packages/web/README.md): browser demo app (Vite + IndexedDB/localStorage).
-- [`@mu/slack-bot`](packages/slack-bot/README.md): Slack slash-command + events handler.
+| Package | Description |
+|---------|-------------|
+| [`@mu/core`](packages/core/README.md) | Types, JSONL persistence, DAG algorithms, event system. Runtime-agnostic core with Node and browser adapters. |
+| [`@mu/issue`](packages/issue/README.md) | Issue store — create, update, close, plus DAG queries (ready leaves, subtree, validate, collapsible). |
+| [`@mu/forum`](packages/forum/README.md) | Forum store — topic-keyed messages with read filtering and event emission. |
+| [`@mu/orchestrator`](packages/orchestrator/README.md) | DAG runner — walks the issue tree, dispatches to LLM backends, manages run lifecycle. |
+| [`@mu/cli`](packages/cli/README.md) | Node CLI wrapping the above into `mu` commands. |
+| [`@mu/web`](packages/web/README.md) | Browser demo — IndexedDB/localStorage backend, no server required. |
+| [`@mu/slack-bot`](packages/slack-bot/README.md) | Slack integration — slash commands for issue triage and creation. |
 
 ## Development
 
@@ -55,28 +55,7 @@ bun test
 bun run typecheck
 ```
 
-## Pack/Install Smoke Test
-
-```bash
-bun run pack:smoke
-```
-
-This builds `dist/`, `npm pack`s `@mu/{core,forum,issue,orchestrator,cli}`, installs them into a temp project, verifies
-imports run under Node, and verifies the `mu` CLI runs (`--help`).
-
-## CLI
-
-The `mu` CLI is shipped by `@mu/cli` and runs on Node (ESM).
-
-```bash
-# global install (after publishing)
-npm install -g @mu/cli
-# or: bun add -g @mu/cli
-
-mu --help
-```
-
-## Formatting
+### Formatting
 
 ```bash
 bun run fmt
@@ -84,31 +63,41 @@ bun run lint
 bun run check
 ```
 
-## Slack Bot
+### Pack smoke test
 
-See `packages/slack-bot/README.md`.
+```bash
+bun run pack:smoke
+```
+
+Builds `dist/`, packs each publishable package, installs them into a temp
+project, verifies imports under Node, and verifies the `mu` CLI runs.
+
+## The `.mu/` directory
+
+```
+.mu/
+├── issues.jsonl        # issue DAG state
+├── forum.jsonl         # forum messages
+├── events.jsonl        # audit trail
+├── roles/              # prompt templates (*.md with YAML frontmatter)
+│   ├── worker.md
+│   └── reviewer.md
+├── logs/               # per-run output
+│   └── mu-<run-id>.jsonl
+└── orchestrator.md     # orchestrator config (optional)
+```
+
+All files are newline-delimited JSON. The store is discovered by walking up from
+the current directory until a `.mu/` directory is found.
 
 ## Browser
 
-Minimal browser demo (no backend) lives at `packages/web/`.
+The web demo at `packages/web/` runs entirely client-side:
 
 ```bash
-# dev server
-bun run web:dev
-
-# build static assets
-bun run web:build
-
-# run headless e2e test (Playwright) against the built app
-bun run web:test
+bun run web:dev      # dev server
+bun run web:build    # static build
+bun run web:test     # headless e2e (Playwright)
 ```
 
-Data lives in your browser:
-
-- Preferred: IndexedDB database `mu-demo` with object stores `issues`, `forum`, `events`
-- Fallback: localStorage keys `mu-demo:issues`, `mu-demo:forum`, `mu-demo:events`
-
-Limitations:
-
-- No schema migrations yet (wipe storage if shapes change).
-- localStorage fallback is for tiny demos only (small quota).
+Data lives in IndexedDB (`mu-demo` database) with a localStorage fallback.
