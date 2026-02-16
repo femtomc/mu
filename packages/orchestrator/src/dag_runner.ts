@@ -138,10 +138,11 @@ export class DagRunner {
 		const systemPrompt = systemPromptForRole(role);
 
 		const { logsDir } = getStorePaths(this.#repoRoot);
-		await mkdir(logsDir, { recursive: true });
+		const rootLogsDir = join(logsDir, rootId);
+		await mkdir(rootLogsDir, { recursive: true });
 
 		const suffix = logSuffix ? `.${logSuffix}` : "";
-		const teePath = join(logsDir, `${issue.id}${suffix}.jsonl`);
+		const teePath = join(rootLogsDir, `${issue.id}${suffix}.jsonl`);
 
 		await this.#events.emit("backend.run.start", {
 			source: "backend",

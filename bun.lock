@@ -15,47 +15,48 @@
     },
     "packages/cli": {
       "name": "@femtomc/mu",
-      "version": "26.2.18",
+      "version": "26.2.21",
       "bin": {
         "mu": "./dist/cli.js",
       },
       "dependencies": {
-        "@femtomc/mu-core": "0.1.0",
-        "@femtomc/mu-forum": "0.1.0",
-        "@femtomc/mu-issue": "0.1.0",
-        "@femtomc/mu-orchestrator": "0.1.0",
+        "@femtomc/mu-core": "26.2.21",
+        "@femtomc/mu-forum": "26.2.21",
+        "@femtomc/mu-issue": "26.2.21",
+        "@femtomc/mu-orchestrator": "26.2.21",
+        "@femtomc/mu-server": "26.2.21",
         "@mariozechner/pi-ai": "^0.52.12",
         "@mariozechner/pi-coding-agent": "^0.52.12",
       },
     },
     "packages/core": {
       "name": "@femtomc/mu-core",
-      "version": "26.2.18",
+      "version": "26.2.21",
       "dependencies": {
         "zod": "^4.1.9",
       },
     },
     "packages/forum": {
       "name": "@femtomc/mu-forum",
-      "version": "26.2.18",
+      "version": "26.2.21",
       "dependencies": {
-        "@femtomc/mu-core": "26.2.18",
+        "@femtomc/mu-core": "26.2.21",
       },
     },
     "packages/issue": {
       "name": "@femtomc/mu-issue",
-      "version": "26.2.18",
+      "version": "26.2.21",
       "dependencies": {
-        "@femtomc/mu-core": "26.2.18",
+        "@femtomc/mu-core": "26.2.21",
       },
     },
     "packages/orchestrator": {
       "name": "@femtomc/mu-orchestrator",
-      "version": "26.2.18",
+      "version": "26.2.21",
       "dependencies": {
-        "@femtomc/mu-core": "0.1.0",
-        "@femtomc/mu-forum": "0.1.0",
-        "@femtomc/mu-issue": "0.1.0",
+        "@femtomc/mu-core": "26.2.21",
+        "@femtomc/mu-forum": "26.2.21",
+        "@femtomc/mu-issue": "26.2.21",
         "@mariozechner/pi-agent-core": "^0.52.12",
         "@mariozechner/pi-ai": "^0.52.12",
         "@mariozechner/pi-coding-agent": "^0.52.12",
@@ -63,11 +64,14 @@
     },
     "packages/server": {
       "name": "@femtomc/mu-server",
-      "version": "26.2.18",
+      "version": "26.2.21",
+      "bin": {
+        "mu-server": "./dist/cli.js",
+      },
       "dependencies": {
-        "@femtomc/mu-core": "26.2.18",
-        "@femtomc/mu-forum": "26.2.18",
-        "@femtomc/mu-issue": "26.2.18",
+        "@femtomc/mu-core": "26.2.21",
+        "@femtomc/mu-forum": "26.2.21",
+        "@femtomc/mu-issue": "26.2.21",
       },
     },
     "packages/slack-bot": {
@@ -80,7 +84,7 @@
     },
     "packages/web": {
       "name": "@femtomc/mu-web",
-      "version": "0.0.0",
+      "version": "26.2.18",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
         "@femtomc/mu-forum": "workspace:*",
@@ -88,6 +92,9 @@
       },
       "devDependencies": {
         "playwright": "^1.44.0",
+        "vite": "^5.4.0",
+      },
+      "peerDependencies": {
         "vite": "^5.4.0",
       },
     },

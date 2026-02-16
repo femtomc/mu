@@ -1271,8 +1271,8 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				[
 					"",
 					"Recovery:",
-					`  mu replay ${replayId}`,
-					`  logs: ${logsRel}/${replayId}*.jsonl`,
+					`  mu replay ${rootIssue.id}/${replayId}`,
+					`  logs: ${logsRel}/${rootIssue.id}/${replayId}*.jsonl`,
 					`  resume: mu resume ${rootIssue.id} --max-steps ${maxSteps}`,
 					"",
 				].join("\n"),
@@ -1290,8 +1290,8 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		const replayId = lastBackendIssueId ?? lastStepIssueId ?? rootIssue.id;
 		const logsRel = relative(ctx.repoRoot, ctx.paths.logsDir).replaceAll("\\", "/");
 		out += "\nRecovery:\n";
-		out += `  mu replay ${replayId}\n`;
-		out += `  logs: ${logsRel}/${replayId}*.jsonl\n`;
+		out += `  mu replay ${rootIssue.id}/${replayId}\n`;
+		out += `  logs: ${logsRel}/${rootIssue.id}/${replayId}*.jsonl\n`;
 		out += `  resume: mu resume ${rootIssue.id} --max-steps ${maxSteps}\n`;
 	}
 	return { stdout: out, stderr: "", exitCode };
@@ -1505,8 +1505,8 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				[
 					"",
 					"Recovery:",
-					`  mu replay ${replayId}`,
-					`  logs: ${logsRel}/${replayId}*.jsonl`,
+					`  mu replay ${rootId}/${replayId}`,
+					`  logs: ${logsRel}/${rootId}/${replayId}*.jsonl`,
 					`  resume: mu resume ${rootId} --max-steps ${maxSteps}`,
 					"",
 				].join("\n"),
@@ -1528,8 +1528,8 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		const replayId = lastBackendIssueId ?? lastStepIssueId ?? rootId;
 		const logsRel = relative(ctx.repoRoot, ctx.paths.logsDir).replaceAll("\\", "/");
 		out += "\nRecovery:\n";
-		out += `  mu replay ${replayId}\n`;
-		out += `  logs: ${logsRel}/${replayId}*.jsonl\n`;
+		out += `  mu replay ${rootId}/${replayId}\n`;
+		out += `  logs: ${logsRel}/${rootId}/${replayId}*.jsonl\n`;
 		out += `  resume: mu resume ${rootId} --max-steps ${maxSteps}\n`;
 	}
 	return { stdout: out, stderr: "", exitCode };
@@ -1558,27 +1558,53 @@ async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const logsDir = ctx.paths.logsDir;
 	let path = resolve(ctx.cwd, target);
 	if (!existsSync(path)) {
-		const candidate = join(logsDir, `${target}.jsonl`);
-		if (existsSync(candidate)) {
-			path = candidate;
-		} else {
-			// Prefix match: <target>*.jsonl
-			let entries: string[];
-			try {
-				entries = await readdir(logsDir);
-			} catch {
-				entries = [];
+		// Search in subdirectories organized by root issue ID
+		let allMatches: { rootId: string; filename: string; fullPath: string }[] = [];
+		
+		try {
+			// First check if target is a direct path within a root directory
+			const parts = target.split("/");
+			if (parts.length === 2) {
+				const [rootId, filename] = parts;
+				const candidate = join(logsDir, rootId, filename.endsWith(".jsonl") ? filename : `${filename}.jsonl`);
+				if (existsSync(candidate)) {
+					path = candidate;
+				}
 			}
-			const matches = entries.filter((e) => e.startsWith(target) && e.endsWith(".jsonl"));
-			if (matches.length === 1) {
-				path = join(logsDir, matches[0]!);
-			} else if (matches.length > 1) {
-				return jsonError(`ambiguous prefix '${target}'`, {
-					recovery: matches.slice(0, 10).map((m) => `mu replay ${m.replace(/\\.jsonl$/, "")}`),
-				});
-			} else {
-				return jsonError(`log not found: ${target}`, { recovery: ["mu status", "ls .mu/logs"] });
+			
+			// If not found, search all root directories
+			if (!path || !existsSync(path)) {
+				const rootDirs = await readdir(logsDir);
+				
+				for (const rootId of rootDirs) {
+					const rootPath = join(logsDir, rootId);
+					const stat = await Bun.file(rootPath).stat();
+					if (!stat.isDirectory()) continue;
+					
+					const files = await readdir(rootPath);
+					// Exact match
+					if (files.includes(`${target}.jsonl`)) {
+						allMatches.push({ rootId, filename: `${target}.jsonl`, fullPath: join(rootPath, `${target}.jsonl`) });
+					}
+					// Prefix match
+					const prefixMatches = files.filter((f) => f.startsWith(target) && f.endsWith(".jsonl"));
+					for (const match of prefixMatches) {
+						allMatches.push({ rootId, filename: match, fullPath: join(rootPath, match) });
+					}
+				}
 			}
+		} catch {
+			// Ignore errors reading directories
+		}
+		
+		if (allMatches.length === 1) {
+			path = allMatches[0]!.fullPath;
+		} else if (allMatches.length > 1) {
+			return jsonError(`ambiguous prefix '${target}'`, {
+				recovery: allMatches.slice(0, 10).map((m) => `mu replay ${m.rootId}/${m.filename.replace(/\\.jsonl$/, "")}`),
+			});
+		} else if (!path || !existsSync(path)) {
+			return jsonError(`log not found: ${target}`, { recovery: ["mu status", "ls .mu/logs/*"] });
 		}
 	}
 
