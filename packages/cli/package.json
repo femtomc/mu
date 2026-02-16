@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu",
-  "version": "26.2.21",
+  "version": "26.2.22",
   "type": "module",
   "bin": {
     "mu": "./dist/cli.js"
