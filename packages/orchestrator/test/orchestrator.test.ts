@@ -8,6 +8,7 @@ import { IssueStore } from "@femtomc/mu-issue";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import type { BackendRunner, BackendRunOpts } from "@femtomc/mu-orchestrator";
 import { createMuResourceLoader, DagRunner, PiStreamRenderer, piStreamHasError, resolveModelConfig } from "@femtomc/mu-orchestrator";
+import { buildPiCliArgv } from "../src/pi_backend.js";
 
 const TEST_MODEL_OVERRIDES = { model: "gpt-5.3-codex" };
 
@@ -72,6 +73,26 @@ describe("piStreamHasError", () => {
 
 	test("ignores non-json lines", () => {
 		expect(piStreamHasError("not json")).toBe(false);
+	});
+});
+
+describe("buildPiCliArgv", () => {
+	test("includes provider and systemPrompt flags (role system prompt must not be dropped)", () => {
+		const argv = buildPiCliArgv({
+			prompt: "USER_PROMPT",
+			systemPrompt: "SYSTEM_PROMPT",
+			provider: "openai-codex",
+			model: "gpt-5.3-codex",
+			thinking: "xhigh",
+		});
+
+		expect(argv).toContain("--provider");
+		expect(argv[argv.indexOf("--provider") + 1]).toBe("openai-codex");
+
+		expect(argv).toContain("--system-prompt");
+		expect(argv[argv.indexOf("--system-prompt") + 1]).toBe("SYSTEM_PROMPT");
+
+		expect(argv.at(-1)).toBe("USER_PROMPT");
 	});
 });
 
@@ -242,6 +263,15 @@ describe("DagRunner", () => {
 		const run = backend.runs[0]!;
 		expect(run.role).toBe("orchestrator");
 		expect(run.systemPrompt).toContain("mu's orchestrator");
+		expect(run.systemPrompt).toContain("You MUST NOT execute work directly");
+		expect(run.systemPrompt).toContain("No code changes, no file edits, no git commits");
+		expect(run.systemPrompt).toContain("MUST decompose the assigned issue into worker child issues");
+		expect(run.systemPrompt).toContain("--outcome expanded");
+		expect(run.systemPrompt).toContain("deterministic and minimal");
+		expect(run.systemPrompt).toContain("blocks");
+		expect(run.systemPrompt).not.toContain("You are mu's worker");
+		expect(run.systemPrompt).not.toContain("Implement: edit files");
+		expect(run.systemPrompt).not.toContain("Implement the work described in your assigned issue");
 	});
 
 	test("unstick repair pass runs orchestrator on root when there are no executable leaves", async () => {

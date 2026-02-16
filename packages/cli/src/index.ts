@@ -9,6 +9,7 @@ import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
 import type { BackendRunner, ModelOverrides } from "@femtomc/mu-orchestrator";
 import { PiPrettyStreamRenderer } from "./pi_pretty_stream_renderer.js";
+import { guideText } from "./guide.js";
 
 export type RunResult = {
 	stdout: string;
@@ -220,17 +221,18 @@ function mainHelp(): string {
 		"  mu <command> [args...]",
 		"",
 		"Commands:",
+		"  guide                          Comprehensive in-CLI guide (recommended)",
 		"  init [--force]                  Initialize .mu store + logs",
 		"  status [--json] [--pretty]      Show repo + DAG status",
 		"  issues <subcmd>                 Issue DAG commands (JSON)",
 		"  forum <subcmd>                  Forum commands (JSON)",
 		"  run <prompt...>                 Create root + run DAG loop",
 		"  resume <root-id>                Resume a DAG loop",
-		"  login [<provider>] [--list]      Authenticate with an AI provider",
+		"  login [<provider>] [--list] [--logout] Authenticate with an AI provider",
 		"  replay <id|path> [--backend pi] Replay a logged run (pi-only)",
-		"  serve [--port N] [--open]        Start server and open web UI",
+		"  serve [--port N] [--api-port N] [--no-open] Start server and open web UI",
 		"",
-		"Run `mu <command> --help` for details.",
+		"Run `mu guide` for the full guide, or `mu <command> --help` for details.",
 	].join("\n");
 }
 
@@ -255,6 +257,8 @@ export async function run(
 	const ctx: CliCtx = { ...ctx0, io: opts.io, backend: opts.backend };
 
 	switch (cmd) {
+		case "guide":
+			return await cmdGuide(rest);
 		case "init":
 			return await cmdInit(rest, ctx);
 		case "status":
@@ -280,10 +284,24 @@ export async function run(
 	}
 }
 
+async function cmdGuide(argv: string[]): Promise<RunResult> {
+	if (argv.length > 0 && !hasHelpFlag(argv)) {
+		return jsonError(`unknown args: ${argv.join(" ")}`, { recovery: ["mu guide"] });
+	}
+	return ok(`${guideText()}\n`);
+}
+
 async function cmdInit(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
-			["mu init - initialize .mu store and logs", "", "Usage:", "  mu init [--force]"].join("\n") + "\n",
+			[
+				"mu init - initialize .mu store and logs",
+				"",
+				"Usage:",
+				"  mu init [--force]",
+				"",
+				"See also: `mu guide`",
+			].join("\n") + "\n",
 		);
 	}
 
@@ -312,7 +330,14 @@ async function cmdInit(argv: string[], ctx: CliCtx): Promise<RunResult> {
 async function cmdStatus(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
-			["mu status - show repo + DAG status", "", "Usage:", "  mu status [--json] [--pretty]"].join("\n") + "\n",
+			[
+				"mu status - show repo + DAG status",
+				"",
+				"Usage:",
+				"  mu status [--json] [--pretty]",
+				"",
+				"See also: `mu guide`",
+			].join("\n") + "\n",
 		);
 	}
 
@@ -375,6 +400,8 @@ async function cmdIssues(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"",
 				"Commands:",
 				"  list/get/create/update/claim/open/close/dep/undep/children/ready/validate",
+				"",
+				"See also: `mu guide`",
 			].join("\n") + "\n",
 		);
 	}
@@ -932,6 +959,8 @@ async function cmdForum(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"",
 				"Commands:",
 				"  post/read/topics",
+				"",
+				"See also: `mu guide`",
 			].join("\n") + "\n",
 		);
 	}
@@ -1068,6 +1097,8 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  --model <id>        Model ID (e.g. gpt-5.3-codex, claude-opus-4-6)",
 				"  --provider <id>     Provider (e.g. anthropic, openai-codex)",
 				"  --reasoning <lvl>   Thinking level (minimal|low|medium|high|xhigh)",
+				"",
+				"See also: `mu guide`",
 			].join("\n") + "\n",
 		);
 	}
@@ -1310,6 +1341,8 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  --model <id>        Model ID (e.g. gpt-5.3-codex, claude-opus-4-6)",
 				"  --provider <id>     Provider (e.g. anthropic, openai-codex)",
 				"  --reasoning <lvl>   Thinking level (minimal|low|medium|high|xhigh)",
+				"",
+				"See also: `mu guide`",
 			].join("\n") + "\n",
 		);
 	}
@@ -1538,9 +1571,14 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (argv.length === 0 || hasHelpFlag(argv)) {
 		return ok(
-			["mu replay - replay a logged run (pi-only)", "", "Usage:", "  mu replay <issue-id|path> [--backend pi]"].join(
-				"\n",
-			) + "\n",
+			[
+				"mu replay - replay a logged run (pi-only)",
+				"",
+				"Usage:",
+				"  mu replay <issue-id|path> [--backend pi]",
+				"",
+				"See also: `mu guide`",
+			].join("\n") + "\n",
 		);
 	}
 
@@ -1640,6 +1678,8 @@ async function cmdLogin(argv: string[]): Promise<RunResult> {
 				"  mu login openai-codex --logout  Remove stored credentials",
 				"",
 				"Credentials are stored in ~/.pi/agent/auth.json (shared with pi CLI).",
+				"",
+				"See also: `mu guide`",
 			].join("\n") + "\n",
 		);
 	}
@@ -1739,6 +1779,8 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"",
 				"For headless/SSH environments:",
 				"  The server will detect headless mode and show port forwarding instructions.",
+				"",
+				"See also: `mu guide`",
 			].join("\n") + "\n",
 		);
 	}

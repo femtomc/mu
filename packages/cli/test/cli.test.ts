@@ -17,6 +17,17 @@ test("mu --help", async () => {
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.includes("Usage:")).toBe(true);
 	expect(result.stdout.includes("mu <command>")).toBe(true);
+	expect(result.stdout.includes("mu guide")).toBe(true);
+});
+
+test("mu guide", async () => {
+	const dir = await mkTempRepo();
+	const result = await run(["guide"], { cwd: dir });
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout.includes("Quickstart")).toBe(true);
+	expect(result.stdout.includes("Command Overview")).toBe(true);
+	expect(result.stdout.includes(".mu Store Layout")).toBe(true);
+	expect(result.stdout.includes(".mu/")).toBe(true);
 });
 
 test("mu issues create outputs JSON and writes to store", async () => {

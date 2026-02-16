@@ -24,6 +24,27 @@ export interface BackendRunner {
 	run(opts: BackendRunOpts): Promise<number>;
 }
 
+export type PiCliArgvOpts = Pick<BackendRunOpts, "prompt" | "systemPrompt" | "provider" | "model" | "thinking">;
+
+/** Build argv for the `pi` CLI. Exported for regression testing. */
+export function buildPiCliArgv(opts: PiCliArgvOpts): string[] {
+	return [
+		"pi",
+		"--mode",
+		"json",
+		"--no-session",
+		"--provider",
+		opts.provider,
+		"--model",
+		opts.model,
+		"--thinking",
+		opts.thinking,
+		"--system-prompt",
+		opts.systemPrompt,
+		opts.prompt,
+	];
+}
+
 export function piStreamHasError(line: string): boolean {
 	let event: any;
 	try {
@@ -55,16 +76,12 @@ export function piStreamHasError(line: string): boolean {
 }
 
 export class PiCliBackend implements BackendRunner {
-	#buildArgv(prompt: string, model: string, thinking: string): string[] {
-		return ["pi", "--mode", "json", "--no-session", "--model", model, "--thinking", thinking, prompt];
-	}
-
 	public async run(opts: BackendRunOpts): Promise<number> {
 		if (opts.cli !== "pi") {
 			throw new Error(`unsupported backend cli=${JSON.stringify(opts.cli)} (only "pi" is supported)`);
 		}
 
-		const argv = this.#buildArgv(opts.prompt, opts.model, opts.thinking);
+		const argv = buildPiCliArgv(opts);
 
 		let teeFh: Awaited<ReturnType<typeof open>> | null = null;
 		try {
