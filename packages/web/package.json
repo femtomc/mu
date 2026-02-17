@@ -1,24 +1,24 @@
 {
-  "name": "@femtomc/mu-web",
-  "version": "26.2.46",
-  "description": "Web console for monitoring and operating mu.",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 5173",
-    "build": "vite build",
-    "e2e": "bun scripts/e2e.ts"
-  },
-  "dependencies": {
-    "@femtomc/mu-core": "26.2.46",
-    "@femtomc/mu-forum": "26.2.46",
-    "@femtomc/mu-issue": "26.2.46"
-  },
-  "devDependencies": {
-    "playwright": "^1.44.0",
-    "vite": "^5.4.0"
-  },
-  "peerDependencies": {
-    "vite": "^5.4.0"
-  }
+	"name": "@femtomc/mu-web",
+	"version": "26.2.47",
+	"description": "Web console for monitoring and operating mu.",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite --host 127.0.0.1 --port 5173",
+		"build": "vite build",
+		"e2e": "bun scripts/e2e.ts"
+	},
+	"dependencies": {
+		"@femtomc/mu-core": "26.2.47",
+		"@femtomc/mu-forum": "26.2.47",
+		"@femtomc/mu-issue": "26.2.47"
+	},
+	"devDependencies": {
+		"playwright": "^1.44.0",
+		"vite": "^5.4.0"
+	},
+	"peerDependencies": {
+		"vite": "^5.4.0"
+	}
 }

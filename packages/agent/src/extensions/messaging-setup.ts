@@ -956,13 +956,14 @@ function buildAgentSetupPrompt(opts: {
 	action: SetupAction;
 	check: AdapterCheck;
 	plan: AdapterPlan;
-	guide: string;
 	publicBaseUrl?: string;
 }): string {
 	const adapter = adapterById(opts.check.id);
 	const normalizedBase = normalizePublicBaseUrl(opts.publicBaseUrl);
 	const webhookUrl = normalizedBase ? `${normalizedBase}${opts.plan.route}` : opts.plan.webhook_url;
 	const verifyFlag = normalizedBase ? ` --public-base-url ${normalizedBase}` : "";
+	const notesBlock =
+		opts.check.notes.length > 0 ? `[Notes]\n${opts.check.notes.map((n) => `- ${n}`).join("\n")}` : "";
 	return interpolateTemplate(MESSAGING_SETUP_BRIEF_TEMPLATE, {
 		adapter_name: adapter.name,
 		action: opts.action,
@@ -971,10 +972,11 @@ function buildAgentSetupPrompt(opts: {
 		route: opts.plan.route,
 		webhook_url: webhookUrl ?? "(need public base URL)",
 		missing_fields: opts.check.missing.join(", ") || "(none)",
+		next_step: opts.check.next_step,
 		provider_steps: adapter.providerSetupSteps.map((step, index) => `${index + 1}. ${step}`).join("\n"),
 		field_status: adapterFieldStatusLines(adapter, opts.check).join("\n"),
+		notes: notesBlock,
 		verify_command: `/mu-setup verify ${adapter.id}${verifyFlag}`,
-		guide: opts.guide,
 	});
 }
 
@@ -1001,12 +1003,10 @@ async function maybeDispatchAgentSetupBrief(opts: {
 	const check = findCheckByAdapter(opts.checks, opts.parsed.adapterId);
 	if (!check) return false;
 	const plan = buildPlan(check, opts.parsed.publicBaseUrl);
-	const guide = guideForAdapter(check);
 	const prompt = buildAgentSetupPrompt({
 		action: opts.parsed.action,
 		check,
 		plan,
-		guide,
 		publicBaseUrl: opts.parsed.publicBaseUrl,
 	});
 	dispatchSetupPromptToAgent(opts.pi, opts.ctx, prompt);
@@ -1146,12 +1146,10 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 							return textResult(`Unknown adapter: ${adapterId}`);
 						}
 						const plan = buildPlan(check, params.public_base_url);
-						const guide = guideForAdapter(check);
 						const brief = buildAgentSetupPrompt({
 							action: params.action,
 							check,
 							plan,
-							guide,
 							publicBaseUrl: params.public_base_url,
 						});
 						return textResult(brief, { checks, runtime, adapter: adapterId, plan });

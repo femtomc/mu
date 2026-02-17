@@ -1,27 +1,27 @@
 {
-  "name": "@femtomc/mu-issue",
-  "version": "26.2.46",
-  "description": "Work item store with dependency graph helpers for mu.",
-  "keywords": [
-    "mu",
-    "issues",
-    "work-items",
-    "dependencies",
-    "dag"
-  ],
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
-  "files": [
-    "dist/**"
-  ],
-  "dependencies": {
-    "@femtomc/mu-core": "26.2.46"
-  }
+	"name": "@femtomc/mu-issue",
+	"version": "26.2.47",
+	"description": "Work item store with dependency graph helpers for mu.",
+	"keywords": [
+		"mu",
+		"issues",
+		"work-items",
+		"dependencies",
+		"dag"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist/**"
+	],
+	"dependencies": {
+		"@femtomc/mu-core": "26.2.47"
+	}
 }

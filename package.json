@@ -30,5 +30,6 @@
 	},
 	"dependencies": {
 		"mu-monorepo": "."
-	}
+	},
+	"version": "26.2.47"
 }

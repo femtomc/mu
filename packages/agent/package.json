@@ -1,33 +1,33 @@
 {
-  "name": "@femtomc/mu-agent",
-  "version": "26.2.46",
-  "description": "Shared agent runtime for mu chat, orchestration roles, and serve extensions.",
-  "keywords": [
-    "mu",
-    "agent",
-    "runtime",
-    "chat",
-    "extensions"
-  ],
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
-  "files": [
-    "dist/**",
-    "prompts/**"
-  ],
-  "dependencies": {
-    "@femtomc/mu-core": "26.2.46",
-    "@mariozechner/pi-agent-core": "^0.52.12",
-    "@mariozechner/pi-ai": "^0.52.12",
-    "@mariozechner/pi-coding-agent": "^0.52.12",
-    "@sinclair/typebox": "^0.34.0",
-    "zod": "^4.1.9"
-  }
+	"name": "@femtomc/mu-agent",
+	"version": "26.2.47",
+	"description": "Shared agent runtime for mu chat, orchestration roles, and serve extensions.",
+	"keywords": [
+		"mu",
+		"agent",
+		"runtime",
+		"chat",
+		"extensions"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist/**",
+		"prompts/**"
+	],
+	"dependencies": {
+		"@femtomc/mu-core": "26.2.47",
+		"@mariozechner/pi-agent-core": "^0.52.12",
+		"@mariozechner/pi-ai": "^0.52.12",
+		"@mariozechner/pi-coding-agent": "^0.52.12",
+		"@sinclair/typebox": "^0.34.0",
+		"zod": "^4.1.9"
+	}
 }
