@@ -3246,7 +3246,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"Control plane configuration:",
 				"  .mu/config.json is the source of truth for adapter + assistant settings",
 				"  Attached terminal operator session inherits control_plane.operator.provider/model when set",
-				"  Use `/mu-setup <adapter>` in mu serve operator session for guided setup",
+				"  Use `/mu setup <adapter>` in mu serve operator session for guided setup",
 				"  Use `mu control status` to inspect current config",
 				"",
 				"See also: `mu chat --help`, `mu guide`",

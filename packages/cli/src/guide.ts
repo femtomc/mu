@@ -82,7 +82,7 @@ export function guideText(): string {
 		'    mu chat --message "How do I set up Slack control-plane webhooks?" --json',
 		"",
 		"    Operator behavior is configured in .mu/config.json",
-		"    Use /mu-setup and mu control status for guided configuration",
+		"    Use /mu setup and mu control status for guided configuration",
 		"",
 		"  Replay",
 		"    mu replay <root-id>/<issue-id>",

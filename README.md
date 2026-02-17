@@ -115,24 +115,24 @@ Type `/exit` in the chat prompt (or press Ctrl+C) to stop both chat and server.
 
 Once `mu serve` is up, use these commands in the attached terminal chat:
 
-- `/mu-status` — repo/open/ready/control-plane summary
-- `/mu-control` — active adapters + webhook routes
-- `/mu-setup` — messaging preflight across adapters
-- `/mu-setup plan slack` — concrete wiring plan for one adapter
-- `/mu-setup apply slack` — guided config apply + control-plane reload
-- `/mu-setup verify slack` — verify runtime adapter mount + route
-- `/mu-setup slack` / `discord` / `telegram` / `gmail` — send adapter setup brief to the active mu agent
-- `/mu-events tail 20` — quick event log snapshot
-- `/mu-events watch on` — live event watch widget
-- `/mu-brand on|off|toggle` — toggle UI branding
+- `/mu status` — repo/open/ready/control-plane summary
+- `/mu control` — active adapters + webhook routes
+- `/mu setup` — messaging preflight across adapters
+- `/mu setup plan slack` — concrete wiring plan for one adapter
+- `/mu setup apply slack` — guided config apply + control-plane reload
+- `/mu setup verify slack` — verify runtime adapter mount + route
+- `/mu setup slack` / `discord` / `telegram` / `gmail` — send adapter setup brief to the active mu agent
+- `/mu events tail 20` — quick event log snapshot
+- `/mu events watch on` — live event watch widget
+- `/mu brand on|off|toggle` — toggle UI branding
 
 Recommended setup flow:
 
-1. Run `/mu-status`
-2. Run `/mu-control`
-3. Run `/mu-setup plan <adapter>` and `/mu-setup apply <adapter>`
+1. Run `/mu status`
+2. Run `/mu control`
+3. Run `/mu setup plan <adapter>` and `/mu setup apply <adapter>`
 4. Link your channel identity (`mu control link --channel <adapter> --actor-id <id> --tenant-id <tenant> --role <viewer|contributor|operator>`)
-5. Run `/mu-setup verify <adapter>`
+5. Run `/mu setup verify <adapter>`
 
 ### Terminal Operator Chat
 
@@ -179,7 +179,7 @@ Minimal Slack example:
 }
 ```
 
-Use `/mu-setup <adapter>` in `mu serve` chat for guided setup, apply, and verify.
+Use `/mu setup <adapter>` in `mu serve` chat for guided setup, apply, and verify.
 
 When adapters are active, `mu serve` prints mounted routes:
 

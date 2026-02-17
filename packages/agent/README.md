@@ -54,16 +54,16 @@ Current stack:
 
 ## Slash commands (operator-facing)
 
-- `/mu-status` — concise server status
-- `/mu-control` — active control-plane adapters and webhook routes
-- `/mu-setup` — adapter preflight
-- `/mu-setup plan <adapter>` — actionable wiring plan
-- `/mu-setup apply <adapter>` — guided config apply + control-plane reload
-- `/mu-setup verify [adapter]` — runtime verification for mounted routes
-- `/mu-setup <adapter>` — sends adapter setup brief to mu agent (`--no-agent` prints local guide)
-- `/mu-events [n]` / `/mu-events tail [n]` — event log tail
-- `/mu-events watch on|off` — toggle event watch widget
-- `/mu-brand on|off|toggle` — enable/disable UI branding
+- `/mu status` — concise server status
+- `/mu control` — active control-plane adapters and webhook routes
+- `/mu setup` — adapter preflight
+- `/mu setup plan <adapter>` — actionable wiring plan
+- `/mu setup apply <adapter>` — guided config apply + control-plane reload
+- `/mu setup verify [adapter]` — runtime verification for mounted routes
+- `/mu setup <adapter>` — sends adapter setup brief to mu agent (`--no-agent` prints local guide)
+- `/mu events [n]` / `/mu events tail [n]` — event log tail
+- `/mu events watch on|off` — toggle event watch widget
+- `/mu brand on|off|toggle` — enable/disable UI branding
 
 ## Tools (agent/operator-facing)
 

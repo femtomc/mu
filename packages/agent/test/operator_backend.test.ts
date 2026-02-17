@@ -169,7 +169,7 @@ describe("PiMessagingOperatorBackend", () => {
 			"Use public base URL https://example.tail4cdecd.ts.net (Tailscale Funnel -> localhost:3000).",
 			"Bot token: 123456:ABCDEF.",
 			"Generate a strong random webhook_secret, update .mu/config.json,",
-			"run /mu-setup apply telegram, call Telegram setWebhook, then verify.",
+			"run /mu setup apply telegram, call Telegram setWebhook, then verify.",
 		].join("\n");
 
 		const backend = new PiMessagingOperatorBackend({

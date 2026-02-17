@@ -205,6 +205,8 @@ test("mu guide", async () => {
 	expect(result.stdout.includes(".mu/")).toBe(true);
 	expect(result.stdout.includes("mu store <subcmd>")).toBe(true);
 	expect(result.stdout.includes("mu control diagnose-operator")).toBe(true);
+	expect(result.stdout).toContain("Use /mu setup and mu control status for guided configuration");
+	expect(result.stdout).not.toContain("/mu-setup");
 });
 
 test("mu store paths/ls/tail provide .mu navigation tools", async () => {
@@ -343,6 +345,8 @@ test("mu chat/serve help text", async () => {
 	expect(serveHelp.exitCode).toBe(0);
 	expect(serveHelp.stdout).toContain("start server + terminal operator session + web UI");
 	expect(serveHelp.stdout).toContain("--port");
+	expect(serveHelp.stdout).toContain("Use `/mu setup <adapter>` in mu serve operator session for guided setup");
+	expect(serveHelp.stdout).not.toContain("/mu-setup");
 	expect(serveHelp.stdout.includes("--api-port")).toBe(false);
 });
 
