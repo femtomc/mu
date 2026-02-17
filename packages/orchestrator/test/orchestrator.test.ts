@@ -343,36 +343,30 @@ describe("DagRunner", () => {
 });
 
 describe("systemPromptForRole", () => {
-	test("returns hardcoded default when no repoRoot is provided", async () => {
+	test("returns bundled defaults when no repoRoot is provided", async () => {
 		const orch = await systemPromptForRole("orchestrator");
 		expect(orch).toBe(DEFAULT_ORCHESTRATOR_PROMPT);
 		const worker = await systemPromptForRole("worker");
 		expect(worker).toBe(DEFAULT_WORKER_PROMPT);
 	});
 
-	test("returns hardcoded default when .mu/roles/ does not exist", async () => {
+	test("returns bundled defaults when repoRoot is provided", async () => {
 		const tmp = await mkdtemp(join(tmpdir(), "mu-roles-"));
 		const result = await systemPromptForRole("orchestrator", tmp);
 		expect(result).toBe(DEFAULT_ORCHESTRATOR_PROMPT);
 	});
 
-	test("loads custom prompt from .mu/roles/<role>.md", async () => {
+	test("ignores repo-local .mu/roles overrides", async () => {
 		const tmp = await mkdtemp(join(tmpdir(), "mu-roles-"));
 		await mkdir(join(tmp, ".mu", "roles"), { recursive: true });
 		await writeFile(join(tmp, ".mu", "roles", "orchestrator.md"), "Custom orchestrator prompt", "utf8");
-		const result = await systemPromptForRole("orchestrator", tmp);
-		expect(result).toBe("Custom orchestrator prompt");
+		await writeFile(join(tmp, ".mu", "roles", "worker.md"), "Custom worker prompt", "utf8");
+
+		expect(await systemPromptForRole("orchestrator", tmp)).toBe(DEFAULT_ORCHESTRATOR_PROMPT);
+		expect(await systemPromptForRole("worker", tmp)).toBe(DEFAULT_WORKER_PROMPT);
 	});
 
-	test("strips frontmatter from custom prompt", async () => {
-		const tmp = await mkdtemp(join(tmpdir(), "mu-roles-"));
-		await mkdir(join(tmp, ".mu", "roles"), { recursive: true });
-		await writeFile(join(tmp, ".mu", "roles", "worker.md"), "---\ntitle: Custom\n---\nCustom worker body", "utf8");
-		const result = await systemPromptForRole("worker", tmp);
-		expect(result).toBe("Custom worker body");
-	});
-
-	test("uses custom prompt from .mu/roles/ in DagRunner", async () => {
+	test("DagRunner uses bundled prompt even when .mu/roles/worker.md exists", async () => {
 		const { repoRoot, store, forum } = await mkTempRepo();
 		await mkdir(join(repoRoot, ".mu", "roles"), { recursive: true });
 		await writeFile(join(repoRoot, ".mu", "roles", "worker.md"), "CUSTOM_WORKER_PROMPT", "utf8");
@@ -393,7 +387,8 @@ describe("systemPromptForRole", () => {
 		await runner.run(root.id, 1);
 
 		expect(backend.runs.length).toBe(1);
-		expect(backend.runs[0]!.systemPrompt).toBe("CUSTOM_WORKER_PROMPT");
+		expect(backend.runs[0]!.systemPrompt).toBe(DEFAULT_WORKER_PROMPT);
+		expect(backend.runs[0]!.systemPrompt).not.toBe("CUSTOM_WORKER_PROMPT");
 	});
 });
 

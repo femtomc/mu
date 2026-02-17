@@ -176,13 +176,11 @@ async function expectStoreBootstrapped(dir: string): Promise<void> {
 		await readFile(join(dir, ".mu", relPath), "utf8");
 	}
 
-	const orchestratorPrompt = await readFile(join(dir, ".mu", "roles", "orchestrator.md"), "utf8");
-	const workerPrompt = await readFile(join(dir, ".mu", "roles", "worker.md"), "utf8");
 	const gitignore = await readFile(join(dir, ".mu", ".gitignore"), "utf8");
-	expect(orchestratorPrompt).toContain("# Mu Orchestrator");
-	expect(workerPrompt).toContain("# Mu Worker");
 	expect(gitignore).toContain("*");
 	expect(gitignore).toContain("!.gitignore");
+	expect(await Bun.file(join(dir, ".mu", "roles", "orchestrator.md")).exists()).toBe(false);
+	expect(await Bun.file(join(dir, ".mu", "roles", "worker.md")).exists()).toBe(false);
 }
 
 test("mu --help", async () => {

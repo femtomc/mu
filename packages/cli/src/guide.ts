@@ -36,7 +36,6 @@ export function guideText(): string {
 		"      forum.jsonl    Forum messages (one JSON object per line)",
 		"      events.jsonl   Append-only event log (auditing / derived views)",
 		"      logs/          Run logs (grouped by root issue id)",
-		"      roles/         Role prompts (orchestrator.md, worker.md)",
 		"",
 		"  Logs are written under:",
 		"    .mu/logs/<root-id>/<issue-id>*.jsonl",

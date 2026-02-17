@@ -2,7 +2,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { BackendRunner } from "@femtomc/mu-agent";
-import { DEFAULT_OPERATOR_SYSTEM_PROMPT, DEFAULT_ORCHESTRATOR_PROMPT, DEFAULT_WORKER_PROMPT } from "@femtomc/mu-agent";
+import { DEFAULT_OPERATOR_SYSTEM_PROMPT } from "@femtomc/mu-agent";
 import type { Issue } from "@femtomc/mu-core";
 import { type EventLog, FsJsonlStore, fsEventLog, getStorePaths, newRunId, readJsonl, runContext } from "@femtomc/mu-core/node";
 import type { ForumTopicSummary } from "@femtomc/mu-forum";
@@ -279,14 +279,6 @@ async function ensureStoreInitialized(ctx: Pick<CliCtx, "paths">): Promise<void>
 		].join("\n"),
 	);
 
-	const rolesDir = join(ctx.paths.storeDir, "roles");
-	await mkdir(rolesDir, { recursive: true });
-	for (const [name, content] of [
-		["orchestrator.md", DEFAULT_ORCHESTRATOR_PROMPT],
-		["worker.md", DEFAULT_WORKER_PROMPT],
-	] as const) {
-		await writeFileIfMissing(join(rolesDir, name), `${content}\n`);
-	}
 }
 
 async function findRepoRoot(start: string): Promise<string> {
@@ -566,7 +558,6 @@ async function listStoreTargets(ctx: CliCtx): Promise<StoreTargetInfo[]> {
 		{ key: "events", path: ctx.paths.eventsPath, description: "Event log (JSONL)" },
 		{ key: "logs", path: ctx.paths.logsDir, description: "Run logs directory" },
 		{ key: "config", path: join(ctx.paths.storeDir, "config.json"), description: "CLI/server config" },
-		{ key: "roles", path: join(ctx.paths.storeDir, "roles"), description: "Role prompts directory" },
 		{ key: "heartbeats", path: join(ctx.paths.storeDir, "heartbeats.jsonl"), description: "Heartbeat programs" },
 		{ key: "cp", path: cp.controlPlaneDir, description: "Control-plane state directory" },
 		{ key: "cp_identities", path: cp.identitiesPath, description: "Linked identities" },
