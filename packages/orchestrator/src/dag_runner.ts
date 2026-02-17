@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { type BackendRunner, type MuRole, PiSdkBackend, roleFromTags, systemPromptForRole } from "@femtomc/mu-agent";
+import { type BackendRunner, type MuRole, SdkBackend, roleFromTags, systemPromptForRole } from "@femtomc/mu-agent";
 import type { Issue, ValidationResult } from "@femtomc/mu-core";
 import {
 	currentRunId,
@@ -112,7 +112,7 @@ export class DagRunner {
 		this.#forum = forum;
 		this.#repoRoot = repoRoot;
 		this.#events = opts.events ?? fsEventLogFromRepoRoot(repoRoot);
-		this.#backend = opts.backend ?? new PiSdkBackend();
+		this.#backend = opts.backend ?? new SdkBackend();
 		this.#modelOverrides = opts.modelOverrides ?? {};
 	}
 
@@ -171,7 +171,6 @@ export class DagRunner {
 			issueId: issue.id,
 			payload: {
 				role,
-				cli: cfg.cli,
 				provider: cfg.provider,
 				model: cfg.model,
 				reasoning: cfg.reasoning,
@@ -190,7 +189,6 @@ export class DagRunner {
 			model: cfg.model,
 			thinking: cfg.reasoning,
 			cwd: this.#repoRoot,
-			cli: cfg.cli,
 			logSuffix,
 			teePath,
 			onLine: opts.onLine,
@@ -201,7 +199,6 @@ export class DagRunner {
 			source: "backend",
 			issueId: issue.id,
 			payload: {
-				cli: cfg.cli,
 				exit_code: exitCode,
 				elapsed_s: roundTo(elapsedS, 3),
 				tee_path: relPath(this.#repoRoot, teePath),

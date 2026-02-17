@@ -5,7 +5,7 @@ import {
 	createReadTool,
 	createWriteTool,
 } from "@mariozechner/pi-coding-agent";
-import { createMuResourceLoader, resolveModel } from "./pi_sdk_backend.js";
+import { createMuResourceLoader, resolveModel } from "./backend.js";
 
 export type CreateMuSessionOpts = {
 	cwd: string;

@@ -9,7 +9,6 @@ export type ModelOverrides = {
 };
 
 export type ResolvedModelConfig = {
-	cli: string;
 	provider: string;
 	model: string;
 	reasoning: string;
@@ -77,7 +76,7 @@ function resolveExplicitModel(
 		if (!match) continue;
 
 		if (auth.hasAuth(provider)) {
-			return { cli: "pi", provider, model: match.id, reasoning: pickReasoning(match, reasoningOverride) };
+			return { provider, model: match.id, reasoning: pickReasoning(match, reasoningOverride) };
 		}
 		if (!fallback) {
 			fallback = { provider, model: match };
@@ -86,7 +85,6 @@ function resolveExplicitModel(
 
 	if (fallback) {
 		return {
-			cli: "pi",
 			provider: fallback.provider,
 			model: fallback.model.id,
 			reasoning: pickReasoning(fallback.model, reasoningOverride),
@@ -117,7 +115,7 @@ function resolveFromProvider(
 	}
 
 	const best = [...models].sort((a, b) => rankModel(b) - rankModel(a))[0]!;
-	return { cli: "pi", provider: providerId, model: best.id, reasoning: pickReasoning(best, reasoningOverride) };
+	return { provider: providerId, model: best.id, reasoning: pickReasoning(best, reasoningOverride) };
 }
 
 const PREFERRED_MODEL = "gpt-5.3-codex";
@@ -140,7 +138,6 @@ function autoDetect(reasoningOverride: string | undefined, auth: AuthStorage): R
 	const preferred = authedModels.find((e) => e.model.id === PREFERRED_MODEL && supportsXhigh(e.model));
 	if (preferred) {
 		return {
-			cli: "pi",
 			provider: preferred.provider,
 			model: preferred.model.id,
 			reasoning: pickReasoning(preferred.model, reasoningOverride),
@@ -149,7 +146,6 @@ function autoDetect(reasoningOverride: string | undefined, auth: AuthStorage): R
 
 	const best = authedModels.sort((a, b) => rankModel(b.model) - rankModel(a.model))[0]!;
 	return {
-		cli: "pi",
 		provider: best.provider,
 		model: best.model.id,
 		reasoning: pickReasoning(best.model, reasoningOverride),

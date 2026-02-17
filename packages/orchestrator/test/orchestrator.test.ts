@@ -7,7 +7,7 @@ import {
 	createMuResourceLoader,
 	DEFAULT_ORCHESTRATOR_PROMPT,
 	DEFAULT_WORKER_PROMPT,
-	piStreamHasError,
+	streamHasError,
 	systemPromptForRole,
 } from "@femtomc/mu-agent";
 import { FsJsonlStore, fsEventLog, getStorePaths } from "@femtomc/mu-core/node";
@@ -65,21 +65,21 @@ class StubBackend implements BackendRunner {
 	}
 }
 
-describe("piStreamHasError", () => {
+describe("streamHasError", () => {
 	test("detects assistantMessageEvent error", () => {
-		expect(piStreamHasError(`{"type":"message_update","assistantMessageEvent":{"type":"error"}}`)).toBe(true);
+		expect(streamHasError(`{"type":"message_update","assistantMessageEvent":{"type":"error"}}`)).toBe(true);
 	});
 
 	test("detects assistant message_end stopReason error/aborted", () => {
-		expect(piStreamHasError(`{"type":"message_end","message":{"role":"assistant","stopReason":"error"}}`)).toBe(true);
-		expect(piStreamHasError(`{"type":"message_end","message":{"role":"assistant","stopReason":"aborted"}}`)).toBe(
+		expect(streamHasError(`{"type":"message_end","message":{"role":"assistant","stopReason":"error"}}`)).toBe(true);
+		expect(streamHasError(`{"type":"message_end","message":{"role":"assistant","stopReason":"aborted"}}`)).toBe(
 			true,
 		);
-		expect(piStreamHasError(`{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}`)).toBe(false);
+		expect(streamHasError(`{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}`)).toBe(false);
 	});
 
 	test("ignores non-json lines", () => {
-		expect(piStreamHasError("not json")).toBe(false);
+		expect(streamHasError("not json")).toBe(false);
 	});
 });
 
@@ -413,7 +413,6 @@ describe("systemPromptForRole", () => {
 describe("resolveModelConfig", () => {
 	test("resolves explicit model", () => {
 		const cfg = resolveModelConfig({ model: "gpt-5.3-codex" });
-		expect(cfg.cli).toBe("pi");
 		expect(typeof cfg.provider).toBe("string");
 		expect(cfg.model).toBe("gpt-5.3-codex");
 		expect(typeof cfg.reasoning).toBe("string");

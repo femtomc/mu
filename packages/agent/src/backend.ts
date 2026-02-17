@@ -16,8 +16,56 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@mariozechner/pi-coding-agent";
-import type { BackendRunner, BackendRunOpts } from "./pi_backend.js";
-import { piStreamHasError } from "./pi_backend.js";
+import type { MuRole } from "./mu_roles.js";
+
+export type BackendRunOpts = {
+	issueId: string;
+	role: MuRole;
+	systemPrompt: string;
+	prompt: string;
+	provider: string;
+	model: string;
+	thinking: string;
+	cwd: string;
+	logSuffix: string;
+	onLine?: (line: string) => void;
+	teePath?: string;
+};
+
+export interface BackendRunner {
+	run(opts: BackendRunOpts): Promise<number>;
+}
+
+export function streamHasError(line: string): boolean {
+	let event: any;
+	try {
+		event = JSON.parse(line) as any;
+	} catch {
+		return false;
+	}
+
+	const etype = event?.type;
+	if (etype === "message_update") {
+		const assistantEvent = event?.assistantMessageEvent;
+		if (assistantEvent && typeof assistantEvent === "object" && assistantEvent.type === "error") {
+			return true;
+		}
+	}
+
+	if (etype === "message_end") {
+		const message = event?.message;
+		if (!message || typeof message !== "object") {
+			return false;
+		}
+		if (message.role !== "assistant") {
+			return false;
+		}
+		return message.stopReason === "error" || message.stopReason === "aborted";
+	}
+
+	return false;
+}
+
 
 /**
  * Resolve a bare model ID (e.g. "gpt-5.3-codex") to a pi-ai Model object.
@@ -61,12 +109,11 @@ export function resolveModel(
 }
 
 /**
- * In-process backend using the pi SDK.
+ * In-process backend using the SDK.
  *
- * Replaces subprocess spawning of the `pi` CLI with direct use of
- * `createAgentSession` from `@mariozechner/pi-coding-agent`.
+ * Uses `createAgentSession` from `@mariozechner/pi-coding-agent`.
  */
-export class PiSdkBackend implements BackendRunner {
+export class SdkBackend implements BackendRunner {
 	async run(opts: BackendRunOpts): Promise<number> {
 		const authStorage = new AuthStorage();
 		const model = resolveModel(opts.model, authStorage, opts.provider);
@@ -131,7 +178,7 @@ export class PiSdkBackend implements BackendRunner {
 			const unsub = session.subscribe((event) => {
 				const line = JSON.stringify(event);
 
-				if (piStreamHasError(line)) {
+				if (streamHasError(line)) {
 					sawError = true;
 				}
 
@@ -165,6 +212,7 @@ export class PiSdkBackend implements BackendRunner {
 		}
 	}
 }
+
 
 export type CreateMuResourceLoaderOpts = {
 	cwd: string;
