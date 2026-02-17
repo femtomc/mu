@@ -192,7 +192,7 @@ describe("DagRunner", () => {
 		expect(backend.runs.length).toBe(1);
 		const run = backend.runs[0]!;
 		expect(run.role).toBe("worker");
-		expect(run.systemPrompt).toContain("mu's worker");
+		expect(run.systemPrompt).toContain("You are a worker");
 
 		// User prompt is just the issue spec + mu run context (not role/system instructions).
 		expect(run.prompt).toContain("leaf-title");
@@ -248,7 +248,7 @@ describe("DagRunner", () => {
 		expect(backend.runs.length).toBe(1);
 		const run = backend.runs[0]!;
 		expect(run.role).toBe("orchestrator");
-		expect(run.systemPrompt).toContain("mu's orchestrator");
+		expect(run.systemPrompt).toContain("You are an orchestrator");
 		expect(run.systemPrompt).toContain("You MUST NOT execute work directly");
 		expect(run.systemPrompt).toContain("No code changes, no file edits, no git commits");
 		expect(run.systemPrompt).toContain("MUST decompose the assigned issue into worker child issues");

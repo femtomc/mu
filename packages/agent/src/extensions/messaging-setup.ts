@@ -10,7 +10,14 @@
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { loadBundledPrompt } from "../default_prompts.js";
 import { fetchMuJson, fetchMuStatus, muServerUrl, textResult, toJsonText } from "./shared.js";
+
+const MESSAGING_SETUP_BRIEF_TEMPLATE = loadBundledPrompt("skills/messaging-setup-brief.md");
+
+function interpolateTemplate(template: string, vars: Record<string, string>): string {
+	return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => vars[key] ?? `{{${key}}}`);
+}
 
 type AdapterSupport = "available" | "planned";
 type AdapterId = "slack" | "discord" | "telegram" | "gmail";
@@ -955,32 +962,20 @@ function buildAgentSetupPrompt(opts: {
 	const adapter = adapterById(opts.check.id);
 	const normalizedBase = normalizePublicBaseUrl(opts.publicBaseUrl);
 	const webhookUrl = normalizedBase ? `${normalizedBase}${opts.plan.route}` : opts.plan.webhook_url;
-	return [
-		`Help me set up ${adapter.name} messaging integration for mu control-plane.`,
-		"Treat diagnostics below as authoritative and guide me step-by-step.",
-		"",
-		"[Live diagnostics]",
-		`action: ${opts.action}`,
-		`state: ${opts.check.state}`,
-		`support: ${opts.check.support}`,
-		`route: ${opts.plan.route}`,
-		`expected webhook URL: ${webhookUrl ?? "(need public base URL)"}`,
-		`missing required config fields: ${opts.check.missing.join(", ") || "(none)"}`,
-		"",
-		"[Provider setup checklist]",
-		...adapter.providerSetupSteps.map((step, index) => `${index + 1}. ${step}`),
-		"",
-		"[Current config field status]",
-		...adapterFieldStatusLines(adapter, opts.check),
-		"",
-		"[How you should respond]",
-		"1) Ask for any missing values (secrets, public base URL, etc).",
-		"2) Give exact provider-console steps and copy/paste commands.",
-		`3) Finish with verification instructions using: /mu-setup verify ${adapter.id}${normalizedBase ? ` --public-base-url ${normalizedBase}` : ""}`,
-		"",
-		"[Guide snapshot]",
-		opts.guide,
-	].join("\n");
+	const verifyFlag = normalizedBase ? ` --public-base-url ${normalizedBase}` : "";
+	return interpolateTemplate(MESSAGING_SETUP_BRIEF_TEMPLATE, {
+		adapter_name: adapter.name,
+		action: opts.action,
+		state: opts.check.state,
+		support: opts.check.support,
+		route: opts.plan.route,
+		webhook_url: webhookUrl ?? "(need public base URL)",
+		missing_fields: opts.check.missing.join(", ") || "(none)",
+		provider_steps: adapter.providerSetupSteps.map((step, index) => `${index + 1}. ${step}`).join("\n"),
+		field_status: adapterFieldStatusLines(adapter, opts.check).join("\n"),
+		verify_command: `/mu-setup verify ${adapter.id}${verifyFlag}`,
+		guide: opts.guide,
+	});
 }
 
 function dispatchSetupPromptToAgent(pi: ExtensionAPI, ctx: ExtensionCommandContext, prompt: string): void {
@@ -1142,18 +1137,30 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 					const { checks, runtime } = await collectChecksCached();
 					return textResult(preflightSummary(checks, runtime), { checks, runtime });
 				}
-				case "guide": {
-					const { checks, runtime } = await collectChecksCached();
-					return textResult(setupGuide(checks, adapterId ?? undefined), { checks, runtime, adapter: adapterId });
-				}
+				case "guide":
 				case "plan": {
 					const { checks, runtime } = await collectChecksCached();
-					const plans = adapterId
-						? checks
-								.filter((check) => check.id === adapterId)
-								.map((check) => buildPlan(check, params.public_base_url))
-						: checks.map((check) => buildPlan(check, params.public_base_url));
-					return textResult(planSummary(plans), { plans, runtime, adapter: adapterId ?? null });
+					if (adapterId) {
+						const check = findCheckByAdapter(checks, adapterId);
+						if (!check) {
+							return textResult(`Unknown adapter: ${adapterId}`);
+						}
+						const plan = buildPlan(check, params.public_base_url);
+						const guide = guideForAdapter(check);
+						const brief = buildAgentSetupPrompt({
+							action: params.action,
+							check,
+							plan,
+							guide,
+							publicBaseUrl: params.public_base_url,
+						});
+						return textResult(brief, { checks, runtime, adapter: adapterId, plan });
+					}
+					if (params.action === "guide") {
+						return textResult(setupGuide(checks), { checks, runtime, adapter: null });
+					}
+					const plans = checks.map((check) => buildPlan(check, params.public_base_url));
+					return textResult(planSummary(plans), { plans, runtime, adapter: null });
 				}
 				case "apply": {
 					if (!adapterId) {
