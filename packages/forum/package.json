@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-forum",
-  "version": "26.2.41",
+  "version": "26.2.42",
   "description": "Topic-based coordination message store used by mu.",
   "keywords": [
     "mu",
@@ -21,6 +21,6 @@
     "dist/**"
   ],
   "dependencies": {
-    "@femtomc/mu-core": "26.2.41"
+    "@femtomc/mu-core": "26.2.42"
   }
 }
