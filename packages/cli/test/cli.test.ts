@@ -477,7 +477,7 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 		root_issue_id: "mu-root1234",
 		max_steps: 7,
 	});
-	expect(seenOperator).toEqual({
+	expect(seenOperator!).toEqual({
 		provider: "openai-codex",
 		model: "gpt-5.3-codex",
 		thinking: "high",

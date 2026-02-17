@@ -21,6 +21,6 @@
 		"dist/**"
 	],
 	"dependencies": {
-		"@femtomc/mu-core": "26.2.54"
+		"@femtomc/mu-core": "workspace:*"
 	}
 }

@@ -10,9 +10,9 @@
 		"e2e": "bun scripts/e2e.ts"
 	},
 	"dependencies": {
-		"@femtomc/mu-core": "26.2.54",
-		"@femtomc/mu-forum": "26.2.54",
-		"@femtomc/mu-issue": "26.2.54"
+		"@femtomc/mu-core": "workspace:*",
+		"@femtomc/mu-forum": "workspace:*",
+		"@femtomc/mu-issue": "workspace:*"
 	},
 	"devDependencies": {
 		"playwright": "^1.44.0",

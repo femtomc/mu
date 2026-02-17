@@ -19,7 +19,7 @@
       "name": "@femtomc/mu-agent",
       "version": "26.2.56",
       "dependencies": {
-        "@femtomc/mu-core": "26.2.54",
+        "@femtomc/mu-core": "workspace:*",
         "@mariozechner/pi-agent-core": "^0.52.12",
         "@mariozechner/pi-ai": "^0.52.12",
         "@mariozechner/pi-coding-agent": "^0.52.12",
@@ -34,13 +34,13 @@
         "mu": "./dist/cli.js",
       },
       "dependencies": {
-        "@femtomc/mu-agent": "26.2.54",
-        "@femtomc/mu-control-plane": "26.2.54",
-        "@femtomc/mu-core": "26.2.54",
-        "@femtomc/mu-forum": "26.2.54",
-        "@femtomc/mu-issue": "26.2.54",
-        "@femtomc/mu-orchestrator": "26.2.54",
-        "@femtomc/mu-server": "26.2.54",
+        "@femtomc/mu-agent": "workspace:*",
+        "@femtomc/mu-control-plane": "workspace:*",
+        "@femtomc/mu-core": "workspace:*",
+        "@femtomc/mu-forum": "workspace:*",
+        "@femtomc/mu-issue": "workspace:*",
+        "@femtomc/mu-orchestrator": "workspace:*",
+        "@femtomc/mu-server": "workspace:*",
         "@mariozechner/pi-ai": "^0.52.12",
         "@mariozechner/pi-coding-agent": "^0.52.12",
         "chalk": "^5.6.2",
@@ -50,8 +50,8 @@
       "name": "@femtomc/mu-control-plane",
       "version": "26.2.56",
       "dependencies": {
-        "@femtomc/mu-agent": "26.2.54",
-        "@femtomc/mu-core": "26.2.54",
+        "@femtomc/mu-agent": "workspace:*",
+        "@femtomc/mu-core": "workspace:*",
         "zod": "^4.1.9",
       },
     },
@@ -66,24 +66,24 @@
       "name": "@femtomc/mu-forum",
       "version": "26.2.56",
       "dependencies": {
-        "@femtomc/mu-core": "26.2.54",
+        "@femtomc/mu-core": "workspace:*",
       },
     },
     "packages/issue": {
       "name": "@femtomc/mu-issue",
       "version": "26.2.56",
       "dependencies": {
-        "@femtomc/mu-core": "26.2.54",
+        "@femtomc/mu-core": "workspace:*",
       },
     },
     "packages/orchestrator": {
       "name": "@femtomc/mu-orchestrator",
       "version": "26.2.56",
       "dependencies": {
-        "@femtomc/mu-agent": "26.2.54",
-        "@femtomc/mu-core": "26.2.54",
-        "@femtomc/mu-forum": "26.2.54",
-        "@femtomc/mu-issue": "26.2.54",
+        "@femtomc/mu-agent": "workspace:*",
+        "@femtomc/mu-core": "workspace:*",
+        "@femtomc/mu-forum": "workspace:*",
+        "@femtomc/mu-issue": "workspace:*",
         "@mariozechner/pi-ai": "^0.52.12",
         "@mariozechner/pi-coding-agent": "^0.52.12",
       },
@@ -95,20 +95,20 @@
         "mu-server": "./dist/cli.js",
       },
       "dependencies": {
-        "@femtomc/mu-agent": "26.2.54",
-        "@femtomc/mu-control-plane": "26.2.54",
-        "@femtomc/mu-core": "26.2.54",
-        "@femtomc/mu-forum": "26.2.54",
-        "@femtomc/mu-issue": "26.2.54",
+        "@femtomc/mu-agent": "workspace:*",
+        "@femtomc/mu-control-plane": "workspace:*",
+        "@femtomc/mu-core": "workspace:*",
+        "@femtomc/mu-forum": "workspace:*",
+        "@femtomc/mu-issue": "workspace:*",
       },
     },
     "packages/web": {
       "name": "@femtomc/mu-web",
       "version": "26.2.56",
       "dependencies": {
-        "@femtomc/mu-core": "26.2.54",
-        "@femtomc/mu-forum": "26.2.54",
-        "@femtomc/mu-issue": "26.2.54",
+        "@femtomc/mu-core": "workspace:*",
+        "@femtomc/mu-forum": "workspace:*",
+        "@femtomc/mu-issue": "workspace:*",
       },
       "devDependencies": {
         "playwright": "^1.44.0",
@@ -789,54 +789,6 @@
     "@aws-crypto/sha256-browser/@smithy/util-utf8": ["@smithy/util-utf8@2.3.0", "", { "dependencies": { "@smithy/util-buffer-from": "^2.2.0", "tslib": "^2.6.2" } }, "sha512-R8Rdn8Hy72KKcebgLiv8jQcQkXoLMOGGv5uI1/k0l+snqkOzQ1R0ChUBCxWMlBsFMekWjq0wRudIweFs7sKT5A=="],
 
     "@aws-crypto/util/@smithy/util-utf8": ["@smithy/util-utf8@2.3.0", "", { "dependencies": { "@smithy/util-buffer-from": "^2.2.0", "tslib": "^2.6.2" } }, "sha512-R8Rdn8Hy72KKcebgLiv8jQcQkXoLMOGGv5uI1/k0l+snqkOzQ1R0ChUBCxWMlBsFMekWjq0wRudIweFs7sKT5A=="],
-
-    "@femtomc/mu/@femtomc/mu-agent": ["@femtomc/mu-agent@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54", "@mariozechner/pi-agent-core": "^0.52.12", "@mariozechner/pi-ai": "^0.52.12", "@mariozechner/pi-coding-agent": "^0.52.12", "@sinclair/typebox": "^0.34.0", "zod": "^4.1.9" } }, "sha512-OKDsGinsVXiDG3wmSjTrW7KF6FkLwSgyx4dE/ou+73m6+HqvHg/yUfqdam1d2f1gvUVQsQX4Ft15V7wbaRcewg=="],
-
-    "@femtomc/mu/@femtomc/mu-control-plane": ["@femtomc/mu-control-plane@26.2.54", "", { "dependencies": { "@femtomc/mu-agent": "26.2.54", "@femtomc/mu-core": "26.2.54", "zod": "^4.1.9" } }, "sha512-2MxCnibHF8cN2a4J7wBnOQPm/JyRYiHBtHm1qK5JI4cXEvs41IX6wIqWUzhK4jT/vITvc/E7u+LVWgoJW0gFFw=="],
-
-    "@femtomc/mu/@femtomc/mu-core": ["@femtomc/mu-core@26.2.54", "", { "dependencies": { "zod": "^4.1.9" } }, "sha512-30E7ZB/40O+6K7la4OBND+Aisboqx4S7udPkSb5jT3Kes7rIePHTH3O/vrKJZvwq5w5mXJcjI+KJww1sLtrFSA=="],
-
-    "@femtomc/mu/@femtomc/mu-forum": ["@femtomc/mu-forum@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54" } }, "sha512-S+Am//wL5Bf0kmDi/hgus3YwK2MmSClcZl+KC+XU4zpJ+Mc+XGSEJZFwJP9nu9+nE09UHK2cOih9Rt4YJNYLEQ=="],
-
-    "@femtomc/mu/@femtomc/mu-issue": ["@femtomc/mu-issue@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54" } }, "sha512-fknN4GfoTbRSG95Q6NsdziDY0Ivfo7QjWEs81ru69bEM+Bp2hThwi5cjI46g7sv1pJCZrD/OVtMg1OIbsjEJDg=="],
-
-    "@femtomc/mu/@femtomc/mu-orchestrator": ["@femtomc/mu-orchestrator@26.2.54", "", { "dependencies": { "@femtomc/mu-agent": "26.2.54", "@femtomc/mu-core": "26.2.54", "@femtomc/mu-forum": "26.2.54", "@femtomc/mu-issue": "26.2.54", "@mariozechner/pi-ai": "^0.52.12", "@mariozechner/pi-coding-agent": "^0.52.12" } }, "sha512-73VfrgGqUkO/gkwU3zHPn7TC34lRI3l2dIpinMNIEkgYX6Noak4jDXNJ+5M1gTxmdSEhl+cuskrxxUBJeJEDKA=="],
-
-    "@femtomc/mu/@femtomc/mu-server": ["@femtomc/mu-server@26.2.54", "", { "dependencies": { "@femtomc/mu-agent": "26.2.54", "@femtomc/mu-control-plane": "26.2.54", "@femtomc/mu-core": "26.2.54", "@femtomc/mu-forum": "26.2.54", "@femtomc/mu-issue": "26.2.54" }, "bin": { "mu-server": "dist/cli.js" } }, "sha512-SEDng1S7fXvvwPDYvyo9mzF33f4Nnnl548p+ptaofUji16YrRHdvhNqh0dqSZ+wQp3IycrgzAfbqXIAcbBxP3A=="],
-
-    "@femtomc/mu-agent/@femtomc/mu-core": ["@femtomc/mu-core@26.2.54", "", { "dependencies": { "zod": "^4.1.9" } }, "sha512-30E7ZB/40O+6K7la4OBND+Aisboqx4S7udPkSb5jT3Kes7rIePHTH3O/vrKJZvwq5w5mXJcjI+KJww1sLtrFSA=="],
-
-    "@femtomc/mu-control-plane/@femtomc/mu-agent": ["@femtomc/mu-agent@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54", "@mariozechner/pi-agent-core": "^0.52.12", "@mariozechner/pi-ai": "^0.52.12", "@mariozechner/pi-coding-agent": "^0.52.12", "@sinclair/typebox": "^0.34.0", "zod": "^4.1.9" } }, "sha512-OKDsGinsVXiDG3wmSjTrW7KF6FkLwSgyx4dE/ou+73m6+HqvHg/yUfqdam1d2f1gvUVQsQX4Ft15V7wbaRcewg=="],
-
-    "@femtomc/mu-control-plane/@femtomc/mu-core": ["@femtomc/mu-core@26.2.54", "", { "dependencies": { "zod": "^4.1.9" } }, "sha512-30E7ZB/40O+6K7la4OBND+Aisboqx4S7udPkSb5jT3Kes7rIePHTH3O/vrKJZvwq5w5mXJcjI+KJww1sLtrFSA=="],
-
-    "@femtomc/mu-forum/@femtomc/mu-core": ["@femtomc/mu-core@26.2.54", "", { "dependencies": { "zod": "^4.1.9" } }, "sha512-30E7ZB/40O+6K7la4OBND+Aisboqx4S7udPkSb5jT3Kes7rIePHTH3O/vrKJZvwq5w5mXJcjI+KJww1sLtrFSA=="],
-
-    "@femtomc/mu-issue/@femtomc/mu-core": ["@femtomc/mu-core@26.2.54", "", { "dependencies": { "zod": "^4.1.9" } }, "sha512-30E7ZB/40O+6K7la4OBND+Aisboqx4S7udPkSb5jT3Kes7rIePHTH3O/vrKJZvwq5w5mXJcjI+KJww1sLtrFSA=="],
-
-    "@femtomc/mu-orchestrator/@femtomc/mu-agent": ["@femtomc/mu-agent@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54", "@mariozechner/pi-agent-core": "^0.52.12", "@mariozechner/pi-ai": "^0.52.12", "@mariozechner/pi-coding-agent": "^0.52.12", "@sinclair/typebox": "^0.34.0", "zod": "^4.1.9" } }, "sha512-OKDsGinsVXiDG3wmSjTrW7KF6FkLwSgyx4dE/ou+73m6+HqvHg/yUfqdam1d2f1gvUVQsQX4Ft15V7wbaRcewg=="],
-
-    "@femtomc/mu-orchestrator/@femtomc/mu-core": ["@femtomc/mu-core@26.2.54", "", { "dependencies": { "zod": "^4.1.9" } }, "sha512-30E7ZB/40O+6K7la4OBND+Aisboqx4S7udPkSb5jT3Kes7rIePHTH3O/vrKJZvwq5w5mXJcjI+KJww1sLtrFSA=="],
-
-    "@femtomc/mu-orchestrator/@femtomc/mu-forum": ["@femtomc/mu-forum@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54" } }, "sha512-S+Am//wL5Bf0kmDi/hgus3YwK2MmSClcZl+KC+XU4zpJ+Mc+XGSEJZFwJP9nu9+nE09UHK2cOih9Rt4YJNYLEQ=="],
-
-    "@femtomc/mu-orchestrator/@femtomc/mu-issue": ["@femtomc/mu-issue@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54" } }, "sha512-fknN4GfoTbRSG95Q6NsdziDY0Ivfo7QjWEs81ru69bEM+Bp2hThwi5cjI46g7sv1pJCZrD/OVtMg1OIbsjEJDg=="],
-
-    "@femtomc/mu-server/@femtomc/mu-agent": ["@femtomc/mu-agent@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54", "@mariozechner/pi-agent-core": "^0.52.12", "@mariozechner/pi-ai": "^0.52.12", "@mariozechner/pi-coding-agent": "^0.52.12", "@sinclair/typebox": "^0.34.0", "zod": "^4.1.9" } }, "sha512-OKDsGinsVXiDG3wmSjTrW7KF6FkLwSgyx4dE/ou+73m6+HqvHg/yUfqdam1d2f1gvUVQsQX4Ft15V7wbaRcewg=="],
-
-    "@femtomc/mu-server/@femtomc/mu-control-plane": ["@femtomc/mu-control-plane@26.2.54", "", { "dependencies": { "@femtomc/mu-agent": "26.2.54", "@femtomc/mu-core": "26.2.54", "zod": "^4.1.9" } }, "sha512-2MxCnibHF8cN2a4J7wBnOQPm/JyRYiHBtHm1qK5JI4cXEvs41IX6wIqWUzhK4jT/vITvc/E7u+LVWgoJW0gFFw=="],
-
-    "@femtomc/mu-server/@femtomc/mu-core": ["@femtomc/mu-core@26.2.54", "", { "dependencies": { "zod": "^4.1.9" } }, "sha512-30E7ZB/40O+6K7la4OBND+Aisboqx4S7udPkSb5jT3Kes7rIePHTH3O/vrKJZvwq5w5mXJcjI+KJww1sLtrFSA=="],
-
-    "@femtomc/mu-server/@femtomc/mu-forum": ["@femtomc/mu-forum@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54" } }, "sha512-S+Am//wL5Bf0kmDi/hgus3YwK2MmSClcZl+KC+XU4zpJ+Mc+XGSEJZFwJP9nu9+nE09UHK2cOih9Rt4YJNYLEQ=="],
-
-    "@femtomc/mu-server/@femtomc/mu-issue": ["@femtomc/mu-issue@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54" } }, "sha512-fknN4GfoTbRSG95Q6NsdziDY0Ivfo7QjWEs81ru69bEM+Bp2hThwi5cjI46g7sv1pJCZrD/OVtMg1OIbsjEJDg=="],
-
-    "@femtomc/mu-web/@femtomc/mu-core": ["@femtomc/mu-core@26.2.54", "", { "dependencies": { "zod": "^4.1.9" } }, "sha512-30E7ZB/40O+6K7la4OBND+Aisboqx4S7udPkSb5jT3Kes7rIePHTH3O/vrKJZvwq5w5mXJcjI+KJww1sLtrFSA=="],
-
-    "@femtomc/mu-web/@femtomc/mu-forum": ["@femtomc/mu-forum@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54" } }, "sha512-S+Am//wL5Bf0kmDi/hgus3YwK2MmSClcZl+KC+XU4zpJ+Mc+XGSEJZFwJP9nu9+nE09UHK2cOih9Rt4YJNYLEQ=="],
-
-    "@femtomc/mu-web/@femtomc/mu-issue": ["@femtomc/mu-issue@26.2.54", "", { "dependencies": { "@femtomc/mu-core": "26.2.54" } }, "sha512-fknN4GfoTbRSG95Q6NsdziDY0Ivfo7QjWEs81ru69bEM+Bp2hThwi5cjI46g7sv1pJCZrD/OVtMg1OIbsjEJDg=="],
 
     "@mistralai/mistralai/zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 

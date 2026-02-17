@@ -25,13 +25,13 @@
 		"dist/**"
 	],
 	"dependencies": {
-		"@femtomc/mu-agent": "26.2.54",
-		"@femtomc/mu-control-plane": "26.2.54",
-		"@femtomc/mu-core": "26.2.54",
-		"@femtomc/mu-forum": "26.2.54",
-		"@femtomc/mu-issue": "26.2.54",
-		"@femtomc/mu-orchestrator": "26.2.54",
-		"@femtomc/mu-server": "26.2.54",
+		"@femtomc/mu-agent": "workspace:*",
+		"@femtomc/mu-control-plane": "workspace:*",
+		"@femtomc/mu-core": "workspace:*",
+		"@femtomc/mu-forum": "workspace:*",
+		"@femtomc/mu-issue": "workspace:*",
+		"@femtomc/mu-orchestrator": "workspace:*",
+		"@femtomc/mu-server": "workspace:*",
 		"@mariozechner/pi-ai": "^0.52.12",
 		"@mariozechner/pi-coding-agent": "^0.52.12",
 		"chalk": "^5.6.2"

@@ -21,10 +21,10 @@
 		"dist/**"
 	],
 	"dependencies": {
-		"@femtomc/mu-agent": "26.2.54",
-		"@femtomc/mu-core": "26.2.54",
-		"@femtomc/mu-forum": "26.2.54",
-		"@femtomc/mu-issue": "26.2.54",
+		"@femtomc/mu-agent": "workspace:*",
+		"@femtomc/mu-core": "workspace:*",
+		"@femtomc/mu-forum": "workspace:*",
+		"@femtomc/mu-issue": "workspace:*",
 		"@mariozechner/pi-coding-agent": "^0.52.12",
 		"@mariozechner/pi-ai": "^0.52.12"
 	}

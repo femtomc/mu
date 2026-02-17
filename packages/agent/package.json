@@ -23,7 +23,7 @@
 		"prompts/**"
 	],
 	"dependencies": {
-		"@femtomc/mu-core": "26.2.54",
+		"@femtomc/mu-core": "workspace:*",
 		"@mariozechner/pi-agent-core": "^0.52.12",
 		"@mariozechner/pi-ai": "^0.52.12",
 		"@mariozechner/pi-coding-agent": "^0.52.12",
