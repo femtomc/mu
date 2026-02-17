@@ -4,7 +4,7 @@ import {
 	type MessagingOperatorBackend,
 	MessagingOperatorRuntime,
 	PiMessagingOperatorBackend,
-	serveExtensionPaths,
+	operatorExtensionPaths,
 } from "@femtomc/mu-agent";
 import {
 	type Channel,
@@ -254,7 +254,7 @@ function buildMessagingOperatorRuntime(opts: {
 		new PiMessagingOperatorBackend({
 			provider: opts.config.operator.provider ?? undefined,
 			model: opts.config.operator.model ?? undefined,
-			extensionPaths: serveExtensionPaths,
+			extensionPaths: operatorExtensionPaths,
 		});
 
 	return new MessagingOperatorRuntime({

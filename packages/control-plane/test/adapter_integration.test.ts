@@ -1150,12 +1150,12 @@ describe("channel adapters integrated with control-plane", () => {
 		}
 	});
 
-	test("operator backend failures return structured denied responses", async () => {
+	test("operator backend failures degrade to safe operator chat response", async () => {
 		const harness = await createHarness({
 			operatorBackend: new ThrowingOperatorBackend(),
 		});
 
-		const denied = await harness.slack.ingest(
+		const fallback = await harness.slack.ingest(
 			slackRequest({
 				secret: "slack-secret",
 				timestampSec: Math.trunc(harness.clock.now / 1000),
@@ -1164,11 +1164,11 @@ describe("channel adapters integrated with control-plane", () => {
 				requestId: "operator-fail-req-1",
 			}),
 		);
-		expect(denied.pipelineResult).toEqual({ kind: "denied", reason: "operator_invalid_output" });
-		expect(denied.outboxRecord).toBeNull();
-		const deniedBody = (await denied.response.json()) as { text?: string };
-		expect(deniedBody.text).toContain("ERROR · DENIED");
-		expect(deniedBody.text).toContain("operator_invalid_output");
+		expect(fallback.pipelineResult?.kind).toBe("operator_response");
+		expect(fallback.outboxRecord).toBeNull();
+		const body = (await fallback.response.json()) as { text?: string };
+		expect(body.text).toContain("Operator · CHAT");
+		expect(body.text).toContain("operator_backend_error");
 	});
 
 	test("command_id/request_id/channel are preserved end-to-end across adapters", async () => {

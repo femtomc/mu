@@ -136,6 +136,26 @@ describe("PiMessagingOperatorBackend", () => {
 		});
 	});
 
+	test("parses MU_DECISION command envelope into approved payload", async () => {
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ['MU_DECISION: {"kind":"command","command":{"kind":"run_start","prompt":"ship release"}}'],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-cmd-envelope", turnId: "turn-1", commandText: "please run this" }),
+		);
+		expect(result).toEqual({
+			kind: "command",
+			command: {
+				kind: "run_start",
+				prompt: "ship release",
+			},
+		});
+	});
+
 	test("parses legacy pure-JSON command payloads for compatibility", async () => {
 		const backend = new PiMessagingOperatorBackend({
 			sessionFactory: async () =>
@@ -154,6 +174,46 @@ describe("PiMessagingOperatorBackend", () => {
 				root_issue_id: "mu-root1234",
 			},
 		});
+	});
+
+	test("invalid command directives degrade to safe response", async () => {
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ['MU_COMMAND: {"kind":"run_start","prompt":}'],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-invalid-directive", turnId: "turn-1", commandText: "start a run" }),
+		);
+		expect(result.kind).toBe("respond");
+		if (result.kind !== "respond") {
+			throw new Error(`expected respond, got ${result.kind}`);
+		}
+		expect(result.message).toContain("operator_invalid_command_directive");
+	});
+
+	test("invalid directives with normal text preserve conversational response", async () => {
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: [
+						"I can help with that.\nMU_COMMAND: {\"kind\":\"run_start\",\"prompt\":}\nLet me know if you want me to propose a command.",
+					],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-invalid-directive-mixed", turnId: "turn-1", commandText: "start a run" }),
+		);
+		expect(result.kind).toBe("respond");
+		if (result.kind !== "respond") {
+			throw new Error(`expected respond, got ${result.kind}`);
+		}
+		expect(result.message).toContain("I can help with that.");
+		expect(result.message).toContain("Let me know if you want me to propose a command.");
+		expect(result.message).not.toContain("MU_COMMAND:");
 	});
 
 	test("evicts idle sessions based on ttl", async () => {

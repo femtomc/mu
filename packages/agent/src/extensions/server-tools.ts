@@ -69,15 +69,22 @@ function sliceWithLimit<T>(
 	};
 }
 
-export function serverToolsExtension(pi: ExtensionAPI) {
+export type ServerToolsExtensionOpts = {
+	allowForumPost?: boolean;
+	toolIntroLine?: string;
+	extraSystemPromptLines?: string[];
+};
+
+function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensionOpts>) {
 	pi.on("before_agent_start", async (event) => {
 		const url = muServerUrl();
 		if (!url) return {};
 		const extra = [
 			"",
 			`[MU SERVER] Connected at ${url}.`,
-			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events, mu_runs, mu_activities, mu_heartbeats.",
+			opts.toolIntroLine,
 			"Use these tools to inspect repository state and control-plane runtime before advising users.",
+			...opts.extraSystemPromptLines,
 		].join("\n");
 		return {
 			systemPrompt: `${event.systemPrompt}${extra}`,
@@ -241,6 +248,12 @@ export function serverToolsExtension(pi: ExtensionAPI) {
 					});
 				}
 				case "post": {
+					if (!opts.allowForumPost) {
+						return textResult(
+							"forum post is disabled in operator read-only mode; use approved /mu command flow for mutations.",
+							{ blocked: true, reason: "operator_read_only_tools" },
+						);
+					}
 					const topic = trimOrNull(params.topic);
 					const body = trimOrNull(params.body);
 					if (!topic) return textResult("Error: topic required for post");
@@ -357,6 +370,27 @@ export function serverToolsExtension(pi: ExtensionAPI) {
 				ctx.ui.notify(`Failed: ${err instanceof Error ? err.message : String(err)}`, "error");
 			}
 		},
+	});
+}
+
+export function serverToolsExtension(pi: ExtensionAPI, opts: ServerToolsExtensionOpts = {}) {
+	registerServerTools(pi, {
+		allowForumPost: opts.allowForumPost ?? true,
+		toolIntroLine:
+			opts.toolIntroLine ??
+			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events, mu_runs, mu_activities, mu_heartbeats.",
+		extraSystemPromptLines: opts.extraSystemPromptLines ?? [],
+	});
+}
+
+export function serverToolsReadOnlyExtension(pi: ExtensionAPI) {
+	registerServerTools(pi, {
+		allowForumPost: false,
+		toolIntroLine:
+			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum(read/topics), mu_events, mu_runs(read), mu_messaging_setup(read).",
+		extraSystemPromptLines: [
+			"Mutating tool actions are disabled in operator mode; propose mutations via approved /mu commands.",
+		],
 	});
 }
 

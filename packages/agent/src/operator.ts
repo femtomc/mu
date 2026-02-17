@@ -1,3 +1,5 @@
+import { appendJsonl } from "@femtomc/mu-core/node";
+import { join } from "node:path";
 import { z } from "zod";
 import { CommandContextResolver } from "./command_context.js";
 import { createMuSession, type CreateMuSessionOpts, type MuSession } from "./session_factory.js";
@@ -61,6 +63,11 @@ export const OperatorBackendTurnResultSchema = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("command"), command: OperatorApprovedCommandSchema }),
 ]);
 export type OperatorBackendTurnResult = z.infer<typeof OperatorBackendTurnResultSchema>;
+
+const OperatorDecisionEnvelopeSchema = z.discriminatedUnion("kind", [
+	z.object({ kind: z.literal("respond"), message: z.string().trim().min(1).max(2000) }),
+	z.object({ kind: z.literal("command"), command: OperatorApprovedCommandSchema }),
+]);
 
 export type OperatorBackendTurnInput = {
 	sessionId: string;
@@ -262,6 +269,14 @@ function defaultTurnId(): string {
 	return `turn-${crypto.randomUUID()}`;
 }
 
+function buildOperatorFailureFallbackMessage(code: string): string {
+	return [
+		"I ran into an internal operator formatting/runtime issue and could not complete that turn safely.",
+		`Code: ${code}`,
+		"You can retry, or use an explicit /mu command (for example: /mu status or /mu run list).",
+	].join("\n");
+}
+
 function conversationKey(inbound: InboundEnvelope, binding: IdentityBinding): string {
 	return `${inbound.channel}:${inbound.channel_tenant_id}:${inbound.channel_conversation_id}:${binding.binding_id}`;
 }
@@ -328,9 +343,8 @@ export class MessagingOperatorRuntime {
 			);
 		} catch (err) {
 			return {
-				kind: "reject",
-				reason: "operator_invalid_output",
-				details: err instanceof Error ? err.message : "operator_backend_error",
+				kind: "response",
+				message: buildOperatorFailureFallbackMessage("operator_backend_error"),
 				operatorSessionId: sessionId,
 				operatorTurnId: turnId,
 			};
@@ -340,9 +354,8 @@ export class MessagingOperatorRuntime {
 			const message = backendResult.message.trim();
 			if (!SAFE_RESPONSE_RE.test(message)) {
 				return {
-					kind: "reject",
-					reason: "operator_invalid_output",
-					details: "invalid response payload",
+					kind: "response",
+					message: buildOperatorFailureFallbackMessage("operator_invalid_response_payload"),
 					operatorSessionId: sessionId,
 					operatorTurnId: turnId,
 				};
@@ -394,6 +407,7 @@ export type PiMessagingOperatorBackendOpts = {
 	nowMs?: () => number;
 	sessionIdleTtlMs?: number;
 	maxSessions?: number;
+	auditTurns?: boolean;
 };
 
 export const DEFAULT_CHAT_SYSTEM_PROMPT = [
@@ -409,54 +423,131 @@ export const DEFAULT_CHAT_SYSTEM_PROMPT = [
 ].join("\n");
 
 const OPERATOR_COMMAND_PREFIX = "MU_COMMAND:";
+const OPERATOR_DECISION_PREFIX = "MU_DECISION:";
 
 const DEFAULT_OPERATOR_SYSTEM_PROMPT = [
 	"You are mu, an AI assistant for the mu orchestration platform.",
 	"You have tools to interact with the mu server: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events.",
 	"Use these tools to answer questions about repository state, issues, events, and control-plane runtime state.",
-	"For adapter setup workflow, use mu_messaging_setup (check/preflight/plan/apply/verify/guide).",
+	"For adapter setup workflow, use mu_messaging_setup (check/preflight/plan/verify/guide).",
 	"You can help users set up messaging integrations (Slack, Discord, Telegram, Gmail planning).",
+	"Mutating actions must flow through approved /mu command proposals; do not execute mutations directly via tools.",
 	"You may either respond normally or emit an approved control-plane command.",
-	`To emit a command, output exactly one line with prefix ${OPERATOR_COMMAND_PREFIX} followed by compact JSON.`,
+	`Preferred command format: output one line with prefix ${OPERATOR_DECISION_PREFIX} followed by compact JSON envelope.`,
 	"Example:",
-	`MU_COMMAND: {\"kind\":\"run_start\",\"prompt\":\"ship release\"}`,
+	`MU_DECISION: {\"kind\":\"command\",\"command\":{\"kind\":\"run_start\",\"prompt\":\"ship release\"}}`,
+	"Legacy format MU_COMMAND remains accepted for compatibility.",
 	"Available command kinds: status, ready, issue_list, issue_get, forum_read, run_list, run_status, run_start, run_resume, run_interrupt.",
 	"",
 	"Be concise, practical, and actionable.",
 	"For normal conversational answers, respond in plain text.",
 ].join("\n");
 
-function parseOperatorCommandDirective(text: string): OperatorApprovedCommand | null {
+type ParsedOperatorDirective =
+	| { kind: "none" }
+	| { kind: "command"; command: OperatorApprovedCommand }
+	| { kind: "respond"; message: string }
+	| { kind: "invalid"; reason: string; fallbackMessage: string };
+
+function stripOperatorDirectiveLines(text: string): string {
+	return text
+		.split(/\r?\n/)
+		.filter((line) => {
+			const trimmed = line.trim();
+			return !(trimmed.startsWith(OPERATOR_COMMAND_PREFIX) || trimmed.startsWith(OPERATOR_DECISION_PREFIX));
+		})
+		.join("\n")
+		.trim();
+}
+
+function parseOperatorDirective(text: string): ParsedOperatorDirective {
 	const whole = text.trim();
 	if (whole.startsWith("{") && whole.endsWith("}")) {
 		try {
-			return OperatorApprovedCommandSchema.parse(JSON.parse(whole));
+			const parsed = JSON.parse(whole);
+			const envelope = OperatorDecisionEnvelopeSchema.safeParse(parsed);
+			if (envelope.success) {
+				return envelope.data.kind === "command"
+					? { kind: "command", command: envelope.data.command }
+					: { kind: "respond", message: envelope.data.message };
+			}
+			const legacy = OperatorApprovedCommandSchema.safeParse(parsed);
+			if (legacy.success) {
+				return { kind: "command", command: legacy.data };
+			}
 		} catch {
-			// fall through to explicit MU_COMMAND parsing
+			// fall through to line-based directives / plain text fallback.
 		}
 	}
 
 	const lines = text.split(/\r?\n/);
 	for (const line of lines) {
 		const trimmed = line.trim();
+		if (trimmed.startsWith(OPERATOR_DECISION_PREFIX)) {
+			const payloadText = trimmed.slice(OPERATOR_DECISION_PREFIX.length).trim();
+			if (payloadText.length === 0) {
+				return {
+					kind: "invalid",
+					reason: "operator_decision_directive_missing_payload",
+					fallbackMessage: stripOperatorDirectiveLines(text),
+				};
+			}
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(payloadText);
+			} catch (err) {
+				return {
+					kind: "invalid",
+					reason: `operator_decision_directive_invalid_json: ${err instanceof Error ? err.message : String(err)}`,
+					fallbackMessage: stripOperatorDirectiveLines(text),
+				};
+			}
+			const envelope = OperatorDecisionEnvelopeSchema.safeParse(parsed);
+			if (!envelope.success) {
+				return {
+					kind: "invalid",
+					reason: `operator_decision_directive_invalid_payload: ${envelope.error.message}`,
+					fallbackMessage: stripOperatorDirectiveLines(text),
+				};
+			}
+			return envelope.data.kind === "command"
+				? { kind: "command", command: envelope.data.command }
+				: { kind: "respond", message: envelope.data.message };
+		}
+
 		if (!trimmed.startsWith(OPERATOR_COMMAND_PREFIX)) {
 			continue;
 		}
 		const payloadText = trimmed.slice(OPERATOR_COMMAND_PREFIX.length).trim();
 		if (payloadText.length === 0) {
-			throw new Error("operator_command_directive_missing_payload");
+			return {
+				kind: "invalid",
+				reason: "operator_command_directive_missing_payload",
+				fallbackMessage: stripOperatorDirectiveLines(text),
+			};
 		}
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(payloadText);
 		} catch (err) {
-			throw new Error(
-				`operator_command_directive_invalid_json: ${err instanceof Error ? err.message : String(err)}`,
-			);
+			return {
+				kind: "invalid",
+				reason: `operator_command_directive_invalid_json: ${err instanceof Error ? err.message : String(err)}`,
+				fallbackMessage: stripOperatorDirectiveLines(text),
+			};
 		}
-		return OperatorApprovedCommandSchema.parse(parsed);
+		const command = OperatorApprovedCommandSchema.safeParse(parsed);
+		if (!command.success) {
+			return {
+				kind: "invalid",
+				reason: `operator_command_directive_invalid_payload: ${command.error.message}`,
+				fallbackMessage: stripOperatorDirectiveLines(text),
+			};
+		}
+		return { kind: "command", command: command.data };
 	}
-	return null;
+
+	return { kind: "none" };
 }
 
 function buildOperatorPrompt(input: OperatorBackendTurnInput): string {
@@ -477,6 +568,20 @@ type PiOperatorSessionRecord = {
 	lastUsedAtMs: number;
 };
 
+type OperatorTurnAuditEntry = {
+	kind: "operator.turn";
+	ts_ms: number;
+	repo_root: string;
+	channel: string;
+	request_id: string;
+	session_id: string;
+	turn_id: string;
+	outcome: "respond" | "command" | "invalid_directive" | "error";
+	reason: string | null;
+	message_preview: string | null;
+	command: OperatorApprovedCommand | null;
+};
+
 export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 	readonly #provider: string | undefined;
 	readonly #model: string | undefined;
@@ -488,6 +593,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 	readonly #nowMs: () => number;
 	readonly #sessionIdleTtlMs: number;
 	readonly #maxSessions: number;
+	readonly #auditTurns: boolean;
 	readonly #sessions = new Map<string, PiOperatorSessionRecord>();
 
 	public constructor(opts: PiMessagingOperatorBackendOpts = {}) {
@@ -501,6 +607,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		this.#nowMs = opts.nowMs ?? Date.now;
 		this.#sessionIdleTtlMs = Math.max(60_000, Math.trunc(opts.sessionIdleTtlMs ?? 30 * 60 * 1_000));
 		this.#maxSessions = Math.max(1, Math.trunc(opts.maxSessions ?? 32));
+		this.#auditTurns = opts.auditTurns ?? true;
 	}
 
 	#disposeSession(sessionId: string): void {
@@ -583,6 +690,36 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		return created;
 	}
 
+	async #auditTurn(input: OperatorBackendTurnInput, opts: {
+		outcome: OperatorTurnAuditEntry["outcome"];
+		reason?: string | null;
+		messagePreview?: string | null;
+		command?: OperatorApprovedCommand | null;
+	}): Promise<void> {
+		if (!this.#auditTurns) {
+			return;
+		}
+		const entry: OperatorTurnAuditEntry = {
+			kind: "operator.turn",
+			ts_ms: Math.trunc(this.#nowMs()),
+			repo_root: input.inbound.repo_root,
+			channel: input.inbound.channel,
+			request_id: input.inbound.request_id,
+			session_id: input.sessionId,
+			turn_id: input.turnId,
+			outcome: opts.outcome,
+			reason: opts.reason ?? null,
+			message_preview: opts.messagePreview?.slice(0, 280) ?? null,
+			command: opts.command ?? null,
+		};
+		try {
+			const path = join(input.inbound.repo_root, ".mu", "control-plane", "operator_turns.jsonl");
+			await appendJsonl(path, entry);
+		} catch {
+			// best effort audit
+		}
+	}
+
 	public async runTurn(input: OperatorBackendTurnInput): Promise<OperatorBackendTurnResult> {
 		const sessionRecord = await this.#resolveSession(input.sessionId, input.inbound.repo_root);
 		const session = sessionRecord.session;
@@ -615,6 +752,13 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 				session.prompt(buildOperatorPrompt(input), { expandPromptTemplates: false }),
 				timeoutPromise,
 			]);
+		} catch (err) {
+			await this.#auditTurn(input, {
+				outcome: "error",
+				reason: err instanceof Error ? err.message : "operator_backend_error",
+				messagePreview: assistantText,
+			});
+			throw err;
 		} finally {
 			unsub();
 			sessionRecord.lastUsedAtMs = Math.trunc(this.#nowMs());
@@ -622,18 +766,65 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 
 		const message = assistantText.trim();
 		if (!message) {
+			await this.#auditTurn(input, {
+				outcome: "error",
+				reason: "operator_empty_response",
+			});
 			throw new Error("operator_empty_response");
 		}
 
-		const command = parseOperatorCommandDirective(message);
-		if (command) {
-			return {
-				kind: "command",
-				command,
-			};
+		const parsed = parseOperatorDirective(message);
+		switch (parsed.kind) {
+			case "command":
+				await this.#auditTurn(input, {
+					outcome: "command",
+					command: parsed.command,
+					messagePreview: message,
+				});
+				return {
+					kind: "command",
+					command: parsed.command,
+				};
+			case "respond": {
+				const responseMessage = parsed.message.trim().slice(0, 2000);
+				if (!SAFE_RESPONSE_RE.test(responseMessage)) {
+					const fallback = buildOperatorFailureFallbackMessage("operator_invalid_response_payload");
+					await this.#auditTurn(input, {
+						outcome: "invalid_directive",
+						reason: "operator_invalid_response_payload",
+						messagePreview: message,
+					});
+					return { kind: "respond", message: fallback };
+				}
+				await this.#auditTurn(input, {
+					outcome: "respond",
+					messagePreview: responseMessage,
+				});
+				return { kind: "respond", message: responseMessage };
+			}
+			case "invalid": {
+				const fallbackMessage = parsed.fallbackMessage.trim();
+				const responseMessage =
+					fallbackMessage.length > 0
+						? fallbackMessage.slice(0, 2000)
+						: buildOperatorFailureFallbackMessage("operator_invalid_command_directive");
+				await this.#auditTurn(input, {
+					outcome: "invalid_directive",
+					reason: parsed.reason,
+					messagePreview: message,
+				});
+				return { kind: "respond", message: responseMessage };
+			}
+			case "none":
+			default: {
+				const responseMessage = message.slice(0, 2000);
+				await this.#auditTurn(input, {
+					outcome: "respond",
+					messagePreview: responseMessage,
+				});
+				return { kind: "respond", message: responseMessage };
+			}
 		}
-
-		return { kind: "respond", message: message.slice(0, 2000) };
 	}
 
 	public dispose(): void {
