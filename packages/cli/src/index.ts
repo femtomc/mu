@@ -2,7 +2,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { BackendRunner } from "@femtomc/mu-agent";
-import { DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_ORCHESTRATOR_PROMPT, DEFAULT_WORKER_PROMPT } from "@femtomc/mu-agent";
+import { DEFAULT_OPERATOR_SYSTEM_PROMPT, DEFAULT_ORCHESTRATOR_PROMPT, DEFAULT_WORKER_PROMPT } from "@femtomc/mu-agent";
 import type { Issue } from "@femtomc/mu-core";
 import { type EventLog, FsJsonlStore, fsEventLog, getStorePaths, newRunId, readJsonl, runContext } from "@femtomc/mu-core/node";
 import type { ForumTopicSummary } from "@femtomc/mu-forum";
@@ -450,10 +450,10 @@ export async function run(
 		case "resume":
 			return await cmdResume(rest, ctx);
 		case "chat": {
-			const { serveExtensionPaths } = await import("@femtomc/mu-agent");
+			const { operatorExtensionPaths } = await import("@femtomc/mu-agent");
 			return await cmdChat(rest, {
 				...ctx,
-				serveExtensionPaths: ctx.serveExtensionPaths ?? serveExtensionPaths,
+				serveExtensionPaths: ctx.serveExtensionPaths ?? operatorExtensionPaths,
 			});
 		}
 		case "login":
@@ -2322,7 +2322,7 @@ async function cmdChat(argv: string[], ctx: CliCtx, options: ChatCommandOptions 
 	if (hasHelpFlag(argv)) {
 		return ok(
 			[
-				"mu chat - interactive terminal session",
+				"mu chat - interactive operator session",
 				"",
 				"Usage:",
 				"  mu chat [--message TEXT] [--json]",
@@ -2403,7 +2403,7 @@ async function cmdChat(argv: string[], ctx: CliCtx, options: ChatCommandOptions 
 	const provider = providerRaw?.trim() || undefined;
 	const model = modelRaw?.trim() || undefined;
 	const thinking = thinkingRaw?.trim() || undefined;
-	const systemPrompt = systemPromptRaw?.trim() || DEFAULT_CHAT_SYSTEM_PROMPT;
+	const systemPrompt = systemPromptRaw?.trim() || DEFAULT_OPERATOR_SYSTEM_PROMPT;
 
 	const createSession = async (): Promise<ChatSession> => {
 		if (ctx.chatSessionFactory) {
@@ -2616,7 +2616,7 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 			};
 		},
 		runOperatorSession: async ({ onReady, provider, model }) => {
-			const { serveExtensionPaths } = await import("@femtomc/mu-agent");
+			const { operatorExtensionPaths } = await import("@femtomc/mu-agent");
 			const chatArgv: string[] = [];
 			if (provider) {
 				chatArgv.push("--provider", provider);
@@ -2626,7 +2626,7 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 			}
 			return await cmdChat(
 				chatArgv,
-				{ ...ctx, serveExtensionPaths },
+				{ ...ctx, serveExtensionPaths: ctx.serveExtensionPaths ?? operatorExtensionPaths },
 				{
 					onInteractiveReady: onReady,
 				},
@@ -2658,7 +2658,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
 			[
-				"mu serve - start server + terminal chat + web UI",
+				"mu serve - start server + terminal operator session + web UI",
 				"",
 				"Usage:",
 				"  mu serve [--port N] [--no-open]",
@@ -2668,11 +2668,11 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  --no-open      Don't open browser automatically",
 				"",
 				"Starts the API + bundled web UI, then attaches an interactive terminal",
-				"chat session in this same shell.",
+				"operator session in this same shell.",
 				"",
 				"Control plane configuration:",
 				"  .mu/config.json is the source of truth for adapter + assistant settings",
-				"  Attached terminal chat inherits control_plane.operator.provider/model when set",
+				"  Attached terminal operator session inherits control_plane.operator.provider/model when set",
 				"  Use `/mu-setup <adapter>` in mu serve chat for guided setup",
 				"  Use `mu control status` to inspect current config",
 				"",

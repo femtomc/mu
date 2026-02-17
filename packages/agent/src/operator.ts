@@ -411,18 +411,6 @@ export type PiMessagingOperatorBackendOpts = {
 	auditTurns?: boolean;
 };
 
-export const DEFAULT_CHAT_SYSTEM_PROMPT = [
-	"You are mu, an AI assistant for the mu orchestration platform.",
-	"Help users with:",
-	"- Understanding mu's architecture (issues, forum, orchestrator, control-plane)",
-	"- Setting up control-plane integrations (Slack, Discord, Telegram, Gmail planning)",
-	"- Navigating issues and forum topics",
-	"- Running and monitoring orchestrator workflows",
-	"- General questions about the mu ecosystem",
-	"",
-	"Be concise, practical, and actionable.",
-].join("\n");
-
 export { DEFAULT_OPERATOR_SYSTEM_PROMPT };
 
 const OPERATOR_COMMAND_PREFIX = "MU_COMMAND:";

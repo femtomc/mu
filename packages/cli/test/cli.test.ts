@@ -4,7 +4,7 @@ import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "@femtomc/mu";
-import type { BackendRunner, BackendRunOpts } from "@femtomc/mu-agent";
+import { DEFAULT_OPERATOR_SYSTEM_PROMPT, type BackendRunner, type BackendRunOpts } from "@femtomc/mu-agent";
 
 async function mkTempRepo(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "mu-cli-"));
@@ -119,7 +119,21 @@ async function writeConfigWithOperatorDefaults(dir: string, provider: string, mo
 function mkMockSessionFactory(response: string) {
 	let promptCalls = 0;
 	let lastPrompt = "";
-	const factory = async () => {
+	let lastFactoryOpts: {
+		cwd: string;
+		systemPrompt: string;
+		provider?: string;
+		model?: string;
+		thinking?: string;
+	} | null = null;
+	const factory = async (opts: {
+		cwd: string;
+		systemPrompt: string;
+		provider?: string;
+		model?: string;
+		thinking?: string;
+	}) => {
+		lastFactoryOpts = opts;
 		const listeners = new Set<(event: any) => void>();
 		return {
 			subscribe: (listener: (event: any) => void) => {
@@ -150,6 +164,9 @@ function mkMockSessionFactory(response: string) {
 		},
 		get lastPrompt() {
 			return lastPrompt;
+		},
+		get lastFactoryOpts() {
+			return lastFactoryOpts;
 		},
 	};
 }
@@ -326,14 +343,14 @@ test("mu chat/serve help text", async () => {
 
 	const chatHelp = await run(["chat", "--help"], { cwd: dir });
 	expect(chatHelp.exitCode).toBe(0);
-	expect(chatHelp.stdout).toContain("interactive terminal session");
+	expect(chatHelp.stdout).toContain("interactive operator session");
 	expect(chatHelp.stdout).toContain("--message");
 	expect(chatHelp.stdout).toContain("--provider");
 	expect(chatHelp.stdout).toContain("--system-prompt");
 
 	const serveHelp = await run(["serve", "--help"], { cwd: dir });
 	expect(serveHelp.exitCode).toBe(0);
-	expect(serveHelp.stdout).toContain("start server + terminal chat + web UI");
+	expect(serveHelp.stdout).toContain("start server + terminal operator session + web UI");
 	expect(serveHelp.stdout).toContain("--port");
 	expect(serveHelp.stdout.includes("--api-port")).toBe(false);
 });
@@ -427,7 +444,7 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
 });
 
-test("mu chat one-shot uses chatSessionFactory", async () => {
+test("mu chat one-shot uses operator defaults in chatSessionFactory", async () => {
 	const dir = await mkTempRepo();
 	const mock = mkMockSessionFactory("Hello from mu chat!");
 	const result = await run(["chat", "--message", "hello"], {
@@ -437,6 +454,7 @@ test("mu chat one-shot uses chatSessionFactory", async () => {
 
 	expect(result.exitCode).toBe(0);
 	expect(mock.promptCalls).toBe(1);
+	expect(mock.lastFactoryOpts?.systemPrompt).toBe(DEFAULT_OPERATOR_SYSTEM_PROMPT);
 });
 
 test("mu chat rejects empty message", async () => {
