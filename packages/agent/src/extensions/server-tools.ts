@@ -337,6 +337,78 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		},
 	});
 
+	const IdentityParams = Type.Object({
+		action: StringEnum(["list", "link", "unlink"] as const),
+		channel: Type.Optional(Type.String({ description: "Channel: slack, discord, telegram (for link)" })),
+		actor_id: Type.Optional(Type.String({ description: "Channel actor ID (for link)" })),
+		tenant_id: Type.Optional(Type.String({ description: "Channel tenant ID (for link)" })),
+		role: Type.Optional(Type.String({ description: "Role: operator, contributor, viewer (for link, default operator)" })),
+		binding_id: Type.Optional(Type.String({ description: "Binding ID (for link/unlink)" })),
+		actor_binding_id: Type.Optional(Type.String({ description: "Actor binding ID (for unlink, usually same as binding_id)" })),
+		reason: Type.Optional(Type.String({ description: "Unlink reason (for unlink)" })),
+		include_inactive: Type.Optional(Type.Boolean({ description: "Include inactive bindings (for list)" })),
+	});
+
+	pi.registerTool({
+		name: "mu_identity",
+		label: "Identity",
+		description: "Manage identity bindings. Actions: list (enumerate bindings), link (create binding), unlink (self-unlink).",
+		parameters: IdentityParams,
+		async execute(_toolCallId, params) {
+			switch (params.action) {
+				case "list": {
+					const query = new URLSearchParams();
+					if (params.include_inactive) query.set("include_inactive", "true");
+					const data = await fetchMuJson<{ count: number; bindings: unknown[] }>(
+						`/api/identities${query.size > 0 ? `?${query.toString()}` : ""}`,
+					);
+					return textResult(toJsonText(data), { count: data.count });
+				}
+				case "link": {
+					const channel = trimOrNull(params.channel);
+					const actorId = trimOrNull(params.actor_id);
+					const tenantId = trimOrNull(params.tenant_id);
+					if (!channel) return textResult("Error: channel required for link");
+					if (!actorId) return textResult("Error: actor_id required for link");
+					if (!tenantId) return textResult("Error: tenant_id required for link");
+					const body: Record<string, unknown> = {
+						channel,
+						actor_id: actorId,
+						tenant_id: tenantId,
+					};
+					const role = trimOrNull(params.role);
+					if (role) body.role = role;
+					const bindingId = trimOrNull(params.binding_id);
+					if (bindingId) body.binding_id = bindingId;
+					const result = await fetchMuJson<Record<string, unknown>>("/api/identities/link", {
+						method: "POST",
+						body,
+					});
+					return textResult(toJsonText(result), result);
+				}
+				case "unlink": {
+					const bindingId = trimOrNull(params.binding_id);
+					const actorBindingId = trimOrNull(params.actor_binding_id);
+					if (!bindingId) return textResult("Error: binding_id required for unlink");
+					if (!actorBindingId) return textResult("Error: actor_binding_id required for unlink");
+					const body: Record<string, unknown> = {
+						binding_id: bindingId,
+						actor_binding_id: actorBindingId,
+					};
+					const reason = trimOrNull(params.reason);
+					if (reason) body.reason = reason;
+					const result = await fetchMuJson<Record<string, unknown>>("/api/identities/unlink", {
+						method: "POST",
+						body,
+					});
+					return textResult(toJsonText(result), result);
+				}
+				default:
+					return textResult(`Unknown action: ${params.action}`);
+			}
+		},
+	});
+
 	pi.registerCommand("mu-status", {
 		description: "Show concise mu server status",
 		handler: async (_args, ctx) => {
@@ -378,7 +450,7 @@ export function serverToolsExtension(pi: ExtensionAPI, opts: ServerToolsExtensio
 		allowForumPost: opts.allowForumPost ?? true,
 		toolIntroLine:
 			opts.toolIntroLine ??
-			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events, mu_runs, mu_activities, mu_heartbeats.",
+			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events, mu_runs, mu_activities, mu_heartbeats, mu_identity.",
 		extraSystemPromptLines: opts.extraSystemPromptLines ?? [],
 	});
 }
@@ -387,7 +459,7 @@ export function serverToolsReadOnlyExtension(pi: ExtensionAPI) {
 	registerServerTools(pi, {
 		allowForumPost: false,
 		toolIntroLine:
-			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum(read/topics), mu_events, mu_runs(read), mu_messaging_setup.",
+			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum(read/topics), mu_events, mu_runs(read), mu_messaging_setup, mu_identity.",
 		extraSystemPromptLines: [
 			"You have Bash, Read, Write, and Edit tools. Use them to run mu CLI commands, edit config files, and complete tasks directly.",
 		],

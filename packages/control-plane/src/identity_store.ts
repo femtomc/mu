@@ -116,6 +116,20 @@ function assertBindingTier(binding: IdentityBinding): void {
 	}
 }
 
+export const ROLE_SCOPES: Record<string, readonly string[]> = {
+	operator: [
+		"cp.read",
+		"cp.issue.write",
+		"cp.forum.write",
+		"cp.run.execute",
+		"cp.identity.self",
+		"cp.identity.admin",
+		"cp.ops.admin",
+	],
+	contributor: ["cp.read", "cp.issue.write", "cp.forum.write", "cp.run.execute", "cp.identity.self"],
+	viewer: ["cp.read"],
+};
+
 export class IdentityStore {
 	readonly #path: string;
 	#loaded = false;

@@ -2828,19 +2828,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return result;
 }
 
-const ROLE_SCOPES: Record<string, readonly string[]> = {
-	operator: [
-		"cp.read",
-		"cp.issue.write",
-		"cp.forum.write",
-		"cp.run.execute",
-		"cp.identity.self",
-		"cp.identity.admin",
-		"cp.ops.admin",
-	],
-	contributor: ["cp.read", "cp.issue.write", "cp.forum.write", "cp.run.execute", "cp.identity.self"],
-	viewer: ["cp.read"],
-};
+// ROLE_SCOPES lives in @femtomc/mu-control-plane; lazy-imported alongside IdentityStore.
 
 async function cmdControl(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
@@ -3203,6 +3191,9 @@ async function controlLink(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 		return jsonError("missing --tenant-id", { pretty, recovery: ["mu control link --help"] });
 	}
 
+	// Lazy-import control-plane.
+	const { IdentityStore, getControlPlanePaths, ROLE_SCOPES } = await import("@femtomc/mu-control-plane");
+
 	const roleKey = role ?? "operator";
 	const roleScopes = ROLE_SCOPES[roleKey];
 	if (!roleScopes) {
@@ -3215,9 +3206,6 @@ async function controlLink(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 
 	const bindingId = bindingIdFlag || `bind-${crypto.randomUUID()}`;
 	const opId = operatorId || "default";
-
-	// Lazy-import control-plane.
-	const { IdentityStore, getControlPlanePaths } = await import("@femtomc/mu-control-plane");
 	const paths = getControlPlanePaths(ctx.repoRoot);
 	const store = new IdentityStore(paths.identitiesPath);
 
