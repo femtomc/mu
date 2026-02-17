@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-issue",
-	"version": "26.2.48",
+	"version": "26.2.49",
 	"description": "Work item store with dependency graph helpers for mu.",
 	"keywords": [
 		"mu",
@@ -22,6 +22,6 @@
 		"dist/**"
 	],
 	"dependencies": {
-		"@femtomc/mu-core": "26.2.48"
+		"@femtomc/mu-core": "26.2.49"
 	}
 }

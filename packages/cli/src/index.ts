@@ -2328,7 +2328,7 @@ async function cmdOperatorSession(
 				"  --message, -m TEXT     One-shot mode (send a single message and exit)",
 				"  --json                 Emit JSON event stream (requires --message)",
 				"  --provider ID          LLM provider",
-				"  --model ID             Model ID (default: claude-sonnet-4-5-20250929)",
+				"  --model ID             Model ID (default: gpt-5.3-codex)",
 				"  --thinking LEVEL       Thinking level (minimal|low|medium|high)",
 				"  --system-prompt TEXT   Override system prompt",
 				"",

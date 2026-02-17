@@ -30,7 +30,7 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 	);
 
 	const authStorage = new AuthStorage();
-	const defaultModel = "claude-sonnet-4-5-20250929";
+	const defaultModel = "gpt-5.3-codex";
 	const modelId = opts.model ?? defaultModel;
 	const model = resolveModel(modelId, authStorage, opts.provider);
 	if (!model) {

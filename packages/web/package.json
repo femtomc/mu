@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-web",
-	"version": "26.2.48",
+	"version": "26.2.49",
 	"description": "Web console for monitoring and operating mu.",
 	"private": true,
 	"type": "module",
@@ -10,9 +10,9 @@
 		"e2e": "bun scripts/e2e.ts"
 	},
 	"dependencies": {
-		"@femtomc/mu-core": "26.2.48",
-		"@femtomc/mu-forum": "26.2.48",
-		"@femtomc/mu-issue": "26.2.48"
+		"@femtomc/mu-core": "26.2.49",
+		"@femtomc/mu-forum": "26.2.49",
+		"@femtomc/mu-issue": "26.2.49"
 	},
 	"devDependencies": {
 		"playwright": "^1.44.0",
