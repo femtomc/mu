@@ -4,31 +4,14 @@ export { cronExtension } from "./cron.js";
 export { eventLogExtension } from "./event-log.js";
 export { heartbeatsExtension } from "./heartbeats.js";
 export { messagingSetupExtension } from "./messaging-setup.js";
+export { muOperatorExtension } from "./mu-operator.js";
+export { muServeExtension } from "./mu-serve.js";
 export { operatorCommandExtension } from "./operator-command.js";
 export { orchestrationRunsExtension } from "./orchestration-runs.js";
 export { orchestrationRunsReadOnlyExtension } from "./orchestration-runs-readonly.js";
 export { serverToolsExtension, serverToolsReadOnlyExtension } from "./server-tools.js";
 export { serverToolsReadonlyExtension } from "./server-tools-readonly.js";
 
-const SERVE_EXTENSION_MODULE_BASENAMES = [
-	"branding",
-	"server-tools",
-	"event-log",
-	"messaging-setup",
-	"orchestration-runs",
-	"activities",
-	"heartbeats",
-	"cron",
-] as const;
-
-const OPERATOR_EXTENSION_MODULE_BASENAMES = [
-	"branding",
-	"server-tools-readonly",
-	"event-log",
-	"messaging-setup",
-	"orchestration-runs-readonly",
-	"operator-command",
-] as const;
 const RUNTIME_EXTENSION = import.meta.url.endsWith(".ts") ? "ts" : "js";
 
 function resolveBundledExtensionPath(moduleBasename: string): string {
@@ -36,22 +19,12 @@ function resolveBundledExtensionPath(moduleBasename: string): string {
 }
 
 /**
- * Serve-mode extension module paths.
- *
- * Prefer this for session creation so extensions are loaded through pi's
- * normal path-based loader (discoverable and visible by file path), not as
- * anonymous inline factories.
+ * Serve-mode extension — single facade that bundles all serve extensions.
  */
-export const serveExtensionPaths = SERVE_EXTENSION_MODULE_BASENAMES.map((moduleBasename) =>
-	resolveBundledExtensionPath(moduleBasename),
-);
+export const serveExtensionPaths = [resolveBundledExtensionPath("mu-serve")];
 
 /**
- * Control-plane operator extension module paths.
- *
- * This set is intentionally read-only for tool-invoked actions so all
- * mutations flow through approved `/mu ...` command proposals and policy.
+ * Operator-mode extension — single facade that bundles all operator
+ * extensions (read-only tools, approved `/mu` command flow).
  */
-export const operatorExtensionPaths = OPERATOR_EXTENSION_MODULE_BASENAMES.map((moduleBasename) =>
-	resolveBundledExtensionPath(moduleBasename),
-);
+export const operatorExtensionPaths = [resolveBundledExtensionPath("mu-operator")];
