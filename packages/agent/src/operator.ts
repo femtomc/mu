@@ -65,10 +65,6 @@ export const OperatorBackendTurnResultSchema = z.discriminatedUnion("kind", [
 ]);
 export type OperatorBackendTurnResult = z.infer<typeof OperatorBackendTurnResultSchema>;
 
-const OperatorDecisionEnvelopeSchema = z.discriminatedUnion("kind", [
-	z.object({ kind: z.literal("respond"), message: z.string().trim().min(1).max(2000) }),
-	z.object({ kind: z.literal("command"), command: OperatorApprovedCommandSchema }),
-]);
 
 export type OperatorBackendTurnInput = {
 	sessionId: string;
@@ -413,115 +409,7 @@ export type PiMessagingOperatorBackendOpts = {
 
 export { DEFAULT_OPERATOR_SYSTEM_PROMPT };
 
-const OPERATOR_COMMAND_PREFIX = "MU_COMMAND:";
-const OPERATOR_DECISION_PREFIX = "MU_DECISION:";
-
-type ParsedOperatorDirective =
-	| { kind: "none" }
-	| { kind: "command"; command: OperatorApprovedCommand }
-	| { kind: "respond"; message: string }
-	| { kind: "invalid"; reason: string; fallbackMessage: string };
-
-function stripOperatorDirectiveLines(text: string): string {
-	return text
-		.split(/\r?\n/)
-		.filter((line) => {
-			const trimmed = line.trim();
-			return !(trimmed.startsWith(OPERATOR_COMMAND_PREFIX) || trimmed.startsWith(OPERATOR_DECISION_PREFIX));
-		})
-		.join("\n")
-		.trim();
-}
-
-function parseOperatorDirective(text: string): ParsedOperatorDirective {
-	const whole = text.trim();
-	if (whole.startsWith("{") && whole.endsWith("}")) {
-		try {
-			const parsed = JSON.parse(whole);
-			const envelope = OperatorDecisionEnvelopeSchema.safeParse(parsed);
-			if (envelope.success) {
-				return envelope.data.kind === "command"
-					? { kind: "command", command: envelope.data.command }
-					: { kind: "respond", message: envelope.data.message };
-			}
-			const legacy = OperatorApprovedCommandSchema.safeParse(parsed);
-			if (legacy.success) {
-				return { kind: "command", command: legacy.data };
-			}
-		} catch {
-			// fall through to line-based directives / plain text fallback.
-		}
-	}
-
-	const lines = text.split(/\r?\n/);
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (trimmed.startsWith(OPERATOR_DECISION_PREFIX)) {
-			const payloadText = trimmed.slice(OPERATOR_DECISION_PREFIX.length).trim();
-			if (payloadText.length === 0) {
-				return {
-					kind: "invalid",
-					reason: "operator_decision_directive_missing_payload",
-					fallbackMessage: stripOperatorDirectiveLines(text),
-				};
-			}
-			let parsed: unknown;
-			try {
-				parsed = JSON.parse(payloadText);
-			} catch (err) {
-				return {
-					kind: "invalid",
-					reason: `operator_decision_directive_invalid_json: ${err instanceof Error ? err.message : String(err)}`,
-					fallbackMessage: stripOperatorDirectiveLines(text),
-				};
-			}
-			const envelope = OperatorDecisionEnvelopeSchema.safeParse(parsed);
-			if (!envelope.success) {
-				return {
-					kind: "invalid",
-					reason: `operator_decision_directive_invalid_payload: ${envelope.error.message}`,
-					fallbackMessage: stripOperatorDirectiveLines(text),
-				};
-			}
-			return envelope.data.kind === "command"
-				? { kind: "command", command: envelope.data.command }
-				: { kind: "respond", message: envelope.data.message };
-		}
-
-		if (!trimmed.startsWith(OPERATOR_COMMAND_PREFIX)) {
-			continue;
-		}
-		const payloadText = trimmed.slice(OPERATOR_COMMAND_PREFIX.length).trim();
-		if (payloadText.length === 0) {
-			return {
-				kind: "invalid",
-				reason: "operator_command_directive_missing_payload",
-				fallbackMessage: stripOperatorDirectiveLines(text),
-			};
-		}
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(payloadText);
-		} catch (err) {
-			return {
-				kind: "invalid",
-				reason: `operator_command_directive_invalid_json: ${err instanceof Error ? err.message : String(err)}`,
-				fallbackMessage: stripOperatorDirectiveLines(text),
-			};
-		}
-		const command = OperatorApprovedCommandSchema.safeParse(parsed);
-		if (!command.success) {
-			return {
-				kind: "invalid",
-				reason: `operator_command_directive_invalid_payload: ${command.error.message}`,
-				fallbackMessage: stripOperatorDirectiveLines(text),
-			};
-		}
-		return { kind: "command", command: command.data };
-	}
-
-	return { kind: "none" };
-}
+const MU_COMMAND_TOOL_NAME = "mu_command";
 
 function buildOperatorPrompt(input: OperatorBackendTurnInput): string {
 	return [
@@ -698,7 +586,10 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		const session = sessionRecord.session;
 
 		let assistantText = "";
+		let capturedCommand: OperatorApprovedCommand | null = null;
+
 		const unsub = session.subscribe((event: any) => {
+			// Capture assistant text for fallback responses.
 			if (event?.type === "message_end" && event?.message?.role === "assistant") {
 				const msg = event.message;
 				if (typeof msg.text === "string") {
@@ -712,6 +603,14 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 						if (typeof t === "string" && t.trim().length > 0) parts.push(t);
 					}
 					if (parts.length > 0) assistantText = parts.join("\n");
+				}
+			}
+
+			// Capture mu_command tool calls — structured command proposals.
+			if (event?.type === "tool_execution_start" && event?.toolName === MU_COMMAND_TOOL_NAME) {
+				const parsed = OperatorApprovedCommandSchema.safeParse(event.args);
+				if (parsed.success) {
+					capturedCommand = parsed.data;
 				}
 			}
 		});
@@ -737,6 +636,17 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			sessionRecord.lastUsedAtMs = Math.trunc(this.#nowMs());
 		}
 
+		// If the operator called mu_command, use the captured structured command.
+		if (capturedCommand) {
+			await this.#auditTurn(input, {
+				outcome: "command",
+				command: capturedCommand,
+				messagePreview: assistantText,
+			});
+			return { kind: "command", command: capturedCommand };
+		}
+
+		// Otherwise treat the assistant text as a plain response.
 		const message = assistantText.trim();
 		if (!message) {
 			await this.#auditTurn(input, {
@@ -746,58 +656,12 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			throw new Error("operator_empty_response");
 		}
 
-		const parsed = parseOperatorDirective(message);
-		switch (parsed.kind) {
-			case "command":
-				await this.#auditTurn(input, {
-					outcome: "command",
-					command: parsed.command,
-					messagePreview: message,
-				});
-				return {
-					kind: "command",
-					command: parsed.command,
-				};
-			case "respond": {
-				const responseMessage = parsed.message.trim().slice(0, 2000);
-				if (!SAFE_RESPONSE_RE.test(responseMessage)) {
-					const fallback = buildOperatorFailureFallbackMessage("operator_invalid_response_payload");
-					await this.#auditTurn(input, {
-						outcome: "invalid_directive",
-						reason: "operator_invalid_response_payload",
-						messagePreview: message,
-					});
-					return { kind: "respond", message: fallback };
-				}
-				await this.#auditTurn(input, {
-					outcome: "respond",
-					messagePreview: responseMessage,
-				});
-				return { kind: "respond", message: responseMessage };
-			}
-			case "invalid": {
-				const fallbackMessage = parsed.fallbackMessage.trim();
-				const responseMessage =
-					fallbackMessage.length > 0
-						? fallbackMessage.slice(0, 2000)
-						: buildOperatorFailureFallbackMessage("operator_invalid_command_directive");
-				await this.#auditTurn(input, {
-					outcome: "invalid_directive",
-					reason: parsed.reason,
-					messagePreview: message,
-				});
-				return { kind: "respond", message: responseMessage };
-			}
-			case "none":
-			default: {
-				const responseMessage = message.slice(0, 2000);
-				await this.#auditTurn(input, {
-					outcome: "respond",
-					messagePreview: responseMessage,
-				});
-				return { kind: "respond", message: responseMessage };
-			}
-		}
+		const responseMessage = message.slice(0, 2000);
+		await this.#auditTurn(input, {
+			outcome: "respond",
+			messagePreview: responseMessage,
+		});
+		return { kind: "respond", message: responseMessage };
 	}
 
 	public dispose(): void {

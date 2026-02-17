@@ -32,14 +32,20 @@ function mkInput(opts: { sessionId: string; turnId: string; commandText: string 
 	};
 }
 
-function makeStubSession(opts: {
+type StubSessionOpts = {
+	/** Text responses emitted via message_end events. */
 	responses: string[];
+	/** Tool calls the session should simulate (emitted before message_end). */
+	toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }>;
 	onDispose?: () => void;
 	onBind?: () => void;
 	onPrompt?: (text: string) => void;
-}): MuSession {
+};
+
+function makeStubSession(opts: StubSessionOpts): MuSession {
 	const listeners = new Set<(event: any) => void>();
-	const queue = [...opts.responses];
+	const responseQueue = [...opts.responses];
+	const toolCallQueue = [...(opts.toolCalls ?? [])];
 	return {
 		subscribe(listener) {
 			listeners.add(listener);
@@ -49,7 +55,22 @@ function makeStubSession(opts: {
 		},
 		async prompt(text) {
 			opts.onPrompt?.(text);
-			const next = queue.shift() ?? "fallback response";
+
+			// Emit tool_execution_start events for any queued tool calls.
+			const toolCall = toolCallQueue.shift();
+			if (toolCall) {
+				for (const listener of listeners) {
+					listener({
+						type: "tool_execution_start",
+						toolCallId: `call-${crypto.randomUUID()}`,
+						toolName: toolCall.toolName,
+						args: toolCall.args,
+					});
+				}
+			}
+
+			// Emit message_end with assistant text.
+			const next = responseQueue.shift() ?? "fallback response";
 			for (const listener of listeners) {
 				listener({
 					type: "message_end",
@@ -116,11 +137,17 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(disposed).toBe(2);
 	});
 
-	test("parses MU_COMMAND directive into approved command payload", async () => {
+	test("mu_command tool call produces approved command payload", async () => {
 		const backend = new PiMessagingOperatorBackend({
 			sessionFactory: async () =>
 				makeStubSession({
-					responses: ['MU_COMMAND: {"kind":"run_start","prompt":"ship release"}'],
+					responses: ["I'll start that run for you."],
+					toolCalls: [
+						{
+							toolName: "mu_command",
+							args: { kind: "run_start", prompt: "ship release" },
+						},
+					],
 				}),
 		});
 
@@ -136,84 +163,94 @@ describe("PiMessagingOperatorBackend", () => {
 		});
 	});
 
-	test("parses MU_DECISION command envelope into approved payload", async () => {
+	test("mu_command tool call works with multi-line prompts", async () => {
+		const longPrompt = [
+			"Set up Telegram messaging integration for mu control-plane in /home/user/Dev/workshop.",
+			"Use public base URL https://example.tail4cdecd.ts.net (Tailscale Funnel -> localhost:3000).",
+			"Bot token: 123456:ABCDEF.",
+			"Generate a strong random webhook_secret, update .mu/config.json,",
+			"run /mu-setup apply telegram, call Telegram setWebhook, then verify.",
+		].join("\n");
+
 		const backend = new PiMessagingOperatorBackend({
 			sessionFactory: async () =>
 				makeStubSession({
-					responses: ['MU_DECISION: {"kind":"command","command":{"kind":"run_start","prompt":"ship release"}}'],
-				}),
-		});
-
-		const result = await backend.runTurn(
-			mkInput({ sessionId: "session-cmd-envelope", turnId: "turn-1", commandText: "please run this" }),
-		);
-		expect(result).toEqual({
-			kind: "command",
-			command: {
-				kind: "run_start",
-				prompt: "ship release",
-			},
-		});
-	});
-
-	test("parses legacy pure-JSON command payloads for compatibility", async () => {
-		const backend = new PiMessagingOperatorBackend({
-			sessionFactory: async () =>
-				makeStubSession({
-					responses: ['{"kind":"run_resume","root_issue_id":"mu-root1234"}'],
-				}),
-		});
-
-		const result = await backend.runTurn(
-			mkInput({ sessionId: "session-cmd-legacy", turnId: "turn-1", commandText: "resume" }),
-		);
-		expect(result).toEqual({
-			kind: "command",
-			command: {
-				kind: "run_resume",
-				root_issue_id: "mu-root1234",
-			},
-		});
-	});
-
-	test("invalid command directives degrade to safe response", async () => {
-		const backend = new PiMessagingOperatorBackend({
-			sessionFactory: async () =>
-				makeStubSession({
-					responses: ['MU_COMMAND: {"kind":"run_start","prompt":}'],
-				}),
-		});
-
-		const result = await backend.runTurn(
-			mkInput({ sessionId: "session-invalid-directive", turnId: "turn-1", commandText: "start a run" }),
-		);
-		expect(result.kind).toBe("respond");
-		if (result.kind !== "respond") {
-			throw new Error(`expected respond, got ${result.kind}`);
-		}
-		expect(result.message).toContain("operator_invalid_command_directive");
-	});
-
-	test("invalid directives with normal text preserve conversational response", async () => {
-		const backend = new PiMessagingOperatorBackend({
-			sessionFactory: async () =>
-				makeStubSession({
-					responses: [
-						"I can help with that.\nMU_COMMAND: {\"kind\":\"run_start\",\"prompt\":}\nLet me know if you want me to propose a command.",
+					responses: ["Setting up Telegram integration now."],
+					toolCalls: [
+						{
+							toolName: "mu_command",
+							args: { kind: "run_start", prompt: longPrompt },
+						},
 					],
 				}),
 		});
 
 		const result = await backend.runTurn(
-			mkInput({ sessionId: "session-invalid-directive-mixed", turnId: "turn-1", commandText: "start a run" }),
+			mkInput({ sessionId: "session-multiline", turnId: "turn-1", commandText: "set up telegram" }),
+		);
+		expect(result).toEqual({
+			kind: "command",
+			command: {
+				kind: "run_start",
+				prompt: longPrompt,
+			},
+		});
+	});
+
+	test("mu_command with invalid args falls back to text response", async () => {
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ["I tried to run a command but something went wrong."],
+					toolCalls: [
+						{
+							toolName: "mu_command",
+							args: { kind: "invalid_kind_that_does_not_exist" },
+						},
+					],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-bad-tool", turnId: "turn-1", commandText: "do something" }),
 		);
 		expect(result.kind).toBe("respond");
-		if (result.kind !== "respond") {
-			throw new Error(`expected respond, got ${result.kind}`);
-		}
-		expect(result.message).toContain("I can help with that.");
-		expect(result.message).toContain("Let me know if you want me to propose a command.");
-		expect(result.message).not.toContain("MU_COMMAND:");
+		if (result.kind !== "respond") throw new Error(`expected respond, got ${result.kind}`);
+		expect(result.message).toContain("I tried to run a command");
+	});
+
+	test("plain text response without tool call", async () => {
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ["Here is some information for you."],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-plain", turnId: "turn-1", commandText: "what is the status?" }),
+		);
+		expect(result).toEqual({ kind: "respond", message: "Here is some information for you." });
+	});
+
+	test("non-mu_command tool calls are ignored", async () => {
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ["The repo has 5 open issues."],
+					toolCalls: [
+						{
+							toolName: "mu_status",
+							args: {},
+						},
+					],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-other-tool", turnId: "turn-1", commandText: "status" }),
+		);
+		expect(result).toEqual({ kind: "respond", message: "The repo has 5 open issues." });
 	});
 
 	test("evicts idle sessions based on ttl", async () => {

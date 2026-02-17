@@ -3,6 +3,7 @@ export { brandingExtension } from "./branding.js";
 export { eventLogExtension } from "./event-log.js";
 export { heartbeatsExtension } from "./heartbeats.js";
 export { messagingSetupExtension } from "./messaging-setup.js";
+export { operatorCommandExtension } from "./operator-command.js";
 export { orchestrationRunsExtension } from "./orchestration-runs.js";
 export { orchestrationRunsReadOnlyExtension } from "./orchestration-runs-readonly.js";
 export { serverToolsExtension, serverToolsReadOnlyExtension } from "./server-tools.js";
@@ -24,6 +25,7 @@ const OPERATOR_EXTENSION_MODULE_BASENAMES = [
 	"event-log",
 	"messaging-setup",
 	"orchestration-runs-readonly",
+	"operator-command",
 ] as const;
 const RUNTIME_EXTENSION = import.meta.url.endsWith(".ts") ? "ts" : "js";
 

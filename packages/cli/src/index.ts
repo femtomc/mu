@@ -3101,7 +3101,7 @@ async function controlDiagnoseOperator(argv: string[], ctx: CliCtx, pretty: bool
 				? "operator_turns.jsonl is missing. This usually means your running mu build predates operator turn auditing; upgrade and restart `mu serve`."
 				: null,
 			problematicTurns.length > 0
-				? "Recent invalid_directive/error outcomes detected. Inspect operator_turns.jsonl and ensure the operator emits MU_DECISION envelopes or plain text."
+				? "Recent invalid_directive/error outcomes detected. Inspect operator_turns.jsonl for failed mu_command tool calls."
 				: null,
 			operatorRunMutations.length === 0
 				? "No operator-attributed run mutations found in command journal. In current architecture, operator-triggered runs should appear as brokered command lifecycle events."

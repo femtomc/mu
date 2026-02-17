@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-server",
-  "version": "26.2.43",
+  "version": "26.2.45",
   "description": "HTTP API server for mu status, work items, messaging setup, and web UI.",
   "keywords": [
     "mu",
@@ -31,10 +31,10 @@
     "start": "bun run dist/cli.js"
   },
   "dependencies": {
-    "@femtomc/mu-agent": "26.2.43",
-    "@femtomc/mu-control-plane": "26.2.43",
-    "@femtomc/mu-core": "26.2.43",
-    "@femtomc/mu-forum": "26.2.43",
-    "@femtomc/mu-issue": "26.2.43"
+    "@femtomc/mu-agent": "26.2.45",
+    "@femtomc/mu-control-plane": "26.2.45",
+    "@femtomc/mu-core": "26.2.45",
+    "@femtomc/mu-forum": "26.2.45",
+    "@femtomc/mu-issue": "26.2.45"
   }
 }
