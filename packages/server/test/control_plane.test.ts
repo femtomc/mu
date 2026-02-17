@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessagingOperatorBackend, OperatorBackendTurnResult } from "@femtomc/mu-agent";
@@ -249,5 +249,23 @@ describe("bootstrapControlPlane operator wiring", () => {
 		const body = (await response.json()) as { text?: string };
 		expect(body.text).toContain("ERROR · DENIED");
 		expect(body.text).toContain("operator_action_disallowed");
+	});
+
+	test("bootstrap cleanup releases writer lock when startup fails", async () => {
+		const repoRoot = await mkRepoRoot();
+		const identitiesPath = join(repoRoot, ".mu", "control-plane", "identities.jsonl");
+		await mkdir(identitiesPath, { recursive: true });
+
+		await expect(
+			bootstrapControlPlane({
+				repoRoot,
+				config: configWith({
+					slackSecret: "slack-secret",
+				}),
+			}),
+		).rejects.toThrow();
+
+		const writerLockPath = join(repoRoot, ".mu", "control-plane", "writer.lock");
+		expect(await Bun.file(writerLockPath).exists()).toBe(false);
 	});
 });

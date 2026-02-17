@@ -2260,7 +2260,19 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 		startServer: async ({ repoRoot, port }) => {
 			const { createServerAsync } = await import("@femtomc/mu-server");
 			const { serverConfig, controlPlane } = await createServerAsync({ repoRoot, port });
-			const server = Bun.serve(serverConfig);
+
+			let server: ReturnType<typeof Bun.serve>;
+			try {
+				server = Bun.serve(serverConfig);
+			} catch (err) {
+				try {
+					await controlPlane?.stop();
+				} catch {
+					// Best effort cleanup. Preserve the original startup error.
+				}
+				throw err;
+			}
+
 			return {
 				activeAdapters: controlPlane?.activeAdapters ?? [],
 				stop: async () => {

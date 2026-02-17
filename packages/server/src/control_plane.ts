@@ -116,132 +116,160 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 	const paths = getControlPlanePaths(opts.repoRoot);
 
 	const runtime = new ControlPlaneRuntime({ repoRoot: opts.repoRoot });
-	await runtime.start();
+	let pipeline: ControlPlaneCommandPipeline | null = null;
+	let drainInterval: ReturnType<typeof setInterval> | null = null;
 
-	const operator =
-		opts.operatorRuntime !== undefined
-			? opts.operatorRuntime
-			: buildMessagingOperatorRuntime({
-					repoRoot: opts.repoRoot,
-					config: controlPlaneConfig,
-					backend: opts.operatorBackend,
-				});
+	try {
+		await runtime.start();
 
-	const pipeline = new ControlPlaneCommandPipeline({ runtime, operator });
-	await pipeline.start();
+		const operator =
+			opts.operatorRuntime !== undefined
+				? opts.operatorRuntime
+				: buildMessagingOperatorRuntime({
+						repoRoot: opts.repoRoot,
+						config: controlPlaneConfig,
+						backend: opts.operatorBackend,
+					});
 
-	const outbox = new ControlPlaneOutbox(paths.outboxPath);
-	await outbox.load();
+		pipeline = new ControlPlaneCommandPipeline({ runtime, operator });
+		await pipeline.start();
 
-	let telegramBotToken: string | null = null;
-	const adapterMap = new Map<string, { adapter: ControlPlaneAdapter; info: ActiveAdapter }>();
+		const outbox = new ControlPlaneOutbox(paths.outboxPath);
+		await outbox.load();
 
-	for (const d of detected) {
-		let adapter: ControlPlaneAdapter;
+		let telegramBotToken: string | null = null;
+		const adapterMap = new Map<string, { adapter: ControlPlaneAdapter; info: ActiveAdapter }>();
 
-		switch (d.name) {
-			case "slack":
-				adapter = new SlackControlPlaneAdapter({
-					pipeline,
-					outbox,
-					signingSecret: d.signingSecret,
-				});
-				break;
-			case "discord":
-				adapter = new DiscordControlPlaneAdapter({
-					pipeline,
-					outbox,
-					signingSecret: d.signingSecret,
-				});
-				break;
-			case "telegram":
-				adapter = new TelegramControlPlaneAdapter({
-					pipeline,
-					outbox,
-					webhookSecret: d.webhookSecret,
-					botUsername: d.botUsername ?? undefined,
-				});
-				if (d.botToken) {
-					telegramBotToken = d.botToken;
-				}
-				break;
-		}
+		for (const d of detected) {
+			let adapter: ControlPlaneAdapter;
 
-		const route = adapter.spec.route;
-		if (adapterMap.has(route)) {
-			throw new Error(`duplicate control-plane webhook route: ${route}`);
-		}
-		adapterMap.set(route, {
-			adapter,
-			info: {
-				name: adapter.spec.channel,
-				route,
-			},
-		});
-	}
-
-	const deliver = async (record: OutboxRecord): Promise<undefined | OutboxDeliveryHandlerResult> => {
-		const { envelope } = record;
-
-		if (envelope.channel === "telegram") {
-			if (!telegramBotToken) {
-				return { kind: "retry", error: "telegram bot token not configured in .mu/config.json" };
+			switch (d.name) {
+				case "slack":
+					adapter = new SlackControlPlaneAdapter({
+						pipeline,
+						outbox,
+						signingSecret: d.signingSecret,
+					});
+					break;
+				case "discord":
+					adapter = new DiscordControlPlaneAdapter({
+						pipeline,
+						outbox,
+						signingSecret: d.signingSecret,
+					});
+					break;
+				case "telegram":
+					adapter = new TelegramControlPlaneAdapter({
+						pipeline,
+						outbox,
+						webhookSecret: d.webhookSecret,
+						botUsername: d.botUsername ?? undefined,
+					});
+					if (d.botToken) {
+						telegramBotToken = d.botToken;
+					}
+					break;
 			}
 
-			const res = await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					chat_id: envelope.channel_conversation_id,
-					text: envelope.body,
-				}),
+			const route = adapter.spec.route;
+			if (adapterMap.has(route)) {
+				throw new Error(`duplicate control-plane webhook route: ${route}`);
+			}
+			adapterMap.set(route, {
+				adapter,
+				info: {
+					name: adapter.spec.channel,
+					route,
+				},
 			});
+		}
 
-			if (res.ok) {
-				return { kind: "delivered" };
-			}
-			if (res.status === 429 || res.status >= 500) {
-				const retryAfter = res.headers.get("retry-after");
-				const retryDelayMs = retryAfter ? Number.parseInt(retryAfter, 10) * 1000 : undefined;
+		const deliver = async (record: OutboxRecord): Promise<undefined | OutboxDeliveryHandlerResult> => {
+			const { envelope } = record;
+
+			if (envelope.channel === "telegram") {
+				if (!telegramBotToken) {
+					return { kind: "retry", error: "telegram bot token not configured in .mu/config.json" };
+				}
+
+				const res = await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						chat_id: envelope.channel_conversation_id,
+						text: envelope.body,
+					}),
+				});
+
+				if (res.ok) {
+					return { kind: "delivered" };
+				}
+				if (res.status === 429 || res.status >= 500) {
+					const retryAfter = res.headers.get("retry-after");
+					const retryDelayMs = retryAfter ? Number.parseInt(retryAfter, 10) * 1000 : undefined;
+					return {
+						kind: "retry",
+						error: `telegram sendMessage ${res.status}: ${await res.text().catch(() => "")}`,
+						retryDelayMs: retryDelayMs && Number.isFinite(retryDelayMs) ? retryDelayMs : undefined,
+					};
+				}
+
 				return {
 					kind: "retry",
 					error: `telegram sendMessage ${res.status}: ${await res.text().catch(() => "")}`,
-					retryDelayMs: retryDelayMs && Number.isFinite(retryDelayMs) ? retryDelayMs : undefined,
 				};
 			}
 
-			return {
-				kind: "retry",
-				error: `telegram sendMessage ${res.status}: ${await res.text().catch(() => "")}`,
-			};
-		}
+			return undefined;
+		};
 
-		return undefined;
-	};
+		const dispatcher = new ControlPlaneOutboxDispatcher({ outbox, deliver });
 
-	const dispatcher = new ControlPlaneOutboxDispatcher({ outbox, deliver });
+		drainInterval = setInterval(async () => {
+			try {
+				await dispatcher.drainDue();
+			} catch {
+				// Swallow errors — the dispatcher already handles retries internally.
+			}
+		}, 2_000);
 
-	const drainInterval = setInterval(async () => {
-		try {
-			await dispatcher.drainDue();
-		} catch {
-			// Swallow errors — the dispatcher already handles retries internally.
-		}
-	}, 2_000);
+		return {
+			activeAdapters: [...adapterMap.values()].map((v) => v.info),
 
-	return {
-		activeAdapters: [...adapterMap.values()].map((v) => v.info),
+			async handleWebhook(path: string, req: Request): Promise<Response | null> {
+				const entry = adapterMap.get(path);
+				if (!entry) return null;
+				const result = await entry.adapter.ingest(req);
+				return result.response;
+			},
 
-		async handleWebhook(path: string, req: Request): Promise<Response | null> {
-			const entry = adapterMap.get(path);
-			if (!entry) return null;
-			const result = await entry.adapter.ingest(req);
-			return result.response;
-		},
-
-		async stop(): Promise<void> {
+			async stop(): Promise<void> {
+				if (drainInterval) {
+					clearInterval(drainInterval);
+					drainInterval = null;
+				}
+				try {
+					await pipeline?.stop();
+				} finally {
+					await runtime.stop();
+				}
+			},
+		};
+	} catch (err) {
+		if (drainInterval) {
 			clearInterval(drainInterval);
-			await pipeline.stop();
-		},
-	};
+			drainInterval = null;
+		}
+		try {
+			await pipeline?.stop();
+		} catch {
+			// Best effort cleanup.
+		}
+		try {
+			await runtime.stop();
+		} catch {
+			// Best effort cleanup.
+		}
+		throw err;
+	}
 }

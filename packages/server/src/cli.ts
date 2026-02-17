@@ -18,7 +18,17 @@ console.log(`Repository root: ${repoRoot}`);
 
 const { serverConfig, controlPlane } = await createServerAsync({ repoRoot, port });
 
-const server = Bun.serve(serverConfig);
+let server: ReturnType<typeof Bun.serve>;
+try {
+	server = Bun.serve(serverConfig);
+} catch (err) {
+	try {
+		await controlPlane?.stop();
+	} catch {
+		// Best effort cleanup. Preserve the startup error.
+	}
+	throw err;
+}
 
 console.log(`Server running at http://localhost:${port}`);
 

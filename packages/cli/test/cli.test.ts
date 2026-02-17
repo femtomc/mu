@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "@femtomc/mu";
@@ -9,6 +10,74 @@ async function mkTempRepo(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "mu-cli-"));
 	await mkdir(join(dir, ".git"), { recursive: true });
 	return dir;
+}
+
+async function occupyPort(): Promise<{ port: number; close: () => Promise<void> }> {
+	const server = createNetServer();
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			server.off("error", reject);
+			resolve();
+		});
+	});
+
+	const address = server.address();
+	if (!address || typeof address === "string") {
+		server.close();
+		throw new Error("failed to resolve occupied port");
+	}
+
+	return {
+		port: address.port,
+		close: async () => {
+			await new Promise<void>((resolve, reject) => {
+				server.close((err) => {
+					if (err) {
+						reject(err);
+						return;
+					}
+					resolve();
+				});
+			});
+		},
+	};
+}
+
+async function writeConfigWithActiveAdapter(dir: string): Promise<void> {
+	const configPath = join(dir, ".mu", "config.json");
+	await mkdir(join(dir, ".mu"), { recursive: true });
+	await writeFile(
+		configPath,
+		`${JSON.stringify(
+			{
+				version: 1,
+				control_plane: {
+					adapters: {
+						slack: { signing_secret: "slack-secret" },
+						discord: { signing_secret: null },
+						telegram: { webhook_secret: null, bot_token: null, bot_username: null },
+						gmail: {
+							enabled: false,
+							webhook_secret: null,
+							client_id: null,
+							client_secret: null,
+							refresh_token: null,
+						},
+					},
+					operator: {
+						enabled: false,
+						run_triggers_enabled: false,
+						provider: null,
+						model: null,
+					},
+				},
+			},
+			null,
+			2,
+		)}\n`,
+		"utf8",
+	);
 }
 
 function mkMockSessionFactory(response: string) {
@@ -485,6 +554,34 @@ test("mu serve reports server startup errors without launching chat", async () =
 	expect(result.stdout).toContain("failed to start server");
 	expect(result.stdout).toContain("EADDRINUSE");
 	expect(chatCalls).toBe(0);
+});
+
+test("mu serve releases control-plane writer lock when bind fails", async () => {
+	const dir = await mkTempRepo();
+	await writeConfigWithActiveAdapter(dir);
+
+	const occupied = await occupyPort();
+	try {
+		let chatCalls = 0;
+		const result = await run(["serve", "--port", String(occupied.port), "--no-open"], {
+			cwd: dir,
+			serveDeps: {
+				runOperatorSession: async () => {
+					chatCalls += 1;
+					return { stdout: "", stderr: "", exitCode: 0 };
+				},
+			},
+		});
+
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toContain("failed to start server");
+		expect(chatCalls).toBe(0);
+
+		const lockPath = join(dir, ".mu", "control-plane", "writer.lock");
+		expect(await Bun.file(lockPath).exists()).toBe(false);
+	} finally {
+		await occupied.close();
+	}
 });
 
 test("mu run streams step headers + rendered assistant output (default human mode)", async () => {
