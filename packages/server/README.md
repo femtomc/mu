@@ -34,7 +34,7 @@ Bun.serve(server);
 
 ### Status
 
-- `GET /api/status` - Returns repository status
+- `GET /api/status` - Returns repository + control-plane runtime status
   ```json
   {
     "repo_root": "/path/to/repo",
@@ -43,7 +43,32 @@ Bun.serve(server);
     "control_plane": {
       "active": true,
       "adapters": ["slack"],
-      "routes": [{ "name": "slack", "route": "/webhooks/slack" }]
+      "routes": [{ "name": "slack", "route": "/webhooks/slack" }],
+      "generation": {
+        "supervisor_id": "control-plane",
+        "active_generation": { "generation_id": "control-plane-gen-3", "generation_seq": 3 },
+        "pending_reload": null,
+        "last_reload": {
+          "attempt_id": "control-plane-reload-4",
+          "reason": "mu_setup_apply_slack",
+          "state": "completed",
+          "requested_at_ms": 0,
+          "swapped_at_ms": 0,
+          "finished_at_ms": 0,
+          "from_generation": { "generation_id": "control-plane-gen-2", "generation_seq": 2 },
+          "to_generation": { "generation_id": "control-plane-gen-3", "generation_seq": 3 }
+        }
+      },
+      "observability": {
+        "counters": {
+          "reload_success_total": 4,
+          "reload_failure_total": 0,
+          "reload_drain_duration_ms_total": 73,
+          "reload_drain_duration_samples_total": 4,
+          "duplicate_signal_total": 0,
+          "drop_signal_total": 0
+        }
+      }
     }
   }
   ```
@@ -64,12 +89,15 @@ Bun.serve(server);
     }
   }
   ```
-- `POST /api/control-plane/reload` - Re-bootstrap control-plane adapters in-process
-  - Re-reads current config from `.mu/config.json` and re-mounts adapters without restarting
+- `POST /api/control-plane/reload` - Trigger generation-scoped control-plane hot reload
+  - Re-reads current config from `.mu/config.json` and executes warmup/cutover/drain/rollback flow
+  - Coalesces concurrent requests onto a single in-flight attempt
   - Body (optional):
   ```json
   { "reason": "mu_setup_apply" }
   ```
+  - Response includes generation metadata and optional `telegram_generation` lifecycle detail.
+- `POST /api/control-plane/rollback` - Explicit rollback trigger (same pipeline, reason=`rollback`)
 
 ### Issues
 
@@ -169,6 +197,7 @@ The server uses:
 - IssueStore and ForumStore from mu packages
 - Bun's built-in HTTP server
 - Simple REST-style JSON API
+- Generation-supervised control-plane hot reload lifecycle (see `docs/adr-0001-control-plane-hot-reload.md`)
 
 All data is persisted to `.mu/` directory:
 - `.mu/issues.jsonl` - Issue data

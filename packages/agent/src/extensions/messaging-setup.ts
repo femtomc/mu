@@ -155,6 +155,25 @@ type ControlPlaneReloadApiResponse = {
 		adapters: string[];
 		routes: Array<{ name: string; route: string }>;
 	};
+	generation?: {
+		attempt_id: string;
+		coalesced: boolean;
+		from_generation: { generation_id: string; generation_seq: number } | null;
+		to_generation: { generation_id: string; generation_seq: number };
+		active_generation: { generation_id: string; generation_seq: number } | null;
+		outcome: "success" | "failure";
+	};
+	telegram_generation?: {
+		handled: boolean;
+		ok: boolean;
+		rollback: {
+			requested: boolean;
+			trigger: string | null;
+			attempted: boolean;
+			ok: boolean;
+			error?: string;
+		};
+	};
 	error?: string;
 };
 
@@ -661,6 +680,24 @@ async function reloadControlPlaneInProcess(reason: string): Promise<ControlPlane
 	}
 }
 
+function reloadOutcomeSummary(reload: ControlPlaneReloadOutcome): string {
+	if (!reload.ok) {
+		return `Control-plane reload failed: ${reload.error ?? "unknown error"}.`;
+	}
+	const response = reload.response;
+	const adapters = response?.control_plane?.adapters.join(", ") || "(none)";
+	const generation = response?.generation;
+	const generationSummary = generation
+		? `${generation.outcome} (${generation.active_generation?.generation_id ?? generation.to_generation.generation_id})`
+		: "success (legacy path)";
+	const telegramRollbackTrigger = response?.telegram_generation?.rollback.trigger;
+	const telegramNote =
+		response?.telegram_generation?.handled && telegramRollbackTrigger
+			? ` rollback_trigger=${telegramRollbackTrigger}`
+			: "";
+	return `Control-plane reloaded in-process. Active adapters: ${adapters}. Generation: ${generationSummary}.${telegramNote}`;
+}
+
 function patchForAdapterValues(adapterId: AdapterId, values: Record<string, string>): Record<string, unknown> {
 	switch (adapterId) {
 		case "slack":
@@ -1064,9 +1101,7 @@ async function runInteractiveApply(ctx: ExtensionCommandContext, adapterId: Adap
 	const lines = [
 		`Updated config fields: ${outcome.updated_fields.join(", ") || "(none)"}`,
 		`Config path: ${outcome.config_path ?? runtime.configPath ?? "(unknown)"}`,
-		outcome.reload.ok
-			? `Control-plane reloaded in-process. Active adapters: ${outcome.reload.response?.control_plane?.adapters.join(", ") || "(none)"}.`
-			: `Control-plane reload failed: ${outcome.reload.error ?? "unknown error"}.`,
+		reloadOutcomeSummary(outcome.reload),
 		"",
 		verifyText(verify),
 	];
@@ -1204,9 +1239,7 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 					const lines = [
 						`Updated config fields: ${outcome.updated_fields.join(", ") || "(none)"}`,
 						`Config path: ${outcome.config_path ?? runtime.configPath ?? "(unknown)"}`,
-						outcome.reload.ok
-							? `Control-plane reloaded in-process. Active adapters: ${outcome.reload.response?.control_plane?.adapters.join(", ") || "(none)"}.`
-							: `Control-plane reload failed: ${outcome.reload.error ?? "unknown error"}.`,
+						reloadOutcomeSummary(outcome.reload),
 						"",
 						verifyText(verify),
 					];

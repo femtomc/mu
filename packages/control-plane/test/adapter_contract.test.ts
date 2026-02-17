@@ -28,6 +28,7 @@ describe("adapter contract", () => {
 		expect(SlackControlPlaneAdapterSpec.route).toBe(defaultWebhookRouteForChannel("slack"));
 		expect(DiscordControlPlaneAdapterSpec.route).toBe(defaultWebhookRouteForChannel("discord"));
 		expect(TelegramControlPlaneAdapterSpec.route).toBe(defaultWebhookRouteForChannel("telegram"));
+		expect(TelegramControlPlaneAdapterSpec.delivery_semantics).toBe("at_least_once");
 	});
 
 	test("built-in adapter classes expose canonical specs", () => {

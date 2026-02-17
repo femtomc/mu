@@ -1,10 +1,19 @@
 import { extname, join, resolve } from "node:path";
-
+import {
+	GenerationTelemetryRecorder,
+	getControlPlanePaths,
+	IdentityStore,
+	type GenerationSupervisorSnapshot,
+	type GenerationTelemetryCountersSnapshot,
+	type ReloadableGenerationIdentity,
+	type ReloadLifecycleReason,
+	ROLE_SCOPES,
+} from "@femtomc/mu-control-plane";
 import type { EventEnvelope, ForumMessage, Issue, JsonlStore } from "@femtomc/mu-core";
 import { currentRunId, EventLog, FsJsonlStore, getStorePaths, JsonlEventSink } from "@femtomc/mu-core/node";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
-import { getControlPlanePaths, IdentityStore, ROLE_SCOPES } from "@femtomc/mu-control-plane";
+import { type ControlPlaneActivityStatus, ControlPlaneActivitySupervisor } from "./activity_supervisor.js";
 import { eventRoutes } from "./api/events.js";
 import { forumRoutes } from "./api/forum.js";
 import { issueRoutes } from "./api/issues.js";
@@ -19,12 +28,14 @@ import {
 	writeMuConfigFile,
 } from "./config.js";
 import {
-	ControlPlaneActivitySupervisor,
-	type ControlPlaneActivityStatus,
-} from "./activity_supervisor.js";
-import { bootstrapControlPlane, type ControlPlaneConfig, type ControlPlaneHandle } from "./control_plane.js";
-import { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
+	bootstrapControlPlane,
+	type ControlPlaneConfig,
+	type ControlPlaneHandle,
+	type TelegramGenerationReloadResult,
+} from "./control_plane.js";
+import { ControlPlaneGenerationSupervisor } from "./generation_supervisor.js";
 import { HeartbeatProgramRegistry, type HeartbeatProgramTarget } from "./heartbeat_programs.js";
+import { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 
 const MIME_TYPES: Record<string, string> = {
 	".html": "text/html; charset=utf-8",
@@ -48,11 +59,27 @@ type ControlPlaneSummary = {
 	routes: Array<{ name: string; route: string }>;
 };
 
+type ControlPlaneStatus = ControlPlaneSummary & {
+	generation: GenerationSupervisorSnapshot;
+	observability: {
+		counters: GenerationTelemetryCountersSnapshot;
+	};
+};
+
 type ControlPlaneReloadResult = {
 	ok: boolean;
 	reason: string;
 	previous_control_plane: ControlPlaneSummary;
 	control_plane: ControlPlaneSummary;
+	generation: {
+		attempt_id: string;
+		coalesced: boolean;
+		from_generation: ReloadableGenerationIdentity | null;
+		to_generation: ReloadableGenerationIdentity;
+		active_generation: ReloadableGenerationIdentity | null;
+		outcome: "success" | "failure";
+	};
+	telegram_generation?: TelegramGenerationReloadResult;
 	error?: string;
 };
 
@@ -60,6 +87,7 @@ type ControlPlaneReloader = (opts: {
 	repoRoot: string;
 	previous: ControlPlaneHandle | null;
 	config: ControlPlaneConfig;
+	generation: ReloadableGenerationIdentity;
 }) => Promise<ControlPlaneHandle | null>;
 
 type ConfigReader = (repoRoot: string) => Promise<MuConfig>;
@@ -72,6 +100,7 @@ export type ServerOptions = {
 	heartbeatScheduler?: ActivityHeartbeatScheduler;
 	activitySupervisor?: ControlPlaneActivitySupervisor;
 	controlPlaneReloader?: ControlPlaneReloader;
+	generationTelemetry?: GenerationTelemetryRecorder;
 	config?: MuConfig;
 	configReader?: ConfigReader;
 	configWriter?: ConfigWriter;
@@ -146,11 +175,37 @@ export function createServer(options: ServerOptions = {}) {
 
 	let controlPlaneCurrent = options.controlPlane ?? null;
 	let reloadInFlight: Promise<ControlPlaneReloadResult> | null = null;
+	const generationTelemetry = options.generationTelemetry ?? new GenerationTelemetryRecorder();
+	const generationSupervisor = new ControlPlaneGenerationSupervisor({
+		supervisorId: "control-plane",
+		initialGeneration: controlPlaneCurrent
+			? {
+					generation_id: "control-plane-gen-0",
+					generation_seq: 0,
+				}
+			: null,
+	});
+	const legacyGeneration: ReloadableGenerationIdentity = {
+		generation_id: "control-plane-gen-legacy",
+		generation_seq: -1,
+	};
+	const generationTagsFor = (generation: ReloadableGenerationIdentity, component: string) => ({
+		generation_id: generation.generation_id,
+		generation_seq: generation.generation_seq,
+		supervisor: "control_plane",
+		component,
+	});
 
 	const controlPlaneReloader: ControlPlaneReloader =
 		options.controlPlaneReloader ??
-		(async ({ repoRoot, config }) => {
-			return await bootstrapControlPlane({ repoRoot, config, heartbeatScheduler });
+		(async ({ repoRoot, config, generation }) => {
+			return await bootstrapControlPlane({
+				repoRoot,
+				config,
+				heartbeatScheduler,
+				generation,
+				telemetry: generationTelemetry,
+			});
 		});
 
 	const controlPlaneProxy: ControlPlaneHandle = {
@@ -254,39 +309,451 @@ export function createServer(options: ServerOptions = {}) {
 		}
 	};
 
-	const performControlPlaneReload = async (reason: string): Promise<ControlPlaneReloadResult> => {
+	const performControlPlaneReload = async (reason: ReloadLifecycleReason): Promise<ControlPlaneReloadResult> => {
+		const startedAtMs = Date.now();
+		const planned = generationSupervisor.beginReload(reason);
+		const attempt = planned.attempt;
 		const previous = controlPlaneCurrent;
 		const previousSummary = summarizeControlPlane(previous);
+		const tags = generationTagsFor(attempt.to_generation, "server.reload");
+		const baseFields = {
+			reason,
+			attempt_id: attempt.attempt_id,
+			coalesced: planned.coalesced,
+			from_generation_id: attempt.from_generation?.generation_id ?? null,
+		};
+		const logLifecycle = (opts: {
+			level: "debug" | "info" | "warn" | "error";
+			stage: "warmup" | "cutover" | "drain" | "rollback";
+			state: "start" | "complete" | "failed" | "skipped";
+			extra?: Record<string, unknown>;
+		}): void => {
+			generationTelemetry.log({
+				level: opts.level,
+				message: `reload transition ${opts.stage}:${opts.state}`,
+				fields: {
+					...tags,
+					...baseFields,
+					...(opts.extra ?? {}),
+				},
+			});
+		};
+
+		let swapped = false;
+		let failedStage: "warmup" | "cutover" | "drain" = "warmup";
+		let drainDurationMs = 0;
+		let drainStartedAtMs: number | null = null;
+
 		try {
+			logLifecycle({ level: "info", stage: "warmup", state: "start" });
 			const latestConfig = await loadConfigFromDisk();
+
+			const telegramGeneration =
+				(await previous?.reloadTelegramGeneration?.({
+					config: latestConfig.control_plane,
+					reason,
+				})) ?? null;
+			if (telegramGeneration?.handled) {
+				if (telegramGeneration.warmup) {
+					logLifecycle({
+						level: telegramGeneration.warmup.ok ? "info" : "error",
+						stage: "warmup",
+						state: telegramGeneration.warmup.ok ? "complete" : "failed",
+						extra: {
+							warmup_elapsed_ms: telegramGeneration.warmup.elapsed_ms,
+							error: telegramGeneration.warmup.error,
+							telegram_generation_id: telegramGeneration.to_generation?.generation_id ?? null,
+						},
+					});
+				} else {
+					logLifecycle({
+						level: "info",
+						stage: "warmup",
+						state: "skipped",
+						extra: {
+							warmup_reason: "telegram_generation_no_warmup",
+							telegram_generation_id: telegramGeneration.to_generation?.generation_id ?? null,
+						},
+					});
+				}
+
+				if (telegramGeneration.cutover) {
+					logLifecycle({ level: "info", stage: "cutover", state: "start" });
+					logLifecycle({
+						level: telegramGeneration.cutover.ok ? "info" : "error",
+						stage: "cutover",
+						state: telegramGeneration.cutover.ok ? "complete" : "failed",
+						extra: {
+							cutover_elapsed_ms: telegramGeneration.cutover.elapsed_ms,
+							error: telegramGeneration.cutover.error,
+							active_generation_id: telegramGeneration.active_generation?.generation_id ?? null,
+						},
+					});
+				} else {
+					logLifecycle({
+						level: "info",
+						stage: "cutover",
+						state: "skipped",
+						extra: {
+							cutover_reason: "telegram_generation_no_cutover",
+							active_generation_id: telegramGeneration.active_generation?.generation_id ?? null,
+						},
+					});
+				}
+
+				if (telegramGeneration.drain) {
+					logLifecycle({ level: "info", stage: "drain", state: "start" });
+					drainDurationMs = Math.max(0, Math.trunc(telegramGeneration.drain.elapsed_ms));
+					generationTelemetry.recordDrainDuration(tags, {
+						durationMs: drainDurationMs,
+						timedOut: telegramGeneration.drain.timed_out,
+						metadata: {
+							...baseFields,
+							telegram_forced_stop: telegramGeneration.drain.forced_stop,
+							telegram_generation_id: telegramGeneration.active_generation?.generation_id ?? null,
+						},
+					});
+					logLifecycle({
+						level: telegramGeneration.drain.ok ? "info" : "warn",
+						stage: "drain",
+						state: telegramGeneration.drain.ok ? "complete" : "failed",
+						extra: {
+							drain_duration_ms: telegramGeneration.drain.elapsed_ms,
+							drain_timed_out: telegramGeneration.drain.timed_out,
+							forced_stop: telegramGeneration.drain.forced_stop,
+							error: telegramGeneration.drain.error,
+						},
+					});
+				} else {
+					logLifecycle({
+						level: "info",
+						stage: "drain",
+						state: "skipped",
+						extra: {
+							drain_reason: "telegram_generation_no_drain",
+							telegram_generation_id: telegramGeneration.active_generation?.generation_id ?? null,
+						},
+					});
+				}
+
+				const shouldLogRollbackStart =
+					telegramGeneration.rollback.requested ||
+					telegramGeneration.rollback.attempted ||
+					telegramGeneration.rollback.trigger != null ||
+					!telegramGeneration.ok;
+				if (shouldLogRollbackStart) {
+					logLifecycle({
+						level: telegramGeneration.rollback.ok ? "warn" : "error",
+						stage: "rollback",
+						state: "start",
+						extra: {
+							rollback_requested: telegramGeneration.rollback.requested,
+							rollback_trigger: telegramGeneration.rollback.trigger,
+							rollback_attempted: telegramGeneration.rollback.attempted,
+						},
+					});
+					logLifecycle({
+						level: telegramGeneration.rollback.ok ? "info" : "error",
+						stage: "rollback",
+						state: telegramGeneration.rollback.ok ? "complete" : "failed",
+						extra: {
+							rollback_requested: telegramGeneration.rollback.requested,
+							rollback_trigger: telegramGeneration.rollback.trigger,
+							rollback_attempted: telegramGeneration.rollback.attempted,
+							error: telegramGeneration.rollback.error,
+						},
+					});
+				} else {
+					logLifecycle({
+						level: "debug",
+						stage: "rollback",
+						state: "skipped",
+						extra: {
+							rollback_reason: "not_requested",
+						},
+					});
+				}
+
+				if (telegramGeneration.ok) {
+					swapped = generationSupervisor.markSwapInstalled(attempt.attempt_id);
+					generationSupervisor.finishReload(attempt.attempt_id, "success");
+					const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+					generationTelemetry.recordReloadSuccess(tags, {
+						...baseFields,
+						elapsed_ms: elapsedMs,
+						drain_duration_ms: drainDurationMs,
+						telegram_generation_id: telegramGeneration.active_generation?.generation_id ?? null,
+						telegram_rollback_attempted: telegramGeneration.rollback.attempted,
+						telegram_rollback_trigger: telegramGeneration.rollback.trigger,
+					});
+					generationTelemetry.trace({
+						name: "control_plane.reload",
+						status: "ok",
+						durationMs: elapsedMs,
+						fields: {
+							...tags,
+							...baseFields,
+							telegram_generation_id: telegramGeneration.active_generation?.generation_id ?? null,
+						},
+					});
+					return {
+						ok: true,
+						reason,
+						previous_control_plane: previousSummary,
+						control_plane: summarizeControlPlane(controlPlaneCurrent),
+						generation: {
+							attempt_id: attempt.attempt_id,
+							coalesced: planned.coalesced,
+							from_generation: attempt.from_generation,
+							to_generation: attempt.to_generation,
+							active_generation: generationSupervisor.activeGeneration(),
+							outcome: "success",
+						},
+						telegram_generation: telegramGeneration,
+					};
+				}
+
+				generationSupervisor.finishReload(attempt.attempt_id, "failure");
+				const error = telegramGeneration.error ?? "telegram_generation_reload_failed";
+				const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+				generationTelemetry.recordReloadFailure(tags, {
+					...baseFields,
+					elapsed_ms: elapsedMs,
+					drain_duration_ms: drainDurationMs,
+					error,
+					telegram_generation_id: telegramGeneration.active_generation?.generation_id ?? null,
+					telegram_rollback_trigger: telegramGeneration.rollback.trigger,
+				});
+				generationTelemetry.trace({
+					name: "control_plane.reload",
+					status: "error",
+					durationMs: elapsedMs,
+					fields: {
+						...tags,
+						...baseFields,
+						error,
+						telegram_generation_id: telegramGeneration.active_generation?.generation_id ?? null,
+						telegram_rollback_trigger: telegramGeneration.rollback.trigger,
+					},
+				});
+				return {
+					ok: false,
+					reason,
+					previous_control_plane: previousSummary,
+					control_plane: summarizeControlPlane(controlPlaneCurrent),
+					generation: {
+						attempt_id: attempt.attempt_id,
+						coalesced: planned.coalesced,
+						from_generation: attempt.from_generation,
+						to_generation: attempt.to_generation,
+						active_generation: generationSupervisor.activeGeneration(),
+						outcome: "failure",
+					},
+					telegram_generation: telegramGeneration,
+					error,
+				};
+			}
+
 			const next = await controlPlaneReloader({
 				repoRoot: context.repoRoot,
 				previous,
 				config: latestConfig.control_plane,
+				generation: attempt.to_generation,
 			});
+			logLifecycle({ level: "info", stage: "warmup", state: "complete" });
+
+			failedStage = "cutover";
+			logLifecycle({ level: "info", stage: "cutover", state: "start" });
 			controlPlaneCurrent = next;
+			swapped = generationSupervisor.markSwapInstalled(attempt.attempt_id);
+			logLifecycle({
+				level: "info",
+				stage: "cutover",
+				state: "complete",
+				extra: {
+					active_generation_id: generationSupervisor.activeGeneration()?.generation_id ?? null,
+				},
+			});
+
+			failedStage = "drain";
 			if (previous && previous !== next) {
+				logLifecycle({ level: "info", stage: "drain", state: "start" });
+				drainStartedAtMs = Date.now();
 				await previous.stop();
+				drainDurationMs = Math.max(0, Date.now() - drainStartedAtMs);
+				generationTelemetry.recordDrainDuration(tags, {
+					durationMs: drainDurationMs,
+					metadata: {
+						...baseFields,
+					},
+				});
+				logLifecycle({
+					level: "info",
+					stage: "drain",
+					state: "complete",
+					extra: {
+						drain_duration_ms: drainDurationMs,
+					},
+				});
+			} else {
+				logLifecycle({
+					level: "info",
+					stage: "drain",
+					state: "skipped",
+					extra: {
+						drain_reason: "no_previous_generation",
+					},
+				});
 			}
+
+			logLifecycle({
+				level: "debug",
+				stage: "rollback",
+				state: "skipped",
+				extra: {
+					rollback_reason: "not_requested",
+				},
+			});
+			generationSupervisor.finishReload(attempt.attempt_id, "success");
+			const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+			generationTelemetry.recordReloadSuccess(tags, {
+				...baseFields,
+				elapsed_ms: elapsedMs,
+				drain_duration_ms: drainDurationMs,
+			});
+			generationTelemetry.trace({
+				name: "control_plane.reload",
+				status: "ok",
+				durationMs: elapsedMs,
+				fields: {
+					...tags,
+					...baseFields,
+				},
+			});
 			return {
 				ok: true,
 				reason,
 				previous_control_plane: previousSummary,
 				control_plane: summarizeControlPlane(next),
+				generation: {
+					attempt_id: attempt.attempt_id,
+					coalesced: planned.coalesced,
+					from_generation: attempt.from_generation,
+					to_generation: attempt.to_generation,
+					active_generation: generationSupervisor.activeGeneration(),
+					outcome: "success",
+				},
 			};
 		} catch (err) {
+			const error = describeError(err);
+			if (failedStage === "drain" && drainStartedAtMs != null) {
+				drainDurationMs = Math.max(0, Date.now() - drainStartedAtMs);
+				generationTelemetry.recordDrainDuration(tags, {
+					durationMs: drainDurationMs,
+					metadata: {
+						...baseFields,
+						error,
+					},
+				});
+			}
+			logLifecycle({
+				level: "error",
+				stage: failedStage,
+				state: "failed",
+				extra: {
+					error,
+					drain_duration_ms: failedStage === "drain" ? drainDurationMs : undefined,
+				},
+			});
+
+			if (swapped) {
+				logLifecycle({
+					level: "warn",
+					stage: "rollback",
+					state: "start",
+					extra: {
+						rollback_mode: "post_cutover_unavailable",
+					},
+				});
+				logLifecycle({
+					level: "warn",
+					stage: "rollback",
+					state: "failed",
+					extra: {
+						rollback_mode: "post_cutover_unavailable",
+						rollback_reason: "manual_rollback_not_implemented",
+					},
+				});
+			} else {
+				logLifecycle({
+					level: "warn",
+					stage: "rollback",
+					state: "start",
+					extra: {
+						rollback_mode: "pre_cutover_noop",
+					},
+				});
+				logLifecycle({
+					level: "info",
+					stage: "rollback",
+					state: "complete",
+					extra: {
+						rollback_mode: "pre_cutover_noop",
+						active_generation_id: generationSupervisor.activeGeneration()?.generation_id ?? null,
+					},
+				});
+			}
+
+			generationSupervisor.finishReload(attempt.attempt_id, "failure");
+			const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+			generationTelemetry.recordReloadFailure(tags, {
+				...baseFields,
+				elapsed_ms: elapsedMs,
+				drain_duration_ms: drainDurationMs,
+				error,
+			});
+			generationTelemetry.trace({
+				name: "control_plane.reload",
+				status: "error",
+				durationMs: elapsedMs,
+				fields: {
+					...tags,
+					...baseFields,
+					error,
+				},
+			});
 			return {
 				ok: false,
 				reason,
 				previous_control_plane: previousSummary,
-				control_plane: summarizeControlPlane(previous),
-				error: describeError(err),
+				control_plane: summarizeControlPlane(swapped ? controlPlaneCurrent : previous),
+				generation: {
+					attempt_id: attempt.attempt_id,
+					coalesced: planned.coalesced,
+					from_generation: attempt.from_generation,
+					to_generation: attempt.to_generation,
+					active_generation: generationSupervisor.activeGeneration(),
+					outcome: "failure",
+				},
+				error,
 			};
 		}
 	};
 
-	const reloadControlPlane = async (reason: string): Promise<ControlPlaneReloadResult> => {
+	const reloadControlPlane = async (reason: ReloadLifecycleReason): Promise<ControlPlaneReloadResult> => {
 		if (reloadInFlight) {
+			const pending = generationSupervisor.pendingReload();
+			const generation = pending?.to_generation ?? generationSupervisor.activeGeneration() ?? legacyGeneration;
+			generationTelemetry.recordDuplicateSignal(generationTagsFor(generation, "server.reload"), {
+				source: "server_reload",
+				signal: "coalesced_reload_request",
+				dedupe_key: pending?.attempt_id ?? "reload_in_flight",
+				record_id: pending?.attempt_id ?? "reload_in_flight",
+				metadata: {
+					reason,
+					pending_reason: pending?.reason ?? null,
+				},
+			});
 			return await reloadInFlight;
 		}
 		reloadInFlight = performControlPlaneReload(reason).finally(() => {
@@ -390,11 +857,25 @@ export function createServer(options: ServerOptions = {}) {
 			return Response.json(result, { status: result.ok ? 200 : 500, headers });
 		}
 
+		if (path === "/api/control-plane/rollback") {
+			if (request.method !== "POST") {
+				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+			}
+			const result = await reloadControlPlane("rollback");
+			return Response.json(result, { status: result.ok ? 200 : 500, headers });
+		}
+
 		if (path === "/api/status") {
 			const issues = await context.issueStore.list();
 			const openIssues = issues.filter((i) => i.status === "open");
 			const readyIssues = await context.issueStore.ready();
-			const controlPlane = summarizeControlPlane(controlPlaneCurrent);
+			const controlPlane: ControlPlaneStatus = {
+				...summarizeControlPlane(controlPlaneCurrent),
+				generation: generationSupervisor.snapshot(),
+				observability: {
+					counters: generationTelemetry.counters(),
+				},
+			};
 
 			return Response.json(
 				{
@@ -569,15 +1050,12 @@ export function createServer(options: ServerOptions = {}) {
 				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 			}
 			const enabledRaw = url.searchParams.get("enabled")?.trim().toLowerCase();
-			const enabled =
-				enabledRaw === "true" ? true : enabledRaw === "false" ? false : undefined;
+			const enabled = enabledRaw === "true" ? true : enabledRaw === "false" ? false : undefined;
 			const targetKindRaw = url.searchParams.get("target_kind")?.trim().toLowerCase();
 			const targetKind = targetKindRaw === "run" || targetKindRaw === "activity" ? targetKindRaw : undefined;
 			const limitRaw = url.searchParams.get("limit");
 			const limit =
-				limitRaw && /^\d+$/.test(limitRaw)
-					? Math.max(1, Math.min(500, Number.parseInt(limitRaw, 10)))
-					: undefined;
+				limitRaw && /^\d+$/.test(limitRaw) ? Math.max(1, Math.min(500, Number.parseInt(limitRaw, 10))) : undefined;
 			const programs = await heartbeatPrograms.list({ enabled, targetKind, limit });
 			return Response.json({ count: programs.length, programs }, { headers });
 		}
@@ -824,18 +1302,13 @@ export function createServer(options: ServerOptions = {}) {
 			}
 			const statusRaw = url.searchParams.get("status")?.trim().toLowerCase();
 			const status =
-				statusRaw === "running" ||
-				statusRaw === "completed" ||
-				statusRaw === "failed" ||
-				statusRaw === "cancelled"
+				statusRaw === "running" || statusRaw === "completed" || statusRaw === "failed" || statusRaw === "cancelled"
 					? (statusRaw as ControlPlaneActivityStatus)
 					: undefined;
 			const kind = url.searchParams.get("kind")?.trim() || undefined;
 			const limitRaw = url.searchParams.get("limit");
 			const limit =
-				limitRaw && /^\d+$/.test(limitRaw)
-					? Math.max(1, Math.min(500, Number.parseInt(limitRaw, 10)))
-					: undefined;
+				limitRaw && /^\d+$/.test(limitRaw) ? Math.max(1, Math.min(500, Number.parseInt(limitRaw, 10))) : undefined;
 			const activities = activitySupervisor.list({ status, kind, limit });
 			return Response.json({ count: activities.length, activities }, { headers });
 		}
@@ -872,9 +1345,7 @@ export function createServer(options: ServerOptions = {}) {
 					? Math.max(0, Math.trunc(body.heartbeat_every_ms))
 					: undefined;
 			const source =
-				body.source === "api" || body.source === "command" || body.source === "system"
-					? body.source
-					: "api";
+				body.source === "api" || body.source === "command" || body.source === "system" ? body.source : "api";
 			try {
 				const activity = activitySupervisor.start({
 					title,
@@ -1073,7 +1544,10 @@ export function createServer(options: ServerOptions = {}) {
 				});
 				switch (decision.kind) {
 					case "linked":
-						return Response.json({ ok: true, kind: "linked", binding: decision.binding }, { status: 201, headers });
+						return Response.json(
+							{ ok: true, kind: "linked", binding: decision.binding },
+							{ status: 201, headers },
+						);
 					case "binding_exists":
 						return Response.json(
 							{ ok: false, kind: "binding_exists", binding: decision.binding },
@@ -1208,12 +1682,24 @@ export async function createServerAsync(
 	const repoRoot = options.repoRoot || process.cwd();
 	const config = options.config ?? (await readMuConfigFile(repoRoot));
 	const heartbeatScheduler = options.heartbeatScheduler ?? new ActivityHeartbeatScheduler();
+	const generationTelemetry = options.generationTelemetry ?? new GenerationTelemetryRecorder();
 	const controlPlane = await bootstrapControlPlane({
 		repoRoot,
 		config: config.control_plane,
 		heartbeatScheduler,
+		generation: {
+			generation_id: "control-plane-gen-0",
+			generation_seq: 0,
+		},
+		telemetry: generationTelemetry,
 	});
-	const serverConfig = createServer({ ...options, heartbeatScheduler, controlPlane, config });
+	const serverConfig = createServer({
+		...options,
+		heartbeatScheduler,
+		controlPlane,
+		config,
+		generationTelemetry,
+	});
 	return {
 		serverConfig,
 		controlPlane: serverConfig.controlPlane,

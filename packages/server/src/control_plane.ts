@@ -3,47 +3,99 @@ import {
 	CommandContextResolver,
 	type MessagingOperatorBackend,
 	MessagingOperatorRuntime,
-	PiMessagingOperatorBackend,
 	operatorExtensionPaths,
+	PiMessagingOperatorBackend,
 } from "@femtomc/mu-agent";
 import {
+	type AdapterIngressResult,
 	type Channel,
-	type CommandRecord,
 	type ControlPlaneAdapter,
 	ControlPlaneCommandPipeline,
 	ControlPlaneOutbox,
 	ControlPlaneOutboxDispatcher,
-	correlationFromCommandRecord,
 	ControlPlaneRuntime,
+	type ControlPlaneSignalObserver,
+	correlationFromCommandRecord,
 	DiscordControlPlaneAdapter,
+	type GenerationTelemetryRecorder,
 	getControlPlanePaths,
 	type MutationCommandExecutionResult,
 	type OutboundEnvelope,
 	type OutboxDeliveryHandlerResult,
 	type OutboxRecord,
+	type ReloadableGenerationIdentity,
 	SlackControlPlaneAdapter,
 	TelegramControlPlaneAdapter,
+	TelegramControlPlaneAdapterSpec,
 } from "@femtomc/mu-control-plane";
 import { DEFAULT_MU_CONFIG, type MuConfig } from "./config.js";
+import type { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 import {
-	ControlPlaneRunSupervisor,
 	type ControlPlaneRunEvent,
 	type ControlPlaneRunHeartbeatResult,
 	type ControlPlaneRunInterruptResult,
 	type ControlPlaneRunSnapshot,
 	type ControlPlaneRunStatus,
+	ControlPlaneRunSupervisor,
 	type ControlPlaneRunTrace,
 } from "./run_supervisor.js";
-import type { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 
 export type ActiveAdapter = {
 	name: Channel;
 	route: string;
 };
 
+export type TelegramGenerationRollbackTrigger =
+	| "manual"
+	| "warmup_failed"
+	| "health_gate_failed"
+	| "cutover_failed"
+	| "post_cutover_health_failed"
+	| "rollback_unavailable"
+	| "rollback_failed";
+
+export type TelegramGenerationReloadResult = {
+	handled: boolean;
+	ok: boolean;
+	reason: string;
+	route: string;
+	from_generation: ReloadableGenerationIdentity | null;
+	to_generation: ReloadableGenerationIdentity | null;
+	active_generation: ReloadableGenerationIdentity | null;
+	warmup: {
+		ok: boolean;
+		elapsed_ms: number;
+		error?: string;
+	} | null;
+	cutover: {
+		ok: boolean;
+		elapsed_ms: number;
+		error?: string;
+	} | null;
+	drain: {
+		ok: boolean;
+		elapsed_ms: number;
+		timed_out: boolean;
+		forced_stop: boolean;
+		error?: string;
+	} | null;
+	rollback: {
+		requested: boolean;
+		trigger: TelegramGenerationRollbackTrigger | null;
+		attempted: boolean;
+		ok: boolean;
+		error?: string;
+	};
+	error?: string;
+};
+
 export type ControlPlaneHandle = {
 	activeAdapters: ActiveAdapter[];
 	handleWebhook(path: string, req: Request): Promise<Response | null>;
+	reloadTelegramGeneration?(opts: {
+		config: ControlPlaneConfig;
+		reason: string;
+	}): Promise<TelegramGenerationReloadResult>;
 	listRuns?(opts?: { status?: string; limit?: number }): Promise<ControlPlaneRunSnapshot[]>;
 	getRun?(idOrRoot: string): Promise<ControlPlaneRunSnapshot | null>;
 	startRun?(opts: { prompt: string; maxSteps?: number }): Promise<ControlPlaneRunSnapshot>;
@@ -59,6 +111,39 @@ export type ControlPlaneHandle = {
 };
 
 export type ControlPlaneConfig = MuConfig["control_plane"];
+
+export type ControlPlaneGenerationContext = ReloadableGenerationIdentity;
+
+export type TelegramGenerationSwapHooks = {
+	onWarmup?: (ctx: { generation: ReloadableGenerationIdentity; reason: string }) => void | Promise<void>;
+	onCutover?: (ctx: {
+		from_generation: ReloadableGenerationIdentity | null;
+		to_generation: ReloadableGenerationIdentity;
+		reason: string;
+	}) => void | Promise<void>;
+	onDrain?: (ctx: {
+		generation: ReloadableGenerationIdentity;
+		reason: string;
+		timeout_ms: number;
+	}) => void | Promise<void>;
+};
+
+function generationTags(
+	generation: ControlPlaneGenerationContext,
+	component: string,
+): {
+	generation_id: string;
+	generation_seq: number;
+	supervisor: string;
+	component: string;
+} {
+	return {
+		generation_id: generation.generation_id,
+		generation_seq: generation.generation_seq,
+		supervisor: "control_plane",
+		component,
+	};
+}
 
 type DetectedAdapter =
 	| { name: "slack"; signingSecret: string }
@@ -94,6 +179,596 @@ export function detectAdapters(config: ControlPlaneConfig): DetectedAdapter[] {
 	}
 
 	return adapters;
+}
+
+type TelegramAdapterConfig = {
+	webhookSecret: string;
+	botToken: string | null;
+	botUsername: string | null;
+};
+
+type TelegramGenerationRecord = {
+	generation: ReloadableGenerationIdentity;
+	config: TelegramAdapterConfig;
+	adapter: TelegramControlPlaneAdapter;
+};
+
+const TELEGRAM_GENERATION_SUPERVISOR_ID = "telegram-adapter";
+const TELEGRAM_WARMUP_TIMEOUT_MS = 2_000;
+const TELEGRAM_DRAIN_TIMEOUT_MS = 5_000;
+
+function cloneControlPlaneConfig(config: ControlPlaneConfig): ControlPlaneConfig {
+	return JSON.parse(JSON.stringify(config)) as ControlPlaneConfig;
+}
+
+function controlPlaneNonTelegramFingerprint(config: ControlPlaneConfig): string {
+	return JSON.stringify({
+		adapters: {
+			slack: config.adapters.slack,
+			discord: config.adapters.discord,
+			gmail: config.adapters.gmail,
+		},
+		operator: config.operator,
+	});
+}
+
+function telegramAdapterConfigFromControlPlane(config: ControlPlaneConfig): TelegramAdapterConfig | null {
+	const webhookSecret = config.adapters.telegram.webhook_secret;
+	if (!webhookSecret) {
+		return null;
+	}
+	return {
+		webhookSecret,
+		botToken: config.adapters.telegram.bot_token,
+		botUsername: config.adapters.telegram.bot_username,
+	};
+}
+
+function applyTelegramAdapterConfig(
+	base: ControlPlaneConfig,
+	telegram: TelegramAdapterConfig | null,
+): ControlPlaneConfig {
+	const next = cloneControlPlaneConfig(base);
+	next.adapters.telegram.webhook_secret = telegram?.webhookSecret ?? null;
+	next.adapters.telegram.bot_token = telegram?.botToken ?? null;
+	next.adapters.telegram.bot_username = telegram?.botUsername ?? null;
+	return next;
+}
+
+function cloneTelegramAdapterConfig(config: TelegramAdapterConfig): TelegramAdapterConfig {
+	return {
+		webhookSecret: config.webhookSecret,
+		botToken: config.botToken,
+		botUsername: config.botUsername,
+	};
+}
+
+function describeError(err: unknown): string {
+	if (err instanceof Error && err.message.trim().length > 0) {
+		return err.message;
+	}
+	return String(err);
+}
+
+async function runWithTimeout<T>(opts: {
+	timeoutMs: number;
+	timeoutMessage: string;
+	run: () => Promise<T>;
+}): Promise<T> {
+	if (opts.timeoutMs <= 0) {
+		return await opts.run();
+	}
+	return await new Promise<T>((resolve, reject) => {
+		let settled = false;
+		const timer = setTimeout(() => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			reject(new Error(opts.timeoutMessage));
+		}, opts.timeoutMs);
+		void opts
+			.run()
+			.then((value) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				clearTimeout(timer);
+				resolve(value);
+			})
+			.catch((err) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				clearTimeout(timer);
+				reject(err);
+			});
+	});
+}
+
+class TelegramAdapterGenerationManager {
+	readonly #pipeline: ControlPlaneCommandPipeline;
+	readonly #outbox: ControlPlaneOutbox;
+	readonly #nowMs: () => number;
+	readonly #onOutboxEnqueued: (() => void) | null;
+	readonly #signalObserver: ControlPlaneSignalObserver | null;
+	readonly #hooks: TelegramGenerationSwapHooks | null;
+	#generationSeq = -1;
+	#active: TelegramGenerationRecord | null = null;
+	#previousConfig: TelegramAdapterConfig | null = null;
+	#activeControlPlaneConfig: ControlPlaneConfig;
+
+	public constructor(opts: {
+		pipeline: ControlPlaneCommandPipeline;
+		outbox: ControlPlaneOutbox;
+		initialConfig: ControlPlaneConfig;
+		nowMs?: () => number;
+		onOutboxEnqueued?: () => void;
+		signalObserver?: ControlPlaneSignalObserver;
+		hooks?: TelegramGenerationSwapHooks;
+	}) {
+		this.#pipeline = opts.pipeline;
+		this.#outbox = opts.outbox;
+		this.#nowMs = opts.nowMs ?? Date.now;
+		this.#onOutboxEnqueued = opts.onOutboxEnqueued ?? null;
+		this.#signalObserver = opts.signalObserver ?? null;
+		this.#hooks = opts.hooks ?? null;
+		this.#activeControlPlaneConfig = cloneControlPlaneConfig(opts.initialConfig);
+	}
+
+	#nextGeneration(): ReloadableGenerationIdentity {
+		const nextSeq = this.#generationSeq + 1;
+		return {
+			generation_id: `${TELEGRAM_GENERATION_SUPERVISOR_ID}-gen-${nextSeq}`,
+			generation_seq: nextSeq,
+		};
+	}
+
+	#buildAdapter(
+		config: TelegramAdapterConfig,
+		opts: { acceptIngress: boolean; ingressDrainEnabled: boolean },
+	): TelegramControlPlaneAdapter {
+		return new TelegramControlPlaneAdapter({
+			pipeline: this.#pipeline,
+			outbox: this.#outbox,
+			webhookSecret: config.webhookSecret,
+			botUsername: config.botUsername,
+			deferredIngress: true,
+			onOutboxEnqueued: this.#onOutboxEnqueued ?? undefined,
+			signalObserver: this.#signalObserver ?? undefined,
+			acceptIngress: opts.acceptIngress,
+			ingressDrainEnabled: opts.ingressDrainEnabled,
+			nowMs: this.#nowMs,
+		});
+	}
+
+	public async initialize(): Promise<void> {
+		const initial = telegramAdapterConfigFromControlPlane(this.#activeControlPlaneConfig);
+		if (!initial) {
+			return;
+		}
+		const generation = this.#nextGeneration();
+		const adapter = this.#buildAdapter(initial, {
+			acceptIngress: true,
+			ingressDrainEnabled: true,
+		});
+		await adapter.warmup();
+		const health = await adapter.healthCheck();
+		if (!health.ok) {
+			await adapter.stop({ force: true, reason: "startup_health_gate_failed" });
+			throw new Error(`telegram adapter warmup health failed: ${health.reason}`);
+		}
+		this.#active = {
+			generation,
+			config: cloneTelegramAdapterConfig(initial),
+			adapter,
+		};
+		this.#generationSeq = generation.generation_seq;
+	}
+
+	public hasActiveGeneration(): boolean {
+		return this.#active != null;
+	}
+
+	public activeGeneration(): ReloadableGenerationIdentity | null {
+		return this.#active ? { ...this.#active.generation } : null;
+	}
+
+	public activeBotToken(): string | null {
+		return this.#active?.config.botToken ?? null;
+	}
+
+	public activeAdapter(): TelegramControlPlaneAdapter | null {
+		return this.#active?.adapter ?? null;
+	}
+
+	public canHandleConfig(nextConfig: ControlPlaneConfig, reason: string): boolean {
+		if (reason === "rollback") {
+			return true;
+		}
+		return (
+			controlPlaneNonTelegramFingerprint(nextConfig) ===
+			controlPlaneNonTelegramFingerprint(this.#activeControlPlaneConfig)
+		);
+	}
+
+	async #rollbackToPrevious(opts: {
+		failedRecord: TelegramGenerationRecord;
+		previous: TelegramGenerationRecord | null;
+		reason: string;
+	}): Promise<{ ok: boolean; error?: string }> {
+		if (!opts.previous) {
+			return { ok: false, error: "rollback_unavailable" };
+		}
+		try {
+			opts.previous.adapter.activateIngress();
+			this.#active = opts.previous;
+			this.#previousConfig = cloneTelegramAdapterConfig(opts.failedRecord.config);
+			await opts.failedRecord.adapter.stop({ force: true, reason: `rollback:${opts.reason}` });
+			this.#activeControlPlaneConfig = applyTelegramAdapterConfig(
+				this.#activeControlPlaneConfig,
+				opts.previous.config,
+			);
+			return { ok: true };
+		} catch (err) {
+			return { ok: false, error: describeError(err) };
+		}
+	}
+
+	public async reload(opts: {
+		config: ControlPlaneConfig;
+		reason: string;
+		warmupTimeoutMs?: number;
+		drainTimeoutMs?: number;
+	}): Promise<TelegramGenerationReloadResult> {
+		if (!this.canHandleConfig(opts.config, opts.reason)) {
+			return {
+				handled: false,
+				ok: false,
+				reason: opts.reason,
+				route: "/webhooks/telegram",
+				from_generation: this.#active?.generation ?? null,
+				to_generation: null,
+				active_generation: this.#active?.generation ?? null,
+				warmup: null,
+				cutover: null,
+				drain: null,
+				rollback: {
+					requested: opts.reason === "rollback",
+					trigger: null,
+					attempted: false,
+					ok: true,
+				},
+			};
+		}
+
+		const rollbackRequested = opts.reason === "rollback";
+		let rollbackTrigger: TelegramGenerationRollbackTrigger | null = rollbackRequested ? "manual" : null;
+		let rollbackAttempted = false;
+		let rollbackOk = true;
+		let rollbackError: string | undefined;
+		const fromGeneration = this.#active?.generation ?? null;
+		const previousRecord = this.#active;
+		const warmupTimeoutMs = Math.max(0, Math.trunc(opts.warmupTimeoutMs ?? TELEGRAM_WARMUP_TIMEOUT_MS));
+		const drainTimeoutMs = Math.max(0, Math.trunc(opts.drainTimeoutMs ?? TELEGRAM_DRAIN_TIMEOUT_MS));
+
+		const targetConfig = rollbackRequested
+			? this.#previousConfig
+			: telegramAdapterConfigFromControlPlane(opts.config);
+		if (rollbackRequested && !targetConfig) {
+			return {
+				handled: true,
+				ok: false,
+				reason: opts.reason,
+				route: "/webhooks/telegram",
+				from_generation: fromGeneration,
+				to_generation: null,
+				active_generation: fromGeneration,
+				warmup: null,
+				cutover: null,
+				drain: null,
+				rollback: {
+					requested: true,
+					trigger: "rollback_unavailable",
+					attempted: false,
+					ok: false,
+					error: "rollback_unavailable",
+				},
+				error: "rollback_unavailable",
+			};
+		}
+
+		if (!targetConfig && !previousRecord) {
+			this.#activeControlPlaneConfig = cloneControlPlaneConfig(opts.config);
+			return {
+				handled: true,
+				ok: true,
+				reason: opts.reason,
+				route: "/webhooks/telegram",
+				from_generation: null,
+				to_generation: null,
+				active_generation: null,
+				warmup: null,
+				cutover: null,
+				drain: null,
+				rollback: {
+					requested: rollbackRequested,
+					trigger: rollbackTrigger,
+					attempted: false,
+					ok: true,
+				},
+			};
+		}
+
+		if (!targetConfig && previousRecord) {
+			const drainStartedAtMs = Math.trunc(this.#nowMs());
+			let forcedStop = false;
+			let drainError: string | undefined;
+			let drainTimedOut = false;
+			try {
+				previousRecord.adapter.beginDrain();
+				if (this.#hooks?.onDrain) {
+					await this.#hooks.onDrain({
+						generation: previousRecord.generation,
+						reason: opts.reason,
+						timeout_ms: drainTimeoutMs,
+					});
+				}
+				const drain = await runWithTimeout({
+					timeoutMs: drainTimeoutMs,
+					timeoutMessage: "telegram_drain_timeout",
+					run: async () => await previousRecord.adapter.drain({ timeoutMs: drainTimeoutMs, reason: opts.reason }),
+				});
+				drainTimedOut = drain.timed_out;
+				if (!drain.ok || drain.timed_out) {
+					forcedStop = true;
+					await previousRecord.adapter.stop({ force: true, reason: "disable_drain_timeout" });
+				} else {
+					await previousRecord.adapter.stop({ force: false, reason: "disable" });
+				}
+			} catch (err) {
+				drainError = describeError(err);
+				forcedStop = true;
+				drainTimedOut = drainError.includes("timeout");
+				await previousRecord.adapter.stop({ force: true, reason: "disable_drain_failed" });
+			}
+			this.#previousConfig = cloneTelegramAdapterConfig(previousRecord.config);
+			this.#active = null;
+			this.#activeControlPlaneConfig = applyTelegramAdapterConfig(this.#activeControlPlaneConfig, null);
+			return {
+				handled: true,
+				ok: drainError == null,
+				reason: opts.reason,
+				route: "/webhooks/telegram",
+				from_generation: fromGeneration,
+				to_generation: null,
+				active_generation: null,
+				warmup: null,
+				cutover: {
+					ok: true,
+					elapsed_ms: 0,
+				},
+				drain: {
+					ok: drainError == null && !drainTimedOut,
+					elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - drainStartedAtMs),
+					timed_out: drainTimedOut,
+					forced_stop: forcedStop,
+					...(drainError ? { error: drainError } : {}),
+				},
+				rollback: {
+					requested: rollbackRequested,
+					trigger: rollbackTrigger,
+					attempted: false,
+					ok: true,
+				},
+				...(drainError ? { error: drainError } : {}),
+			};
+		}
+
+		const nextConfig = cloneTelegramAdapterConfig(targetConfig as TelegramAdapterConfig);
+		const toGeneration = this.#nextGeneration();
+		const nextAdapter = this.#buildAdapter(nextConfig, {
+			acceptIngress: false,
+			ingressDrainEnabled: false,
+		});
+		const nextRecord: TelegramGenerationRecord = {
+			generation: toGeneration,
+			config: nextConfig,
+			adapter: nextAdapter,
+		};
+
+		const warmupStartedAtMs = Math.trunc(this.#nowMs());
+		try {
+			if (this.#hooks?.onWarmup) {
+				await this.#hooks.onWarmup({ generation: toGeneration, reason: opts.reason });
+			}
+			await runWithTimeout({
+				timeoutMs: warmupTimeoutMs,
+				timeoutMessage: "telegram_warmup_timeout",
+				run: async () => {
+					await nextAdapter.warmup();
+					const health = await nextAdapter.healthCheck();
+					if (!health.ok) {
+						throw new Error(`telegram_health_gate_failed:${health.reason}`);
+					}
+				},
+			});
+		} catch (err) {
+			const error = describeError(err);
+			rollbackTrigger = error.includes("health_gate") ? "health_gate_failed" : "warmup_failed";
+			await nextAdapter.stop({ force: true, reason: "warmup_failed" });
+			return {
+				handled: true,
+				ok: false,
+				reason: opts.reason,
+				route: "/webhooks/telegram",
+				from_generation: fromGeneration,
+				to_generation: toGeneration,
+				active_generation: fromGeneration,
+				warmup: {
+					ok: false,
+					elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - warmupStartedAtMs),
+					error,
+				},
+				cutover: null,
+				drain: null,
+				rollback: {
+					requested: rollbackRequested,
+					trigger: rollbackTrigger,
+					attempted: false,
+					ok: true,
+				},
+				error,
+			};
+		}
+
+		const cutoverStartedAtMs = Math.trunc(this.#nowMs());
+		try {
+			if (this.#hooks?.onCutover) {
+				await this.#hooks.onCutover({
+					from_generation: fromGeneration,
+					to_generation: toGeneration,
+					reason: opts.reason,
+				});
+			}
+			nextAdapter.activateIngress();
+			if (previousRecord) {
+				previousRecord.adapter.beginDrain();
+			}
+			this.#active = nextRecord;
+			this.#generationSeq = toGeneration.generation_seq;
+			const postCutoverHealth = await nextAdapter.healthCheck();
+			if (!postCutoverHealth.ok) {
+				throw new Error(`telegram_post_cutover_health_failed:${postCutoverHealth.reason}`);
+			}
+		} catch (err) {
+			const error = describeError(err);
+			rollbackTrigger = error.includes("post_cutover") ? "post_cutover_health_failed" : "cutover_failed";
+			rollbackAttempted = true;
+			const rollback = await this.#rollbackToPrevious({
+				failedRecord: nextRecord,
+				previous: previousRecord,
+				reason: opts.reason,
+			});
+			rollbackOk = rollback.ok;
+			rollbackError = rollback.error;
+			if (!rollback.ok) {
+				await nextAdapter.stop({ force: true, reason: "rollback_failed" });
+				this.#active = previousRecord ?? null;
+				this.#activeControlPlaneConfig = applyTelegramAdapterConfig(
+					this.#activeControlPlaneConfig,
+					previousRecord?.config ?? null,
+				);
+			}
+			return {
+				handled: true,
+				ok: false,
+				reason: opts.reason,
+				route: "/webhooks/telegram",
+				from_generation: fromGeneration,
+				to_generation: toGeneration,
+				active_generation: this.#active?.generation ?? fromGeneration,
+				warmup: {
+					ok: true,
+					elapsed_ms: Math.max(0, cutoverStartedAtMs - warmupStartedAtMs),
+				},
+				cutover: {
+					ok: false,
+					elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - cutoverStartedAtMs),
+					error,
+				},
+				drain: null,
+				rollback: {
+					requested: rollbackRequested,
+					trigger: rollbackTrigger,
+					attempted: rollbackAttempted,
+					ok: rollbackOk,
+					...(rollbackError ? { error: rollbackError } : {}),
+				},
+				error,
+			};
+		}
+
+		let drain: TelegramGenerationReloadResult["drain"] = null;
+		if (previousRecord) {
+			const drainStartedAtMs = Math.trunc(this.#nowMs());
+			let forcedStop = false;
+			let drainTimedOut = false;
+			let drainError: string | undefined;
+			try {
+				if (this.#hooks?.onDrain) {
+					await this.#hooks.onDrain({
+						generation: previousRecord.generation,
+						reason: opts.reason,
+						timeout_ms: drainTimeoutMs,
+					});
+				}
+				const drained = await runWithTimeout({
+					timeoutMs: drainTimeoutMs,
+					timeoutMessage: "telegram_drain_timeout",
+					run: async () => await previousRecord.adapter.drain({ timeoutMs: drainTimeoutMs, reason: opts.reason }),
+				});
+				drainTimedOut = drained.timed_out;
+				if (!drained.ok || drained.timed_out) {
+					forcedStop = true;
+					await previousRecord.adapter.stop({ force: true, reason: "generation_drain_timeout" });
+				} else {
+					await previousRecord.adapter.stop({ force: false, reason: "generation_drained" });
+				}
+			} catch (err) {
+				drainError = describeError(err);
+				forcedStop = true;
+				drainTimedOut = drainError.includes("timeout");
+				await previousRecord.adapter.stop({ force: true, reason: "generation_drain_failed" });
+			}
+			drain = {
+				ok: drainError == null && !drainTimedOut,
+				elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - drainStartedAtMs),
+				timed_out: drainTimedOut,
+				forced_stop: forcedStop,
+				...(drainError ? { error: drainError } : {}),
+			};
+		}
+
+		this.#previousConfig = previousRecord ? cloneTelegramAdapterConfig(previousRecord.config) : this.#previousConfig;
+		this.#activeControlPlaneConfig = applyTelegramAdapterConfig(this.#activeControlPlaneConfig, nextConfig);
+		return {
+			handled: true,
+			ok: true,
+			reason: opts.reason,
+			route: "/webhooks/telegram",
+			from_generation: fromGeneration,
+			to_generation: toGeneration,
+			active_generation: toGeneration,
+			warmup: {
+				ok: true,
+				elapsed_ms: Math.max(0, cutoverStartedAtMs - warmupStartedAtMs),
+			},
+			cutover: {
+				ok: true,
+				elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - cutoverStartedAtMs),
+			},
+			drain,
+			rollback: {
+				requested: rollbackRequested,
+				trigger: rollbackTrigger,
+				attempted: rollbackAttempted,
+				ok: rollbackOk,
+				...(rollbackError ? { error: rollbackError } : {}),
+			},
+		};
+	}
+
+	public async stop(): Promise<void> {
+		const active = this.#active;
+		this.#active = null;
+		if (!active) {
+			return;
+		}
+		await active.adapter.stop({ force: true, reason: "shutdown" });
+	}
 }
 
 function sha256Hex(input: string): string {
@@ -273,11 +948,29 @@ export type BootstrapControlPlaneOpts = {
 	operatorRuntime?: MessagingOperatorRuntime | null;
 	operatorBackend?: MessagingOperatorBackend;
 	heartbeatScheduler?: ActivityHeartbeatScheduler;
+	generation?: ControlPlaneGenerationContext;
+	telemetry?: GenerationTelemetryRecorder | null;
+	telegramGenerationHooks?: TelegramGenerationSwapHooks;
 };
 
 export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Promise<ControlPlaneHandle | null> {
 	const controlPlaneConfig = opts.config ?? DEFAULT_MU_CONFIG.control_plane;
 	const detected = detectAdapters(controlPlaneConfig);
+	const generation: ControlPlaneGenerationContext = opts.generation ?? {
+		generation_id: "control-plane-gen-legacy",
+		generation_seq: -1,
+	};
+	const telemetry = opts.telemetry ?? null;
+	const signalObserver: ControlPlaneSignalObserver | undefined = telemetry
+		? {
+				onDuplicateSignal: (signal) => {
+					telemetry.recordDuplicateSignal(generationTags(generation, `control_plane.${signal.source}`), signal);
+				},
+				onDropSignal: (signal) => {
+					telemetry.recordDropSignal(generationTags(generation, `control_plane.${signal.source}`), signal);
+				},
+			}
+		: undefined;
 
 	if (detected.length === 0) {
 		return null;
@@ -289,7 +982,14 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 	let pipeline: ControlPlaneCommandPipeline | null = null;
 	let runSupervisor: ControlPlaneRunSupervisor | null = null;
 	let drainInterval: ReturnType<typeof setInterval> | null = null;
-	const adapterMap = new Map<string, { adapter: ControlPlaneAdapter; info: ActiveAdapter }>();
+	const adapterMap = new Map<
+		string,
+		{
+			adapter: ControlPlaneAdapter;
+			info: ActiveAdapter;
+			isActive: () => boolean;
+		}
+	>();
 
 	try {
 		await runtime.start();
@@ -303,7 +1003,9 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 						backend: opts.operatorBackend,
 					});
 
-		const outbox = new ControlPlaneOutbox(paths.outboxPath);
+		const outbox = new ControlPlaneOutbox(paths.outboxPath, {
+			signalObserver,
+		});
 		await outbox.load();
 
 		let scheduleOutboxDrainRef: (() => void) | null = null;
@@ -425,42 +1127,35 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		});
 		await pipeline.start();
 
-		let telegramBotToken: string | null = null;
+		const telegramManager = new TelegramAdapterGenerationManager({
+			pipeline,
+			outbox,
+			initialConfig: controlPlaneConfig,
+			onOutboxEnqueued: () => {
+				scheduleOutboxDrainRef?.();
+			},
+			signalObserver,
+			hooks: opts.telegramGenerationHooks,
+		});
+		await telegramManager.initialize();
 
 		for (const d of detected) {
-			let adapter: ControlPlaneAdapter;
-
-			switch (d.name) {
-				case "slack":
-					adapter = new SlackControlPlaneAdapter({
-						pipeline,
-						outbox,
-						signingSecret: d.signingSecret,
-					});
-					break;
-				case "discord":
-					adapter = new DiscordControlPlaneAdapter({
-						pipeline,
-						outbox,
-						signingSecret: d.signingSecret,
-					});
-					break;
-				case "telegram":
-					adapter = new TelegramControlPlaneAdapter({
-						pipeline,
-						outbox,
-						webhookSecret: d.webhookSecret,
-						botUsername: d.botUsername ?? undefined,
-						deferredIngress: true,
-						onOutboxEnqueued: () => {
-							scheduleOutboxDrainRef?.();
-						},
-					});
-					if (d.botToken) {
-						telegramBotToken = d.botToken;
-					}
-					break;
+			if (d.name === "telegram") {
+				continue;
 			}
+
+			const adapter: ControlPlaneAdapter =
+				d.name === "slack"
+					? new SlackControlPlaneAdapter({
+							pipeline,
+							outbox,
+							signingSecret: d.signingSecret,
+						})
+					: new DiscordControlPlaneAdapter({
+							pipeline,
+							outbox,
+							signingSecret: d.signingSecret,
+						});
 
 			const route = adapter.spec.route;
 			if (adapterMap.has(route)) {
@@ -472,13 +1167,50 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 					name: adapter.spec.channel,
 					route,
 				},
+				isActive: () => true,
 			});
 		}
+
+		const telegramProxy: ControlPlaneAdapter = {
+			spec: TelegramControlPlaneAdapterSpec,
+			async ingest(req: Request): Promise<AdapterIngressResult> {
+				const active = telegramManager.activeAdapter();
+				if (!active) {
+					return {
+						channel: "telegram",
+						accepted: false,
+						reason: "telegram_not_configured",
+						response: new Response("telegram_not_configured", { status: 404 }),
+						inbound: null,
+						pipelineResult: null,
+						outboxRecord: null,
+						auditEntry: null,
+					};
+				}
+				return await active.ingest(req);
+			},
+			async stop(): Promise<void> {
+				await telegramManager.stop();
+			},
+		};
+
+		if (adapterMap.has(TelegramControlPlaneAdapterSpec.route)) {
+			throw new Error(`duplicate control-plane webhook route: ${TelegramControlPlaneAdapterSpec.route}`);
+		}
+		adapterMap.set(TelegramControlPlaneAdapterSpec.route, {
+			adapter: telegramProxy,
+			info: {
+				name: "telegram",
+				route: TelegramControlPlaneAdapterSpec.route,
+			},
+			isActive: () => telegramManager.hasActiveGeneration(),
+		});
 
 		const deliver = async (record: OutboxRecord): Promise<undefined | OutboxDeliveryHandlerResult> => {
 			const { envelope } = record;
 
 			if (envelope.channel === "telegram") {
+				const telegramBotToken = telegramManager.activeBotToken();
 				if (!telegramBotToken) {
 					return { kind: "retry", error: "telegram bot token not configured in .mu/config.json" };
 				}
@@ -560,16 +1292,32 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		scheduleOutboxDrain();
 
 		return {
-			activeAdapters: [...adapterMap.values()].map((v) => v.info),
+			get activeAdapters(): ActiveAdapter[] {
+				return [...adapterMap.values()].filter((entry) => entry.isActive()).map((v) => v.info);
+			},
 
 			async handleWebhook(path: string, req: Request): Promise<Response | null> {
 				const entry = adapterMap.get(path);
-				if (!entry) return null;
+				if (!entry || !entry.isActive()) return null;
 				const result = await entry.adapter.ingest(req);
 				if (result.outboxRecord) {
 					scheduleOutboxDrain();
 				}
 				return result.response;
+			},
+
+			async reloadTelegramGeneration(reloadOpts: {
+				config: ControlPlaneConfig;
+				reason: string;
+			}): Promise<TelegramGenerationReloadResult> {
+				const result = await telegramManager.reload({
+					config: reloadOpts.config,
+					reason: reloadOpts.reason,
+				});
+				if (result.handled && result.ok) {
+					scheduleOutboxDrain();
+				}
+				return result;
 			},
 
 			async listRuns(opts = {}): Promise<ControlPlaneRunSnapshot[]> {

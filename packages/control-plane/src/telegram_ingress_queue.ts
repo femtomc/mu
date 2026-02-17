@@ -1,6 +1,11 @@
 import { appendJsonl, readJsonl } from "@femtomc/mu-core/node";
 import { z } from "zod";
 import { type InboundEnvelope, InboundEnvelopeSchema } from "./models.js";
+import type {
+	ControlPlaneDropSignal,
+	ControlPlaneDuplicateSignal,
+	ControlPlaneSignalObserver,
+} from "./observability.js";
 import { SerializedMutationExecutor } from "./serialized_mutation_executor.js";
 
 function defaultIngressIdFactory(): string {
@@ -59,6 +64,7 @@ export class TelegramIngressQueue {
 	readonly #nowMs: () => number;
 	readonly #ingressIdFactory: () => string;
 	readonly #executor: SerializedMutationExecutor;
+	readonly #signalObserver: ControlPlaneSignalObserver | null;
 	#loaded = false;
 	readonly #recordsById = new Map<string, TelegramIngressRecord>();
 	readonly #recordIdByDedupeKey = new Map<string, string>();
@@ -68,12 +74,14 @@ export class TelegramIngressQueue {
 		opts: {
 			nowMs?: () => number;
 			ingressIdFactory?: () => string;
+			signalObserver?: ControlPlaneSignalObserver;
 		} = {},
 	) {
 		this.#path = path;
 		this.#nowMs = opts.nowMs ?? Date.now;
 		this.#ingressIdFactory = opts.ingressIdFactory ?? defaultIngressIdFactory;
 		this.#executor = new SerializedMutationExecutor();
+		this.#signalObserver = opts.signalObserver ?? null;
 	}
 
 	public get path(): string {
@@ -119,6 +127,24 @@ export class TelegramIngressQueue {
 		this.#applyRecord(parsed);
 	}
 
+	#emitDuplicateSignal(signal: ControlPlaneDuplicateSignal): void {
+		if (!this.#signalObserver?.onDuplicateSignal) {
+			return;
+		}
+		void Promise.resolve(this.#signalObserver.onDuplicateSignal(signal)).catch(() => {
+			// Keep signal emission non-fatal.
+		});
+	}
+
+	#emitDropSignal(signal: ControlPlaneDropSignal): void {
+		if (!this.#signalObserver?.onDropSignal) {
+			return;
+		}
+		void Promise.resolve(this.#signalObserver.onDropSignal(signal)).catch(() => {
+			// Keep signal emission non-fatal.
+		});
+	}
+
 	public async get(ingressId: string): Promise<TelegramIngressRecord | null> {
 		await this.#ensureLoaded();
 		const record = this.#recordsById.get(ingressId);
@@ -153,7 +179,10 @@ export class TelegramIngressQueue {
 		return out;
 	}
 
-	public async pendingDue(nowMs: number = Math.trunc(this.#nowMs()), limit: number = 100): Promise<TelegramIngressRecord[]> {
+	public async pendingDue(
+		nowMs: number = Math.trunc(this.#nowMs()),
+		limit: number = 100,
+	): Promise<TelegramIngressRecord[]> {
 		const due = (await this.records({ state: "pending" }))
 			.filter((record) => record.next_attempt_at_ms <= nowMs)
 			.sort((a, b) => {
@@ -194,6 +223,16 @@ export class TelegramIngressQueue {
 
 			const existing = await this.getByDedupeKey(dedupeKey);
 			if (existing) {
+				this.#emitDuplicateSignal({
+					source: "telegram_ingress",
+					signal: "dedupe_hit",
+					dedupe_key: dedupeKey,
+					record_id: existing.ingress_id,
+					ts_ms: nowMs,
+					metadata: {
+						state: existing.state,
+					},
+				});
 				return { kind: "duplicate", record: existing };
 			}
 
@@ -241,7 +280,10 @@ export class TelegramIngressQueue {
 		});
 	}
 
-	public async markFailure(ingressId: string, opts: MarkTelegramIngressFailureOpts): Promise<TelegramIngressRecord | null> {
+	public async markFailure(
+		ingressId: string,
+		opts: MarkTelegramIngressFailureOpts,
+	): Promise<TelegramIngressRecord | null> {
 		return await this.#executor.run(async () => {
 			await this.#ensureLoaded();
 			const current = this.#recordsById.get(ingressId);
@@ -265,6 +307,17 @@ export class TelegramIngressQueue {
 					dead_letter_reason: opts.error,
 				});
 				await this.#appendRecord(deadLetter);
+				this.#emitDropSignal({
+					source: "telegram_ingress",
+					signal: "dead_letter",
+					record_id: deadLetter.ingress_id,
+					reason: opts.error,
+					attempt_count: attemptCount,
+					ts_ms: nowMs,
+					metadata: {
+						dedupe_key: deadLetter.dedupe_key,
+					},
+				});
 				return deadLetter;
 			}
 

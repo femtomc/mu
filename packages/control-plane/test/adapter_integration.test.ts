@@ -589,6 +589,10 @@ describe("channel adapters integrated with control-plane", () => {
 		if (!first.outboxRecord) {
 			throw new Error("expected outbox record");
 		}
+		expect(first.inbound?.metadata.delivery_semantics).toBe("at_least_once");
+		expect(first.inbound?.metadata.duplicate_safe).toBe(true);
+		expect(first.inbound?.metadata.idempotency_scope).toBe("telegram:update_or_callback_id");
+		expect(first.inbound?.idempotency_key).toBe("telegram-idem-update-100");
 		const commandId = first.pipelineResult.command.command_id;
 
 		const duplicate = await harness.telegram.ingest(submitReq());
@@ -597,6 +601,7 @@ describe("channel adapters integrated with control-plane", () => {
 			throw new Error(`expected awaiting_confirmation, got ${duplicate.pipelineResult?.kind}`);
 		}
 		expect(duplicate.pipelineResult.command.command_id).toBe(commandId);
+		expect(duplicate.inbound?.idempotency_key).toBe(first.inbound?.idempotency_key);
 		expect(duplicate.outboxRecord?.outbox_id).toBe(first.outboxRecord.outbox_id);
 
 		let retriedOnce = false;

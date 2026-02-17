@@ -28,6 +28,14 @@ export type AdapterVerification = z.infer<typeof AdapterVerificationSchema>;
 export const AdapterAckFormatSchema = z.enum(["slack_ephemeral_json", "discord_ephemeral_json", "telegram_ok_json"]);
 export type AdapterAckFormat = z.infer<typeof AdapterAckFormatSchema>;
 
+/**
+ * Delivery semantics are intentionally explicit at the adapter boundary.
+ * Channel webhooks are treated as at-least-once deliveries and rely on
+ * durable idempotency + dedupe handling downstream.
+ */
+export const AdapterDeliverySemanticsSchema = z.enum(["at_least_once"]);
+export type AdapterDeliverySemantics = z.infer<typeof AdapterDeliverySemanticsSchema>;
+
 export const ControlPlaneAdapterSpecSchema = z.object({
 	v: z.literal(CONTROL_PLANE_ADAPTER_CONTRACT_VERSION).default(CONTROL_PLANE_ADAPTER_CONTRACT_VERSION),
 	channel: ChannelSchema,
@@ -35,6 +43,7 @@ export const ControlPlaneAdapterSpecSchema = z.object({
 	ingress_payload: AdapterIngressPayloadSchema,
 	verification: AdapterVerificationSchema,
 	ack_format: AdapterAckFormatSchema,
+	delivery_semantics: AdapterDeliverySemanticsSchema.default("at_least_once"),
 	deferred_delivery: z.boolean().default(true),
 });
 export type ControlPlaneAdapterSpec = z.infer<typeof ControlPlaneAdapterSpecSchema>;

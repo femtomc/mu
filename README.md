@@ -156,6 +156,7 @@ Control-plane runtime configuration is file-based:
 - Source of truth: `.mu/config.json`
 - Live config API: `GET /api/config`, `POST /api/config` (patch)
 - Runtime remount: `POST /api/control-plane/reload`
+- Explicit rollback trigger: `POST /api/control-plane/rollback`
 
 Minimal Slack example:
 
@@ -192,7 +193,7 @@ Operator terminal: connecting...
 Operator terminal: connected
 ```
 
-`/api/status` includes a `control_plane` summary (active adapters + routes).
+`/api/status` includes `control_plane` runtime state (active adapters/routes, generation supervisor snapshot, and reload observability counters).
 
 ## Packages
 

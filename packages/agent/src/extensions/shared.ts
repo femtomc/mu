@@ -3,6 +3,38 @@ export type MuControlPlaneRoute = {
 	route: string;
 };
 
+export type MuGenerationIdentity = {
+	generation_id: string;
+	generation_seq: number;
+};
+
+export type MuGenerationReloadAttempt = {
+	attempt_id: string;
+	reason: string;
+	state: "planned" | "swapped" | "completed" | "failed";
+	requested_at_ms: number;
+	swapped_at_ms: number | null;
+	finished_at_ms: number | null;
+	from_generation: MuGenerationIdentity | null;
+	to_generation: MuGenerationIdentity;
+};
+
+export type MuGenerationSupervisorSnapshot = {
+	supervisor_id: string;
+	active_generation: MuGenerationIdentity | null;
+	pending_reload: MuGenerationReloadAttempt | null;
+	last_reload: MuGenerationReloadAttempt | null;
+};
+
+export type MuGenerationObservabilityCounters = {
+	reload_success_total: number;
+	reload_failure_total: number;
+	reload_drain_duration_ms_total: number;
+	reload_drain_duration_samples_total: number;
+	duplicate_signal_total: number;
+	drop_signal_total: number;
+};
+
 export type MuStatusResponse = {
 	repo_root: string;
 	open_count: number;
@@ -11,6 +43,10 @@ export type MuStatusResponse = {
 		active: boolean;
 		adapters: string[];
 		routes?: MuControlPlaneRoute[];
+		generation?: MuGenerationSupervisorSnapshot;
+		observability?: {
+			counters: MuGenerationObservabilityCounters;
+		};
 	};
 };
 

@@ -12,6 +12,8 @@ import {
 	fetchMuJson,
 	fetchMuStatus,
 	type MuControlPlaneRoute,
+	type MuGenerationObservabilityCounters,
+	type MuGenerationSupervisorSnapshot,
 	muServerUrl,
 	textResult,
 	toJsonText,
@@ -33,17 +35,47 @@ function cpRoutesFromStatus(routes: MuControlPlaneRoute[] | undefined, adapters:
 	}));
 }
 
+function generationSummary(generation: MuGenerationSupervisorSnapshot | undefined): string | null {
+	if (!generation) {
+		return null;
+	}
+	const active = generation.active_generation?.generation_id ?? "(none)";
+	const pending = generation.pending_reload
+		? `${generation.pending_reload.attempt_id}:${generation.pending_reload.state}`
+		: "(none)";
+	const last = generation.last_reload
+		? `${generation.last_reload.attempt_id}:${generation.last_reload.state}`
+		: "(none)";
+	return `generation: active=${active} pending=${pending} last=${last}`;
+}
+
+function observabilitySummary(counters: MuGenerationObservabilityCounters | undefined): string | null {
+	if (!counters) {
+		return null;
+	}
+	return `observability: reload_success=${counters.reload_success_total} reload_failure=${counters.reload_failure_total} duplicate=${counters.duplicate_signal_total} drop=${counters.drop_signal_total}`;
+}
+
 function summarizeStatus(status: Awaited<ReturnType<typeof fetchMuStatus>>): string {
 	const cp = status.control_plane ?? { active: false, adapters: [] as string[], routes: [] as MuControlPlaneRoute[] };
 	const routes = cpRoutesFromStatus(cp.routes, cp.adapters);
 	const routeText = routes.length > 0 ? routes.map((entry) => `${entry.name}:${entry.route}`).join(", ") : "(none)";
-	return [
+	const generationLine = generationSummary(cp.generation);
+	const observabilityLine = observabilitySummary(cp.observability?.counters);
+	const lines = [
 		`repo: ${status.repo_root}`,
 		`issues: open=${status.open_count} ready=${status.ready_count}`,
 		`control_plane: ${cp.active ? "active" : "inactive"}`,
 		`adapters: ${cp.adapters.length > 0 ? cp.adapters.join(", ") : "(none)"}`,
 		`routes: ${routeText}`,
-	].join("\n");
+	];
+	if (generationLine) {
+		lines.push(generationLine);
+	}
+	if (observabilityLine) {
+		lines.push(observabilityLine);
+	}
+	return lines.join("\n");
 }
 
 function sliceWithLimit<T>(
@@ -139,6 +171,8 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 				routes: [] as MuControlPlaneRoute[],
 			};
 			const routes = cpRoutesFromStatus(cp.routes, cp.adapters);
+			const generation = cp.generation ?? null;
+			const observability = cp.observability?.counters ?? null;
 			switch (params.action) {
 				case "status":
 					return textResult(
@@ -146,8 +180,10 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 							active: cp.active,
 							adapters: cp.adapters,
 							routes,
+							generation,
+							observability,
 						}),
-						{ control_plane: cp, routes },
+						{ control_plane: cp, routes, generation, observability },
 					);
 				case "adapters":
 					return textResult(toJsonText(cp.adapters), { adapters: cp.adapters });
@@ -437,6 +473,14 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 					`adapters: ${cp.adapters.length > 0 ? cp.adapters.join(", ") : "(none)"}`,
 					`routes: ${routes.length > 0 ? routes.map((entry) => `${entry.name}:${entry.route}`).join(", ") : "(none)"}`,
 				];
+				const generationLine = generationSummary(cp.generation);
+				if (generationLine) {
+					lines.push(generationLine);
+				}
+				const observabilityLine = observabilitySummary(cp.observability?.counters);
+				if (observabilityLine) {
+					lines.push(observabilityLine);
+				}
 				ctx.ui.notify(lines.join("\n"), "info");
 			} catch (err) {
 				ctx.ui.notify(`Failed: ${err instanceof Error ? err.message : String(err)}`, "error");

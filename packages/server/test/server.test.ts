@@ -42,7 +42,27 @@ describe("mu-server", () => {
 			repo_root: tempDir,
 			open_count: 0,
 			ready_count: 0,
-			control_plane: { active: false, adapters: [], routes: [] },
+			control_plane: {
+				active: false,
+				adapters: [],
+				routes: [],
+				generation: {
+					supervisor_id: "control-plane",
+					active_generation: null,
+					pending_reload: null,
+					last_reload: null,
+				},
+				observability: {
+					counters: {
+						reload_success_total: 0,
+						reload_failure_total: 0,
+						reload_drain_duration_ms_total: 0,
+						reload_drain_duration_samples_total: 0,
+						duplicate_signal_total: 0,
+						drop_signal_total: 0,
+					},
+				},
+			},
 		});
 	});
 
@@ -139,13 +159,17 @@ describe("mu-server", () => {
 				active: boolean;
 				adapters: string[];
 				routes: Array<{ name: string; route: string }>;
+				generation: {
+					active_generation: { generation_id: string; generation_seq: number } | null;
+				};
 			};
 		};
-		expect(status.control_plane).toEqual({
+		expect(status.control_plane).toMatchObject({
 			active: true,
 			adapters: ["slack"],
 			routes: [{ name: "slack", route: "/webhooks/slack" }],
 		});
+		expect(status.control_plane.generation.active_generation?.generation_id).toBe("control-plane-gen-0");
 	});
 
 	test("control-plane reload endpoint swaps adapters in-process", async () => {
@@ -184,18 +208,36 @@ describe("mu-server", () => {
 			ok: boolean;
 			previous_control_plane: { adapters: string[] };
 			control_plane: { adapters: string[] };
+			generation: {
+				outcome: "success" | "failure";
+				from_generation: { generation_id: string } | null;
+				to_generation: { generation_id: string };
+				active_generation: { generation_id: string } | null;
+			};
+			telegram_generation?: unknown;
 		};
 		expect(payload.ok).toBe(true);
 		expect(payload.previous_control_plane.adapters).toEqual(["slack"]);
 		expect(payload.control_plane.adapters).toEqual(["discord"]);
+		expect(payload.generation.outcome).toBe("success");
+		expect(payload.generation.from_generation?.generation_id).toBe("control-plane-gen-0");
+		expect(payload.generation.to_generation.generation_id).toBe("control-plane-gen-1");
+		expect(payload.generation.active_generation?.generation_id).toBe("control-plane-gen-1");
+		expect(payload.telegram_generation).toBeUndefined();
 		expect(stopCalls).toBe(1);
 
 		const statusResponse = await serverWithReload.fetch(new Request("http://localhost/api/status"));
 		expect(statusResponse.status).toBe(200);
 		const status = (await statusResponse.json()) as {
-			control_plane: { adapters: string[] };
+			control_plane: {
+				adapters: string[];
+				generation: {
+					active_generation: { generation_id: string } | null;
+				};
+			};
 		};
 		expect(status.control_plane.adapters).toEqual(["discord"]);
+		expect(status.control_plane.generation.active_generation?.generation_id).toBe("control-plane-gen-1");
 	});
 
 	test("control-plane reload failure keeps existing adapters", async () => {
@@ -228,18 +270,64 @@ describe("mu-server", () => {
 			ok: boolean;
 			error?: string;
 			control_plane: { adapters: string[] };
+			generation: {
+				outcome: "success" | "failure";
+				active_generation: { generation_id: string } | null;
+			};
 		};
 		expect(payload.ok).toBe(false);
 		expect(payload.error).toContain("reload failed");
 		expect(payload.control_plane.adapters).toEqual(["slack"]);
+		expect(payload.generation.outcome).toBe("failure");
+		expect(payload.generation.active_generation?.generation_id).toBe("control-plane-gen-0");
 		expect(stopCalls).toBe(0);
 
 		const statusResponse = await serverWithReload.fetch(new Request("http://localhost/api/status"));
 		expect(statusResponse.status).toBe(200);
 		const status = (await statusResponse.json()) as {
-			control_plane: { adapters: string[] };
+			control_plane: {
+				adapters: string[];
+				generation: {
+					active_generation: { generation_id: string } | null;
+				};
+			};
 		};
 		expect(status.control_plane.adapters).toEqual(["slack"]);
+		expect(status.control_plane.generation.active_generation?.generation_id).toBe("control-plane-gen-0");
+	});
+
+	test("control-plane rollback endpoint uses reload pipeline with explicit rollback reason", async () => {
+		const initial: ControlPlaneHandle = {
+			activeAdapters: [{ name: "slack", route: "/webhooks/slack" }],
+			handleWebhook: async () => null,
+			stop: async () => {},
+		};
+		const reloaded: ControlPlaneHandle = {
+			activeAdapters: [{ name: "discord", route: "/webhooks/discord" }],
+			handleWebhook: async () => null,
+			stop: async () => {},
+		};
+
+		const serverWithReload = createServer({
+			repoRoot: tempDir,
+			controlPlane: initial,
+			controlPlaneReloader: async () => reloaded,
+		});
+
+		const rollbackResponse = await serverWithReload.fetch(
+			new Request("http://localhost/api/control-plane/rollback", {
+				method: "POST",
+			}),
+		);
+		expect(rollbackResponse.status).toBe(200);
+		const payload = (await rollbackResponse.json()) as {
+			ok: boolean;
+			reason: string;
+			generation: { outcome: "success" | "failure" };
+		};
+		expect(payload.ok).toBe(true);
+		expect(payload.reason).toBe("rollback");
+		expect(payload.generation.outcome).toBe("success");
 	});
 
 	test("run management APIs proxy through control-plane handle", async () => {

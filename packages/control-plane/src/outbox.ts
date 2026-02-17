@@ -1,6 +1,11 @@
 import { appendJsonl, readJsonl } from "@femtomc/mu-core/node";
 import { z } from "zod";
 import { type OutboundEnvelope, OutboundEnvelopeSchema } from "./models.js";
+import type {
+	ControlPlaneDropSignal,
+	ControlPlaneDuplicateSignal,
+	ControlPlaneSignalObserver,
+} from "./observability.js";
 
 function defaultOutboxIdFactory(): string {
 	return `out-${crypto.randomUUID()}`;
@@ -72,6 +77,7 @@ export class ControlPlaneOutbox {
 	readonly #nowMs: () => number;
 	readonly #outboxIdFactory: () => string;
 	readonly #responseIdFactory: () => string;
+	readonly #signalObserver: ControlPlaneSignalObserver | null;
 	#loaded = false;
 	readonly #recordsById = new Map<string, OutboxRecord>();
 	readonly #recordIdByDedupeKey = new Map<string, string>();
@@ -82,12 +88,14 @@ export class ControlPlaneOutbox {
 			nowMs?: () => number;
 			outboxIdFactory?: () => string;
 			responseIdFactory?: () => string;
+			signalObserver?: ControlPlaneSignalObserver;
 		} = {},
 	) {
 		this.#path = path;
 		this.#nowMs = opts.nowMs ?? Date.now;
 		this.#outboxIdFactory = opts.outboxIdFactory ?? defaultOutboxIdFactory;
 		this.#responseIdFactory = opts.responseIdFactory ?? defaultResponseIdFactory;
+		this.#signalObserver = opts.signalObserver ?? null;
 	}
 
 	public get path(): string {
@@ -131,6 +139,24 @@ export class ControlPlaneOutbox {
 		});
 		await appendJsonl(this.#path, entry);
 		this.#applyRecord(parsed);
+	}
+
+	#emitDuplicateSignal(signal: ControlPlaneDuplicateSignal): void {
+		if (!this.#signalObserver?.onDuplicateSignal) {
+			return;
+		}
+		void Promise.resolve(this.#signalObserver.onDuplicateSignal(signal)).catch(() => {
+			// Keep signal emission non-fatal.
+		});
+	}
+
+	#emitDropSignal(signal: ControlPlaneDropSignal): void {
+		if (!this.#signalObserver?.onDropSignal) {
+			return;
+		}
+		void Promise.resolve(this.#signalObserver.onDropSignal(signal)).catch(() => {
+			// Keep signal emission non-fatal.
+		});
 	}
 
 	public get(outboxId: string): OutboxRecord | null {
@@ -201,6 +227,16 @@ export class ControlPlaneOutbox {
 
 		const existing = this.getByDedupeKey(dedupeKey);
 		if (existing) {
+			this.#emitDuplicateSignal({
+				source: "outbox",
+				signal: "dedupe_hit",
+				dedupe_key: dedupeKey,
+				record_id: existing.outbox_id,
+				ts_ms: nowMs,
+				metadata: {
+					state: existing.state,
+				},
+			});
 			return { kind: "duplicate", record: existing };
 		}
 
@@ -271,6 +307,17 @@ export class ControlPlaneOutbox {
 				dead_letter_reason: opts.error,
 			});
 			await this.#appendRecord(deadLetter);
+			this.#emitDropSignal({
+				source: "outbox",
+				signal: "dead_letter",
+				record_id: deadLetter.outbox_id,
+				reason: opts.error,
+				attempt_count: attemptCount,
+				ts_ms: nowMs,
+				metadata: {
+					dedupe_key: deadLetter.dedupe_key,
+				},
+			});
 			return deadLetter;
 		}
 

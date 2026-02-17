@@ -12,6 +12,7 @@ import type { CommandState } from "./command_state.js";
 import { assuranceTierForChannel, type Channel, ChannelSchema } from "./identity_store.js";
 import { formatAdapterAckMessage, presentPipelineResultMessage } from "./interaction_contract.js";
 import { type AssuranceTier, type InboundEnvelope, InboundEnvelopeSchema, type OutboundEnvelope } from "./models.js";
+import type { ControlPlaneSignalObserver } from "./observability.js";
 import type { ControlPlaneOutbox, OutboxRecord } from "./outbox.js";
 import { TelegramIngressQueue, type TelegramIngressRecord } from "./telegram_ingress_queue.js";
 
@@ -588,6 +589,7 @@ export const SlackControlPlaneAdapterSpec = ControlPlaneAdapterSpecSchema.parse(
 		max_clock_skew_sec: 5 * 60,
 	},
 	ack_format: "slack_ephemeral_json",
+	delivery_semantics: "at_least_once",
 	deferred_delivery: true,
 });
 
@@ -603,6 +605,7 @@ export const DiscordControlPlaneAdapterSpec = ControlPlaneAdapterSpecSchema.pars
 		max_clock_skew_sec: 5 * 60,
 	},
 	ack_format: "discord_ephemeral_json",
+	delivery_semantics: "at_least_once",
 	deferred_delivery: true,
 });
 
@@ -615,6 +618,7 @@ export const TelegramControlPlaneAdapterSpec = ControlPlaneAdapterSpecSchema.par
 		secret_header: "x-telegram-bot-api-secret-token",
 	},
 	ack_format: "telegram_ok_json",
+	delivery_semantics: "at_least_once",
 	deferred_delivery: true,
 });
 
@@ -956,6 +960,17 @@ export type TelegramControlPlaneAdapterOpts = {
 	deferredIngress?: boolean;
 	ingressMaxAttempts?: number;
 	onOutboxEnqueued?: () => void;
+	signalObserver?: ControlPlaneSignalObserver;
+	/**
+	 * Generation swap support: stage a new adapter in standby (acceptIngress=false)
+	 * and atomically activate it at cutover.
+	 */
+	acceptIngress?: boolean;
+	/**
+	 * Generation swap support: only the active generation drains the shared
+	 * telegram ingress queue.
+	 */
+	ingressDrainEnabled?: boolean;
 };
 
 export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
@@ -969,12 +984,16 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 	readonly #deferredIngress: boolean;
 	readonly #ingressMaxAttempts: number;
 	readonly #onOutboxEnqueued: (() => void) | null;
+	readonly #signalObserver: ControlPlaneSignalObserver | null;
 	readonly #ingressQueue: TelegramIngressQueue | null;
 	readonly #adapterAudit: AdapterAuditLog | null;
 	#ingressDraining = false;
 	#ingressDrainRequested = false;
 	#ingressRetryTimer: ReturnType<typeof setTimeout> | null = null;
 	#ingressRetryTimerAtMs: number | null = null;
+	#ingressInFlight = 0;
+	#acceptIngress: boolean;
+	#ingressDrainEnabled: boolean;
 	#stopped = false;
 
 	public constructor(opts: TelegramControlPlaneAdapterOpts) {
@@ -987,15 +1006,21 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		this.#deferredIngress = opts.deferredIngress ?? false;
 		this.#ingressMaxAttempts = Math.max(1, Math.trunc(opts.ingressMaxAttempts ?? 5));
 		this.#onOutboxEnqueued = opts.onOutboxEnqueued ?? null;
+		this.#signalObserver = opts.signalObserver ?? null;
+		this.#acceptIngress = opts.acceptIngress ?? true;
+		this.#ingressDrainEnabled = opts.ingressDrainEnabled ?? this.#acceptIngress;
 		if (this.#deferredIngress) {
 			this.#ingressQueue = new TelegramIngressQueue(
 				join(this.#pipeline.runtime.paths.controlPlaneDir, "telegram_ingress.jsonl"),
 				{
 					nowMs: this.#nowMs,
+					signalObserver: this.#signalObserver ?? undefined,
 				},
 			);
 			this.#adapterAudit = new AdapterAuditLog(this.#pipeline.runtime.paths.adapterAuditPath);
-			this.#requestIngressDrain();
+			if (this.#ingressDrainEnabled) {
+				this.#requestIngressDrain();
+			}
 		} else {
 			this.#ingressQueue = null;
 			this.#adapterAudit = null;
@@ -1023,7 +1048,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 	}
 
 	#scheduleIngressDrainAt(atMs: number): void {
-		if (!this.#deferredIngress || this.#stopped) {
+		if (!this.#deferredIngress || this.#stopped || !this.#ingressDrainEnabled) {
 			return;
 		}
 		const nowMs = Math.trunc(this.#nowMs());
@@ -1044,7 +1069,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 	}
 
 	#requestIngressDrain(): void {
-		if (!this.#deferredIngress || this.#stopped) {
+		if (!this.#deferredIngress || this.#stopped || !this.#ingressDrainEnabled) {
 			return;
 		}
 		queueMicrotask(() => {
@@ -1086,6 +1111,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			return;
 		}
 		const startedAtMs = Math.trunc(this.#nowMs());
+		this.#ingressInFlight += 1;
 		await this.#appendAudit(record.inbound, "telegram.ingress.process.start", null, {
 			ingress_id: record.ingress_id,
 			attempt: record.attempt_count + 1,
@@ -1104,6 +1130,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 					source: "telegram:deferred_ingress",
 					delivery_id: record.inbound.delivery_id,
 					ingress_id: record.ingress_id,
+					at_least_once_safe: true,
 				},
 				forceOutbox: true,
 			});
@@ -1118,7 +1145,8 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 				elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - startedAtMs),
 			});
 		} catch (err) {
-			const errorMessage = err instanceof Error && err.message.length > 0 ? err.message : "telegram_ingress_processing_error";
+			const errorMessage =
+				err instanceof Error && err.message.length > 0 ? err.message : "telegram_ingress_processing_error";
 			const updated = await ingressQueue.markFailure(record.ingress_id, {
 				error: errorMessage,
 				nowMs: Math.trunc(this.#nowMs()),
@@ -1128,7 +1156,9 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			}
 			await this.#appendAudit(
 				record.inbound,
-				updated?.state === "dead_letter" ? "telegram.ingress.process.dead_letter" : "telegram.ingress.process.retry",
+				updated?.state === "dead_letter"
+					? "telegram.ingress.process.dead_letter"
+					: "telegram.ingress.process.retry",
 				errorMessage,
 				{
 					ingress_id: record.ingress_id,
@@ -1137,12 +1167,14 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 					elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - startedAtMs),
 				},
 			);
+		} finally {
+			this.#ingressInFlight = Math.max(0, this.#ingressInFlight - 1);
 		}
 	}
 
 	async #drainIngressQueue(): Promise<void> {
 		const ingressQueue = this.#ingressQueue;
-		if (!this.#deferredIngress || this.#stopped || !ingressQueue) {
+		if (!this.#deferredIngress || this.#stopped || !ingressQueue || !this.#ingressDrainEnabled) {
 			return;
 		}
 		if (this.#ingressDraining) {
@@ -1155,7 +1187,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			do {
 				this.#ingressDrainRequested = false;
 				for (;;) {
-					if (this.#stopped) {
+					if (this.#stopped || !this.#ingressDrainEnabled) {
 						return;
 					}
 					const due = await ingressQueue.pendingDue(Math.trunc(this.#nowMs()), 20);
@@ -1163,7 +1195,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 						break;
 					}
 					for (const record of due) {
-						if (this.#stopped) {
+						if (this.#stopped || !this.#ingressDrainEnabled) {
 							return;
 						}
 						await this.#processDeferredIngressRecord(record);
@@ -1172,17 +1204,95 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 						break;
 					}
 				}
+				if (!this.#ingressDrainEnabled) {
+					return;
+				}
 				const nextPendingAttemptAtMs = await ingressQueue.nextPendingAttemptAtMs();
 				if (nextPendingAttemptAtMs != null) {
 					this.#scheduleIngressDrainAt(nextPendingAttemptAtMs);
 				}
-			} while (this.#ingressDrainRequested && !this.#stopped);
+			} while (this.#ingressDrainRequested && !this.#stopped && this.#ingressDrainEnabled);
 		} finally {
 			this.#ingressDraining = false;
 		}
 	}
 
-	public async stop(): Promise<void> {
+	public async warmup(): Promise<void> {
+		if (this.#stopped) {
+			throw new Error("telegram_adapter_stopped");
+		}
+		if (!this.#deferredIngress || !this.#ingressQueue) {
+			return;
+		}
+		await this.#ingressQueue.load();
+		await this.#ingressQueue.nextPendingAttemptAtMs();
+	}
+
+	public async healthCheck(): Promise<{ ok: true } | { ok: false; reason: string }> {
+		if (this.#stopped) {
+			return { ok: false, reason: "telegram_adapter_stopped" };
+		}
+		if (this.#deferredIngress && !this.#ingressQueue) {
+			return { ok: false, reason: "telegram_ingress_queue_unavailable" };
+		}
+		return { ok: true };
+	}
+
+	public activateIngress(): void {
+		if (this.#stopped) {
+			throw new Error("telegram_adapter_stopped");
+		}
+		this.#acceptIngress = true;
+		this.#ingressDrainEnabled = true;
+		this.#requestIngressDrain();
+	}
+
+	public beginDrain(): void {
+		this.#acceptIngress = false;
+		this.#ingressDrainEnabled = false;
+		this.#ingressDrainRequested = false;
+		this.#clearIngressRetryTimer();
+	}
+
+	public async drain(opts: { timeoutMs: number; reason?: string } = { timeoutMs: 0 }): Promise<{
+		ok: boolean;
+		drained: boolean;
+		in_flight_at_start: number;
+		in_flight_at_end: number;
+		elapsed_ms: number;
+		timed_out: boolean;
+	}> {
+		const startedAtMs = Math.trunc(this.#nowMs());
+		const timeoutMs = Math.max(0, Math.trunc(opts.timeoutMs));
+		const inFlightAtStart = this.#ingressInFlight + (this.#ingressDraining ? 1 : 0);
+		this.beginDrain();
+		const deadlineMs = startedAtMs + timeoutMs;
+		for (;;) {
+			if (!this.#ingressDraining && this.#ingressInFlight === 0) {
+				break;
+			}
+			if (Math.trunc(this.#nowMs()) >= deadlineMs) {
+				break;
+			}
+			await Bun.sleep(10);
+		}
+		const inFlightAtEnd = this.#ingressInFlight + (this.#ingressDraining ? 1 : 0);
+		const timedOut = inFlightAtEnd > 0;
+		const elapsedMs = Math.max(0, Math.trunc(this.#nowMs()) - startedAtMs);
+		return {
+			ok: !timedOut,
+			drained: !timedOut,
+			in_flight_at_start: inFlightAtStart,
+			in_flight_at_end: inFlightAtEnd,
+			elapsed_ms: elapsedMs,
+			timed_out: timedOut,
+		};
+	}
+
+	public async stop(opts: { force?: boolean; reason?: string } = {}): Promise<void> {
+		if (!opts.force) {
+			this.beginDrain();
+		}
 		this.#stopped = true;
 		this.#ingressDrainRequested = false;
 		this.#clearIngressRetryTimer();
@@ -1194,6 +1304,14 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 				channel: this.spec.channel,
 				reason: "method_not_allowed",
 				response: textResponse("method not allowed", { status: 405 }),
+			});
+		}
+
+		if (this.#stopped || !this.#acceptIngress) {
+			return rejectedIngressResult({
+				channel: this.spec.channel,
+				reason: "telegram_generation_draining",
+				response: textResponse("telegram_generation_draining", { status: 503 }),
 			});
 		}
 
@@ -1234,7 +1352,13 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		let commandText = "";
 		let sourceKind: "update" | "callback" = "update";
 		let sourceId = updateId;
-		const metadata: Record<string, unknown> = { adapter: this.spec.channel, update_id: updateId };
+		const metadata: Record<string, unknown> = {
+			adapter: this.spec.channel,
+			update_id: updateId,
+			delivery_semantics: "at_least_once",
+			duplicate_safe: true,
+			idempotency_scope: "telegram:update_or_callback_id",
+		};
 
 		if (callbackQuery) {
 			sourceKind = "callback";
@@ -1336,6 +1460,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 				queue_decision: enqueue.kind,
 				ack_mode: sourceKind === "callback" ? "answerCallbackQuery" : "sendChatAction",
 				deferred_ingress: true,
+				at_least_once_safe: true,
 			});
 			const response =
 				sourceKind === "callback"
@@ -1368,6 +1493,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 				adapter: this.spec.channel,
 				source,
 				delivery_id: deliveryId,
+				at_least_once_safe: true,
 			},
 		});
 
