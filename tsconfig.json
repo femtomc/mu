@@ -1,0 +1,25 @@
+{
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"baseUrl": ".",
+		"paths": {
+			"@femtomc/mu-forum": ["./packages/forum/src/index.ts"],
+			"@femtomc/mu-forum/*": ["./packages/forum/src/*"],
+			"@femtomc/mu-core": ["./packages/core/src/index.ts"],
+			"@femtomc/mu-core/*": ["./packages/core/src/*"],
+			"@femtomc/mu-control-plane": ["./packages/control-plane/src/index.ts"],
+			"@femtomc/mu-control-plane/*": ["./packages/control-plane/src/*"],
+			"@femtomc/mu-issue": ["./packages/issue/src/index.ts"],
+			"@femtomc/mu-issue/*": ["./packages/issue/src/*"],
+			"@femtomc/mu-orchestrator": ["./packages/orchestrator/src/index.ts"],
+			"@femtomc/mu-orchestrator/*": ["./packages/orchestrator/src/*"],
+			"@femtomc/mu-agent": ["./packages/agent/src/index.ts"],
+			"@femtomc/mu-agent/*": ["./packages/agent/src/*"],
+			"@femtomc/mu": ["./packages/cli/src/index.ts"],
+			"@femtomc/mu/*": ["./packages/cli/src/*"]
+		}
+	},
+	"include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"],
+	"exclude": ["**/node_modules/**", "**/dist/**", "packages/web/**"]
+}

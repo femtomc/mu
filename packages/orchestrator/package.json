@@ -1,0 +1,26 @@
+{
+  "name": "@femtomc/mu-orchestrator",
+  "version": "26.2.39",
+  "description": "Long-running execution engine for mu work plans.",
+  "keywords": ["mu", "orchestrator", "automation", "execution"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**"
+  ],
+  "dependencies": {
+    "@femtomc/mu-agent": "26.2.39",
+    "@femtomc/mu-core": "26.2.39",
+    "@femtomc/mu-forum": "26.2.39",
+    "@femtomc/mu-issue": "26.2.39",
+    "@mariozechner/pi-coding-agent": "^0.52.12",
+    "@mariozechner/pi-ai": "^0.52.12"
+  }
+}

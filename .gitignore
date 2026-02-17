@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# misc
+.DS_Store
+.env
+.env.*
+.mu/
+
+# editors
+.vscode/
+.idea/
+
+# generated web bundle for mu-server
+packages/server/public/index.html
+packages/server/public/assets/

@@ -1,0 +1,32 @@
+{
+  "name": "@femtomc/mu",
+  "version": "26.2.39",
+  "description": "Personal agent CLI for technical work.",
+  "keywords": ["mu", "agent", "automation", "orchestration", "cli"],
+  "type": "module",
+  "bin": {
+    "mu": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**"
+  ],
+  "dependencies": {
+    "@femtomc/mu-agent": "26.2.39",
+    "@femtomc/mu-core": "26.2.39",
+    "@femtomc/mu-forum": "26.2.39",
+    "@femtomc/mu-issue": "26.2.39",
+    "@femtomc/mu-orchestrator": "26.2.39",
+    "@femtomc/mu-control-plane": "26.2.39",
+    "@femtomc/mu-server": "26.2.39",
+    "@mariozechner/pi-coding-agent": "^0.52.12",
+    "@mariozechner/pi-ai": "^0.52.12"
+  }
+}
