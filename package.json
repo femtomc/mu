@@ -21,7 +21,7 @@
 		"build:compile": "bun build packages/cli/src/cli.ts --compile --outfile mu-bin --minify",
 		"build:compile:linux": "bun build packages/cli/src/cli.ts --compile --outfile mu-bin-linux --target bun-linux-x64 --minify",
 		"build:compile:mac": "bun build packages/cli/src/cli.ts --compile --outfile mu-bin-darwin --target bun-darwin-arm64 --minify",
-		"publish:all": "bun run web:bundle && bun run build && npm publish --access public -w packages/core && npm publish --access public -w packages/agent && npm publish --access public -w packages/control-plane && npm publish --access public -w packages/forum && npm publish --access public -w packages/issue && npm publish --access public -w packages/orchestrator && npm publish --access public -w packages/server && npm publish --access public -w packages/cli"
+		"publish:all": "bun run web:bundle && bun run build && bun publish --cwd packages/core --access public && bun publish --cwd packages/agent --access public && bun publish --cwd packages/control-plane --access public && bun publish --cwd packages/forum --access public && bun publish --cwd packages/issue --access public && bun publish --cwd packages/orchestrator --access public && bun publish --cwd packages/server --access public && bun publish --cwd packages/cli --access public"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.5",
@@ -33,5 +33,5 @@
 	"dependencies": {
 		"mu-monorepo": "."
 	},
-	"version": "26.2.56"
+	"version": "26.2.62"
 }

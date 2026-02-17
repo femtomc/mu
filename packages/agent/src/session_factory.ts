@@ -29,7 +29,7 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 		"@mariozechner/pi-coding-agent"
 	);
 
-	const authStorage = new AuthStorage();
+	const authStorage = AuthStorage.create();
 	const defaultModel = "gpt-5.3-codex";
 	const modelId = opts.model ?? defaultModel;
 	const model = resolveModel(modelId, authStorage, opts.provider);

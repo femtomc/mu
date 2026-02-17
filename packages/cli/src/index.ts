@@ -2765,7 +2765,7 @@ async function cmdLogin(argv: string[]): Promise<RunResult> {
 	const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
 	const { getOAuthProviders } = await import("@mariozechner/pi-ai");
 
-	const authStorage = new AuthStorage();
+	const authStorage = AuthStorage.create();
 	const providers = getOAuthProviders();
 
 	const { present: listMode, rest: argv0 } = popFlag(argv, "--list");
@@ -2804,7 +2804,7 @@ async function cmdLogin(argv: string[]): Promise<RunResult> {
 
 	try {
 		await authStorage.login(providerId, {
-			onAuth: (info) => {
+			onAuth: (info: { url: string; instructions?: string }) => {
 				process.stderr.write(`\nOpen this URL to authenticate:\n  ${info.url}\n\n`);
 				if (info.instructions) {
 					process.stderr.write(`${info.instructions}\n\n`);
@@ -2818,13 +2818,13 @@ async function cmdLogin(argv: string[]): Promise<RunResult> {
 					}
 				} catch {}
 			},
-			onPrompt: async (prompt) => {
+			onPrompt: async (prompt: { message: string; placeholder?: string }) => {
 				const msg = prompt.placeholder ? `${prompt.message} [${prompt.placeholder}]: ` : `${prompt.message}: `;
 				const answer = await readLine(msg);
 				if (!answer && prompt.placeholder) return prompt.placeholder;
 				return answer;
 			},
-			onProgress: (message) => {
+			onProgress: (message: string) => {
 				process.stderr.write(`${message}\n`);
 			},
 			onManualCodeInput: async () => {

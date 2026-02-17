@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-web",
-	"version": "26.2.56",
+	"version": "26.2.62",
 	"description": "Web console for monitoring and operating mu.",
 	"private": true,
 	"type": "module",

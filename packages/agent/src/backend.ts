@@ -115,7 +115,7 @@ export function resolveModel(
  */
 export class SdkBackend implements BackendRunner {
 	async run(opts: BackendRunOpts): Promise<number> {
-		const authStorage = new AuthStorage();
+		const authStorage = AuthStorage.create();
 		const model = resolveModel(opts.model, authStorage, opts.provider);
 		if (!model) {
 			const scope = opts.provider ? ` in provider "${opts.provider}"` : "";

@@ -20,7 +20,7 @@ type MuCommandDispatcherState = {
 	aliases: Map<string, string>;
 };
 
-const DISPATCHER_STATES = new WeakMap<ExtensionAPI, MuCommandDispatcherState>();
+let singletonState: MuCommandDispatcherState | null = null;
 
 const RESERVED_SUBCOMMANDS = new Set(["help", "?"]);
 
@@ -86,16 +86,15 @@ function resolveEntry(state: MuCommandDispatcherState, token: string): MuSubcomm
 }
 
 function ensureDispatcher(pi: ExtensionAPI): MuCommandDispatcherState {
-	const existing = DISPATCHER_STATES.get(pi);
-	if (existing) {
-		return existing;
+	if (singletonState) {
+		return singletonState;
 	}
 
 	const state: MuCommandDispatcherState = {
 		entries: new Map(),
 		aliases: new Map(),
 	};
-	DISPATCHER_STATES.set(pi, state);
+	singletonState = state;
 
 	pi.registerCommand("mu", {
 		description: "mu command dispatcher (`/mu <subcommand> ...`)",

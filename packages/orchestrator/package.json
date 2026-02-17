@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-orchestrator",
-	"version": "26.2.56",
+	"version": "26.2.62",
 	"description": "Long-running execution engine for mu work plans.",
 	"keywords": [
 		"mu",
@@ -25,7 +25,7 @@
 		"@femtomc/mu-core": "workspace:*",
 		"@femtomc/mu-forum": "workspace:*",
 		"@femtomc/mu-issue": "workspace:*",
-		"@mariozechner/pi-coding-agent": "^0.52.12",
-		"@mariozechner/pi-ai": "^0.52.12"
+		"@mariozechner/pi-coding-agent": "^0.53.0",
+		"@mariozechner/pi-ai": "^0.53.0"
 	}
 }

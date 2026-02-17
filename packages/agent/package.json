@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-agent",
-	"version": "26.2.56",
+	"version": "26.2.62",
 	"description": "Shared agent runtime for mu chat, orchestration roles, and serve extensions.",
 	"keywords": [
 		"mu",
@@ -24,9 +24,9 @@
 	],
 	"dependencies": {
 		"@femtomc/mu-core": "workspace:*",
-		"@mariozechner/pi-agent-core": "^0.52.12",
-		"@mariozechner/pi-ai": "^0.52.12",
-		"@mariozechner/pi-coding-agent": "^0.52.12",
+		"@mariozechner/pi-agent-core": "^0.53.0",
+		"@mariozechner/pi-ai": "^0.53.0",
+		"@mariozechner/pi-coding-agent": "^0.53.0",
 		"@sinclair/typebox": "^0.34.0",
 		"zod": "^4.1.9"
 	}

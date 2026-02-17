@@ -42,7 +42,7 @@ function pickReasoning(model: Model<any>, explicit?: string): string {
  *   3. Auto-detect: best model from any auth'd provider
  */
 export function resolveModelConfig(overrides: ModelOverrides, authStorage?: AuthStorage): ResolvedModelConfig {
-	const auth = authStorage ?? new AuthStorage();
+	const auth = authStorage ?? AuthStorage.create();
 
 	if (overrides.model) {
 		return resolveExplicitModel(overrides.model, overrides.provider, overrides.reasoning, auth);
