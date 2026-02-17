@@ -38,9 +38,40 @@ type ServeServerHandle = {
 	stop: () => Promise<void>;
 };
 
+type QueuedRunSnapshot = {
+	job_id: string;
+	root_issue_id: string | null;
+	max_steps: number;
+	mode?: string;
+	status?: string;
+	source?: string;
+};
+
+type RunHeartbeatRegistration = {
+	program_id: string | null;
+	created: boolean;
+};
+
 type ServeDeps = {
 	startServer: (opts: { repoRoot: string; port: number }) => Promise<ServeServerHandle>;
-	runOperatorSession: (opts: { onReady: () => void; provider?: string; model?: string }) => Promise<RunResult>;
+	runOperatorSession: (opts: {
+		onReady: () => void;
+		provider?: string;
+		model?: string;
+		thinking?: string;
+	}) => Promise<RunResult>;
+	queueRun: (opts: {
+		serverUrl: string;
+		prompt: string;
+		maxSteps: number;
+		provider?: string;
+		model?: string;
+		reasoning?: string;
+	}) => Promise<QueuedRunSnapshot>;
+	registerRunHeartbeat: (opts: {
+		serverUrl: string;
+		run: QueuedRunSnapshot;
+	}) => Promise<RunHeartbeatRegistration>;
 	registerSignalHandler: (signal: NodeJS.Signals, handler: () => void) => () => void;
 	openBrowser: (url: string) => void;
 	isHeadless: () => boolean;
@@ -76,6 +107,20 @@ type CliCtx = {
 
 type OperatorSessionCommandOptions = {
 	onInteractiveReady?: () => void;
+};
+
+type ServeLifecycleOptions = {
+	commandName: "serve" | "run";
+	port: number;
+	noOpen: boolean;
+	operatorProvider?: string;
+	operatorModel?: string;
+	operatorThinking?: string;
+	beforeOperatorSession?: (opts: {
+		serverUrl: string;
+		deps: ServeDeps;
+		io: CliIO | undefined;
+	}) => Promise<void>;
 };
 
 function ok(stdout: string = "", exitCode: number = 0): RunResult {
@@ -366,7 +411,7 @@ function mainHelp(): string {
 		`  ${cmd("store")} ${dim("<subcmd>")}                        Inspect .mu store files and logs`,
 		`  ${cmd("issues")} ${dim("<subcmd>")}                       Work item commands`,
 		`  ${cmd("forum")} ${dim("<subcmd>")}                        Coordination message commands`,
-		`  ${cmd("run")} ${dim("<prompt...>")}                       Start a new autonomous run`,
+		`  ${cmd("run")} ${dim("<prompt...>")}                       Queue a run and attach operator session`,
 		`  ${cmd("resume")} ${dim("<root-id>")}                      Resume a run`,
 		`  ${cmd("chat")} ${dim("[--message TEXT]")}                 Interactive operator session`,
 		`  ${cmd("login")} ${dim("[<provider>] [--list]")}           Authenticate with an AI provider`,
@@ -439,6 +484,8 @@ export async function run(
 			return await cmdForum(rest, ctx);
 		case "run":
 			return await cmdRun(rest, ctx);
+		case "_run-direct":
+			return await cmdRunDirect(rest, ctx);
 		case "resume":
 			return await cmdResume(rest, ctx);
 		case "chat": {
@@ -1735,6 +1782,213 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (argv.length === 0 || hasHelpFlag(argv)) {
 		return ok(
 			[
+				"mu run - start mu serve, queue a run, register heartbeat, and attach operator terminal",
+				"",
+				"Usage:",
+				"  mu run <prompt...> [--max-steps N] [--model ID] [--provider ID] [--reasoning LVL] [--port N] [--no-open]",
+				"",
+				"Run queue options:",
+				"  --max-steps <N>    Max DAG steps for the queued run (default: 20)",
+				"  --provider <id>    Provider intent for queued run + operator session",
+				"  --model <id>       Model intent for queued run + operator session",
+				"  --reasoning <lvl>  Thinking intent (queued run request + operator session)",
+				"",
+				"Serve passthrough:",
+				"  --port <N>         Server port (default: 3000)",
+				"  --no-open          Don't open browser automatically",
+				"",
+				"Legacy note:",
+				"  --json and --raw-stream are no longer supported on mu run.",
+				"  Use `mu serve` + /api/runs/* for machine integration, or `mu resume --json` for direct run state.",
+				"",
+				"See also: `mu serve --help`, `mu guide`",
+			].join("\n") + "\n",
+		);
+	}
+
+	let maxSteps = 20;
+	let port = 3000;
+	let noOpen = false;
+	let modelFlag: string | undefined;
+	let providerFlag: string | undefined;
+	let reasoningFlag: string | undefined;
+	const promptParts: string[] = [];
+
+	for (let i = 0; i < argv.length; i++) {
+		const a = argv[i]!;
+		if (a === "--") {
+			promptParts.push(...argv.slice(i + 1));
+			break;
+		}
+		if (a === "--json") {
+			return jsonError(
+				"`mu run --json` has been removed. Use `mu serve` + /api/runs/* for machine integration, or `mu resume <root-id> --json` for direct run output.",
+				{
+					recovery: [
+						"mu run \"Break down and execute this goal\"",
+						"mu serve --help",
+						"mu resume <root-id> --json",
+					],
+				},
+			);
+		}
+		if (a === "--raw-stream") {
+			return jsonError(
+				"`mu run --raw-stream` has been removed. Use `mu serve` + /api/runs/* for queued runs, or `mu resume <root-id> --raw-stream` for direct runner streaming.",
+				{
+					recovery: [
+						"mu run \"Break down and execute this goal\"",
+						"mu serve --help",
+						"mu resume <root-id> --raw-stream",
+					],
+				},
+			);
+		}
+		if (a === "--no-open") {
+			noOpen = true;
+			continue;
+		}
+		if (a === "--max-steps") {
+			const next = argv[i + 1];
+			if (!next) {
+				return jsonError("missing value for --max-steps", { recovery: ['mu run --max-steps 20 "..."'] });
+			}
+			const n = ensureInt(next, { name: "--max-steps", min: 1 });
+			if (n == null) {
+				return jsonError("max-steps must be >= 1", { recovery: ['mu run --max-steps 20 "..."'] });
+			}
+			maxSteps = n;
+			i += 1;
+			continue;
+		}
+		if (a.startsWith("--max-steps=")) {
+			const n = ensureInt(a.slice("--max-steps=".length), { name: "--max-steps", min: 1 });
+			if (n == null) {
+				return jsonError("max-steps must be >= 1", { recovery: ['mu run --max-steps 20 "..."'] });
+			}
+			maxSteps = n;
+			continue;
+		}
+		if (a === "--port") {
+			const next = argv[i + 1];
+			if (!next) {
+				return jsonError("missing value for --port", { recovery: ["mu run --port 3000 \"...\""] });
+			}
+			const p = ensureInt(next, { name: "--port", min: 1, max: 65535 });
+			if (p == null) {
+				return jsonError("port must be 1-65535", { recovery: ["mu run --port 3000 \"...\""] });
+			}
+			port = p;
+			i += 1;
+			continue;
+		}
+		if (a.startsWith("--port=")) {
+			const p = ensureInt(a.slice("--port=".length), { name: "--port", min: 1, max: 65535 });
+			if (p == null) {
+				return jsonError("port must be 1-65535", { recovery: ["mu run --port 3000 \"...\""] });
+			}
+			port = p;
+			continue;
+		}
+		if (a === "--model") {
+			const next = argv[i + 1];
+			if (!next) {
+				return jsonError("missing value for --model", { recovery: ['mu run "..." --model gpt-5.3-codex'] });
+			}
+			modelFlag = next;
+			i += 1;
+			continue;
+		}
+		if (a.startsWith("--model=")) {
+			modelFlag = a.slice("--model=".length);
+			continue;
+		}
+		if (a === "--provider") {
+			const next = argv[i + 1];
+			if (!next) {
+				return jsonError("missing value for --provider", { recovery: ['mu run "..." --provider openai-codex'] });
+			}
+			providerFlag = next;
+			i += 1;
+			continue;
+		}
+		if (a.startsWith("--provider=")) {
+			providerFlag = a.slice("--provider=".length);
+			continue;
+		}
+		if (a === "--reasoning") {
+			const next = argv[i + 1];
+			if (!next) {
+				return jsonError("missing value for --reasoning", {
+					recovery: ['mu run "..." --reasoning high'],
+				});
+			}
+			reasoningFlag = next;
+			i += 1;
+			continue;
+		}
+		if (a.startsWith("--reasoning=")) {
+			reasoningFlag = a.slice("--reasoning=".length);
+			continue;
+		}
+		if (a.startsWith("-")) {
+			return jsonError(`unknown arg: ${a}`, {
+				recovery: ["mu run --help", 'mu run "Break down and execute this goal"'],
+			});
+		}
+		promptParts.push(a);
+	}
+
+	for (const [flagName, rawValue] of [
+		["--provider", providerFlag],
+		["--model", modelFlag],
+		["--reasoning", reasoningFlag],
+	] as const) {
+		if (rawValue != null && rawValue.trim().length === 0) {
+			return jsonError(`missing value for ${flagName}`, { recovery: ["mu run --help"] });
+		}
+	}
+
+	const promptText = promptParts.join(" ").trim();
+	if (!promptText) {
+		return jsonError("missing prompt", { recovery: ['mu run "Break down and execute this goal"'] });
+	}
+
+	const provider = providerFlag?.trim() || undefined;
+	const model = modelFlag?.trim() || undefined;
+	const reasoning = reasoningFlag?.trim() || undefined;
+
+	return await runServeLifecycle(ctx, {
+		commandName: "run",
+		port,
+		noOpen,
+		operatorProvider: provider,
+		operatorModel: model,
+		operatorThinking: reasoning,
+		beforeOperatorSession: async ({ serverUrl, deps, io }) => {
+			const queued = await deps.queueRun({
+				serverUrl,
+				prompt: promptText,
+				maxSteps,
+				provider,
+				model,
+				reasoning,
+			});
+			const rootText = queued.root_issue_id ? ` root=${queued.root_issue_id}` : "";
+			io?.stderr?.write(`Queued run: ${queued.job_id}${rootText} max_steps=${queued.max_steps}\n`);
+
+			const heartbeat = await deps.registerRunHeartbeat({ serverUrl, run: queued });
+			const action = heartbeat.created ? "registered" : "confirmed";
+			const idSuffix = heartbeat.program_id ? ` (${heartbeat.program_id})` : "";
+			io?.stderr?.write(`Run heartbeat: ${action}${idSuffix}\n`);
+		},
+	});
+}
+
+async function cmdRunDirect(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	if (argv.length === 0 || hasHelpFlag(argv)) {
+		return ok(
+			[
 				"mu run - create a root work item and start execution",
 				"",
 				"Usage:",
@@ -2586,6 +2840,82 @@ async function cmdLogin(argv: string[]): Promise<RunResult> {
 	return ok(`Authenticated with ${provider.name} (${providerId})\n`);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (typeof value !== "object" || value == null || Array.isArray(value)) {
+		return null;
+	}
+	return value as Record<string, unknown>;
+}
+
+async function readApiError(response: Response, payloadOverride?: unknown): Promise<string> {
+	let detail = "";
+	if (payloadOverride !== undefined) {
+		const payload = asRecord(payloadOverride);
+		const error = payload && typeof payload.error === "string" ? payload.error.trim() : "";
+		if (error.length > 0) {
+			detail = error;
+		}
+	} else {
+		try {
+			const payload = asRecord(await response.json());
+			const error = payload && typeof payload.error === "string" ? payload.error.trim() : "";
+			if (error.length > 0) {
+				detail = error;
+			}
+		} catch {
+			// Ignore invalid/empty JSON; fallback to HTTP status text.
+		}
+	}
+	const statusText = `${response.status} ${response.statusText}`.trim();
+	if (detail.length > 0) {
+		return `${detail} (${statusText})`;
+	}
+	return statusText;
+}
+
+function normalizeQueuedRun(value: unknown): QueuedRunSnapshot | null {
+	const rec = asRecord(value);
+	if (!rec) {
+		return null;
+	}
+	const jobId = typeof rec.job_id === "string" ? rec.job_id.trim() : "";
+	if (jobId.length === 0) {
+		return null;
+	}
+	const rootRaw = typeof rec.root_issue_id === "string" ? rec.root_issue_id.trim() : "";
+	const rootIssueId = rootRaw.length > 0 ? rootRaw : null;
+	const maxSteps =
+		typeof rec.max_steps === "number" && Number.isFinite(rec.max_steps)
+			? Math.max(1, Math.trunc(rec.max_steps))
+			: 20;
+	return {
+		job_id: jobId,
+		root_issue_id: rootIssueId,
+		max_steps: maxSteps,
+		mode: typeof rec.mode === "string" ? rec.mode : undefined,
+		status: typeof rec.status === "string" ? rec.status : undefined,
+		source: typeof rec.source === "string" ? rec.source : undefined,
+	};
+}
+
+function heartbeatProgramMatchesRun(program: Record<string, unknown>, run: QueuedRunSnapshot): boolean {
+	const metadata = asRecord(program.metadata);
+	if (typeof metadata?.auto_run_job_id === "string" && metadata.auto_run_job_id === run.job_id) {
+		return true;
+	}
+	const target = asRecord(program.target);
+	if (!target || target.kind !== "run") {
+		return false;
+	}
+	if (typeof target.job_id === "string" && target.job_id.trim() === run.job_id) {
+		return true;
+	}
+	if (run.root_issue_id && typeof target.root_issue_id === "string" && target.root_issue_id.trim() === run.root_issue_id) {
+		return true;
+	}
+	return false;
+}
+
 function buildServeDeps(ctx: CliCtx): ServeDeps {
 	const defaults: ServeDeps = {
 		startServer: async ({ repoRoot, port }) => {
@@ -2612,7 +2942,7 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 				},
 			};
 		},
-		runOperatorSession: async ({ onReady, provider, model }) => {
+		runOperatorSession: async ({ onReady, provider, model, thinking }) => {
 			const { operatorExtensionPaths } = await import("@femtomc/mu-agent");
 			const operatorArgv: string[] = [];
 			if (provider) {
@@ -2621,6 +2951,9 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 			if (model) {
 				operatorArgv.push("--model", model);
 			}
+			if (thinking) {
+				operatorArgv.push("--thinking", thinking);
+			}
 			return await cmdOperatorSession(
 				operatorArgv,
 				{ ...ctx, serveExtensionPaths: ctx.serveExtensionPaths ?? operatorExtensionPaths },
@@ -2628,6 +2961,93 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 					onInteractiveReady: onReady,
 				},
 			);
+		},
+		queueRun: async ({ serverUrl, prompt, maxSteps, provider, model, reasoning }) => {
+			const response = await fetch(`${serverUrl}/api/runs/start`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					prompt,
+					max_steps: maxSteps,
+					provider: provider ?? null,
+					model: model ?? null,
+					reasoning: reasoning ?? null,
+				}),
+			});
+			let payload: unknown = null;
+			try {
+				payload = await response.json();
+			} catch {
+				// handled below via status check + normalizeQueuedRun guard
+			}
+			if (!response.ok) {
+				const detail = await readApiError(response, payload);
+				throw new Error(`run queue request failed: ${detail}`);
+			}
+			const run = normalizeQueuedRun(asRecord(payload)?.run);
+			if (!run) {
+				throw new Error("run queue response missing run snapshot");
+			}
+			return run;
+		},
+		registerRunHeartbeat: async ({ serverUrl, run }) => {
+			const listRes = await fetch(`${serverUrl}/api/heartbeats?target_kind=run&limit=500`);
+			let listPayload: unknown = null;
+			try {
+				listPayload = await listRes.json();
+			} catch {
+				// handled below via status + shape checks
+			}
+			if (!listRes.ok) {
+				throw new Error(`heartbeat listing failed: ${await readApiError(listRes, listPayload)}`);
+			}
+			const programsRaw = asRecord(listPayload)?.programs;
+			const programs = Array.isArray(programsRaw)
+				? programsRaw.map(asRecord).filter((p): p is Record<string, unknown> => p != null)
+				: [];
+			for (const program of programs) {
+				if (!heartbeatProgramMatchesRun(program, run)) {
+					continue;
+				}
+				const programId = typeof program.program_id === "string" ? program.program_id : null;
+				return { program_id: programId, created: false };
+			}
+
+			const createRes = await fetch(`${serverUrl}/api/heartbeats/create`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: `Run heartbeat: ${run.root_issue_id ?? run.job_id}`,
+					target_kind: "run",
+					run_job_id: run.job_id,
+					run_root_issue_id: run.root_issue_id,
+					every_ms: 15_000,
+					reason: "auto-run-heartbeat",
+					wake_mode: "next_heartbeat",
+					enabled: true,
+					metadata: {
+						auto_run_heartbeat: true,
+						auto_run_job_id: run.job_id,
+						auto_run_root_issue_id: run.root_issue_id,
+						auto_disable_on_terminal: true,
+						run_mode: run.mode ?? null,
+						run_source: run.source ?? "api",
+					},
+				}),
+			});
+			let createPayload: unknown = null;
+			try {
+				createPayload = await createRes.json();
+			} catch {
+				// handled below via status + guards
+			}
+			if (!createRes.ok) {
+				throw new Error(`heartbeat registration failed: ${await readApiError(createRes, createPayload)}`);
+			}
+			const createdProgram = asRecord(asRecord(createPayload)?.program);
+			const createdProgramId =
+				createdProgram && typeof createdProgram.program_id === "string" ? createdProgram.program_id : null;
+			return { program_id: createdProgramId, created: true };
 		},
 		registerSignalHandler: (signal, handler) => {
 			process.on(signal, handler);
@@ -2649,6 +3069,162 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 		isHeadless: () => !Bun.env.DISPLAY && !Bun.env.BROWSER,
 	};
 	return { ...defaults, ...ctx.serveDeps };
+}
+
+async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Promise<RunResult> {
+	await ensureStoreInitialized(ctx);
+	const operatorDefaults = await readServeOperatorDefaults(ctx.repoRoot);
+	const operatorProvider = opts.operatorProvider ?? operatorDefaults.provider;
+	const operatorModel =
+		opts.operatorModel ??
+		(opts.operatorProvider != null && opts.operatorProvider.length > 0 ? undefined : operatorDefaults.model);
+
+	const io = ctx.io;
+	const deps = buildServeDeps(ctx);
+	let server: ServeServerHandle;
+	try {
+		server = await deps.startServer({ repoRoot: ctx.repoRoot, port: opts.port });
+	} catch (err) {
+		return jsonError(`failed to start server: ${describeError(err)}`, {
+			recovery: [`mu ${opts.commandName} --port 3000`, `mu ${opts.commandName} --help`],
+		});
+	}
+
+	const serverUrl = `http://localhost:${opts.port}`;
+	Bun.env.MU_SERVER_URL = serverUrl;
+	io?.stderr?.write(`mu server connected at ${serverUrl}\n`);
+	io?.stderr?.write(`Repository: ${ctx.repoRoot}\n`);
+	if (server.activeAdapters.length > 0) {
+		io?.stderr?.write("Control plane: active\n");
+		for (const adapter of server.activeAdapters) {
+			io?.stderr?.write(`  ${adapter.name.padEnd(12)} ${adapter.route}\n`);
+		}
+	}
+
+	const isHeadless = deps.isHeadless();
+	const shouldOpen = !opts.noOpen && !isHeadless;
+	if (isHeadless) {
+		io?.stderr?.write("\nHeadless environment detected. Use SSH port forwarding:\n");
+		io?.stderr?.write(`  ssh -L ${opts.port}:localhost:${opts.port} <your-server>\n\n`);
+	} else if (shouldOpen) {
+		try {
+			deps.openBrowser(serverUrl);
+			io?.stderr?.write(`Opening ${serverUrl} in browser...\n`);
+		} catch {
+			io?.stderr?.write(`Could not open browser. Please visit ${serverUrl}\n`);
+		}
+	}
+
+	let stopError: unknown | null = null;
+	let stopped = false;
+	const stopServer = async (): Promise<void> => {
+		if (stopped) {
+			return;
+		}
+		stopped = true;
+		try {
+			await server.stop();
+			io?.stderr?.write("mu server disconnected.\n");
+		} catch (err) {
+			stopError = err;
+			io?.stderr?.write(`mu serve: failed to stop server cleanly: ${describeError(err)}\n`);
+		}
+	};
+
+	let unregisterSignals: (() => void) | null = null;
+	let result: RunResult = ok();
+	try {
+		if (opts.beforeOperatorSession) {
+			try {
+				await opts.beforeOperatorSession({ serverUrl, deps, io });
+			} catch (err) {
+				return jsonError(`failed to prepare run lifecycle: ${describeError(err)}`, {
+					recovery: ["mu serve --help", "mu run --help"],
+				});
+			}
+		}
+
+		let operatorConnected = false;
+		const onOperatorReady = (): void => {
+			if (operatorConnected) {
+				return;
+			}
+			operatorConnected = true;
+			io?.stderr?.write("Operator terminal: connected\n");
+		};
+
+		io?.stderr?.write("Operator terminal: connecting...\n");
+
+		let resolveSignal: ((signal: NodeJS.Signals) => void) | null = null;
+		const signalPromise = new Promise<NodeJS.Signals>((resolve) => {
+			resolveSignal = resolve;
+		});
+		let receivedSignal: NodeJS.Signals | null = null;
+		const onSignal = (signal: NodeJS.Signals): void => {
+			if (receivedSignal != null) {
+				return;
+			}
+			receivedSignal = signal;
+			resolveSignal?.(signal);
+		};
+		const removeSignalHandlers = [
+			deps.registerSignalHandler("SIGINT", () => onSignal("SIGINT")),
+			deps.registerSignalHandler("SIGTERM", () => onSignal("SIGTERM")),
+		];
+		unregisterSignals = () => {
+			for (const remove of removeSignalHandlers) {
+				try {
+					remove();
+				} catch {
+					// no-op
+				}
+			}
+		};
+
+		const operatorPromise = deps
+			.runOperatorSession({
+				onReady: onOperatorReady,
+				provider: operatorProvider,
+				model: operatorModel,
+				thinking: opts.operatorThinking,
+			})
+			.catch((err) =>
+				jsonError(`operator session crashed: ${describeError(err)}`, {
+					recovery: ["mu chat --help"],
+				}),
+			);
+
+		const winner = await Promise.race([
+			operatorPromise.then((operatorResult) => ({ kind: "operator" as const, operatorResult })),
+			signalPromise.then((signal) => ({ kind: "signal" as const, signal })),
+		]);
+
+		if (winner.kind === "signal") {
+			io?.stderr?.write(`\nOperator terminal: disconnected (${winner.signal}).\n`);
+			await Promise.race([operatorPromise, delayMs(1_000)]);
+			result = { stdout: "", stderr: "", exitCode: signalExitCode(winner.signal) };
+		} else {
+			if (winner.operatorResult.exitCode === 0) {
+				io?.stderr?.write("Operator terminal: disconnected.\n");
+			} else if (operatorConnected) {
+				io?.stderr?.write("Operator terminal: disconnected (error).\n");
+			} else {
+				io?.stderr?.write("Operator terminal: failed to connect.\n");
+			}
+			result = winner.operatorResult;
+		}
+	} finally {
+		unregisterSignals?.();
+		await stopServer();
+	}
+
+	if (stopError && result.exitCode === 0) {
+		return jsonError(`server shutdown failed: ${describeError(stopError)}`, {
+			recovery: ["Retry `mu serve`", "Inspect local process state"],
+		});
+	}
+
+	return result;
 }
 
 async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
@@ -2689,143 +3265,11 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		return jsonError("port must be 1-65535", { recovery: ["mu serve --port 3000"] });
 	}
 
-	await ensureStoreInitialized(ctx);
-	const operatorDefaults = await readServeOperatorDefaults(ctx.repoRoot);
-
-	const io = ctx.io;
-	const deps = buildServeDeps(ctx);
-	let server: ServeServerHandle;
-	try {
-		server = await deps.startServer({ repoRoot: ctx.repoRoot, port });
-	} catch (err) {
-		return jsonError(`failed to start server: ${describeError(err)}`, {
-			recovery: ["mu serve --port 3000", "mu serve --help"],
-		});
-	}
-
-	const url = `http://localhost:${port}`;
-	Bun.env.MU_SERVER_URL = url;
-	io?.stderr?.write(`mu server connected at ${url}\n`);
-	io?.stderr?.write(`Repository: ${ctx.repoRoot}\n`);
-	if (server.activeAdapters.length > 0) {
-		io?.stderr?.write("Control plane: active\n");
-		for (const adapter of server.activeAdapters) {
-			io?.stderr?.write(`  ${adapter.name.padEnd(12)} ${adapter.route}\n`);
-		}
-	}
-
-	const isHeadless = deps.isHeadless();
-	const shouldOpen = !noOpen && !isHeadless;
-	if (isHeadless) {
-		io?.stderr?.write("\nHeadless environment detected. Use SSH port forwarding:\n");
-		io?.stderr?.write(`  ssh -L ${port}:localhost:${port} <your-server>\n\n`);
-	} else if (shouldOpen) {
-		try {
-			deps.openBrowser(url);
-			io?.stderr?.write(`Opening ${url} in browser...\n`);
-		} catch {
-			io?.stderr?.write(`Could not open browser. Please visit ${url}\n`);
-		}
-	}
-
-	let operatorConnected = false;
-	const onOperatorReady = (): void => {
-		if (operatorConnected) {
-			return;
-		}
-		operatorConnected = true;
-		io?.stderr?.write("Operator terminal: connected\n");
-	};
-
-	io?.stderr?.write("Operator terminal: connecting...\n");
-
-	let resolveSignal: ((signal: NodeJS.Signals) => void) | null = null;
-	const signalPromise = new Promise<NodeJS.Signals>((resolve) => {
-		resolveSignal = resolve;
+	return await runServeLifecycle(ctx, {
+		commandName: "serve",
+		port,
+		noOpen,
 	});
-	let receivedSignal: NodeJS.Signals | null = null;
-	const onSignal = (signal: NodeJS.Signals): void => {
-		if (receivedSignal != null) {
-			return;
-		}
-		receivedSignal = signal;
-		resolveSignal?.(signal);
-	};
-	const removeSignalHandlers = [
-		deps.registerSignalHandler("SIGINT", () => onSignal("SIGINT")),
-		deps.registerSignalHandler("SIGTERM", () => onSignal("SIGTERM")),
-	];
-	const unregisterSignals = (): void => {
-		for (const remove of removeSignalHandlers) {
-			try {
-				remove();
-			} catch {
-				// no-op
-			}
-		}
-	};
-
-	const operatorPromise = deps
-		.runOperatorSession({
-			onReady: onOperatorReady,
-			provider: operatorDefaults.provider,
-			model: operatorDefaults.model,
-		})
-		.catch((err) =>
-			jsonError(`operator session crashed: ${describeError(err)}`, {
-				recovery: ["mu chat --help"],
-			}),
-		);
-
-	let stopError: unknown | null = null;
-	let stopped = false;
-	const stopServer = async (): Promise<void> => {
-		if (stopped) {
-			return;
-		}
-		stopped = true;
-		try {
-			await server.stop();
-			io?.stderr?.write("mu server disconnected.\n");
-		} catch (err) {
-			stopError = err;
-			io?.stderr?.write(`mu serve: failed to stop server cleanly: ${describeError(err)}\n`);
-		}
-	};
-
-	let result: RunResult = ok();
-	try {
-		const winner = await Promise.race([
-			operatorPromise.then((operatorResult) => ({ kind: "operator" as const, operatorResult })),
-			signalPromise.then((signal) => ({ kind: "signal" as const, signal })),
-		]);
-
-		if (winner.kind === "signal") {
-			io?.stderr?.write(`\nOperator terminal: disconnected (${winner.signal}).\n`);
-			await Promise.race([operatorPromise, delayMs(1_000)]);
-			result = { stdout: "", stderr: "", exitCode: signalExitCode(winner.signal) };
-		} else {
-			if (winner.operatorResult.exitCode === 0) {
-				io?.stderr?.write("Operator terminal: disconnected.\n");
-			} else if (operatorConnected) {
-				io?.stderr?.write("Operator terminal: disconnected (error).\n");
-			} else {
-				io?.stderr?.write("Operator terminal: failed to connect.\n");
-			}
-			result = winner.operatorResult;
-		}
-	} finally {
-		unregisterSignals();
-		await stopServer();
-	}
-
-	if (stopError && result.exitCode === 0) {
-		return jsonError(`server shutdown failed: ${describeError(stopError)}`, {
-			recovery: ["Retry `mu serve`", "Inspect local process state"],
-		});
-	}
-
-	return result;
 }
 
 // ROLE_SCOPES lives in @femtomc/mu-control-plane; lazy-imported alongside IdentityStore.

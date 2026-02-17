@@ -1,0 +1,149 @@
+import { describe, expect, test } from "bun:test";
+import { InMemoryJsonlStore } from "@femtomc/mu-core";
+import { CronProgramRegistry, type CronProgramSnapshot } from "../src/cron_programs.js";
+import { ActivityHeartbeatScheduler } from "../src/heartbeat_scheduler.js";
+
+async function waitFor<T>(fn: () => T, opts: { timeoutMs?: number; intervalMs?: number } = {}): Promise<T> {
+	const timeoutMs = opts.timeoutMs ?? 2_000;
+	const intervalMs = opts.intervalMs ?? 20;
+	const startedAt = Date.now();
+	while (true) {
+		const value = fn();
+		if (value) {
+			return value;
+		}
+		if (Date.now() - startedAt > timeoutMs) {
+			throw new Error("timeout waiting for condition");
+		}
+		await Bun.sleep(intervalMs);
+	}
+}
+
+describe("CronProgramRegistry", () => {
+	test("runs one-shot at schedules and disables after completion", async () => {
+		const store = new InMemoryJsonlStore<CronProgramSnapshot>([]);
+		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 1, retryMs: 30 });
+		let calls = 0;
+		const registry = new CronProgramRegistry({
+			repoRoot: "/repo",
+			heartbeatScheduler: scheduler,
+			store,
+			runHeartbeat: async (opts) => {
+				calls += 1;
+				expect(opts.rootIssueId).toBe("mu-root-one-shot");
+				return { ok: true, reason: null };
+			},
+			activityHeartbeat: async () => ({ ok: false, reason: "not_found" }),
+		});
+
+		const atMs = Date.now() + 60;
+		const program = await registry.create({
+			title: "One-shot run wake",
+			target: {
+				kind: "run",
+				job_id: null,
+				root_issue_id: "mu-root-one-shot",
+			},
+			schedule: {
+				kind: "at",
+				at_ms: atMs,
+			},
+		});
+
+		await waitFor(() => (calls >= 1 ? true : null));
+		const refreshed = await registry.get(program.program_id);
+		expect(refreshed?.enabled).toBe(false);
+		expect(refreshed?.next_run_at_ms).toBeNull();
+		expect(refreshed?.last_result).toBe("ok");
+
+		registry.stop();
+		scheduler.stop();
+	});
+
+	test("run-target wake mode forwards to run heartbeat", async () => {
+		const store = new InMemoryJsonlStore<CronProgramSnapshot>([]);
+		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 1, retryMs: 30 });
+		const wakeModes: Array<string | undefined> = [];
+		const registry = new CronProgramRegistry({
+			repoRoot: "/repo",
+			heartbeatScheduler: scheduler,
+			store,
+			runHeartbeat: async (opts) => {
+				wakeModes.push(opts.wakeMode);
+				return { ok: true, reason: null };
+			},
+			activityHeartbeat: async () => ({ ok: false, reason: "not_found" }),
+		});
+
+		const program = await registry.create({
+			title: "Wake mode cron",
+			target: {
+				kind: "run",
+				job_id: "run-job-wake",
+				root_issue_id: "mu-root-wake",
+			},
+			schedule: { kind: "at", at_ms: Date.now() + 60_000 },
+			wakeMode: "next_heartbeat",
+		});
+
+		const trigger = await registry.trigger({ programId: program.program_id, reason: "manual" });
+		expect(trigger.ok).toBe(true);
+		expect(wakeModes).toEqual(["next_heartbeat"]);
+
+		registry.stop();
+		scheduler.stop();
+	});
+
+	test("loads persisted recurring schedules and re-arms on startup", async () => {
+		const now = Date.now();
+		const store = new InMemoryJsonlStore<CronProgramSnapshot>([
+			{
+				v: 1,
+				program_id: "cron-preloaded-1",
+				title: "Preloaded recurring",
+				enabled: true,
+				schedule: {
+					kind: "every",
+					every_ms: 40,
+					anchor_ms: now,
+				},
+				reason: "scheduled",
+				wake_mode: "immediate",
+				target: {
+					kind: "run",
+					job_id: null,
+					root_issue_id: "mu-root-preloaded",
+				},
+				metadata: {},
+				created_at_ms: now,
+				updated_at_ms: now,
+				next_run_at_ms: null,
+				last_triggered_at_ms: null,
+				last_result: null,
+				last_error: null,
+			},
+		]);
+		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 1, retryMs: 30 });
+		let ticks = 0;
+		const registry = new CronProgramRegistry({
+			repoRoot: "/repo",
+			heartbeatScheduler: scheduler,
+			store,
+			runHeartbeat: async (opts) => {
+				ticks += 1;
+				expect(opts.rootIssueId).toBe("mu-root-preloaded");
+				return { ok: true, reason: null };
+			},
+			activityHeartbeat: async () => ({ ok: false, reason: "not_found" }),
+		});
+
+		await waitFor(() => (ticks >= 1 ? true : null));
+		const loaded = await registry.get("cron-preloaded-1");
+		expect(loaded).not.toBeNull();
+		expect(loaded?.last_triggered_at_ms).not.toBeNull();
+		expect(loaded?.last_result).toBe("ok");
+
+		registry.stop();
+		scheduler.stop();
+	});
+});

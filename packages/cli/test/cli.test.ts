@@ -4,7 +4,7 @@ import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "@femtomc/mu";
-import { DEFAULT_OPERATOR_SYSTEM_PROMPT, type BackendRunner, type BackendRunOpts } from "@femtomc/mu-agent";
+import { DEFAULT_OPERATOR_SYSTEM_PROMPT } from "@femtomc/mu-agent";
 
 async function mkTempRepo(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "mu-cli-"));
@@ -348,11 +348,158 @@ test("mu chat/serve help text", async () => {
 
 test("mu run auto-initializes store layout", async () => {
 	const dir = await mkTempRepo();
-	const backend: BackendRunner = { run: async () => 0 };
-
-	const result = await run(["run", "hello", "--max-steps", "1", "--json"], { cwd: dir, backend });
-	expect(result.exitCode).toBe(1);
+	const result = await run(["run", "hello", "--max-steps", "1", "--no-open"], {
+		cwd: dir,
+		serveDeps: {
+			startServer: async () => ({
+				activeAdapters: [],
+				stop: async () => {},
+			}),
+			queueRun: async ({ maxSteps }) => ({
+				job_id: "run-job-init",
+				root_issue_id: "mu-root-init",
+				max_steps: maxSteps,
+				mode: "run_start",
+				status: "running",
+				source: "api",
+			}),
+			registerRunHeartbeat: async () => ({ program_id: "hb-init", created: true }),
+			runOperatorSession: async ({ onReady }) => {
+				onReady();
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+			registerSignalHandler: () => () => {},
+			isHeadless: () => true,
+			openBrowser: () => {},
+		},
+	});
+	expect(result.exitCode).toBe(0);
 	await expectStoreBootstrapped(dir);
+});
+
+test("mu run uses shared serve lifecycle and queues run + heartbeat before operator attach", async () => {
+	const dir = await mkTempRepo();
+	const events: string[] = [];
+	let queuedArgs: {
+		serverUrl: string;
+		prompt: string;
+		maxSteps: number;
+		provider?: string;
+		model?: string;
+		reasoning?: string;
+	} | null = null;
+	let heartbeatRun: { job_id: string; root_issue_id: string | null; max_steps: number } | null = null;
+	let seenOperator: { provider?: string; model?: string; thinking?: string } | null = null;
+	const { io, chunks } = mkCaptureIo();
+
+	const result = await run(
+		[
+			"run",
+			"Ship",
+			"release",
+			"--max-steps",
+			"7",
+			"--provider",
+			"openai-codex",
+			"--model",
+			"gpt-5.3-codex",
+			"--reasoning",
+			"high",
+			"--port",
+			"3311",
+			"--no-open",
+		],
+		{
+			cwd: dir,
+			io,
+			serveDeps: {
+				startServer: async ({ port }) => {
+					events.push(`server:start:${port}`);
+					return {
+						activeAdapters: [],
+						stop: async () => {
+							events.push("server:stop");
+						},
+					};
+				},
+				queueRun: async (opts) => {
+					events.push("run:queue");
+					queuedArgs = opts;
+					return {
+						job_id: "run-job-1",
+						root_issue_id: "mu-root1234",
+						max_steps: opts.maxSteps,
+						mode: "run_start",
+						status: "running",
+						source: "api",
+					};
+				},
+				registerRunHeartbeat: async ({ run }) => {
+					events.push("run:heartbeat");
+					heartbeatRun = run;
+					return { program_id: "hb-1", created: true };
+				},
+				runOperatorSession: async ({ onReady, provider, model, thinking }) => {
+					events.push("operator:start");
+					seenOperator = { provider, model, thinking };
+					onReady();
+					events.push("operator:end");
+					return { stdout: "", stderr: "", exitCode: 0 };
+				},
+				registerSignalHandler: () => () => {},
+				isHeadless: () => true,
+				openBrowser: () => {
+					throw new Error("browser should not open in no-open mode");
+				},
+			},
+		},
+	);
+
+	expect(result.exitCode).toBe(0);
+	expect(events).toEqual([
+		"server:start:3311",
+		"run:queue",
+		"run:heartbeat",
+		"operator:start",
+		"operator:end",
+		"server:stop",
+	]);
+	expect(queuedArgs).toMatchObject({
+		serverUrl: "http://localhost:3311",
+		prompt: "Ship release",
+		maxSteps: 7,
+		provider: "openai-codex",
+		model: "gpt-5.3-codex",
+		reasoning: "high",
+	});
+	expect(heartbeatRun).toMatchObject({
+		job_id: "run-job-1",
+		root_issue_id: "mu-root1234",
+		max_steps: 7,
+	});
+	expect(seenOperator).toEqual({
+		provider: "openai-codex",
+		model: "gpt-5.3-codex",
+		thinking: "high",
+	});
+	expect(chunks.stderr).toContain("Queued run: run-job-1 root=mu-root1234 max_steps=7");
+	expect(chunks.stderr).toContain("Run heartbeat: registered (hb-1)");
+	expect(chunks.stderr).toContain("Operator terminal: connecting");
+});
+
+test("mu run rejects removed --json/--raw-stream flows with recovery guidance", async () => {
+	const dir = await mkTempRepo();
+	const jsonMode = await run(["run", "hello", "--json"], { cwd: dir });
+	expect(jsonMode.exitCode).toBe(1);
+	expect(jsonMode.stdout).toContain("--json");
+	expect(jsonMode.stdout).toContain("has been removed");
+	expect(jsonMode.stdout).toContain("mu serve");
+
+	const rawMode = await run(["run", "hello", "--raw-stream"], { cwd: dir });
+	expect(rawMode.exitCode).toBe(1);
+	expect(rawMode.stdout).toContain("--raw-stream");
+	expect(rawMode.stdout).toContain("has been removed");
+	expect(rawMode.stdout).toContain("mu resume <root-id> --raw-stream");
 });
 
 test("mu serve auto-initializes store layout", async () => {
@@ -724,104 +871,4 @@ test("mu serve releases control-plane writer lock when bind fails", async () => 
 	} finally {
 		await occupied.close();
 	}
-});
-
-test("mu run streams step headers + rendered assistant output (default human mode)", async () => {
-	const dir = await mkTempRepo();
-	const backend: BackendRunner = {
-		run: async (opts: BackendRunOpts) => {
-			// Emit pi-style JSON events; CLI should render assistant text deltas.
-			opts.onLine?.(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hello"}}`);
-			opts.onLine?.(`{"type":"message_end","message":{"role":"assistant"}}`);
-			return 0;
-		},
-	};
-
-	const { io, chunks } = mkCaptureIo();
-	const result = await run(["run", "Hello", "--max-steps", "1"], { cwd: dir, io, backend });
-
-	// The runner doesn't close the issue (stub backend), so the DagRunner marks failure.
-	expect(result.exitCode).toBe(1);
-
-	expect(chunks.stdout).toBe("Hello\n");
-	expect(chunks.stderr.includes("Step 1/1")).toBe(true);
-	expect(chunks.stderr.includes("role=")).toBe(true);
-	expect(chunks.stderr.includes("Done 1/1")).toBe(true);
-	expect(chunks.stderr.includes("outcome=failure")).toBe(true);
-	expect(chunks.stderr.includes("Recovery:")).toBe(true);
-	expect(chunks.stderr.includes("mu replay")).toBe(true);
-});
-
-test("mu run pretty TTY mode renders markdown + tool events", async () => {
-	const dir = await mkTempRepo();
-	const backend: BackendRunner = {
-		run: async (opts: BackendRunOpts) => {
-			opts.onLine?.(
-				`{"type":"tool_execution_start","toolCallId":"t1","toolName":"bash","args":{"command":"echo hi"}}`,
-			);
-			opts.onLine?.(`{"type":"tool_execution_end","toolCallId":"t1","toolName":"bash","result":[],"isError":false}`);
-			opts.onLine?.(
-				'{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"# Hello\\n\\n- a\\n- b\\n\\n`code`\\n"}}',
-			);
-			opts.onLine?.(`{"type":"message_end","message":{"role":"assistant"}}`);
-			return 0;
-		},
-	};
-
-	const { io, chunks } = mkCaptureIo();
-	// Mark these as TTY so the CLI switches into pretty rendering mode.
-	(io.stdout as any).isTTY = true;
-	(io.stderr as any).isTTY = true;
-
-	const result = await run(["run", "Hello", "--max-steps", "1"], { cwd: dir, io, backend });
-	expect(result.exitCode).toBe(1);
-
-	// Tool events go to stderr and should be concise.
-	expect(chunks.stderr.includes("bash")).toBe(true);
-	expect(chunks.stderr.includes("echo hi")).toBe(true);
-
-	// Assistant markdown should be rendered (no raw '# ' heading marker) and styled with ANSI.
-	expect(chunks.stdout.includes("\u001b[")).toBe(process.env.NO_COLOR == null);
-	const plain = chunks.stdout.replaceAll(new RegExp("\\u001b\\[[0-9;]*m", "g"), "");
-	expect(plain.includes("# Hello")).toBe(false);
-	expect(plain.includes("Hello")).toBe(true);
-	expect(plain.includes("- a")).toBe(true);
-	expect(plain.includes("code")).toBe(true);
-});
-
-test("mu run --raw-stream prints raw pi JSONL to stdout", async () => {
-	const dir = await mkTempRepo();
-	const backend: BackendRunner = {
-		run: async (opts: BackendRunOpts) => {
-			opts.onLine?.(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hello"}}`);
-			opts.onLine?.(`{"type":"message_end","message":{"role":"assistant"}}`);
-			return 0;
-		},
-	};
-
-	const { io, chunks } = mkCaptureIo();
-	const result = await run(["run", "Hello", "--max-steps", "1", "--raw-stream"], { cwd: dir, io, backend });
-	expect(result.exitCode).toBe(1);
-
-	expect(chunks.stdout.includes(`"type":"message_update"`)).toBe(true);
-	expect(chunks.stdout.includes(`"type":"message_end"`)).toBe(true);
-	// Raw stream should not be the rendered assistant text.
-	expect(chunks.stdout).not.toBe("Hello\n");
-});
-
-test("mu run --json stays clean even when io is provided", async () => {
-	const dir = await mkTempRepo();
-	const backend: BackendRunner = { run: async () => 0 };
-	const { io, chunks } = mkCaptureIo();
-	const result = await run(["run", "Hello", "--max-steps", "1", "--json"], { cwd: dir, io, backend });
-
-	expect(chunks.stdout).toBe("");
-	expect(chunks.stderr).toBe("");
-
-	const payload = JSON.parse(result.stdout) as any;
-	expect(payload).toMatchObject({
-		root_id: expect.any(String),
-		status: expect.any(String),
-		steps: expect.any(Number),
-	});
 });

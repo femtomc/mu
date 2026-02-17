@@ -33,8 +33,13 @@ import {
 	type ControlPlaneHandle,
 	type TelegramGenerationReloadResult,
 } from "./control_plane.js";
+import { CronProgramRegistry, type CronProgramTarget } from "./cron_programs.js";
 import { ControlPlaneGenerationSupervisor } from "./generation_supervisor.js";
-import { HeartbeatProgramRegistry, type HeartbeatProgramTarget } from "./heartbeat_programs.js";
+import {
+	HeartbeatProgramRegistry,
+	type HeartbeatProgramSnapshot,
+	type HeartbeatProgramTarget,
+} from "./heartbeat_programs.js";
 import { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 
 const MIME_TYPES: Record<string, string> = {
@@ -52,6 +57,30 @@ const MIME_TYPES: Record<string, string> = {
 
 // Resolve public/ dir relative to this file (works in npm global installs)
 const PUBLIC_DIR = join(new URL(".", import.meta.url).pathname, "..", "public");
+
+const DEFAULT_OPERATOR_WAKE_COALESCE_MS = 2_000;
+const DEFAULT_AUTO_RUN_HEARTBEAT_EVERY_MS = 15_000;
+const AUTO_RUN_HEARTBEAT_REASON = "auto-run-heartbeat";
+
+type ProgramWakeMode = "immediate" | "next_heartbeat";
+
+function normalizeWakeMode(value: unknown): ProgramWakeMode {
+	if (typeof value !== "string") {
+		return "immediate";
+	}
+	const normalized = value.trim().toLowerCase().replaceAll("-", "_");
+	return normalized === "next_heartbeat" ? "next_heartbeat" : "immediate";
+}
+
+function toNonNegativeInt(value: unknown, fallback: number): number {
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return Math.max(0, Math.trunc(value));
+	}
+	if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+		return Math.max(0, Number.parseInt(value, 10));
+	}
+	return Math.max(0, Math.trunc(fallback));
+}
 
 type ControlPlaneSummary = {
 	active: boolean;
@@ -83,6 +112,14 @@ type ControlPlaneReloadResult = {
 	error?: string;
 };
 
+type AutoHeartbeatRunSnapshot = {
+	job_id: string;
+	root_issue_id: string | null;
+	status: string;
+	source: "command" | "api";
+	mode: string;
+};
+
 type ControlPlaneReloader = (opts: {
 	repoRoot: string;
 	previous: ControlPlaneHandle | null;
@@ -101,6 +138,8 @@ export type ServerOptions = {
 	activitySupervisor?: ControlPlaneActivitySupervisor;
 	controlPlaneReloader?: ControlPlaneReloader;
 	generationTelemetry?: GenerationTelemetryRecorder;
+	operatorWakeCoalesceMs?: number;
+	autoRunHeartbeatEveryMs?: number;
 	config?: MuConfig;
 	configReader?: ConfigReader;
 	configWriter?: ConfigWriter;
@@ -127,6 +166,79 @@ function summarizeControlPlane(handle: ControlPlaneHandle | null): ControlPlaneS
 		active: handle.activeAdapters.length > 0,
 		adapters: handle.activeAdapters.map((adapter) => adapter.name),
 		routes: handle.activeAdapters.map((adapter) => ({ name: adapter.name, route: adapter.route })),
+	};
+}
+
+function parseCronTarget(body: Record<string, unknown>): {
+	target: CronProgramTarget | null;
+	error: string | null;
+} {
+	const targetKind = typeof body.target_kind === "string" ? body.target_kind.trim().toLowerCase() : "";
+	if (targetKind === "run") {
+		const jobId = typeof body.run_job_id === "string" ? body.run_job_id.trim() : "";
+		const rootIssueId = typeof body.run_root_issue_id === "string" ? body.run_root_issue_id.trim() : "";
+		if (!jobId && !rootIssueId) {
+			return {
+				target: null,
+				error: "run target requires run_job_id or run_root_issue_id",
+			};
+		}
+		return {
+			target: {
+				kind: "run",
+				job_id: jobId || null,
+				root_issue_id: rootIssueId || null,
+			},
+			error: null,
+		};
+	}
+	if (targetKind === "activity") {
+		const activityId = typeof body.activity_id === "string" ? body.activity_id.trim() : "";
+		if (!activityId) {
+			return {
+				target: null,
+				error: "activity target requires activity_id",
+			};
+		}
+		return {
+			target: {
+				kind: "activity",
+				activity_id: activityId,
+			},
+			error: null,
+		};
+	}
+	return {
+		target: null,
+		error: "target_kind must be run or activity",
+	};
+}
+
+function hasCronScheduleInput(body: Record<string, unknown>): boolean {
+	return (
+		body.schedule != null ||
+		body.schedule_kind != null ||
+		body.at_ms != null ||
+		body.at != null ||
+		body.every_ms != null ||
+		body.anchor_ms != null ||
+		body.expr != null ||
+		body.tz != null
+	);
+}
+
+function cronScheduleInputFromBody(body: Record<string, unknown>): Record<string, unknown> {
+	if (body.schedule && typeof body.schedule === "object" && !Array.isArray(body.schedule)) {
+		return { ...(body.schedule as Record<string, unknown>) };
+	}
+	return {
+		kind: typeof body.schedule_kind === "string" ? body.schedule_kind : undefined,
+		at_ms: body.at_ms,
+		at: body.at,
+		every_ms: body.every_ms,
+		anchor_ms: body.anchor_ms,
+		expr: body.expr,
+		tz: body.tz,
 	};
 }
 
@@ -172,6 +284,43 @@ export function createServer(options: ServerOptions = {}) {
 				});
 			},
 		});
+
+	const operatorWakeCoalesceMs = toNonNegativeInt(options.operatorWakeCoalesceMs, DEFAULT_OPERATOR_WAKE_COALESCE_MS);
+	const autoRunHeartbeatEveryMs = Math.max(
+		1_000,
+		toNonNegativeInt(options.autoRunHeartbeatEveryMs, DEFAULT_AUTO_RUN_HEARTBEAT_EVERY_MS),
+	);
+	const operatorWakeLastByKey = new Map<string, number>();
+	const autoRunHeartbeatProgramByJobId = new Map<string, string>();
+
+	const emitOperatorWake = async (opts: {
+		dedupeKey: string;
+		message: string;
+		payload: Record<string, unknown>;
+		coalesceMs?: number;
+	}): Promise<boolean> => {
+		const dedupeKey = opts.dedupeKey.trim();
+		if (!dedupeKey) {
+			return false;
+		}
+		const nowMs = Date.now();
+		const coalesceMs = Math.max(0, Math.trunc(opts.coalesceMs ?? operatorWakeCoalesceMs));
+		const previous = operatorWakeLastByKey.get(dedupeKey);
+		if (typeof previous === "number" && nowMs - previous < coalesceMs) {
+			return false;
+		}
+		operatorWakeLastByKey.set(dedupeKey, nowMs);
+		await context.eventLog.emit("operator.wake", {
+			source: "mu-server.operator-wake",
+			payload: {
+				message: opts.message,
+				dedupe_key: dedupeKey,
+				coalesce_ms: coalesceMs,
+				...opts.payload,
+			},
+		});
+		return true;
+	};
 
 	let controlPlaneCurrent = options.controlPlane ?? null;
 	let reloadInFlight: Promise<ControlPlaneReloadResult> | null = null;
@@ -271,6 +420,7 @@ export function createServer(options: ServerOptions = {}) {
 				jobId: opts.jobId ?? null,
 				rootIssueId: opts.rootIssueId ?? null,
 				reason: opts.reason ?? null,
+				wakeMode: opts.wakeMode,
 			});
 			return result ?? { ok: false, reason: "not_found" };
 		},
@@ -291,8 +441,229 @@ export function createServer(options: ServerOptions = {}) {
 					program: event.program,
 				},
 			});
+			await emitOperatorWake({
+				dedupeKey: `heartbeat-program:${event.program_id}`,
+				message: event.message,
+				payload: {
+					wake_source: "heartbeat_program",
+					program_id: event.program_id,
+					status: event.status,
+					reason: event.reason,
+					wake_mode: event.program.wake_mode,
+					target_kind: event.program.target.kind,
+					target:
+						event.program.target.kind === "run"
+							? {
+									job_id: event.program.target.job_id,
+									root_issue_id: event.program.target.root_issue_id,
+								}
+							: { activity_id: event.program.target.activity_id },
+				},
+			});
 		},
 	});
+
+	const cronPrograms = new CronProgramRegistry({
+		repoRoot,
+		heartbeatScheduler,
+		runHeartbeat: async (opts) => {
+			const result = await controlPlaneProxy.heartbeatRun?.({
+				jobId: opts.jobId ?? null,
+				rootIssueId: opts.rootIssueId ?? null,
+				reason: opts.reason ?? null,
+				wakeMode: opts.wakeMode,
+			});
+			return result ?? { ok: false, reason: "not_found" };
+		},
+		activityHeartbeat: async (opts) => {
+			return activitySupervisor.heartbeat({
+				activityId: opts.activityId ?? null,
+				reason: opts.reason ?? null,
+			});
+		},
+		onLifecycleEvent: async (event) => {
+			await context.eventLog.emit("cron_program.lifecycle", {
+				source: "mu-server.cron-programs",
+				payload: {
+					action: event.action,
+					program_id: event.program_id,
+					message: event.message,
+					program: event.program,
+				},
+			});
+		},
+		onTickEvent: async (event) => {
+			await context.eventLog.emit("cron_program.tick", {
+				source: "mu-server.cron-programs",
+				payload: {
+					program_id: event.program_id,
+					status: event.status,
+					reason: event.reason,
+					message: event.message,
+					program: event.program,
+				},
+			});
+			await emitOperatorWake({
+				dedupeKey: `cron-program:${event.program_id}`,
+				message: event.message,
+				payload: {
+					wake_source: "cron_program",
+					program_id: event.program_id,
+					status: event.status,
+					reason: event.reason,
+					wake_mode: event.program.wake_mode,
+					target_kind: event.program.target.kind,
+					target:
+						event.program.target.kind === "run"
+							? {
+									job_id: event.program.target.job_id,
+									root_issue_id: event.program.target.root_issue_id,
+								}
+							: { activity_id: event.program.target.activity_id },
+				},
+			});
+		},
+	});
+
+	const findAutoRunHeartbeatProgram = async (jobId: string): Promise<HeartbeatProgramSnapshot | null> => {
+		const normalizedJobId = jobId.trim();
+		if (!normalizedJobId) {
+			return null;
+		}
+		const knownProgramId = autoRunHeartbeatProgramByJobId.get(normalizedJobId);
+		if (knownProgramId) {
+			const knownProgram = await heartbeatPrograms.get(knownProgramId);
+			if (knownProgram) {
+				return knownProgram;
+			}
+			autoRunHeartbeatProgramByJobId.delete(normalizedJobId);
+		}
+		const programs = await heartbeatPrograms.list({ targetKind: "run", limit: 500 });
+		for (const program of programs) {
+			if (program.metadata.auto_run_job_id !== normalizedJobId) {
+				continue;
+			}
+			autoRunHeartbeatProgramByJobId.set(normalizedJobId, program.program_id);
+			return program;
+		}
+		return null;
+	};
+
+	const registerAutoRunHeartbeatProgram = async (run: AutoHeartbeatRunSnapshot): Promise<void> => {
+		if (run.source === "command") {
+			return;
+		}
+		const jobId = run.job_id.trim();
+		if (!jobId || run.status !== "running") {
+			return;
+		}
+		const rootIssueId = typeof run.root_issue_id === "string" ? run.root_issue_id.trim() : "";
+		const metadata: Record<string, unknown> = {
+			auto_run_heartbeat: true,
+			auto_run_job_id: jobId,
+			auto_run_root_issue_id: rootIssueId || null,
+			auto_disable_on_terminal: true,
+			run_mode: run.mode,
+			run_source: run.source,
+		};
+
+		const existing = await findAutoRunHeartbeatProgram(jobId);
+		if (existing) {
+			const result = await heartbeatPrograms.update({
+				programId: existing.program_id,
+				title: `Run heartbeat: ${rootIssueId || jobId}`,
+				target: {
+					kind: "run",
+					job_id: jobId,
+					root_issue_id: rootIssueId || null,
+				},
+				enabled: true,
+				everyMs: autoRunHeartbeatEveryMs,
+				reason: AUTO_RUN_HEARTBEAT_REASON,
+				wakeMode: "next_heartbeat",
+				metadata,
+			});
+			if (result.ok && result.program) {
+				autoRunHeartbeatProgramByJobId.set(jobId, result.program.program_id);
+				await context.eventLog.emit("run.auto_heartbeat.lifecycle", {
+					source: "mu-server.runs",
+					payload: {
+						action: "updated",
+						run_job_id: jobId,
+						run_root_issue_id: rootIssueId || null,
+						program_id: result.program.program_id,
+						program: result.program,
+					},
+				});
+			}
+			return;
+		}
+
+		const created = await heartbeatPrograms.create({
+			title: `Run heartbeat: ${rootIssueId || jobId}`,
+			target: {
+				kind: "run",
+				job_id: jobId,
+				root_issue_id: rootIssueId || null,
+			},
+			everyMs: autoRunHeartbeatEveryMs,
+			reason: AUTO_RUN_HEARTBEAT_REASON,
+			wakeMode: "next_heartbeat",
+			metadata,
+			enabled: true,
+		});
+		autoRunHeartbeatProgramByJobId.set(jobId, created.program_id);
+		await context.eventLog.emit("run.auto_heartbeat.lifecycle", {
+			source: "mu-server.runs",
+			payload: {
+				action: "registered",
+				run_job_id: jobId,
+				run_root_issue_id: rootIssueId || null,
+				program_id: created.program_id,
+				program: created,
+			},
+		});
+	};
+
+	const disableAutoRunHeartbeatProgram = async (opts: {
+		jobId: string;
+		status: string;
+		reason: string;
+	}): Promise<void> => {
+		const program = await findAutoRunHeartbeatProgram(opts.jobId);
+		if (!program) {
+			return;
+		}
+		const metadata = {
+			...program.metadata,
+			auto_disabled_from_status: opts.status,
+			auto_disabled_reason: opts.reason,
+			auto_disabled_at_ms: Date.now(),
+		};
+		const result = await heartbeatPrograms.update({
+			programId: program.program_id,
+			enabled: false,
+			everyMs: 0,
+			reason: AUTO_RUN_HEARTBEAT_REASON,
+			wakeMode: program.wake_mode,
+			metadata,
+		});
+		autoRunHeartbeatProgramByJobId.delete(opts.jobId.trim());
+		if (!result.ok || !result.program) {
+			return;
+		}
+		await context.eventLog.emit("run.auto_heartbeat.lifecycle", {
+			source: "mu-server.runs",
+			payload: {
+				action: "disabled",
+				run_job_id: opts.jobId,
+				status: opts.status,
+				reason: opts.reason,
+				program_id: result.program.program_id,
+				program: result.program,
+			},
+		});
+	};
 
 	const loadConfigFromDisk = async (): Promise<MuConfig> => {
 		try {
@@ -955,6 +1326,16 @@ export function createServer(options: ServerOptions = {}) {
 				if (!run) {
 					return Response.json({ error: "run supervisor unavailable" }, { status: 503, headers });
 				}
+				await registerAutoRunHeartbeatProgram(run as AutoHeartbeatRunSnapshot).catch(async (error) => {
+					await context.eventLog.emit("run.auto_heartbeat.lifecycle", {
+						source: "mu-server.runs",
+						payload: {
+							action: "register_failed",
+							run_job_id: run.job_id,
+							error: describeError(error),
+						},
+					});
+				});
 				return Response.json({ ok: true, run }, { status: 201, headers });
 			} catch (err) {
 				return Response.json({ error: describeError(err) }, { status: 500, headers });
@@ -984,6 +1365,16 @@ export function createServer(options: ServerOptions = {}) {
 				if (!run) {
 					return Response.json({ error: "run supervisor unavailable" }, { status: 503, headers });
 				}
+				await registerAutoRunHeartbeatProgram(run as AutoHeartbeatRunSnapshot).catch(async (error) => {
+					await context.eventLog.emit("run.auto_heartbeat.lifecycle", {
+						source: "mu-server.runs",
+						payload: {
+							action: "register_failed",
+							run_job_id: run.job_id,
+							error: describeError(error),
+						},
+					});
+				});
 				return Response.json({ ok: true, run }, { status: 201, headers });
 			} catch (err) {
 				return Response.json({ error: describeError(err) }, { status: 500, headers });
@@ -1009,6 +1400,15 @@ export function createServer(options: ServerOptions = {}) {
 			if (!result) {
 				return Response.json({ error: "run supervisor unavailable" }, { status: 503, headers });
 			}
+			if (!result.ok && result.reason === "not_running" && result.run) {
+				await disableAutoRunHeartbeatProgram({
+					jobId: result.run.job_id,
+					status: result.run.status,
+					reason: "interrupt_not_running",
+				}).catch(() => {
+					// best effort cleanup only
+				});
+			}
 			return Response.json(result, { status: result.ok ? 200 : 404, headers });
 		}
 
@@ -1016,22 +1416,38 @@ export function createServer(options: ServerOptions = {}) {
 			if (request.method !== "POST") {
 				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 			}
-			let body: { root_issue_id?: unknown; job_id?: unknown; reason?: unknown };
+			let body: { root_issue_id?: unknown; job_id?: unknown; reason?: unknown; wake_mode?: unknown };
 			try {
-				body = (await request.json()) as { root_issue_id?: unknown; job_id?: unknown; reason?: unknown };
+				body = (await request.json()) as {
+					root_issue_id?: unknown;
+					job_id?: unknown;
+					reason?: unknown;
+					wake_mode?: unknown;
+				};
 			} catch {
 				return Response.json({ error: "invalid json body" }, { status: 400, headers });
 			}
 			const rootIssueId = typeof body.root_issue_id === "string" ? body.root_issue_id.trim() : null;
 			const jobId = typeof body.job_id === "string" ? body.job_id.trim() : null;
 			const reason = typeof body.reason === "string" ? body.reason.trim() : null;
+			const wakeMode = normalizeWakeMode(body.wake_mode);
 			const result = await controlPlaneProxy.heartbeatRun?.({
 				rootIssueId,
 				jobId,
 				reason,
+				wakeMode,
 			});
 			if (!result) {
 				return Response.json({ error: "run supervisor unavailable" }, { status: 503, headers });
+			}
+			if (!result.ok && result.reason === "not_running" && result.run) {
+				await disableAutoRunHeartbeatProgram({
+					jobId: result.run.job_id,
+					status: result.run.status,
+					reason: "run_not_running",
+				}).catch(() => {
+					// best effort cleanup only
+				});
 			}
 			if (result.ok) {
 				return Response.json(result, { status: 200, headers });
@@ -1074,7 +1490,197 @@ export function createServer(options: ServerOptions = {}) {
 			if (!run) {
 				return Response.json({ error: "run not found" }, { status: 404, headers });
 			}
+			if (run.status !== "running") {
+				await disableAutoRunHeartbeatProgram({
+					jobId: run.job_id,
+					status: run.status,
+					reason: "run_terminal_snapshot",
+				}).catch(() => {
+					// best effort cleanup only
+				});
+			}
 			return Response.json(run, { headers });
+		}
+
+		if (path === "/api/cron/status") {
+			if (request.method !== "GET") {
+				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+			}
+			const status = await cronPrograms.status();
+			return Response.json(status, { headers });
+		}
+
+		if (path === "/api/cron") {
+			if (request.method !== "GET") {
+				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+			}
+			const enabledRaw = url.searchParams.get("enabled")?.trim().toLowerCase();
+			const enabled = enabledRaw === "true" ? true : enabledRaw === "false" ? false : undefined;
+			const targetKindRaw = url.searchParams.get("target_kind")?.trim().toLowerCase();
+			const targetKind = targetKindRaw === "run" || targetKindRaw === "activity" ? targetKindRaw : undefined;
+			const scheduleKindRaw = url.searchParams.get("schedule_kind")?.trim().toLowerCase();
+			const scheduleKind =
+				scheduleKindRaw === "at" || scheduleKindRaw === "every" || scheduleKindRaw === "cron"
+					? scheduleKindRaw
+					: undefined;
+			const limitRaw = url.searchParams.get("limit");
+			const limit =
+				limitRaw && /^\d+$/.test(limitRaw) ? Math.max(1, Math.min(500, Number.parseInt(limitRaw, 10))) : undefined;
+			const programs = await cronPrograms.list({ enabled, targetKind, scheduleKind, limit });
+			return Response.json({ count: programs.length, programs }, { headers });
+		}
+
+		if (path === "/api/cron/create") {
+			if (request.method !== "POST") {
+				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+			}
+			let body: Record<string, unknown>;
+			try {
+				body = (await request.json()) as Record<string, unknown>;
+			} catch {
+				return Response.json({ error: "invalid json body" }, { status: 400, headers });
+			}
+			const title = typeof body.title === "string" ? body.title.trim() : "";
+			if (!title) {
+				return Response.json({ error: "title is required" }, { status: 400, headers });
+			}
+			const parsedTarget = parseCronTarget(body);
+			if (!parsedTarget.target) {
+				return Response.json({ error: parsedTarget.error ?? "invalid target" }, { status: 400, headers });
+			}
+			if (!hasCronScheduleInput(body)) {
+				return Response.json({ error: "schedule is required" }, { status: 400, headers });
+			}
+			const schedule = cronScheduleInputFromBody(body);
+			const reason = typeof body.reason === "string" ? body.reason.trim() : undefined;
+			const wakeMode = normalizeWakeMode(body.wake_mode);
+			const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+			try {
+				const program = await cronPrograms.create({
+					title,
+					target: parsedTarget.target,
+					schedule,
+					reason,
+					wakeMode,
+					enabled,
+					metadata:
+						body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+							? (body.metadata as Record<string, unknown>)
+							: undefined,
+				});
+				return Response.json({ ok: true, program }, { status: 201, headers });
+			} catch (err) {
+				return Response.json({ error: describeError(err) }, { status: 400, headers });
+			}
+		}
+
+		if (path === "/api/cron/update") {
+			if (request.method !== "POST") {
+				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+			}
+			let body: Record<string, unknown>;
+			try {
+				body = (await request.json()) as Record<string, unknown>;
+			} catch {
+				return Response.json({ error: "invalid json body" }, { status: 400, headers });
+			}
+			const programId = typeof body.program_id === "string" ? body.program_id.trim() : "";
+			if (!programId) {
+				return Response.json({ error: "program_id is required" }, { status: 400, headers });
+			}
+			let target: CronProgramTarget | undefined;
+			if (typeof body.target_kind === "string") {
+				const parsedTarget = parseCronTarget(body);
+				if (!parsedTarget.target) {
+					return Response.json({ error: parsedTarget.error ?? "invalid target" }, { status: 400, headers });
+				}
+				target = parsedTarget.target;
+			}
+			const schedule = hasCronScheduleInput(body) ? cronScheduleInputFromBody(body) : undefined;
+			const wakeMode = Object.hasOwn(body, "wake_mode") ? normalizeWakeMode(body.wake_mode) : undefined;
+			try {
+				const result = await cronPrograms.update({
+					programId,
+					title: typeof body.title === "string" ? body.title : undefined,
+					reason: typeof body.reason === "string" ? body.reason : undefined,
+					wakeMode,
+					enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+					target,
+					schedule,
+					metadata:
+						body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+							? (body.metadata as Record<string, unknown>)
+							: undefined,
+				});
+				if (result.ok) {
+					return Response.json(result, { headers });
+				}
+				if (result.reason === "not_found") {
+					return Response.json(result, { status: 404, headers });
+				}
+				return Response.json(result, { status: 400, headers });
+			} catch (err) {
+				return Response.json({ error: describeError(err) }, { status: 400, headers });
+			}
+		}
+
+		if (path === "/api/cron/delete") {
+			if (request.method !== "POST") {
+				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+			}
+			let body: { program_id?: unknown };
+			try {
+				body = (await request.json()) as { program_id?: unknown };
+			} catch {
+				return Response.json({ error: "invalid json body" }, { status: 400, headers });
+			}
+			const programId = typeof body.program_id === "string" ? body.program_id.trim() : "";
+			if (!programId) {
+				return Response.json({ error: "program_id is required" }, { status: 400, headers });
+			}
+			const result = await cronPrograms.remove(programId);
+			return Response.json(result, { status: result.ok ? 200 : result.reason === "not_found" ? 404 : 400, headers });
+		}
+
+		if (path === "/api/cron/trigger") {
+			if (request.method !== "POST") {
+				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+			}
+			let body: { program_id?: unknown; reason?: unknown };
+			try {
+				body = (await request.json()) as { program_id?: unknown; reason?: unknown };
+			} catch {
+				return Response.json({ error: "invalid json body" }, { status: 400, headers });
+			}
+			const result = await cronPrograms.trigger({
+				programId: typeof body.program_id === "string" ? body.program_id : null,
+				reason: typeof body.reason === "string" ? body.reason : null,
+			});
+			if (result.ok) {
+				return Response.json(result, { headers });
+			}
+			if (result.reason === "missing_target") {
+				return Response.json(result, { status: 400, headers });
+			}
+			if (result.reason === "not_found") {
+				return Response.json(result, { status: 404, headers });
+			}
+			return Response.json(result, { status: 409, headers });
+		}
+
+		if (path.startsWith("/api/cron/")) {
+			if (request.method !== "GET") {
+				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+			}
+			const id = decodeURIComponent(path.slice("/api/cron/".length)).trim();
+			if (!id) {
+				return Response.json({ error: "missing program id" }, { status: 400, headers });
+			}
+			const program = await cronPrograms.get(id);
+			if (!program) {
+				return Response.json({ error: "program not found" }, { status: 404, headers });
+			}
+			return Response.json(program, { headers });
 		}
 
 		if (path === "/api/heartbeats") {
@@ -1104,6 +1710,7 @@ export function createServer(options: ServerOptions = {}) {
 				activity_id?: unknown;
 				every_ms?: unknown;
 				reason?: unknown;
+				wake_mode?: unknown;
 				enabled?: unknown;
 				metadata?: unknown;
 			};
@@ -1116,6 +1723,7 @@ export function createServer(options: ServerOptions = {}) {
 					activity_id?: unknown;
 					every_ms?: unknown;
 					reason?: unknown;
+					wake_mode?: unknown;
 					enabled?: unknown;
 					metadata?: unknown;
 				};
@@ -1159,6 +1767,7 @@ export function createServer(options: ServerOptions = {}) {
 					? Math.max(0, Math.trunc(body.every_ms))
 					: undefined;
 			const reason = typeof body.reason === "string" ? body.reason.trim() : undefined;
+			const wakeMode = normalizeWakeMode(body.wake_mode);
 			const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
 			try {
 				const program = await heartbeatPrograms.create({
@@ -1166,6 +1775,7 @@ export function createServer(options: ServerOptions = {}) {
 					target,
 					everyMs,
 					reason,
+					wakeMode,
 					enabled,
 					metadata:
 						body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
@@ -1191,6 +1801,7 @@ export function createServer(options: ServerOptions = {}) {
 				activity_id?: unknown;
 				every_ms?: unknown;
 				reason?: unknown;
+				wake_mode?: unknown;
 				enabled?: unknown;
 				metadata?: unknown;
 			};
@@ -1204,6 +1815,7 @@ export function createServer(options: ServerOptions = {}) {
 					activity_id?: unknown;
 					every_ms?: unknown;
 					reason?: unknown;
+					wake_mode?: unknown;
 					enabled?: unknown;
 					metadata?: unknown;
 				};
@@ -1244,6 +1856,7 @@ export function createServer(options: ServerOptions = {}) {
 					return Response.json({ error: "target_kind must be run or activity" }, { status: 400, headers });
 				}
 			}
+			const wakeMode = Object.hasOwn(body, "wake_mode") ? normalizeWakeMode(body.wake_mode) : undefined;
 			try {
 				const result = await heartbeatPrograms.update({
 					programId,
@@ -1254,6 +1867,7 @@ export function createServer(options: ServerOptions = {}) {
 							? Math.max(0, Math.trunc(body.every_ms))
 							: undefined,
 					reason: typeof body.reason === "string" ? body.reason : undefined,
+					wakeMode,
 					enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
 					metadata:
 						body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
@@ -1698,6 +2312,7 @@ export function createServer(options: ServerOptions = {}) {
 		controlPlane: controlPlaneProxy,
 		activitySupervisor,
 		heartbeatPrograms,
+		cronPrograms,
 	};
 
 	return server;

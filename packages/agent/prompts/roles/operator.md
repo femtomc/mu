@@ -22,6 +22,7 @@ You also have access to specialized read/diagnostic tools:
 - `mu_runs`
 - `mu_activities`
 - `mu_heartbeats`
+- `mu_cron`
 - `mu_messaging_setup`
 
 Hard Constraints:

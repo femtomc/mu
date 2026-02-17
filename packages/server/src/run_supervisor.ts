@@ -5,6 +5,7 @@ import { ActivityHeartbeatScheduler, type HeartbeatRunResult } from "./heartbeat
 
 export type ControlPlaneRunMode = "run_start" | "run_resume";
 export type ControlPlaneRunStatus = "running" | "completed" | "failed" | "cancelled";
+export type ControlPlaneRunWakeMode = "immediate" | "next_heartbeat";
 
 export type ControlPlaneRunSnapshot = {
 	job_id: string;
@@ -89,6 +90,7 @@ type InternalRunJob = {
 	stderr_lines: string[];
 	log_hints: Set<string>;
 	interrupt_requested: boolean;
+	next_heartbeat_reason: string | null;
 	hard_kill_timer: ReturnType<typeof setTimeout> | null;
 };
 
@@ -138,6 +140,14 @@ function normalizeIssueId(value: string | null | undefined): string | null {
 		return null;
 	}
 	return trimmed.toLowerCase();
+}
+
+function normalizeWakeMode(value: string | null | undefined): ControlPlaneRunWakeMode {
+	if (typeof value !== "string") {
+		return "immediate";
+	}
+	const normalized = value.trim().toLowerCase().replaceAll("-", "_");
+	return normalized === "next_heartbeat" ? "next_heartbeat" : "immediate";
 }
 
 function pushBounded(lines: string[], line: string, maxLines: number): void {
@@ -353,6 +363,7 @@ export class ControlPlaneRunSupervisor {
 			stderr_lines: [],
 			log_hints: new Set<string>(),
 			interrupt_requested: false,
+			next_heartbeat_reason: null,
 			hard_kill_timer: null,
 		};
 
@@ -370,14 +381,23 @@ export class ControlPlaneRunSupervisor {
 		this.#heartbeatScheduler.register({
 			activityId: snapshot.job_id,
 			everyMs: this.#heartbeatIntervalMs,
-			handler: async (): Promise<HeartbeatRunResult> => {
+			handler: async ({ reason }): Promise<HeartbeatRunResult> => {
 				if (job.snapshot.status !== "running") {
 					return { status: "skipped", reason: "not_running" };
+				}
+				const normalizedReason = reason?.trim();
+				const heartbeatReason =
+					normalizedReason && normalizedReason.length > 0 && normalizedReason !== "interval"
+						? normalizedReason
+						: job.next_heartbeat_reason;
+				if (heartbeatReason) {
+					job.next_heartbeat_reason = null;
 				}
 				const elapsedSec = Math.max(0, Math.trunc((this.#nowMs() - job.snapshot.started_at_ms) / 1_000));
 				const root = job.snapshot.root_issue_id ?? job.snapshot.job_id;
 				const progress = job.snapshot.last_progress ? ` · ${job.snapshot.last_progress}` : "";
-				this.#emit("run_heartbeat", job, `⏱ ${root} running for ${elapsedSec}s${progress}`);
+				const reasonSuffix = heartbeatReason ? ` · wake=${heartbeatReason}` : "";
+				this.#emit("run_heartbeat", job, `⏱ ${root} running for ${elapsedSec}s${progress}${reasonSuffix}`);
 				return { status: "ran" };
 			},
 		});
@@ -426,7 +446,7 @@ export class ControlPlaneRunSupervisor {
 			throw new Error("run_start_prompt_required");
 		}
 		const maxSteps = toPositiveInt(opts.maxSteps, DEFAULT_MAX_STEPS);
-		const argv = ["mu", "run", prompt, "--max-steps", String(maxSteps), "--raw-stream"];
+		const argv = ["mu", "_run-direct", prompt, "--max-steps", String(maxSteps), "--raw-stream"];
 		return await this.#launch({
 			mode: "run_start",
 			prompt,
@@ -563,6 +583,7 @@ export class ControlPlaneRunSupervisor {
 		jobId?: string | null;
 		rootIssueId?: string | null;
 		reason?: string | null;
+		wakeMode?: string | null;
 	}): ControlPlaneRunHeartbeatResult {
 		const target = opts.jobId?.trim() || opts.rootIssueId?.trim() || "";
 		if (target.length === 0) {
@@ -576,6 +597,15 @@ export class ControlPlaneRunSupervisor {
 			return { ok: false, reason: "not_running", run: this.#snapshot(job) };
 		}
 		const reason = opts.reason?.trim() || "manual";
+		const wakeMode = normalizeWakeMode(opts.wakeMode);
+		if (wakeMode === "next_heartbeat") {
+			job.next_heartbeat_reason = reason;
+			this.#touch(job);
+			return { ok: true, reason: null, run: this.#snapshot(job) };
+		}
+		if (reason !== "interval") {
+			job.next_heartbeat_reason = null;
+		}
 		this.#heartbeatScheduler.requestNow(job.snapshot.job_id, {
 			reason,
 			coalesceMs: 0,

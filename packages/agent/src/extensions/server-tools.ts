@@ -473,7 +473,7 @@ export function serverToolsExtension(pi: ExtensionAPI, opts: ServerToolsExtensio
 		allowForumPost: opts.allowForumPost ?? true,
 		toolIntroLine:
 			opts.toolIntroLine ??
-			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events, mu_runs, mu_activities, mu_heartbeats, mu_identity.",
+			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events, mu_runs, mu_activities, mu_heartbeats, mu_cron, mu_identity.",
 		extraSystemPromptLines: opts.extraSystemPromptLines ?? [],
 	});
 }

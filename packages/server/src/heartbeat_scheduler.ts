@@ -23,6 +23,13 @@ type PendingWakeReason = {
 	requestedAt: number;
 };
 
+type WakeTimer = {
+	handle: ReturnType<typeof setTimeout>;
+	dueAt: number;
+	kind: WakeTimerKind;
+	token: number;
+};
+
 type ActivityState = {
 	activityId: string;
 	everyMs: number;
@@ -32,9 +39,8 @@ type ActivityState = {
 	scheduled: boolean;
 	running: boolean;
 	intervalTimer: ReturnType<typeof setInterval> | null;
-	wakeTimer: ReturnType<typeof setTimeout> | null;
-	wakeDueAt: number | null;
-	wakeKind: WakeTimerKind | null;
+	wakeTimer: WakeTimer | null;
+	disposed: boolean;
 };
 
 const DEFAULT_COALESCE_MS = 250;
@@ -96,12 +102,20 @@ function toMs(value: number | undefined, fallback: number, min: number): number 
 	return Math.max(min, Math.trunc(value));
 }
 
+function shouldRetry(result: HeartbeatRunResult): boolean {
+	if (result.status === "failed") {
+		return true;
+	}
+	return result.status === "skipped" && result.reason === "requests-in-flight";
+}
+
 export class ActivityHeartbeatScheduler {
 	readonly #states = new Map<string, ActivityState>();
 	readonly #nowMs: () => number;
 	readonly #defaultCoalesceMs: number;
 	readonly #retryMs: number;
 	readonly #minIntervalMs: number;
+	#wakeTimerToken = 0;
 
 	public constructor(opts: ActivityHeartbeatSchedulerOpts = {}) {
 		this.#nowMs = opts.nowMs ?? defaultNowMs;
@@ -110,27 +124,46 @@ export class ActivityHeartbeatScheduler {
 		this.#minIntervalMs = Math.max(100, Math.trunc(opts.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS));
 	}
 
+	#isCurrentState(state: ActivityState): boolean {
+		if (state.disposed) {
+			return false;
+		}
+		return this.#states.get(state.activityId) === state;
+	}
+
+	#normalizeDelayMs(coalesceMs: number): number {
+		if (!Number.isFinite(coalesceMs)) {
+			return this.#defaultCoalesceMs;
+		}
+		return Math.max(0, Math.trunc(coalesceMs));
+	}
+
 	#clearWakeTimer(state: ActivityState): void {
 		if (state.wakeTimer) {
-			clearTimeout(state.wakeTimer);
-			state.wakeTimer = null;
+			clearTimeout(state.wakeTimer.handle);
 		}
-		state.wakeDueAt = null;
-		state.wakeKind = null;
+		state.wakeTimer = null;
 	}
 
 	#disposeState(state: ActivityState): void {
+		if (state.disposed) {
+			return;
+		}
+		state.disposed = true;
 		if (state.intervalTimer) {
 			clearInterval(state.intervalTimer);
 			state.intervalTimer = null;
 		}
 		this.#clearWakeTimer(state);
 		state.pendingWake = null;
-		state.running = false;
 		state.scheduled = false;
+		state.running = false;
 	}
 
 	#queuePendingWakeReason(state: ActivityState, reason?: string): void {
+		if (!this.#isCurrentState(state)) {
+			return;
+		}
 		const normalized = normalizeReason(reason);
 		const next: PendingWakeReason = {
 			reason: normalized,
@@ -150,31 +183,79 @@ export class ActivityHeartbeatScheduler {
 		}
 	}
 
-	#schedule(state: ActivityState, coalesceMs: number, kind: WakeTimerKind = "normal"): void {
-		const delay = Math.max(0, Math.trunc(Number.isFinite(coalesceMs) ? coalesceMs : this.#defaultCoalesceMs));
+	#scheduleWake(state: ActivityState, coalesceMs: number, kind: WakeTimerKind = "normal"): void {
+		if (!this.#isCurrentState(state)) {
+			return;
+		}
+
+		const delay = this.#normalizeDelayMs(coalesceMs);
 		const dueAt = this.#nowMs() + delay;
-		if (state.wakeTimer) {
+		const activeTimer = state.wakeTimer;
+		if (activeTimer) {
 			// Retry cooldown should remain in force.
-			if (state.wakeKind === "retry") {
+			if (activeTimer.kind === "retry") {
 				return;
 			}
-			if (typeof state.wakeDueAt === "number" && state.wakeDueAt <= dueAt) {
+			if (activeTimer.dueAt <= dueAt) {
 				return;
 			}
 			this.#clearWakeTimer(state);
 		}
 
-		state.wakeDueAt = dueAt;
-		state.wakeKind = kind;
-		state.wakeTimer = setTimeout(() => {
-			void this.#flush(state.activityId, delay, kind);
+		const timerToken = ++this.#wakeTimerToken;
+		const handle = setTimeout(() => {
+			void this.#flushWake(state, {
+				timerToken,
+				delay,
+				kind,
+			});
 		}, delay);
-		state.wakeTimer.unref?.();
+		handle.unref?.();
+
+		state.wakeTimer = {
+			handle,
+			dueAt,
+			kind,
+			token: timerToken,
+		};
 	}
 
-	async #flush(activityId: string, delay: number, kind: WakeTimerKind): Promise<void> {
-		const state = this.#states.get(activityId);
-		if (!state) {
+	async #invokeHandler(state: ActivityState, reason: string | undefined): Promise<HeartbeatRunResult> {
+		const startedAt = this.#nowMs();
+		try {
+			const result = await state.handler({
+				activityId: state.activityId,
+				reason,
+			});
+			if (result.status === "ran" && result.durationMs == null) {
+				return {
+					status: "ran",
+					durationMs: Math.max(0, Math.trunc(this.#nowMs() - startedAt)),
+				};
+			}
+			return result;
+		} catch (err) {
+			return {
+				status: "failed",
+				reason: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async #flushWake(
+		state: ActivityState,
+		params: {
+			timerToken: number;
+			delay: number;
+			kind: WakeTimerKind;
+		},
+	): Promise<void> {
+		if (!this.#isCurrentState(state)) {
+			return;
+		}
+
+		const activeTimer = state.wakeTimer;
+		if (!activeTimer || activeTimer.token !== params.timerToken) {
 			return;
 		}
 
@@ -183,48 +264,27 @@ export class ActivityHeartbeatScheduler {
 
 		if (state.running) {
 			state.scheduled = true;
-			this.#schedule(state, delay, kind);
+			this.#scheduleWake(state, params.delay, params.kind);
 			return;
 		}
 
 		const reason = state.pendingWake?.reason;
 		state.pendingWake = null;
 		state.running = true;
-
-		let result: HeartbeatRunResult;
-		const startedAt = this.#nowMs();
-		try {
-			result = await state.handler({ activityId, reason: reason ?? undefined });
-			if (result.status === "ran" && result.durationMs == null) {
-				result = {
-					status: "ran",
-					durationMs: Math.max(0, Math.trunc(this.#nowMs() - startedAt)),
-				};
-			}
-		} catch (err) {
-			result = {
-				status: "failed",
-				reason: err instanceof Error ? err.message : String(err),
-			};
-		}
-
+		const result = await this.#invokeHandler(state, reason ?? undefined);
 		state.running = false;
 
-		// If the activity was removed while the handler was running, bail out quietly.
-		if (this.#states.get(activityId) !== state) {
+		if (!this.#isCurrentState(state)) {
 			return;
 		}
 
-		if (result.status === "failed") {
+		if (shouldRetry(result)) {
 			this.#queuePendingWakeReason(state, reason ?? "retry");
-			this.#schedule(state, this.#retryMs, "retry");
-		} else if (result.status === "skipped" && result.reason === "requests-in-flight") {
-			this.#queuePendingWakeReason(state, reason ?? "retry");
-			this.#schedule(state, this.#retryMs, "retry");
+			this.#scheduleWake(state, this.#retryMs, "retry");
 		}
 
 		if (state.pendingWake || state.scheduled) {
-			this.#schedule(state, state.coalesceMs, "normal");
+			this.#scheduleWake(state, state.coalesceMs, "normal");
 		}
 	}
 
@@ -241,9 +301,10 @@ export class ActivityHeartbeatScheduler {
 			this.#states.delete(activityId);
 		}
 
+		const hasInterval = Number.isFinite(opts.everyMs) && Math.trunc(opts.everyMs) > 0;
 		const state: ActivityState = {
 			activityId,
-			everyMs: toMs(opts.everyMs, this.#minIntervalMs, this.#minIntervalMs),
+			everyMs: hasInterval ? toMs(opts.everyMs, this.#minIntervalMs, this.#minIntervalMs) : 0,
 			coalesceMs: Math.max(0, Math.trunc(opts.coalesceMs ?? this.#defaultCoalesceMs)),
 			handler: opts.handler,
 			pendingWake: null,
@@ -251,14 +312,16 @@ export class ActivityHeartbeatScheduler {
 			running: false,
 			intervalTimer: null,
 			wakeTimer: null,
-			wakeDueAt: null,
-			wakeKind: null,
+			disposed: false,
 		};
 
-		state.intervalTimer = setInterval(() => {
-			this.requestNow(activityId, { reason: "interval", coalesceMs: 0 });
-		}, state.everyMs);
-		state.intervalTimer.unref?.();
+		if (state.everyMs > 0) {
+			state.intervalTimer = setInterval(() => {
+				this.requestNow(activityId, { reason: "interval", coalesceMs: 0 });
+			}, state.everyMs);
+			state.intervalTimer.unref?.();
+		}
+
 		this.#states.set(activityId, state);
 	}
 
@@ -272,7 +335,7 @@ export class ActivityHeartbeatScheduler {
 			return false;
 		}
 		this.#queuePendingWakeReason(state, opts?.reason);
-		this.#schedule(state, opts?.coalesceMs ?? state.coalesceMs, "normal");
+		this.#scheduleWake(state, opts?.coalesceMs ?? state.coalesceMs, "normal");
 		return true;
 	}
 

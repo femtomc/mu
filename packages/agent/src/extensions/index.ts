@@ -1,5 +1,6 @@
 export { activitiesExtension } from "./activities.js";
 export { brandingExtension } from "./branding.js";
+export { cronExtension } from "./cron.js";
 export { eventLogExtension } from "./event-log.js";
 export { heartbeatsExtension } from "./heartbeats.js";
 export { messagingSetupExtension } from "./messaging-setup.js";
@@ -17,6 +18,7 @@ const SERVE_EXTENSION_MODULE_BASENAMES = [
 	"orchestration-runs",
 	"activities",
 	"heartbeats",
+	"cron",
 ] as const;
 
 const OPERATOR_EXTENSION_MODULE_BASENAMES = [

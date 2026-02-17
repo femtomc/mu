@@ -3,16 +3,22 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessagingOperatorBackend, OperatorBackendTurnResult } from "@femtomc/mu-agent";
-import { getControlPlanePaths, IdentityStore, SlackControlPlaneAdapterSpec } from "@femtomc/mu-control-plane";
+import {
+	ControlPlaneOutbox,
+	getControlPlanePaths,
+	IdentityStore,
+	SlackControlPlaneAdapterSpec,
+} from "@femtomc/mu-control-plane";
 import { DEFAULT_MU_CONFIG } from "../src/config.js";
 import {
 	bootstrapControlPlane,
 	buildTelegramSendMessagePayload,
-	containsTelegramMathNotation,
-	renderTelegramMarkdown,
 	type ControlPlaneConfig,
 	type ControlPlaneHandle,
+	containsTelegramMathNotation,
+	renderTelegramMarkdown,
 } from "../src/control_plane.js";
+import type { ControlPlaneRunProcess } from "../src/run_supervisor.js";
 
 const handlesToCleanup = new Set<ControlPlaneHandle>();
 const dirsToCleanup = new Set<string>();
@@ -92,6 +98,40 @@ function telegramRequest(opts: {
 		}),
 		body: JSON.stringify(payload),
 	});
+}
+
+function streamFromLines(lines: string[]): ReadableStream<Uint8Array> {
+	return new ReadableStream<Uint8Array>({
+		start(controller) {
+			const encoder = new TextEncoder();
+			for (const line of lines) {
+				controller.enqueue(
+					encoder.encode(`${line}
+`),
+				);
+			}
+			controller.close();
+		},
+	});
+}
+
+async function waitFor<T>(
+	fn: () => T | Promise<T>,
+	opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T> {
+	const timeoutMs = opts.timeoutMs ?? 2_000;
+	const intervalMs = opts.intervalMs ?? 20;
+	const startedAt = Date.now();
+	while (true) {
+		const value = await fn();
+		if (value) {
+			return value;
+		}
+		if (Date.now() - startedAt > timeoutMs) {
+			throw new Error("timeout waiting for condition");
+		}
+		await Bun.sleep(intervalMs);
+	}
 }
 
 class StaticOperatorBackend implements MessagingOperatorBackend {
@@ -567,6 +607,101 @@ describe("bootstrapControlPlane operator wiring", () => {
 		const body = (await response.json()) as { text?: string };
 		expect(body.text).toContain("ERROR · DENIED");
 		expect(body.text).toContain("operator_action_disallowed");
+	});
+
+	test("command-originated run lifecycle/heartbeat notifications stay routable via outbox", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkSlackIdentity(repoRoot, ["cp.read", "cp.run.execute"]);
+
+		let resolveExit: (code: number) => void = () => {};
+		const exited = new Promise<number>((resolve) => {
+			resolveExit = resolve;
+		});
+
+		const handle = await bootstrapControlPlane({
+			repoRoot,
+			config: configWith({ slackSecret: "slack-secret" }),
+			runSupervisorSpawnProcess: () => {
+				const process: ControlPlaneRunProcess = {
+					pid: 777,
+					stdout: streamFromLines([]),
+					stderr: streamFromLines([]),
+					exited,
+					kill() {
+						resolveExit(0);
+					},
+				};
+				return process;
+			},
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const response = await handle.handleWebhook(
+			"/webhooks/slack",
+			slackRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(Date.now() / 1000),
+				text: "run resume mu-rootcmd123 5",
+				triggerId: "run-heartbeat-1",
+			}),
+		);
+		expect(response).not.toBeNull();
+		if (!response) {
+			throw new Error("expected webhook response");
+		}
+		expect(response.status).toBe(200);
+		const kickoffBody = (await response.json()) as { text?: string };
+		const commandId = kickoffBody.text?.match(/cmd-[a-z0-9-]+/i)?.[0] ?? null;
+		expect(commandId).not.toBeNull();
+		if (!commandId) {
+			throw new Error("expected command id in confirmation response");
+		}
+
+		const confirmResponse = await handle.handleWebhook(
+			"/webhooks/slack",
+			slackRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(Date.now() / 1000),
+				text: `confirm ${commandId}`,
+				triggerId: "run-heartbeat-2",
+			}),
+		);
+		expect(confirmResponse).not.toBeNull();
+		if (!confirmResponse) {
+			throw new Error("expected confirmation webhook response");
+		}
+		expect(confirmResponse.status).toBe(200);
+
+		await waitFor(async () => {
+			const run = await handle.getRun?.("mu-rootcmd123");
+			return run?.status === "running" ? true : null;
+		});
+
+		const heartbeat = await handle.heartbeatRun?.({
+			rootIssueId: "mu-rootcmd123",
+			reason: "manual",
+			wakeMode: "immediate",
+		});
+		expect(heartbeat?.ok).toBe(true);
+
+		await Bun.sleep(150);
+		resolveExit(0);
+
+		await Bun.sleep(350);
+		const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
+		await outbox.load();
+		const runEventKinds = new Set(
+			outbox
+				.records()
+				.filter((record) => typeof record.envelope.metadata.run_event_kind === "string")
+				.map((record) => String(record.envelope.metadata.run_event_kind)),
+		);
+		expect(runEventKinds.has("run_started")).toBe(true);
+		expect(runEventKinds.has("run_heartbeat")).toBe(true);
 	});
 
 	test("bootstrap cleanup releases writer lock when startup fails", async () => {

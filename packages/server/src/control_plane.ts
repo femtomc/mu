@@ -37,6 +37,7 @@ import {
 	type ControlPlaneRunSnapshot,
 	type ControlPlaneRunStatus,
 	ControlPlaneRunSupervisor,
+	type ControlPlaneRunSupervisorOpts,
 	type ControlPlaneRunTrace,
 } from "./run_supervisor.js";
 
@@ -105,6 +106,7 @@ export type ControlPlaneHandle = {
 		jobId?: string | null;
 		rootIssueId?: string | null;
 		reason?: string | null;
+		wakeMode?: string | null;
 	}): Promise<ControlPlaneRunHeartbeatResult>;
 	traceRun?(opts: { idOrRoot: string; limit?: number }): Promise<ControlPlaneRunTrace | null>;
 	stop(): Promise<void>;
@@ -948,6 +950,8 @@ export type BootstrapControlPlaneOpts = {
 	operatorRuntime?: MessagingOperatorRuntime | null;
 	operatorBackend?: MessagingOperatorBackend;
 	heartbeatScheduler?: ActivityHeartbeatScheduler;
+	runSupervisorSpawnProcess?: ControlPlaneRunSupervisorOpts["spawnProcess"];
+	runSupervisorHeartbeatIntervalMs?: number;
 	generation?: ControlPlaneGenerationContext;
 	telemetry?: GenerationTelemetryRecorder | null;
 	telegramGenerationHooks?: TelegramGenerationSwapHooks;
@@ -1012,6 +1016,8 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		runSupervisor = new ControlPlaneRunSupervisor({
 			repoRoot: opts.repoRoot,
 			heartbeatScheduler: opts.heartbeatScheduler,
+			heartbeatIntervalMs: opts.runSupervisorHeartbeatIntervalMs,
+			spawnProcess: opts.runSupervisorSpawnProcess,
 			onEvent: async (event) => {
 				const outboxRecord = await enqueueRunEventOutbox({
 					outbox,
