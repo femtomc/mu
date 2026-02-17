@@ -19,7 +19,8 @@
     }
   },
   "files": [
-    "dist/**"
+    "dist/**",
+    "prompts/**"
   ],
   "dependencies": {
     "@femtomc/mu-core": "26.2.42",

@@ -10,6 +10,16 @@ This package provides reusable runtime pieces for chat, orchestration, and serve
 - pi CLI/SDK orchestration backends and resource loader helpers
 - Prompt/template helpers used by orchestration roles
 
+## Bundled default prompts
+
+Bundled defaults now live as markdown files under `packages/agent/prompts/`:
+
+- `operator.md`
+- `orchestrator.md`
+- `worker.md`
+
+These are loaded by runtime code and are the single source of truth for default system prompts.
+
 ## Install
 
 ```bash
