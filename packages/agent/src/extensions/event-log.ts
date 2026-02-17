@@ -2,11 +2,12 @@
  * mu-event-log — Event stream helper for mu serve.
  *
  * - Status line with last event type and tail count
- * - Optional watch widget below editor (`/mu-events watch on|off`)
- * - Command for quick tail inspection (`/mu-events [n]` or `/mu-events tail [n]`)
+ * - Optional watch widget below editor (`/mu events watch on|off`)
+ * - Command for quick tail inspection (`/mu events [n]` or `/mu events tail [n]`)
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 import { clampInt, fetchMuJson, muServerUrl } from "./shared.js";
 
 type EventEnvelope = {
@@ -112,8 +113,10 @@ export function eventLogExtension(pi: ExtensionAPI) {
 		activeCtx = null;
 	});
 
-	pi.registerCommand("mu-events", {
-		description: "Inspect events (`/mu-events [n]`, `/mu-events tail [n]`, `/mu-events watch on|off`)",
+	registerMuSubcommand(pi, {
+		subcommand: "events",
+		summary: "Inspect event tails and toggle the watch widget",
+		usage: "/mu events [n] | /mu events tail [n] | /mu events watch on|off",
 		handler: async (args, ctx) => {
 			const tokens = args
 				.trim()

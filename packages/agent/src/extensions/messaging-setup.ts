@@ -2,7 +2,7 @@
  * mu-messaging-setup — Adapter configuration diagnostics + guided setup.
  *
  * Goals:
- * - Make `/mu-setup <adapter>` hand setup context to the active mu agent.
+ * - Make `/mu setup <adapter>` hand setup context to the active mu agent.
  * - Keep configuration in `.mu/config.json` (no process.env mutations).
  * - Support plan/apply/verify workflow with in-process control-plane reload.
  */
@@ -11,6 +11,7 @@ import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { loadBundledPrompt } from "../default_prompts.js";
+import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 import { fetchMuJson, fetchMuStatus, muServerUrl, textResult, toJsonText } from "./shared.js";
 
 const MESSAGING_SETUP_BRIEF_TEMPLATE = loadBundledPrompt("skills/messaging-setup-brief.md");
@@ -204,7 +205,7 @@ const ADAPTERS: AdapterConfig[] = [
 			"Copy Signing Secret into .mu/config.json → control_plane.adapters.slack.signing_secret.",
 			"Create a Slash Command (e.g. /mu) with Request URL <public-base-url>/webhooks/slack.",
 			"Install/reinstall app after command changes.",
-			"Run /mu in Slack, then /mu-setup verify slack.",
+			"Run /mu in Slack, then /mu setup verify slack.",
 		],
 	},
 	{
@@ -222,7 +223,7 @@ const ADAPTERS: AdapterConfig[] = [
 			"Create/open app in Discord Developer Portal.",
 			"Copy Interaction Public Key into .mu/config.json → control_plane.adapters.discord.signing_secret.",
 			"Set Interactions Endpoint URL to <public-base-url>/webhooks/discord.",
-			"Run a Discord command interaction, then /mu-setup verify discord.",
+			"Run a Discord command interaction, then /mu setup verify discord.",
 		],
 	},
 	{
@@ -252,7 +253,7 @@ const ADAPTERS: AdapterConfig[] = [
 			"Call Telegram setWebhook using URL <public-base-url>/webhooks/telegram and matching secret_token.",
 			"Link your Telegram identity to control-plane policy (mu control link --channel telegram --actor-id <telegram-user-id> --tenant-id telegram-bot --role <viewer|contributor|operator>).",
 			"Optionally set control_plane.adapters.telegram.bot_username.",
-			"Send /mu in Telegram chat, then /mu-setup verify telegram.",
+			"Send /mu in Telegram chat, then /mu setup verify telegram.",
 		],
 	},
 	{
@@ -423,7 +424,7 @@ function nextStepForState(opts: { state: AdapterCheck["state"]; missing: string[
 		case "active":
 			return "No action needed. Adapter is mounted and receiving webhooks.";
 		case "configured_not_active":
-			return "Run `/mu-setup apply <adapter>` to trigger in-process control-plane reload.";
+			return "Run `/mu setup apply <adapter>` to trigger in-process control-plane reload.";
 		case "missing_config":
 			return `Set required config fields: ${opts.missing.join(", ")}.`;
 		case "planned":
@@ -562,7 +563,7 @@ function setupGuide(checks: AdapterCheck[], adapterId?: AdapterId): string {
 	return [
 		"# Messaging Integration Setup",
 		"",
-		"Use `/mu-setup <adapter>` to hand setup context to mu agent.",
+		"Use `/mu setup <adapter>` to hand setup context to mu agent.",
 		"Config source of truth is `.mu/config.json`.",
 		"",
 		...sections,
@@ -582,16 +583,16 @@ function buildPlan(check: AdapterCheck, publicBaseUrl?: string): AdapterPlan {
 	} else {
 		if (check.missing.length > 0) {
 			steps.push(`Set required config fields: ${check.missing.join(", ")}.`);
-			steps.push(`Run /mu-setup apply ${check.id} to write config and reload control-plane.`);
+			steps.push(`Run /mu setup apply ${check.id} to write config and reload control-plane.`);
 		}
 		if (check.state === "configured_not_active") {
-			steps.push(`Run /mu-setup apply ${check.id} to trigger control-plane reload.`);
+			steps.push(`Run /mu setup apply ${check.id} to trigger control-plane reload.`);
 		}
 		if (webhookUrl) {
 			steps.push(`Configure provider webhook/inbound URL to: ${webhookUrl}`);
 		}
 		steps.push(
-			`Run verification: /mu-setup verify ${check.id}${normalizedBase ? ` --public-base-url ${normalizedBase}` : ""}`,
+			`Run verification: /mu setup verify ${check.id}${normalizedBase ? ` --public-base-url ${normalizedBase}` : ""}`,
 		);
 	}
 
@@ -606,8 +607,8 @@ function buildPlan(check: AdapterCheck, publicBaseUrl?: string): AdapterPlan {
 		missing_required_fields: check.missing,
 		steps,
 		commands: {
-			apply: `/mu-setup apply ${check.id}`,
-			verify: `/mu-setup verify ${check.id}`,
+			apply: `/mu setup apply ${check.id}`,
+			verify: `/mu setup verify ${check.id}`,
 		},
 	};
 }
@@ -915,7 +916,7 @@ function verifyText(result: VerifyOutcome): string {
 		lines.push(`   next: ${check.next_step}`);
 	}
 	if (!result.ok) {
-		lines.push("", "Tip: run `/mu-setup plan <adapter>` for exact remediation steps.");
+		lines.push("", "Tip: run `/mu setup plan <adapter>` for exact remediation steps.");
 	}
 	return lines.join("\n");
 }
@@ -1086,7 +1087,7 @@ function buildAgentSetupPrompt(opts: {
 		missing_fields: opts.check.missing.join(", ") || "(none)",
 		provider_steps: adapter.providerSetupSteps.map((step, index) => `${index + 1}. ${step}`).join("\n"),
 		field_status: adapterFieldStatusLines(adapter, opts.check).join("\n"),
-		verify_command: `/mu-setup verify ${adapter.id}${verifyFlag}`,
+		verify_command: `/mu setup verify ${adapter.id}${verifyFlag}`,
 	});
 }
 
@@ -1293,7 +1294,7 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 					const stillMissing = check.missing.filter((field) => !(field in overrides));
 					if (stillMissing.length > 0) {
 						return textResult(
-							`Cannot apply ${adapterId}: missing required config fields (${stillMissing.join(", ")}). Pass them via the fields parameter or use /mu-setup apply ${adapterId} for guided input.`,
+							`Cannot apply ${adapterId}: missing required config fields (${stillMissing.join(", ")}). Pass them via the fields parameter or use /mu setup apply ${adapterId} for guided input.`,
 							{ adapter: adapterId, missing_required_fields: stillMissing },
 						);
 					}
@@ -1335,14 +1336,15 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("mu-setup", {
-		description:
-			"Messaging setup workflow (`/mu-setup slack`, `/mu-setup plan <adapter>`, `/mu-setup apply <adapter>`, `/mu-setup verify [adapter]`)",
+	registerMuSubcommand(pi, {
+		subcommand: "setup",
+		summary: "Messaging adapter setup workflow (preflight/guide/plan/apply/verify)",
+		usage: "/mu setup [preflight|guide|plan|apply|verify] [adapter] [--public-base-url URL] [--agent|--no-agent]",
 		handler: async (args, ctx) => {
 			const parsed = parseSetupCommandArgs(args);
 			if (parsed.error) {
 				ctx.ui.notify(
-					`${parsed.error}. Usage: /mu-setup [preflight|guide|plan|apply|verify] [adapter] [--public-base-url URL] [--agent|--no-agent]`,
+					`${parsed.error}. Usage: /mu setup [preflight|guide|plan|apply|verify] [adapter] [--public-base-url URL] [--agent|--no-agent]`,
 					"error",
 				);
 				return;
@@ -1407,7 +1409,7 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 				}
 				case "apply": {
 					if (!parsed.adapterId) {
-						ctx.ui.notify("apply requires adapter. Example: /mu-setup apply slack", "error");
+						ctx.ui.notify("apply requires adapter. Example: /mu setup apply slack", "error");
 						return;
 					}
 					const text = await runInteractiveApply(ctx, parsed.adapterId);

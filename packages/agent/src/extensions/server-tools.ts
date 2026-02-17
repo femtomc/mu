@@ -7,6 +7,7 @@
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 import {
 	clampInt,
 	fetchMuJson,
@@ -434,8 +435,10 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		},
 	});
 
-	pi.registerCommand("mu-status", {
-		description: "Show concise mu server status",
+	registerMuSubcommand(pi, {
+		subcommand: "status",
+		summary: "Show concise mu server status",
+		usage: "/mu status",
 		handler: async (_args, ctx) => {
 			try {
 				const status = await fetchMuStatus();
@@ -446,8 +449,10 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		},
 	});
 
-	pi.registerCommand("mu-control", {
-		description: "Show control-plane adapter/runtime status",
+	registerMuSubcommand(pi, {
+		subcommand: "control",
+		summary: "Show control-plane adapter/runtime status",
+		usage: "/mu control",
 		handler: async (_args, ctx) => {
 			try {
 				const status = await fetchMuStatus();

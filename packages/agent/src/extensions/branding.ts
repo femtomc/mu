@@ -10,6 +10,7 @@
 
 import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 import { fetchMuStatus, type MuControlPlaneRoute, muServerUrl } from "./shared.js";
 
 type StatusSnapshot = {
@@ -74,7 +75,7 @@ export function brandingExtension(pi: ExtensionAPI) {
 					: snapshot.controlPlaneActive
 						? theme.fg("success", `cp ${snapshot.adapters.join(",") || "on"}`)
 						: theme.fg("muted", "cp off");
-				const line1 = `${theme.fg("accent", "μ")}${theme.fg("dim", " quick actions")}: ${theme.fg("muted", "/mu-status  /mu-control  /mu-setup  /mu-events")}`;
+				const line1 = `${theme.fg("accent", "μ")}${theme.fg("dim", " quick actions")}: ${theme.fg("muted", "/mu status  /mu control  /mu setup  /mu events")}`;
 				const line2 = `${theme.fg("dim", `open ${snapshot.openCount} · ready ${snapshot.readyCount}`)} · ${cpState}`;
 				return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
 			},
@@ -247,8 +248,10 @@ export function brandingExtension(pi: ExtensionAPI) {
 		activeCtx = null;
 	});
 
-	pi.registerCommand("mu-brand", {
-		description: "Toggle mu TUI branding (`/mu-brand on|off|toggle`)",
+	registerMuSubcommand(pi, {
+		subcommand: "brand",
+		summary: "Toggle mu TUI branding",
+		usage: "/mu brand [on|off|toggle]",
 		handler: async (args, ctx) => {
 			const mode = args.trim().toLowerCase();
 			if (mode === "on") {
