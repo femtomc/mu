@@ -1,4 +1,4 @@
-Set up {{adapter_name}} messaging for mu control-plane. You have Bash, Read, Write, and Edit tools — use them to do the setup yourself.
+Set up {{adapter_name}} messaging for mu control-plane.
 
 [Diagnostics]
 state: {{state}}
@@ -16,7 +16,8 @@ missing fields: {{missing_fields}}
 [Instructions]
 1) Ask the user ONLY for values you cannot generate: secrets from external providers (e.g. bot tokens from @BotFather), public base URL.
 2) Generate values you CAN create yourself (e.g. webhook_secret — run `openssl rand -hex 32` via Bash).
-3) Use your tools to write the config file directly, call provider APIs (curl via Bash), and complete setup end-to-end.
-4) After setup, run {{verify_command}} to confirm everything works.
+3) Write config via mu_messaging_setup tool: call mu_messaging_setup(action="apply", adapter="{{adapter_id}}", fields={...}) with ALL missing field values. This writes config and reloads the control plane in one step.
+4) After config is applied, call provider APIs (e.g. Telegram setWebhook) via Bash/curl.
+5) Run {{verify_command}} to confirm everything works.
 
-Do NOT give the user copy-paste commands. Do the work yourself.
+Do NOT give the user copy-paste commands or tutorials. Do the work yourself.

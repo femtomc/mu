@@ -964,6 +964,7 @@ function buildAgentSetupPrompt(opts: {
 	const verifyFlag = normalizedBase ? ` --public-base-url ${normalizedBase}` : "";
 	return interpolateTemplate(MESSAGING_SETUP_BRIEF_TEMPLATE, {
 		adapter_name: adapter.name,
+		adapter_id: adapter.id,
 		state: opts.check.state,
 		config_path: opts.configPath ?? ".mu/config.json",
 		route: opts.plan.route,
@@ -1099,13 +1100,19 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 					"Optional public base URL used to compute expected webhook endpoints (e.g. https://example.ngrok.app)",
 			}),
 		),
+		fields: Type.Optional(
+			Type.Record(Type.String(), Type.String(), {
+				description:
+					"Config field overrides for apply action. Keys are field names (e.g. bot_token, webhook_secret), values are the secrets/tokens to write.",
+			}),
+		),
 	});
 
 	pi.registerTool({
 		name: "mu_messaging_setup",
 		label: "Messaging Setup",
 		description:
-			"Messaging setup workflow. Actions: check/preflight/guide/plan/apply/verify. Use plan -> apply -> verify.",
+			"Messaging setup workflow. Actions: check/preflight/guide/plan/apply/verify. For apply, pass field values via the fields parameter (e.g. fields={bot_token:'...', webhook_secret:'...'}).",
 		parameters: SetupParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const adapterId = params.adapter ? normalizeAdapterId(params.adapter) : null;
@@ -1169,30 +1176,19 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 					if (!check) {
 						return textResult(`Unknown adapter: ${adapterId}`);
 					}
-					if (check.missing.length > 0) {
-						return textResult(
-							`Cannot apply ${adapterId}: missing required config fields (${check.missing.join(", ")}). Use /mu-setup apply ${adapterId} for guided input.`,
-							{ adapter: adapterId, missing_required_fields: check.missing },
-						);
-					}
 
-					if (!ctx.hasUI) {
+					const overrides = params.fields ?? {};
+					const stillMissing = check.missing.filter((field) => !(field in overrides));
+					if (stillMissing.length > 0) {
 						return textResult(
-							"Apply is blocked in non-interactive mode. Use `/mu-setup apply <adapter>` in an interactive `mu serve` session.",
-							{ adapter: adapterId, blocked: true },
+							`Cannot apply ${adapterId}: missing required config fields (${stillMissing.join(", ")}). Pass them via the fields parameter or use /mu-setup apply ${adapterId} for guided input.`,
+							{ adapter: adapterId, missing_required_fields: stillMissing },
 						);
-					}
-
-					const confirmed = await ctx.ui.confirm(
-						`Apply ${adapterId} configuration?`,
-						"This may write config and triggers control-plane reload.",
-					);
-					if (!confirmed) {
-						return textResult("Apply cancelled by user.", { adapter: adapterId, cancelled: true });
 					}
 
 					const outcome = await applyAdapterConfig({
 						adapterId,
+						overrides,
 						presence: runtime.configPresence,
 					});
 					if (!outcome.ok) {

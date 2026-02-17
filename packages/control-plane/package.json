@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-control-plane",
-	"version": "26.2.50",
+	"version": "26.2.51",
 	"description": "Messaging integration runtime for mu with policy, confirmation, idempotency, and delivery.",
 	"keywords": [
 		"mu",
@@ -22,8 +22,8 @@
 		"dist/**"
 	],
 	"dependencies": {
-		"@femtomc/mu-agent": "26.2.50",
-		"@femtomc/mu-core": "26.2.50",
+		"@femtomc/mu-agent": "26.2.51",
+		"@femtomc/mu-core": "26.2.51",
 		"zod": "^4.1.9"
 	}
 }
