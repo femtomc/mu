@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-agent",
-	"version": "26.2.62",
+	"version": "26.2.63",
 	"description": "Shared agent runtime for mu chat, orchestration roles, and serve extensions.",
 	"keywords": [
 		"mu",
