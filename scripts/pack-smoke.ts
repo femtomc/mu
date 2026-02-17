@@ -29,47 +29,20 @@ function invariant(cond: unknown, msg: string): asserts cond {
 	if (!cond) throw new Error(msg);
 }
 
-async function resolveWorkspaceDeps(pkgDir: string): Promise<(() => Promise<void>) | null> {
-	const pkgPath = join(pkgDir, "package.json");
-	const raw = await Bun.file(pkgPath).text();
-	if (!raw.includes("workspace:")) return null;
-
-	const pkg = JSON.parse(raw);
-	for (const depKey of ["dependencies", "devDependencies", "peerDependencies"] as const) {
-		const deps = pkg[depKey];
-		if (!deps) continue;
-		for (const [name, ver] of Object.entries(deps)) {
-			if (typeof ver === "string" && ver.startsWith("workspace:")) {
-				deps[name] = pkg.version;
-			}
-		}
+async function bunPack(pkgDir: string, packDest: string): Promise<string> {
+	const r = await runCmd("bun", ["pm", "pack", "--destination", packDest, "--quiet"], { cwd: pkgDir });
+	if (r.code !== 0) {
+		throw new Error(`bun pm pack failed in ${pkgDir} (code=${r.code})\n${r.stderr || r.stdout}`);
 	}
-	await Bun.write(pkgPath, JSON.stringify(pkg, null, "\t") + "\n");
-	return async () => { await Bun.write(pkgPath, raw); };
-}
 
-async function npmPack(pkgDir: string, packDest: string): Promise<string> {
-	const restore = await resolveWorkspaceDeps(pkgDir);
-	try {
-		const r = await runCmd("npm", ["pack", "--json", "--pack-destination", packDest], { cwd: pkgDir });
-		if (r.code !== 0) {
-			throw new Error(`npm pack failed in ${pkgDir} (code=${r.code})\n${r.stderr || r.stdout}`);
-		}
+	// bun pm pack prints the tarball path to stdout
+	const tarball = r.stdout.trim().split("\n").pop()?.trim();
+	invariant(typeof tarball === "string" && tarball.length > 0, `bun pm pack missing output in ${pkgDir}`);
 
-		let parsed: any;
-		try {
-			parsed = JSON.parse(r.stdout);
-		} catch (err) {
-			throw new Error(`npm pack did not return JSON in ${pkgDir}\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
-		}
-
-		invariant(Array.isArray(parsed) && parsed.length > 0, `npm pack JSON missing entries in ${pkgDir}`);
-		const filename = parsed[0]?.filename;
-		invariant(typeof filename === "string" && filename.length > 0, `npm pack JSON missing filename in ${pkgDir}`);
-		return join(packDest, filename);
-	} finally {
-		if (restore) await restore();
-	}
+	// bun pm pack output may be an absolute path or just a filename
+	const tgzPath = tarball.startsWith("/") ? tarball : join(packDest, tarball);
+	invariant(await Bun.file(tgzPath).exists(), `bun pm pack tarball not found: ${tgzPath}`);
+	return tgzPath;
 }
 
 async function main(): Promise<void> {
@@ -115,7 +88,7 @@ async function main(): Promise<void> {
 
 		const tarballs: string[] = [];
 		for (const p of pkgs) {
-			const tgz = await npmPack(p.dir, packDir);
+			const tgz = await bunPack(p.dir, packDir);
 			tarballs.push(tgz);
 		}
 
@@ -125,9 +98,9 @@ async function main(): Promise<void> {
 			"utf8",
 		);
 
-		const install = await runCmd("npm", ["install", "--no-audit", "--no-fund", ...tarballs], { cwd: projDir });
+		const install = await runCmd("bun", ["install", ...tarballs], { cwd: projDir });
 		if (install.code !== 0) {
-			throw new Error(`npm install failed (code=${install.code})\n${install.stderr || install.stdout}`);
+			throw new Error(`bun install failed (code=${install.code})\n${install.stderr || install.stdout}`);
 		}
 
 		const smokeMjs = `import { newRunId } from "@femtomc/mu-core";
@@ -176,4 +149,3 @@ console.log("ok");
 }
 
 await main();
-
