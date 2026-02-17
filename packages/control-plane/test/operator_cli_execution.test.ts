@@ -279,6 +279,52 @@ describe("operator + allowlisted mu CLI execution", () => {
 		expect(payload.cli_command_kind).toBe("status");
 	});
 
+	test("operator can inspect orchestration runs via run list + run status", async () => {
+		const listHarness = await createPipeline({
+			scopes: ["cp.read"],
+			backendResult: {
+				kind: "command",
+				command: { kind: "run_list" },
+			},
+			cliRunResult: {
+				kind: "completed",
+				stdout: "[]",
+				stderr: "",
+				exitCode: 0,
+				runRootId: null,
+			},
+		});
+		const listResult = await listHarness.pipeline.handleInbound(mkInbound(listHarness.repoRoot));
+		expect(listResult.kind).toBe("completed");
+		if (listResult.kind !== "completed") {
+			throw new Error(`expected completed, got ${listResult.kind}`);
+		}
+		expect(listResult.command.cli_command_kind).toBe("run_list");
+		expect(listHarness.cli.plans[0]?.argv).toEqual(["mu", "issues", "list", "--tag", "node:root"]);
+
+		const statusHarness = await createPipeline({
+			scopes: ["cp.read"],
+			backendResult: {
+				kind: "command",
+				command: { kind: "run_status", root_issue_id: "mu-root9999" },
+			},
+			cliRunResult: {
+				kind: "completed",
+				stdout: '{"id":"mu-root9999"}',
+				stderr: "",
+				exitCode: 0,
+				runRootId: "mu-root9999",
+			},
+		});
+		const statusResult = await statusHarness.pipeline.handleInbound(mkInbound(statusHarness.repoRoot));
+		expect(statusResult.kind).toBe("completed");
+		if (statusResult.kind !== "completed") {
+			throw new Error(`expected completed, got ${statusResult.kind}`);
+		}
+		expect(statusResult.command.cli_command_kind).toBe("run_status");
+		expect(statusHarness.cli.plans[0]?.argv).toEqual(["mu", "issues", "get", "mu-root9999"]);
+	});
+
 	test("operator readonly CLI failures surface deterministic error reasons", async () => {
 		const harness = await createPipeline({
 			scopes: ["cp.read"],

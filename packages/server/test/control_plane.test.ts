@@ -8,6 +8,7 @@ import { DEFAULT_MU_CONFIG } from "../src/config.js";
 import {
 	bootstrapControlPlane,
 	buildTelegramSendMessagePayload,
+	containsTelegramMathNotation,
 	renderTelegramMarkdown,
 	type ControlPlaneConfig,
 	type ControlPlaneHandle,
@@ -66,6 +67,33 @@ function slackRequest(opts: {
 	});
 }
 
+function telegramRequest(opts: {
+	secret: string;
+	updateId: number;
+	text: string;
+	messageId?: number;
+	chatId?: string;
+	actorId?: string;
+}): Request {
+	const payload = {
+		update_id: opts.updateId,
+		message: {
+			message_id: opts.messageId ?? opts.updateId,
+			from: { id: opts.actorId ?? "telegram-actor" },
+			chat: { id: opts.chatId ?? "tg-chat-1", type: "private" },
+			text: opts.text,
+		},
+	};
+	return new Request("https://example.test/telegram/webhook", {
+		method: "POST",
+		headers: new Headers({
+			"content-type": "application/json",
+			"x-telegram-bot-api-secret-token": opts.secret,
+		}),
+		body: JSON.stringify(payload),
+	});
+}
+
 class StaticOperatorBackend implements MessagingOperatorBackend {
 	readonly #result: OperatorBackendTurnResult;
 	public turns = 0;
@@ -88,11 +116,17 @@ async function mkRepoRoot(): Promise<string> {
 
 function configWith(opts: {
 	slackSecret?: string | null;
+	telegramSecret?: string | null;
+	telegramBotToken?: string | null;
+	telegramBotUsername?: string | null;
 	operatorEnabled?: boolean;
 	runTriggersEnabled?: boolean;
 }): ControlPlaneConfig {
 	const base = JSON.parse(JSON.stringify(DEFAULT_MU_CONFIG.control_plane)) as ControlPlaneConfig;
 	base.adapters.slack.signing_secret = opts.slackSecret ?? null;
+	base.adapters.telegram.webhook_secret = opts.telegramSecret ?? null;
+	base.adapters.telegram.bot_token = opts.telegramBotToken ?? null;
+	base.adapters.telegram.bot_username = opts.telegramBotUsername ?? null;
 	if (typeof opts.operatorEnabled === "boolean") {
 		base.operator.enabled = opts.operatorEnabled;
 	}
@@ -112,6 +146,21 @@ async function linkSlackIdentity(repoRoot: string, scopes: string[]): Promise<vo
 		channel: "slack",
 		channelTenantId: "team-1",
 		channelActorId: "slack-actor",
+		scopes,
+		nowMs: 1_000,
+	});
+}
+
+async function linkTelegramIdentity(repoRoot: string, scopes: string[]): Promise<void> {
+	const paths = getControlPlanePaths(repoRoot);
+	const identities = new IdentityStore(paths.identitiesPath);
+	await identities.load();
+	await identities.link({
+		bindingId: "binding-telegram",
+		operatorId: "op-telegram",
+		channel: "telegram",
+		channelTenantId: "telegram-bot",
+		channelActorId: "telegram-actor",
 		scopes,
 		nowMs: 1_000,
 	});
@@ -153,6 +202,21 @@ describe("telegram markdown rendering", () => {
 		expect(plain.text).toBe("Hello **world**");
 		expect(plain.parse_mode).toBeUndefined();
 		expect(plain.disable_web_page_preview).toBeUndefined();
+	});
+
+	test("math-like markdown falls back to plain text payload", () => {
+		const text = "The estimate is $x_t = x_{t-1} + \\epsilon$ and $$\\sum_i x_i$$.";
+		expect(containsTelegramMathNotation(text)).toBe(true);
+
+		const payload = buildTelegramSendMessagePayload({
+			chatId: "123",
+			text,
+			richFormatting: true,
+		});
+		expect(payload.chat_id).toBe("123");
+		expect(payload.text).toBe(text);
+		expect(payload.parse_mode).toBeUndefined();
+		expect(payload.disable_web_page_preview).toBeUndefined();
 	});
 });
 
@@ -212,6 +276,69 @@ describe("bootstrapControlPlane operator wiring", () => {
 
 		const body = (await response.json()) as { text?: string };
 		expect(body.text).toContain("Operator · CHAT");
+	});
+
+	test("Telegram webhook drains outbox immediately for low-latency delivery", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkTelegramIdentity(repoRoot, ["cp.read"]);
+
+		const telegramApiCalls: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.startsWith("https://api.telegram.org/bot")) {
+				const parsedBody =
+					typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				telegramApiCalls.push({ url, body: parsedBody });
+				return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return await originalFetch(input as RequestInfo | URL, init);
+		}) as typeof fetch;
+
+		try {
+			const handle = await bootstrapControlPlane({
+				repoRoot,
+				config: configWith({
+					telegramSecret: "telegram-secret",
+					telegramBotToken: "telegram-token",
+				}),
+			});
+			expect(handle).not.toBeNull();
+			if (!handle) {
+				throw new Error("expected control plane handle");
+			}
+			handlesToCleanup.add(handle);
+
+			const response = await handle.handleWebhook(
+				"/webhooks/telegram",
+				telegramRequest({
+					secret: "telegram-secret",
+					updateId: 101,
+					text: "/mu status",
+				}),
+			);
+			expect(response).not.toBeNull();
+			if (!response) {
+				throw new Error("expected webhook response");
+			}
+			expect(response.status).toBe(200);
+			const ack = (await response.json()) as { method?: string; chat_id?: string; action?: string };
+			expect(ack.method).toBe("sendChatAction");
+			expect(ack.chat_id).toBe("tg-chat-1");
+			expect(ack.action).toBe("typing");
+
+			for (let attempt = 0; attempt < 40 && telegramApiCalls.length === 0; attempt++) {
+				await Bun.sleep(10);
+			}
+			expect(telegramApiCalls.length).toBeGreaterThan(0);
+			expect(telegramApiCalls[0]?.body?.chat_id).toBe("tg-chat-1");
+			expect(typeof telegramApiCalls[0]?.body?.text).toBe("string");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 
 	test("operator.enabled=false disables operator routing by default", async () => {

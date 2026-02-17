@@ -179,7 +179,12 @@ export class ControlPlaneCommandPipeline {
 			return;
 		}
 		this.#started = false;
-		await this.runtime.stop();
+		try {
+			const operator = this.#operator as { stop?: () => Promise<void> } | null;
+			await operator?.stop?.();
+		} finally {
+			await this.runtime.stop();
+		}
 	}
 
 	#assertStarted(): void {
@@ -340,6 +345,8 @@ export class ControlPlaneCommandPipeline {
 			case "dlq inspect":
 			case "dlq replay":
 			case "run resume":
+			case "run status":
+			case "run interrupt":
 				return [record.target_id];
 			default:
 				return [];

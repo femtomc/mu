@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-const SAFE_TOKEN_RE = /^(?!-)[A-Za-z0-9._:@/-]{1,200}$/;
 const ISSUE_ID_RE = /^mu-[a-z0-9][a-z0-9-]*$/;
 const TOPIC_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 
@@ -10,6 +9,8 @@ export const MuCliCommandKindSchema = z.enum([
 	"issue_get",
 	"issue_list",
 	"forum_read",
+	"run_list",
+	"run_status",
 	"run_start",
 	"run_resume",
 ]);
@@ -24,8 +25,11 @@ const KNOWN_COMMAND_KEYS = new Set<string>([
 	"issue get",
 	"issue list",
 	"forum read",
+	"run list",
+	"run status",
 	"run start",
 	"run resume",
+	"run interrupt",
 ]);
 
 export type MuCliInvocationPlan = {
@@ -57,10 +61,6 @@ function parsePositiveInt(raw: string): number | null {
 		return null;
 	}
 	return value;
-}
-
-function isSafeToken(value: string): boolean {
-	return SAFE_TOKEN_RE.test(value);
 }
 
 function parseRunMaxSteps(arg: string | undefined): number | null {
@@ -235,12 +235,54 @@ export class MuCliCommandSurface {
 					},
 				};
 			}
+			case "run list": {
+				if (args.length > 0) {
+					return reject("cli_validation_failed", "run list does not accept arguments");
+				}
+				return {
+					kind: "ok",
+					plan: {
+						invocationId,
+						commandKind: "run_list",
+						argv: [this.#muBinary, "issues", "list", "--tag", "node:root"],
+						timeoutMs: this.#readTimeoutMs,
+						runRootId: null,
+						mutating: false,
+					},
+				};
+			}
+			case "run status": {
+				if (args.length !== 1) {
+					return reject("cli_validation_failed", "run status expects <root-id>");
+				}
+				const rootId = resolveIssueId(args[0]);
+				if (!rootId) {
+					return reject("cli_validation_failed", "invalid run root id");
+				}
+				return {
+					kind: "ok",
+					plan: {
+						invocationId,
+						commandKind: "run_status",
+						argv: [this.#muBinary, "issues", "get", rootId],
+						timeoutMs: this.#readTimeoutMs,
+						runRootId: rootId,
+						mutating: false,
+					},
+				};
+			}
+			case "run interrupt": {
+				return reject("operator_action_disallowed", "run interrupt requires control-plane async run supervisor");
+			}
 			case "run start": {
 				if (args.length === 0) {
 					return reject("cli_validation_failed", "run start requires a prompt");
 				}
-				if (!args.every((arg) => isSafeToken(arg))) {
-					return reject("cli_validation_failed", "run start prompt contains unsafe token");
+				if (args.some((arg) => arg.startsWith("-"))) {
+					return reject("cli_validation_failed", "run start prompt contains disallowed flag-like token");
+				}
+				if (args.some((arg) => /[\u0000-\u001f]/.test(arg))) {
+					return reject("cli_validation_failed", "run start prompt contains control characters");
 				}
 				const prompt = args.join(" ");
 				if (prompt.length > 500) {

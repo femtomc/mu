@@ -242,6 +242,269 @@ describe("mu-server", () => {
 		expect(status.control_plane.adapters).toEqual(["slack"]);
 	});
 
+	test("run management APIs proxy through control-plane handle", async () => {
+		const run = {
+			job_id: "run-job-1",
+			mode: "run_start",
+			status: "running",
+			prompt: "ship release",
+			root_issue_id: "mu-root1234",
+			max_steps: 20,
+			command_id: "cmd-1",
+			source: "command",
+			started_at_ms: 1,
+			updated_at_ms: 2,
+			finished_at_ms: null,
+			exit_code: null,
+			pid: 10,
+			last_progress: "Step 1/20",
+		} as const;
+		const controlPlane: ControlPlaneHandle = {
+			activeAdapters: [{ name: "telegram", route: "/webhooks/telegram" }],
+			handleWebhook: async () => null,
+			listRuns: async () => [run],
+			getRun: async () => run,
+			startRun: async () => run,
+			resumeRun: async () => ({ ...run, mode: "run_resume" }),
+			interruptRun: async () => ({ ok: true, reason: null, run }),
+			heartbeatRun: async () => ({ ok: true, reason: null, run }),
+			traceRun: async () => ({ run, stdout: ["a"], stderr: ["b"], log_hints: [".mu/logs/x"], trace_files: [] }),
+			stop: async () => {},
+		};
+		const serverWithRuns = createServer({ repoRoot: tempDir, controlPlane });
+
+		const listRes = await serverWithRuns.fetch(new Request("http://localhost/api/runs?limit=10"));
+		expect(listRes.status).toBe(200);
+		const listPayload = (await listRes.json()) as { count: number; runs: Array<{ job_id: string }> };
+		expect(listPayload.count).toBe(1);
+		expect(listPayload.runs[0]?.job_id).toBe("run-job-1");
+
+		const getRes = await serverWithRuns.fetch(new Request("http://localhost/api/runs/mu-root1234"));
+		expect(getRes.status).toBe(200);
+		const getPayload = (await getRes.json()) as { root_issue_id: string };
+		expect(getPayload.root_issue_id).toBe("mu-root1234");
+
+		const traceRes = await serverWithRuns.fetch(new Request("http://localhost/api/runs/run-job-1/trace?limit=10"));
+		expect(traceRes.status).toBe(200);
+		const tracePayload = (await traceRes.json()) as { stdout: string[]; stderr: string[] };
+		expect(tracePayload.stdout).toEqual(["a"]);
+		expect(tracePayload.stderr).toEqual(["b"]);
+
+		const startRes = await serverWithRuns.fetch(
+			new Request("http://localhost/api/runs/start", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ prompt: "ship release", max_steps: 20 }),
+			}),
+		);
+		expect(startRes.status).toBe(201);
+
+		const resumeRes = await serverWithRuns.fetch(
+			new Request("http://localhost/api/runs/resume", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ root_issue_id: "mu-root1234", max_steps: 20 }),
+			}),
+		);
+		expect(resumeRes.status).toBe(201);
+
+		const interruptRes = await serverWithRuns.fetch(
+			new Request("http://localhost/api/runs/interrupt", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ root_issue_id: "mu-root1234" }),
+			}),
+		);
+		expect(interruptRes.status).toBe(200);
+		const interruptPayload = (await interruptRes.json()) as { ok: boolean };
+		expect(interruptPayload.ok).toBe(true);
+
+		const heartbeatRes = await serverWithRuns.fetch(
+			new Request("http://localhost/api/runs/heartbeat", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ root_issue_id: "mu-root1234", reason: "manual" }),
+			}),
+		);
+		expect(heartbeatRes.status).toBe(200);
+		const heartbeatPayload = (await heartbeatRes.json()) as { ok: boolean };
+		expect(heartbeatPayload.ok).toBe(true);
+	});
+
+	test("activity management APIs support generic long-running tasks", async () => {
+		const startRes = await server.fetch(
+			new Request("http://localhost/api/activities/start", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Index docs",
+					kind: "indexer",
+					heartbeat_every_ms: 0,
+					metadata: { scope: "docs" },
+				}),
+			}),
+		);
+		expect(startRes.status).toBe(201);
+		const started = (await startRes.json()) as {
+			ok: boolean;
+			activity: { activity_id: string; kind: string; status: string };
+		};
+		expect(started.ok).toBe(true);
+		expect(started.activity.kind).toBe("indexer");
+		expect(started.activity.status).toBe("running");
+		const activityId = started.activity.activity_id;
+
+		const listRes = await server.fetch(new Request("http://localhost/api/activities?status=running&limit=10"));
+		expect(listRes.status).toBe(200);
+		const listPayload = (await listRes.json()) as {
+			count: number;
+			activities: Array<{ activity_id: string }>;
+		};
+		expect(listPayload.count).toBeGreaterThanOrEqual(1);
+		expect(listPayload.activities.some((activity) => activity.activity_id === activityId)).toBe(true);
+
+		const progressRes = await server.fetch(
+			new Request("http://localhost/api/activities/progress", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					activity_id: activityId,
+					message: "Indexed 100/500 files",
+				}),
+			}),
+		);
+		expect(progressRes.status).toBe(200);
+
+		const heartbeatRes = await server.fetch(
+			new Request("http://localhost/api/activities/heartbeat", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					activity_id: activityId,
+					reason: "manual",
+				}),
+			}),
+		);
+		expect(heartbeatRes.status).toBe(200);
+
+		const eventsRes = await server.fetch(new Request(`http://localhost/api/activities/${activityId}/events?limit=20`));
+		expect(eventsRes.status).toBe(200);
+		const eventsPayload = (await eventsRes.json()) as {
+			count: number;
+			events: Array<{ kind: string }>;
+		};
+		expect(eventsPayload.count).toBeGreaterThanOrEqual(3);
+		expect(eventsPayload.events.some((event) => event.kind === "activity_started")).toBe(true);
+		expect(eventsPayload.events.some((event) => event.kind === "activity_progress")).toBe(true);
+		expect(eventsPayload.events.some((event) => event.kind === "activity_heartbeat")).toBe(true);
+
+		const completeRes = await server.fetch(
+			new Request("http://localhost/api/activities/complete", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					activity_id: activityId,
+					message: "Index complete",
+				}),
+			}),
+		);
+		expect(completeRes.status).toBe(200);
+		const completed = (await completeRes.json()) as {
+			ok: boolean;
+			activity: { status: string; final_message: string | null };
+		};
+		expect(completed.ok).toBe(true);
+		expect(completed.activity.status).toBe("completed");
+		expect(completed.activity.final_message).toBe("Index complete");
+	});
+
+	test("heartbeat program APIs persist runtime-programmed schedules in .mu/heartbeats.jsonl", async () => {
+		const activityStart = await server.fetch(
+			new Request("http://localhost/api/activities/start", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Watch indexing",
+					kind: "watcher",
+					heartbeat_every_ms: 0,
+				}),
+			}),
+		);
+		expect(activityStart.status).toBe(201);
+		const activityPayload = (await activityStart.json()) as {
+			activity: { activity_id: string };
+		};
+		const activityId = activityPayload.activity.activity_id;
+
+		const createRes = await server.fetch(
+			new Request("http://localhost/api/heartbeats/create", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Watch indexing pulse",
+					target_kind: "activity",
+					activity_id: activityId,
+					every_ms: 0,
+					reason: "watchdog",
+					enabled: true,
+				}),
+			}),
+		);
+		expect(createRes.status).toBe(201);
+		const createPayload = (await createRes.json()) as {
+			ok: boolean;
+			program: { program_id: string; target: { kind: string } };
+		};
+		expect(createPayload.ok).toBe(true);
+		expect(createPayload.program.target.kind).toBe("activity");
+		const programId = createPayload.program.program_id;
+
+		const listRes = await server.fetch(new Request("http://localhost/api/heartbeats?limit=10"));
+		expect(listRes.status).toBe(200);
+		const listPayload = (await listRes.json()) as {
+			count: number;
+			programs: Array<{ program_id: string }>;
+		};
+		expect(listPayload.count).toBeGreaterThanOrEqual(1);
+		expect(listPayload.programs.some((program) => program.program_id === programId)).toBe(true);
+
+		const triggerRes = await server.fetch(
+			new Request("http://localhost/api/heartbeats/trigger", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					program_id: programId,
+					reason: "manual",
+				}),
+			}),
+		);
+		expect(triggerRes.status).toBe(200);
+		const triggerPayload = (await triggerRes.json()) as {
+			ok: boolean;
+			program: { program_id: string; last_result: string | null };
+		};
+		expect(triggerPayload.ok).toBe(true);
+		expect(triggerPayload.program.program_id).toBe(programId);
+		expect(triggerPayload.program.last_result).toBe("ok");
+
+		const activityEventsRes = await server.fetch(
+			new Request(`http://localhost/api/activities/${activityId}/events?limit=20`),
+		);
+		expect(activityEventsRes.status).toBe(200);
+		const activityEvents = (await activityEventsRes.json()) as {
+			events: Array<{ kind: string }>;
+		};
+		expect(activityEvents.events.some((event) => event.kind === "activity_heartbeat")).toBe(true);
+
+		const heartbeatsPath = join(tempDir, ".mu", "heartbeats.jsonl");
+		const lines = (await readFile(heartbeatsPath, "utf8"))
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0)
+			.map((line) => JSON.parse(line) as { program_id?: string; target?: { kind?: string } });
+		expect(lines.some((row) => row.program_id === programId && row.target?.kind === "activity")).toBe(true);
+	});
+
 	describe("issues API", () => {
 		test("create issue", async () => {
 			const response = await server.fetch(

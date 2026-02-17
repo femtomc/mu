@@ -93,6 +93,80 @@ function textResponse(text: string, init: ResponseInit = {}): Response {
 	return new Response(text, { ...init, headers });
 }
 
+type TelegramWebhookSendMessagePayload = {
+	method: "sendMessage";
+	chat_id: string;
+	text: string;
+	disable_notification?: boolean;
+	reply_to_message_id?: number;
+	allow_sending_without_reply?: boolean;
+};
+
+type TelegramWebhookAnswerCallbackPayload = {
+	method: "answerCallbackQuery";
+	callback_query_id: string;
+	text?: string;
+	show_alert?: boolean;
+};
+
+type TelegramWebhookSendChatActionPayload = {
+	method: "sendChatAction";
+	chat_id: string;
+	action: "typing";
+};
+
+type TelegramWebhookMethodPayload =
+	| TelegramWebhookSendMessagePayload
+	| TelegramWebhookAnswerCallbackPayload
+	| TelegramWebhookSendChatActionPayload;
+
+function telegramWebhookMethodResponse(payload: TelegramWebhookMethodPayload): Response {
+	return jsonResponse(payload, { status: 200 });
+}
+
+function truncateTelegramWebhookText(text: string, maxLen: number = 3_500): string {
+	if (text.length <= maxLen) {
+		return text;
+	}
+	if (maxLen <= 16) {
+		return text.slice(0, maxLen);
+	}
+	const suffix = "\n…(truncated)";
+	const headLen = Math.max(0, maxLen - suffix.length);
+	return `${text.slice(0, headLen)}${suffix}`;
+}
+
+function maybeParseIntegerId(value: unknown): number | null {
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return Math.trunc(value);
+	}
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (!/^-?\d+$/.test(trimmed)) {
+			return null;
+		}
+		const parsed = Number.parseInt(trimmed, 10);
+		if (Number.isFinite(parsed)) {
+			return parsed;
+		}
+	}
+	return null;
+}
+
+function summarizeTelegramCallbackAck(text: string): string {
+	for (const rawLine of text.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (line.length === 0) {
+			continue;
+		}
+		if (line.length <= 160) {
+			return line;
+		}
+		return `${line.slice(0, 157)}...`;
+	}
+	return "Processed request.";
+}
+
 function normalizeSlashMuCommand(text: string): string {
 	const trimmed = text.trim();
 	if (trimmed.startsWith("/mu")) {
@@ -857,7 +931,12 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 				return rejectedIngressResult({
 					channel: this.spec.channel,
 					reason: "unsupported_telegram_callback",
-					response: jsonResponse({ ok: true, result: "unsupported_telegram_callback" }, { status: 200 }),
+					response: telegramWebhookMethodResponse({
+						method: "answerCallbackQuery",
+						callback_query_id: sourceId,
+						text: "Unsupported action.",
+						show_alert: false,
+					}),
 				});
 			}
 			commandText = normalized;
@@ -933,9 +1012,40 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			},
 		});
 
+		const hasDeferredUpdate = dispatched.outboxRecord != null;
+		const callbackAckText = summarizeTelegramCallbackAck(dispatched.ackText);
+		const replyToMessageId = maybeParseIntegerId(metadata.message_id);
+
+		const response =
+			sourceKind === "callback"
+				? telegramWebhookMethodResponse({
+						method: "answerCallbackQuery",
+						callback_query_id: sourceId,
+						text: hasDeferredUpdate ? "Processing…" : callbackAckText,
+						show_alert: false,
+					})
+				: hasDeferredUpdate
+					? telegramWebhookMethodResponse({
+							method: "sendChatAction",
+							chat_id: conversationId,
+							action: "typing",
+						})
+					: telegramWebhookMethodResponse({
+							method: "sendMessage",
+							chat_id: conversationId,
+							text: truncateTelegramWebhookText(dispatched.ackText),
+							disable_notification: true,
+							...(replyToMessageId != null
+								? {
+										reply_to_message_id: replyToMessageId,
+										allow_sending_without_reply: true,
+									}
+								: {}),
+						});
+
 		return acceptedIngressResult({
 			channel: this.spec.channel,
-			response: jsonResponse({ ok: true, result: dispatched.ackText }, { status: 200 }),
+			response,
 			inbound,
 			pipelineResult: dispatched.pipelineResult,
 			outboxRecord: dispatched.outboxRecord,

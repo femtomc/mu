@@ -180,6 +180,20 @@ const DEFAULT_COMMANDS: Record<string, CommandPolicyRule> = {
 		min_assurance_tier: "tier_b",
 		ops_class: "forum_write",
 	},
+	"run list": {
+		scopes: ["cp.read"],
+		mutating: false,
+		confirmation_required: false,
+		min_assurance_tier: "tier_c",
+		ops_class: "read",
+	},
+	"run status": {
+		scopes: ["cp.read"],
+		mutating: false,
+		confirmation_required: false,
+		min_assurance_tier: "tier_c",
+		ops_class: "read",
+	},
 	"run start": {
 		scopes: ["cp.run.execute"],
 		mutating: true,
@@ -188,6 +202,13 @@ const DEFAULT_COMMANDS: Record<string, CommandPolicyRule> = {
 		ops_class: "run_execute",
 	},
 	"run resume": {
+		scopes: ["cp.run.execute"],
+		mutating: true,
+		confirmation_required: true,
+		min_assurance_tier: "tier_b",
+		ops_class: "run_execute",
+	},
+	"run interrupt": {
 		scopes: ["cp.run.execute"],
 		mutating: true,
 		confirmation_required: true,

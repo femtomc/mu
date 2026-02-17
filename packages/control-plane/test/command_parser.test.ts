@@ -38,6 +38,33 @@ describe("parseSeriousWorkCommand", () => {
 			commandKey: "run resume",
 			args: ["mu-abc123", "40"],
 		});
+
+		const runList = parseSeriousWorkCommand("/mu run list");
+		expect(runList).toMatchObject({
+			kind: "command",
+			invocation: "slash",
+			requestedMode: "auto",
+			commandKey: "run list",
+			args: [],
+		});
+
+		const runStatus = parseSeriousWorkCommand("/mu run status mu-abc123");
+		expect(runStatus).toMatchObject({
+			kind: "command",
+			invocation: "slash",
+			requestedMode: "auto",
+			commandKey: "run status",
+			args: ["mu-abc123"],
+		});
+
+		const runInterrupt = parseSeriousWorkCommand("/mu run interrupt mu-abc123");
+		expect(runInterrupt).toMatchObject({
+			kind: "command",
+			invocation: "slash",
+			requestedMode: "auto",
+			commandKey: "run interrupt",
+			args: ["mu-abc123"],
+		});
 	});
 
 	test("parses confirm/cancel commands", () => {

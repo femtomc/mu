@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CommandContextResolver } from "./command_context.js";
-import { createMuSession } from "./session_factory.js";
+import { createMuSession, type CreateMuSessionOpts, type MuSession } from "./session_factory.js";
 
 export type MessagingOperatorInboundEnvelope = {
 	channel: string;
@@ -34,10 +34,19 @@ export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 		topic: z.string().trim().min(1).optional(),
 		limit: z.number().int().min(1).max(500).optional(),
 	}),
+	z.object({ kind: z.literal("run_list") }),
+	z.object({
+		kind: z.literal("run_status"),
+		root_issue_id: z.string().trim().min(1).optional(),
+	}),
 	z.object({
 		kind: z.literal("run_resume"),
 		root_issue_id: z.string().trim().min(1).optional(),
 		max_steps: z.number().int().min(1).max(500).optional(),
+	}),
+	z.object({
+		kind: z.literal("run_interrupt"),
+		root_issue_id: z.string().trim().min(1).optional(),
 	}),
 	z.object({
 		kind: z.literal("run_start"),
@@ -62,6 +71,7 @@ export type OperatorBackendTurnInput = {
 
 export interface MessagingOperatorBackend {
 	runTurn(input: OperatorBackendTurnInput): Promise<OperatorBackendTurnResult>;
+	dispose?(): void | Promise<void>;
 }
 
 export type OperatorDecision =
@@ -163,6 +173,17 @@ export class ApprovedCommandBroker {
 				}
 				break;
 			}
+			case "run_list":
+				commandKey = "run list";
+				args = [];
+				break;
+			case "run_status":
+				commandKey = "run status";
+				args = [];
+				if (opts.proposal.root_issue_id) {
+					args.push(normalizeArg(opts.proposal.root_issue_id));
+				}
+				break;
 			case "run_resume": {
 				if (!this.#runTriggersEnabled) {
 					return { kind: "reject", reason: "operator_action_disallowed", details: "run triggers disabled" };
@@ -174,6 +195,17 @@ export class ApprovedCommandBroker {
 				}
 				if (opts.proposal.max_steps != null) {
 					args.push(String(Math.trunc(opts.proposal.max_steps)));
+				}
+				break;
+			}
+			case "run_interrupt": {
+				if (!this.#runTriggersEnabled) {
+					return { kind: "reject", reason: "operator_action_disallowed", details: "run triggers disabled" };
+				}
+				commandKey = "run interrupt";
+				args = [];
+				if (opts.proposal.root_issue_id) {
+					args.push(normalizeArg(opts.proposal.root_issue_id));
 				}
 				break;
 			}
@@ -263,10 +295,7 @@ export class MessagingOperatorRuntime {
 		return created;
 	}
 
-	public async handleInbound(opts: {
-		inbound: InboundEnvelope;
-		binding: IdentityBinding;
-	}): Promise<OperatorDecision> {
+	public async handleInbound(opts: { inbound: InboundEnvelope; binding: IdentityBinding }): Promise<OperatorDecision> {
 		const sessionId = this.#resolveSessionId(opts.inbound, opts.binding);
 		const turnId = this.#turnIdFactory();
 
@@ -347,6 +376,11 @@ export class MessagingOperatorRuntime {
 			operatorTurnId: turnId,
 		};
 	}
+
+	public async stop(): Promise<void> {
+		this.#sessionByConversation.clear();
+		await this.#backend.dispose?.();
+	}
 }
 
 export type PiMessagingOperatorBackendOpts = {
@@ -356,6 +390,10 @@ export type PiMessagingOperatorBackendOpts = {
 	systemPrompt?: string;
 	timeoutMs?: number;
 	extensionPaths?: string[];
+	sessionFactory?: (opts: CreateMuSessionOpts) => Promise<MuSession>;
+	nowMs?: () => number;
+	sessionIdleTtlMs?: number;
+	maxSessions?: number;
 };
 
 export const DEFAULT_CHAT_SYSTEM_PROMPT = [
@@ -370,16 +408,56 @@ export const DEFAULT_CHAT_SYSTEM_PROMPT = [
 	"Be concise, practical, and actionable.",
 ].join("\n");
 
+const OPERATOR_COMMAND_PREFIX = "MU_COMMAND:";
+
 const DEFAULT_OPERATOR_SYSTEM_PROMPT = [
 	"You are mu, an AI assistant for the mu orchestration platform.",
 	"You have tools to interact with the mu server: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events.",
 	"Use these tools to answer questions about repository state, issues, events, and control-plane runtime state.",
 	"For adapter setup workflow, use mu_messaging_setup (check/preflight/plan/apply/verify/guide).",
 	"You can help users set up messaging integrations (Slack, Discord, Telegram, Gmail planning).",
+	"You may either respond normally or emit an approved control-plane command.",
+	`To emit a command, output exactly one line with prefix ${OPERATOR_COMMAND_PREFIX} followed by compact JSON.`,
+	"Example:",
+	`MU_COMMAND: {\"kind\":\"run_start\",\"prompt\":\"ship release\"}`,
+	"Available command kinds: status, ready, issue_list, issue_get, forum_read, run_list, run_status, run_start, run_resume, run_interrupt.",
 	"",
 	"Be concise, practical, and actionable.",
-	"Respond in plain text — do not wrap in JSON.",
+	"For normal conversational answers, respond in plain text.",
 ].join("\n");
+
+function parseOperatorCommandDirective(text: string): OperatorApprovedCommand | null {
+	const whole = text.trim();
+	if (whole.startsWith("{") && whole.endsWith("}")) {
+		try {
+			return OperatorApprovedCommandSchema.parse(JSON.parse(whole));
+		} catch {
+			// fall through to explicit MU_COMMAND parsing
+		}
+	}
+
+	const lines = text.split(/\r?\n/);
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith(OPERATOR_COMMAND_PREFIX)) {
+			continue;
+		}
+		const payloadText = trimmed.slice(OPERATOR_COMMAND_PREFIX.length).trim();
+		if (payloadText.length === 0) {
+			throw new Error("operator_command_directive_missing_payload");
+		}
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(payloadText);
+		} catch (err) {
+			throw new Error(
+				`operator_command_directive_invalid_json: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+		return OperatorApprovedCommandSchema.parse(parsed);
+	}
+	return null;
+}
 
 function buildOperatorPrompt(input: OperatorBackendTurnInput): string {
 	return [
@@ -392,6 +470,13 @@ function buildOperatorPrompt(input: OperatorBackendTurnInput): string {
 	].join("\n");
 }
 
+type PiOperatorSessionRecord = {
+	session: MuSession;
+	repoRoot: string;
+	createdAtMs: number;
+	lastUsedAtMs: number;
+};
+
 export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 	readonly #provider: string | undefined;
 	readonly #model: string | undefined;
@@ -399,6 +484,11 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 	readonly #systemPrompt: string;
 	readonly #timeoutMs: number;
 	readonly #extensionPaths: string[];
+	readonly #sessionFactory: (opts: CreateMuSessionOpts) => Promise<MuSession>;
+	readonly #nowMs: () => number;
+	readonly #sessionIdleTtlMs: number;
+	readonly #maxSessions: number;
+	readonly #sessions = new Map<string, PiOperatorSessionRecord>();
 
 	public constructor(opts: PiMessagingOperatorBackendOpts = {}) {
 		this.#provider = opts.provider;
@@ -407,11 +497,46 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		this.#systemPrompt = opts.systemPrompt ?? DEFAULT_OPERATOR_SYSTEM_PROMPT;
 		this.#timeoutMs = Math.max(1_000, Math.trunc(opts.timeoutMs ?? 90_000));
 		this.#extensionPaths = opts.extensionPaths ?? [];
+		this.#sessionFactory = opts.sessionFactory ?? createMuSession;
+		this.#nowMs = opts.nowMs ?? Date.now;
+		this.#sessionIdleTtlMs = Math.max(60_000, Math.trunc(opts.sessionIdleTtlMs ?? 30 * 60 * 1_000));
+		this.#maxSessions = Math.max(1, Math.trunc(opts.maxSessions ?? 32));
 	}
 
-	public async runTurn(input: OperatorBackendTurnInput): Promise<OperatorBackendTurnResult> {
-		const session = await createMuSession({
-			cwd: input.inbound.repo_root,
+	#disposeSession(sessionId: string): void {
+		const entry = this.#sessions.get(sessionId);
+		if (!entry) {
+			return;
+		}
+		this.#sessions.delete(sessionId);
+		try {
+			entry.session.dispose();
+		} catch {
+			// Best effort cleanup.
+		}
+	}
+
+	#pruneSessions(nowMs: number): void {
+		for (const [sessionId, entry] of this.#sessions.entries()) {
+			if (nowMs - entry.lastUsedAtMs > this.#sessionIdleTtlMs) {
+				this.#disposeSession(sessionId);
+			}
+		}
+
+		if (this.#sessions.size <= this.#maxSessions) {
+			return;
+		}
+
+		const byOldestUse = [...this.#sessions.entries()].sort((a, b) => a[1].lastUsedAtMs - b[1].lastUsedAtMs);
+		while (this.#sessions.size > this.#maxSessions && byOldestUse.length > 0) {
+			const [sessionId] = byOldestUse.shift()!;
+			this.#disposeSession(sessionId);
+		}
+	}
+
+	async #createSession(repoRoot: string, nowMs: number): Promise<PiOperatorSessionRecord> {
+		const session = await this.#sessionFactory({
+			cwd: repoRoot,
 			systemPrompt: this.#systemPrompt,
 			provider: this.#provider,
 			model: this.#model,
@@ -419,59 +544,101 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			extensionPaths: this.#extensionPaths,
 		});
 
-		try {
-			await session.bindExtensions({
-				commandContextActions: {
-					waitForIdle: () => session.agent.waitForIdle(),
-					newSession: async () => ({ cancelled: true }),
-					fork: async () => ({ cancelled: true }),
-					navigateTree: async () => ({ cancelled: true }),
-					switchSession: async () => ({ cancelled: true }),
-					reload: async () => {},
-				},
-				onError: () => {},
-			});
+		await session.bindExtensions({
+			commandContextActions: {
+				waitForIdle: () => session.agent.waitForIdle(),
+				newSession: async () => ({ cancelled: true }),
+				fork: async () => ({ cancelled: true }),
+				navigateTree: async () => ({ cancelled: true }),
+				switchSession: async () => ({ cancelled: true }),
+				reload: async () => {},
+			},
+			onError: () => {},
+		});
 
-			let assistantText = "";
-			const unsub = session.subscribe((event: any) => {
-				if (event?.type === "message_end" && event?.message?.role === "assistant") {
-					const msg = event.message;
-					if (typeof msg.text === "string") {
-						assistantText = msg.text;
-					} else if (typeof msg.content === "string") {
-						assistantText = msg.content;
-					} else if (Array.isArray(msg.content)) {
-						const parts: string[] = [];
-						for (const item of msg.content) {
-							const t = typeof item === "string" ? item : item?.text;
-							if (typeof t === "string" && t.trim().length > 0) parts.push(t);
-						}
-						if (parts.length > 0) assistantText = parts.join("\n");
+		return {
+			session,
+			repoRoot,
+			createdAtMs: nowMs,
+			lastUsedAtMs: nowMs,
+		};
+	}
+
+	async #resolveSession(sessionId: string, repoRoot: string): Promise<PiOperatorSessionRecord> {
+		const nowMs = Math.trunc(this.#nowMs());
+		this.#pruneSessions(nowMs);
+
+		const existing = this.#sessions.get(sessionId);
+		if (existing && existing.repoRoot === repoRoot) {
+			existing.lastUsedAtMs = nowMs;
+			return existing;
+		}
+		if (existing && existing.repoRoot !== repoRoot) {
+			this.#disposeSession(sessionId);
+		}
+
+		const created = await this.#createSession(repoRoot, nowMs);
+		this.#sessions.set(sessionId, created);
+		this.#pruneSessions(nowMs);
+		return created;
+	}
+
+	public async runTurn(input: OperatorBackendTurnInput): Promise<OperatorBackendTurnResult> {
+		const sessionRecord = await this.#resolveSession(input.sessionId, input.inbound.repo_root);
+		const session = sessionRecord.session;
+
+		let assistantText = "";
+		const unsub = session.subscribe((event: any) => {
+			if (event?.type === "message_end" && event?.message?.role === "assistant") {
+				const msg = event.message;
+				if (typeof msg.text === "string") {
+					assistantText = msg.text;
+				} else if (typeof msg.content === "string") {
+					assistantText = msg.content;
+				} else if (Array.isArray(msg.content)) {
+					const parts: string[] = [];
+					for (const item of msg.content) {
+						const t = typeof item === "string" ? item : item?.text;
+						if (typeof t === "string" && t.trim().length > 0) parts.push(t);
 					}
+					if (parts.length > 0) assistantText = parts.join("\n");
 				}
-			});
-
-			const timeoutPromise = new Promise<never>((_, reject) => {
-				setTimeout(() => reject(new Error("pi operator timeout")), this.#timeoutMs);
-			});
-
-			try {
-				await Promise.race([
-					session.prompt(buildOperatorPrompt(input), { expandPromptTemplates: false }),
-					timeoutPromise,
-				]);
-			} finally {
-				unsub();
 			}
+		});
 
-			// The agent now responds naturally with tools — always return as respond
-			const message = assistantText.trim();
-			if (!message) {
-				throw new Error("operator_empty_response");
-			}
-			return { kind: "respond", message: message.slice(0, 2000) };
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			setTimeout(() => reject(new Error("pi operator timeout")), this.#timeoutMs);
+		});
+
+		try {
+			await Promise.race([
+				session.prompt(buildOperatorPrompt(input), { expandPromptTemplates: false }),
+				timeoutPromise,
+			]);
 		} finally {
-			session.dispose();
+			unsub();
+			sessionRecord.lastUsedAtMs = Math.trunc(this.#nowMs());
+		}
+
+		const message = assistantText.trim();
+		if (!message) {
+			throw new Error("operator_empty_response");
+		}
+
+		const command = parseOperatorCommandDirective(message);
+		if (command) {
+			return {
+				kind: "command",
+				command,
+			};
+		}
+
+		return { kind: "respond", message: message.slice(0, 2000) };
+	}
+
+	public dispose(): void {
+		for (const sessionId of [...this.#sessions.keys()]) {
+			this.#disposeSession(sessionId);
 		}
 	}
 }

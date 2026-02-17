@@ -76,7 +76,7 @@ export function serverToolsExtension(pi: ExtensionAPI) {
 		const extra = [
 			"",
 			`[MU SERVER] Connected at ${url}.`,
-			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events.",
+			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events, mu_runs, mu_activities, mu_heartbeats.",
 			"Use these tools to inspect repository state and control-plane runtime before advising users.",
 		].join("\n");
 		return {

@@ -38,6 +38,8 @@ const ISSUE_TARGET_COMMANDS = new Set<string>([
 	"issue claim",
 	"issue close",
 	"run resume",
+	"run status",
+	"run interrupt",
 ]);
 const TOPIC_TARGET_COMMANDS = new Set<string>(["forum read", "forum post"]);
 const GENERIC_TARGET_COMMANDS = new Set<string>(["audit get", "dlq inspect", "dlq replay"]);

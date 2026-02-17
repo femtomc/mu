@@ -644,10 +644,26 @@ describe("channel adapters integrated with control-plane", () => {
 		if (confirm.pipelineResult?.kind !== "completed") {
 			throw new Error(`expected completed, got ${confirm.pipelineResult?.kind}`);
 		}
+		const confirmAck = (await confirm.response.json()) as {
+			method?: string;
+			callback_query_id?: string;
+			text?: string;
+		};
+		expect(confirmAck.method).toBe("answerCallbackQuery");
+		expect(confirmAck.callback_query_id).toBe("cb-1");
+		expect(confirmAck.text).toBe("Processing…");
 
 		const confirmDuplicate = await harness.telegram.ingest(confirmReq());
 		expect(confirmDuplicate.pipelineResult).toEqual({ kind: "denied", reason: "confirmation_invalid_state" });
 		expect(confirmDuplicate.outboxRecord).toBeNull();
+		const confirmDuplicateAck = (await confirmDuplicate.response.json()) as {
+			method?: string;
+			callback_query_id?: string;
+			text?: string;
+		};
+		expect(confirmDuplicateAck.method).toBe("answerCallbackQuery");
+		expect(confirmDuplicateAck.callback_query_id).toBe("cb-1");
+		expect(confirmDuplicateAck.text).toContain("ERROR · DENIED");
 
 		await retryingDispatcher.drainDue();
 		expect(harness.deliveries.length).toBe(2);
@@ -843,9 +859,10 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(chat.outboxRecord.envelope.body).toBe("Hey from Telegram operator.");
 		expect(chat.outboxRecord.envelope.metadata.interaction_render_mode).toBe("chat_plain");
 
-		const chatAck = (await chat.response.json()) as { result?: string };
-		expect(chatAck.result).toContain("Operator · CHAT");
-		expect(chatAck.result).toContain("Delivery:");
+		const chatAck = (await chat.response.json()) as { method?: string; chat_id?: string; action?: string };
+		expect(chatAck.method).toBe("sendChatAction");
+		expect(chatAck.chat_id).toBe("tg-chat-1");
+		expect(chatAck.action).toBe("typing");
 
 		await harness.dispatcher.drainDue();
 		expect(harness.deliveries.length).toBe(1);
@@ -1090,12 +1107,19 @@ describe("channel adapters integrated with control-plane", () => {
 
 		const slackAck = (await slack.response.json()) as { text?: string };
 		const discordAck = (await discord.response.json()) as { data?: { content?: string } };
-		const telegramAck = (await telegram.response.json()) as { result?: string };
+		const telegramAck = (await telegram.response.json()) as {
+			method?: string;
+			chat_id?: string;
+			action?: string;
+		};
 
-		for (const text of [slackAck.text, discordAck.data?.content, telegramAck.result]) {
+		for (const text of [slackAck.text, discordAck.data?.content]) {
 			expect(text).toContain("RESULT · COMPLETED");
 			expect(text).toContain("Key details:");
 		}
+		expect(telegramAck.method).toBe("sendChatAction");
+		expect(telegramAck.chat_id).toBe("tg-chat-1");
+		expect(telegramAck.action).toBe("typing");
 
 		const expectedByChannel = {
 			slack: "detailed",

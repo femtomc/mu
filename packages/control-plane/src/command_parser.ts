@@ -53,6 +53,9 @@ const KNOWN_TWO_TOKEN_COMMANDS = new Set([
 	"dlq replay",
 	"run start",
 	"run resume",
+	"run list",
+	"run status",
+	"run interrupt",
 ]);
 
 const KNOWN_ONE_TOKEN_COMMANDS = new Set(["status", "ready", "revoke"]);
