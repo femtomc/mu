@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { BackendRunner } from "@femtomc/mu-agent";
@@ -383,7 +383,7 @@ export async function run(
 	}
 	if (argv.includes("--version")) {
 		const pkgPath = join(dirname(new URL(import.meta.url).pathname), "..", "package.json");
-		const { version } = JSON.parse(await readFile(pkgPath, "utf8")) as { version: string };
+		const { version } = JSON.parse(await Bun.file(pkgPath).text()) as { version: string };
 		return ok(`mu ${version}\n`);
 	}
 
@@ -1980,7 +1980,7 @@ async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		}
 	}
 
-	const text = await readFile(path, "utf8");
+	const text = await Bun.file(path).text();
 	return ok(text.length > 0 && !text.endsWith("\n") ? `${text}\n` : text);
 }
 
@@ -2762,7 +2762,7 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	const configPath = join(ctx.repoRoot, ".mu", "config.json");
 	let config: Record<string, unknown> = {};
 	try {
-		const raw = await readFile(configPath, "utf8");
+		const raw = await Bun.file(configPath).text();
 		config = JSON.parse(raw) as Record<string, unknown>;
 	} catch (err) {
 		const code = (err as { code?: string })?.code;

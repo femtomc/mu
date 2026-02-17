@@ -1,5 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { mkdir, open, rm } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { z } from "zod";
@@ -15,7 +15,7 @@ export type WriterLockMetadata = z.infer<typeof WriterLockMetadataSchema>;
 
 async function readLockMetadata(lockPath: string): Promise<WriterLockMetadata | null> {
 	try {
-		const raw = await readFile(lockPath, "utf8");
+		const raw = await Bun.file(lockPath).text();
 		const trimmed = raw.trim();
 		if (trimmed.length === 0) {
 			return null;

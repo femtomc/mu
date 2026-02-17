@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from "node:crypto";
 import { CommandContextResolver, type MessagingOperatorRuntime } from "@femtomc/mu-agent";
 import { type ParsedCommand, parseSeriousWorkCommand } from "./command_parser.js";
 import {
@@ -16,11 +15,11 @@ import { DEFAULT_CONTROL_PLANE_POLICY, PolicyEngine, type RequestedCommandMode }
 import type { ControlPlaneRuntime } from "./runtime.js";
 
 function defaultCommandIdFactory(): string {
-	return `cmd-${randomUUID()}`;
+	return `cmd-${crypto.randomUUID()}`;
 }
 
 function defaultCliInvocationIdFactory(): string {
-	return `cli-${randomUUID()}`;
+	return `cli-${crypto.randomUUID()}`;
 }
 
 export type CommandPipelineResult =
@@ -103,8 +102,14 @@ function resolveOpsClass(record: CommandRecord, engine: PolicyEngine): string {
 	return rule?.ops_class ?? "default";
 }
 
+function sha256Hex(input: string): string {
+	const hasher = new Bun.CryptoHasher("sha256");
+	hasher.update(input);
+	return hasher.digest("hex");
+}
+
 function normalizeFingerprint(input: string): string {
-	return `fp-${createHash("sha256").update(input, "utf8").digest("hex")}`;
+	return `fp-${sha256Hex(input)}`;
 }
 
 function truncateText(value: string, maxLen: number = 4_000): string {

@@ -1,14 +1,13 @@
-import { randomUUID } from "node:crypto";
 import { appendJsonl, readJsonl } from "@femtomc/mu-core/node";
 import { z } from "zod";
 import { type OutboundEnvelope, OutboundEnvelopeSchema } from "./models.js";
 
 function defaultOutboxIdFactory(): string {
-	return `out-${randomUUID()}`;
+	return `out-${crypto.randomUUID()}`;
 }
 
 function defaultResponseIdFactory(): string {
-	return `resp-${randomUUID()}`;
+	return `resp-${crypto.randomUUID()}`;
 }
 
 function cloneRecord(record: OutboxRecord): OutboxRecord {

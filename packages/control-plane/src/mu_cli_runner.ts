@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 const SAFE_TOKEN_RE = /^(?!-)[A-Za-z0-9._:@/-]{1,200}$/;
@@ -107,7 +106,7 @@ function resolveTopic(value: string | undefined): string | null {
 }
 
 function defaultInvocationId(): string {
-	return `cli-${randomUUID()}`;
+	return `cli-${crypto.randomUUID()}`;
 }
 
 function reject(reason: MuCliValidationErrorReason, details?: string): MuCliPlanDecision {

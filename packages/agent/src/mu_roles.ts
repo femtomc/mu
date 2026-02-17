@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { splitFrontmatter } from "./prompt.js";
 
@@ -161,7 +160,7 @@ export async function systemPromptForRole(role: MuRole, repoRoot?: string): Prom
 	if (repoRoot) {
 		try {
 			const filePath = join(repoRoot, ".mu", "roles", `${role}.md`);
-			const raw = await readFile(filePath, "utf8");
+			const raw = await Bun.file(filePath).text();
 			const { body } = splitFrontmatter(raw);
 			return body;
 		} catch {

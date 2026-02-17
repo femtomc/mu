@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { type Channel, ChannelSchema, type IdentityBinding } from "./identity_store.js";
 import { type AssuranceTier, AssuranceTierSchema } from "./models.js";
@@ -350,7 +349,7 @@ export function buildControlPlanePolicy(overrides: ControlPlanePolicyOverrides =
 export async function loadControlPlanePolicy(path: string): Promise<ControlPlanePolicy> {
 	let raw: string;
 	try {
-		raw = await readFile(path, "utf8");
+		raw = await Bun.file(path).text();
 	} catch (err) {
 		if (err instanceof Error && "code" in err && err.code === "ENOENT") {
 			return DEFAULT_CONTROL_PLANE_POLICY;

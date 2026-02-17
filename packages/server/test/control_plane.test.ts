@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHmac } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +23,9 @@ afterEach(async () => {
 });
 
 function hmac(secret: string, input: string): string {
-	return createHmac("sha256", secret).update(input, "utf8").digest("hex");
+	const hasher = new Bun.CryptoHasher("sha256", secret);
+	hasher.update(input);
+	return hasher.digest("hex");
 }
 
 function slackRequest(opts: {

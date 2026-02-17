@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import type { Issue } from "@femtomc/mu-core";
 
@@ -98,7 +98,7 @@ export function extractDescription(meta: PromptMeta, body: string): { descriptio
 }
 
 export async function readPromptMeta(path: string): Promise<PromptMeta> {
-	const text = await readFile(path, "utf8");
+	const text = await Bun.file(path).text();
 	const { meta } = splitFrontmatter(text);
 	return meta;
 }
@@ -121,7 +121,7 @@ export async function buildRoleCatalog(repoRoot: string): Promise<string> {
 
 	for (const file of roleFiles) {
 		const abs = join(rolesDir, file);
-		const text = await readFile(abs, "utf8");
+		const text = await Bun.file(abs).text();
 		const { meta, body } = splitFrontmatter(text);
 
 		const name = file.replace(/\.md$/, "");
@@ -154,7 +154,7 @@ export async function renderPromptTemplate(
 	issue: Pick<Issue, "id" | "title" | "body">,
 	opts: { repoRoot?: string } = {},
 ): Promise<string> {
-	const text = await readFile(path, "utf8");
+	const text = await Bun.file(path).text();
 	const { body } = splitFrontmatter(text);
 
 	let promptText = issue.title ?? "";

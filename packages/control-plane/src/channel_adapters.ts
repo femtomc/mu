@@ -1,5 +1,3 @@
-import { Buffer } from "node:buffer";
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
 	type AdapterIngressResult,
 	type ControlPlaneAdapter,
@@ -14,20 +12,27 @@ import { type AssuranceTier, type InboundEnvelope, InboundEnvelopeSchema, type O
 import type { ControlPlaneOutbox, OutboxRecord } from "./outbox.js";
 
 function sha256Hex(input: string): string {
-	return createHash("sha256").update(input, "utf8").digest("hex");
+	const hasher = new Bun.CryptoHasher("sha256");
+	hasher.update(input);
+	return hasher.digest("hex");
 }
 
 function hmacSha256Hex(secret: string, input: string): string {
-	return createHmac("sha256", secret).update(input, "utf8").digest("hex");
+	const hasher = new Bun.CryptoHasher("sha256", secret);
+	hasher.update(input);
+	return hasher.digest("hex");
 }
 
 function timingSafeEqualUtf8(a: string, b: string): boolean {
-	const left = Buffer.from(a, "utf8");
-	const right = Buffer.from(b, "utf8");
-	if (left.length !== right.length) {
-		return false;
+	const encoder = new TextEncoder();
+	const left = encoder.encode(a);
+	const right = encoder.encode(b);
+	let diff = left.length ^ right.length;
+	const maxLen = Math.max(left.length, right.length);
+	for (let i = 0; i < maxLen; i++) {
+		diff |= (left[i] ?? 0) ^ (right[i] ?? 0);
 	}
-	return timingSafeEqual(left, right);
+	return diff === 0;
 }
 
 function copyHeaders(initHeaders: unknown): Headers {

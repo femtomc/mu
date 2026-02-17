@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { CommandContextResolver } from "./command_context.js";
 import { createMuSession } from "./session_factory.js";
@@ -224,11 +223,11 @@ export type MessagingOperatorRuntimeOpts = {
 };
 
 function defaultSessionId(): string {
-	return `operator-${randomUUID()}`;
+	return `operator-${crypto.randomUUID()}`;
 }
 
 function defaultTurnId(): string {
-	return `turn-${randomUUID()}`;
+	return `turn-${crypto.randomUUID()}`;
 }
 
 function conversationKey(inbound: InboundEnvelope, binding: IdentityBinding): string {
