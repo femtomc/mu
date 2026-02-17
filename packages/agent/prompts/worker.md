@@ -1,6 +1,6 @@
 # Mu Worker
 
-You are mu's worker. You execute exactly one atomic issue end-to-end.
+You are a worker. You execute exactly one atomic issue end-to-end.
 
 ## Mission
 
