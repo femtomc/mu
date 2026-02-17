@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 import type { BackendRunner } from "@femtomc/mu-agent";
 import { DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_ORCHESTRATOR_PROMPT, DEFAULT_WORKER_PROMPT } from "@femtomc/mu-agent";
 import type { Issue } from "@femtomc/mu-core";
-import { type EventLog, FsJsonlStore, fsEventLog, getStorePaths, newRunId, runContext } from "@femtomc/mu-core/node";
+import { type EventLog, FsJsonlStore, fsEventLog, getStorePaths, newRunId, readJsonl, runContext } from "@femtomc/mu-core/node";
 import type { ForumTopicSummary } from "@femtomc/mu-forum";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
@@ -369,6 +369,7 @@ function mainHelp(): string {
 		"Commands:",
 		"  guide                                 In-CLI guide",
 		"  status [--json] [--pretty]            Show repo and work status",
+		"  store <subcmd>                        Inspect .mu store files and logs",
 		"  issues <subcmd>                       Work item commands",
 		"  forum <subcmd>                        Coordination message commands",
 		"  run <prompt...>                       Start a new autonomous run",
@@ -438,6 +439,8 @@ export async function run(
 			});
 		case "status":
 			return await cmdStatus(rest, ctx);
+		case "store":
+			return await cmdStore(rest, ctx);
 		case "issues":
 			return await cmdIssues(rest, ctx);
 		case "forum":
@@ -545,6 +548,306 @@ async function cmdStatus(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 
 	return ok(out);
+}
+
+type StoreTargetInfo = {
+	key: string;
+	path: string;
+	description: string;
+};
+
+async function listStoreTargets(ctx: CliCtx): Promise<StoreTargetInfo[]> {
+	const { getControlPlanePaths } = await import("@femtomc/mu-control-plane");
+	const cp = getControlPlanePaths(ctx.repoRoot);
+	return [
+		{ key: "store", path: ctx.paths.storeDir, description: "Store root directory" },
+		{ key: "issues", path: ctx.paths.issuesPath, description: "Issue DAG nodes (JSONL)" },
+		{ key: "forum", path: ctx.paths.forumPath, description: "Forum messages (JSONL)" },
+		{ key: "events", path: ctx.paths.eventsPath, description: "Event log (JSONL)" },
+		{ key: "logs", path: ctx.paths.logsDir, description: "Run logs directory" },
+		{ key: "config", path: join(ctx.paths.storeDir, "config.json"), description: "CLI/server config" },
+		{ key: "roles", path: join(ctx.paths.storeDir, "roles"), description: "Role prompts directory" },
+		{ key: "heartbeats", path: join(ctx.paths.storeDir, "heartbeats.jsonl"), description: "Heartbeat programs" },
+		{ key: "cp", path: cp.controlPlaneDir, description: "Control-plane state directory" },
+		{ key: "cp_identities", path: cp.identitiesPath, description: "Linked identities" },
+		{ key: "cp_commands", path: cp.commandsPath, description: "Command lifecycle journal" },
+		{ key: "cp_outbox", path: cp.outboxPath, description: "Outbound delivery queue" },
+		{ key: "cp_policy", path: cp.policyPath, description: "Control-plane policy" },
+		{ key: "cp_adapter_audit", path: cp.adapterAuditPath, description: "Adapter ingress audit" },
+		{ key: "cp_operator_turns", path: join(cp.controlPlaneDir, "operator_turns.jsonl"), description: "Operator turn audit" },
+		{ key: "cp_telegram_ingress", path: join(cp.controlPlaneDir, "telegram_ingress.jsonl"), description: "Deferred Telegram ingress queue" },
+	];
+}
+
+async function inspectPath(path: string): Promise<{
+	exists: boolean;
+	type: "file" | "directory" | "other" | "missing";
+	size_bytes: number | null;
+}> {
+	const file = Bun.file(path);
+	const exists = await file.exists();
+	if (!exists) {
+		return { exists: false, type: "missing", size_bytes: null };
+	}
+	try {
+		const st = await file.stat();
+		if (st.isDirectory()) {
+			return { exists: true, type: "directory", size_bytes: st.size };
+		}
+		if (st.isFile()) {
+			return { exists: true, type: "file", size_bytes: st.size };
+		}
+		return { exists: true, type: "other", size_bytes: st.size };
+	} catch {
+		return { exists: true, type: "other", size_bytes: null };
+	}
+}
+
+async function cmdStore(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (argv0.length === 0 || argv0[0] === "--help" || argv0[0] === "-h") {
+		return ok(
+			[
+				"mu store - inspect .mu store files and logs",
+				"",
+				"Usage:",
+				"  mu store <command> [args...] [--pretty]",
+				"",
+				"Commands:",
+				"  paths                         Show canonical .mu paths and existence",
+				"  ls                            Summarize known .mu files",
+				"  tail <target> [--limit N]     Show recent entries from a .mu file",
+				"",
+				"Examples:",
+				"  mu store paths",
+				"  mu store ls --pretty",
+				"  mu store tail events --limit 20",
+				"  mu store tail cp_operator_turns --limit 30 --json --pretty",
+				"",
+				"Targets (for tail): issues, forum, events, cp_commands, cp_outbox, cp_identities,",
+				"cp_operator_turns, cp_telegram_ingress, or explicit paths under .mu/",
+			].join("\n") + "\n",
+		);
+	}
+
+	const sub = argv0[0]!;
+	const rest = argv0.slice(1);
+	switch (sub) {
+		case "paths":
+			return await storePaths(rest, ctx, pretty);
+		case "ls":
+			return await storeLs(rest, ctx, pretty);
+		case "tail":
+			return await storeTail(rest, ctx, pretty);
+		default:
+			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu store --help"] });
+	}
+}
+
+async function storePaths(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (hasHelpFlag(argv)) {
+		return ok(
+			[
+				"mu store paths - list canonical .mu paths",
+				"",
+				"Usage:",
+				"  mu store paths [--json] [--pretty]",
+			].join("\n") + "\n",
+		);
+	}
+
+	const { present: jsonMode, rest } = popFlag(argv, "--json");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu store paths --help"] });
+	}
+
+	const targets = await listStoreTargets(ctx);
+	const rows = [] as Array<Record<string, unknown>>;
+	for (const t of targets) {
+		const stat = await inspectPath(t.path);
+		rows.push({
+			key: t.key,
+			path: t.path,
+			rel_path: relative(ctx.repoRoot, t.path).replaceAll("\\", "/"),
+			description: t.description,
+			exists: stat.exists,
+			type: stat.type,
+			size_bytes: stat.size_bytes,
+		});
+	}
+
+	const payload = {
+		repo_root: ctx.repoRoot,
+		store_dir: ctx.paths.storeDir,
+		targets: rows,
+	};
+	if (jsonMode) {
+		return ok(jsonText(payload, pretty));
+	}
+
+	let out = `.mu paths for ${ctx.repoRoot}\n`;
+	for (const row of rows) {
+		const key = String(row.key).padEnd(20);
+		const status = row.exists ? String(row.type) : "missing";
+		const relPath = String(row.rel_path);
+		out += `  ${key} ${status.padEnd(10)} ${relPath}\n`;
+	}
+	return ok(out);
+}
+
+async function storeLs(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (hasHelpFlag(argv)) {
+		return ok(
+			[
+				"mu store ls - summarize known .mu files",
+				"",
+				"Usage:",
+				"  mu store ls [--all] [--json] [--pretty]",
+				"",
+				"By default only existing paths are shown. Use --all to include missing.",
+			].join("\n") + "\n",
+		);
+	}
+
+	const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+	const { present: includeAll, rest } = popFlag(argv0, "--all");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu store ls --help"] });
+	}
+
+	const targets = await listStoreTargets(ctx);
+	const rows: Array<Record<string, unknown>> = [];
+	for (const t of targets) {
+		const stat = await inspectPath(t.path);
+		if (!includeAll && !stat.exists) {
+			continue;
+		}
+		let entries: number | null = null;
+		if (stat.exists && stat.type === "file" && t.path.endsWith(".jsonl")) {
+			try {
+				entries = (await readJsonl(t.path)).length;
+			} catch {
+				entries = null;
+			}
+		}
+		rows.push({
+			key: t.key,
+			rel_path: relative(ctx.repoRoot, t.path).replaceAll("\\", "/"),
+			exists: stat.exists,
+			type: stat.type,
+			size_bytes: stat.size_bytes,
+			entries,
+			description: t.description,
+		});
+	}
+
+	const payload = {
+		repo_root: ctx.repoRoot,
+		count: rows.length,
+		files: rows,
+	};
+	if (jsonMode) {
+		return ok(jsonText(payload, pretty));
+	}
+
+	let out = `.mu summary (${rows.length} item${rows.length === 1 ? "" : "s"})\n`;
+	for (const row of rows) {
+		const key = String(row.key).padEnd(20);
+		const kind = String(row.type).padEnd(10);
+		const size = row.size_bytes == null ? "-" : `${row.size_bytes}b`;
+		const entries = row.entries == null ? "" : ` entries=${row.entries}`;
+		out += `  ${key} ${kind} ${String(row.rel_path)} size=${size}${entries}\n`;
+	}
+	return ok(out);
+}
+
+async function storeTail(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (argv.length === 0 || hasHelpFlag(argv)) {
+		return ok(
+			[
+				"mu store tail - show recent entries from a .mu file",
+				"",
+				"Usage:",
+				"  mu store tail <target> [--limit N] [--json] [--pretty]",
+				"",
+				"Examples:",
+				"  mu store tail events --limit 20",
+				"  mu store tail cp_commands --limit 50 --json --pretty",
+			].join("\n") + "\n",
+		);
+	}
+
+	const targetRaw = argv[0]!;
+	const { value: limitRaw, rest: argv0 } = getFlagValue(argv.slice(1), "--limit");
+	const { present: jsonMode, rest } = popFlag(argv0, "--json");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu store tail --help"] });
+	}
+
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 2000 }) : 20;
+	if (limit == null) {
+		return jsonError("limit must be an integer between 1 and 2000", {
+			pretty,
+			recovery: ["mu store tail events --limit 20"],
+		});
+	}
+
+	const targets = await listStoreTargets(ctx);
+	const byKey = new Map(targets.map((t) => [t.key, t.path] as const));
+	const targetPath = byKey.get(targetRaw) ?? resolve(ctx.cwd, targetRaw);
+	const storeDirAbs = resolve(ctx.paths.storeDir);
+	const targetAbs = resolve(targetPath);
+	if (targetAbs !== storeDirAbs && !targetAbs.startsWith(`${storeDirAbs}/`)) {
+		return jsonError(`target must be inside .mu/: ${targetRaw}`, {
+			pretty,
+			recovery: ["mu store paths", "mu store tail events --limit 20"],
+		});
+	}
+
+	if (!(await fileExists(targetAbs))) {
+		return jsonError(`target not found: ${targetRaw}`, { pretty, recovery: ["mu store ls --all --pretty"] });
+	}
+
+	const stat = await inspectPath(targetAbs);
+	if (stat.type === "directory") {
+		return jsonError(`target is a directory: ${targetRaw}`, {
+			pretty,
+			recovery: ["mu store ls --pretty", "mu store tail events --limit 20"],
+		});
+	}
+
+	if (targetAbs.endsWith(".jsonl")) {
+		const rows = await readJsonl(targetAbs);
+		const tailRows = rows.slice(-limit);
+		const payload = {
+			target: targetRaw,
+			path: targetAbs,
+			total: rows.length,
+			returned: tailRows.length,
+			entries: tailRows,
+		};
+		if (jsonMode) {
+			return ok(jsonText(payload, pretty));
+		}
+		const rendered = tailRows.map((row) => JSON.stringify(row)).join("\n");
+		return ok(rendered.length > 0 ? `${rendered}\n` : "");
+	}
+
+	const text = await Bun.file(targetAbs).text();
+	const lines = text.split(/\r?\n/);
+	const normalized = lines.length > 0 && lines[lines.length - 1] === "" ? lines.slice(0, -1) : lines;
+	const tailLines = normalized.slice(-limit);
+	const payload = {
+		target: targetRaw,
+		path: targetAbs,
+		total: normalized.length,
+		returned: tailLines.length,
+		lines: tailLines,
+	};
+	if (jsonMode) {
+		return ok(jsonText(payload, pretty));
+	}
+	return ok(tailLines.length > 0 ? `${tailLines.join("\n")}\n` : "");
 }
 
 async function cmdIssues(argv: string[], ctx: CliCtx): Promise<RunResult> {
@@ -2558,6 +2861,7 @@ async function cmdControl(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  unlink        Unlink a binding (self-unlink or admin revoke)",
 				"  identities    List identity bindings",
 				"  status        Show control-plane status",
+				"  diagnose-operator  Diagnose operator turn parsing/execution health",
 				"",
 				"See also: `mu guide`",
 			].join("\n") + "\n",
@@ -2576,9 +2880,283 @@ async function cmdControl(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			return await controlIdentities(rest, ctx, pretty);
 		case "status":
 			return await controlStatus(rest, ctx, pretty);
+		case "diagnose-operator":
+			return await controlDiagnoseOperator(rest, ctx, pretty);
 		default:
 			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu control --help"] });
 	}
+}
+
+async function controlDiagnoseOperator(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (hasHelpFlag(argv)) {
+		return ok(
+			[
+				"mu control diagnose-operator - inspect operator decision parsing/execution health",
+				"",
+				"Usage:",
+				"  mu control diagnose-operator [--limit N] [--json] [--pretty]",
+				"",
+				"Reads:",
+				"  .mu/control-plane/operator_turns.jsonl",
+				"  .mu/control-plane/commands.jsonl",
+				"",
+				"Examples:",
+				"  mu control diagnose-operator",
+				"  mu control diagnose-operator --limit 50 --json --pretty",
+			].join("\n") + "\n",
+		);
+	}
+
+	const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+	const { value: limitRaw, rest } = getFlagValue(argv0, "--limit");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, {
+			pretty,
+			recovery: ["mu control diagnose-operator --help"],
+		});
+	}
+
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
+	if (limit == null) {
+		return jsonError("limit must be an integer between 1 and 500", {
+			pretty,
+			recovery: ["mu control diagnose-operator --limit 20"],
+		});
+	}
+
+	const asRecord = (value: unknown): Record<string, unknown> | null =>
+		typeof value === "object" && value != null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+
+	const formatTs = (ts: number): string => {
+		try {
+			return new Date(ts).toISOString();
+		} catch {
+			return String(ts);
+		}
+	};
+
+	const { getControlPlanePaths } = await import("@femtomc/mu-control-plane");
+	const paths = getControlPlanePaths(ctx.repoRoot);
+	const turnsPath = join(paths.controlPlaneDir, "operator_turns.jsonl");
+	const turnsExists = await fileExists(turnsPath);
+
+	const turns: Array<{
+		ts_ms: number;
+		request_id: string;
+		session_id: string | null;
+		turn_id: string | null;
+		outcome: string;
+		reason: string | null;
+		message_preview: string | null;
+		command_kind: string | null;
+	}> = [];
+
+	if (turnsExists) {
+		try {
+			const rows = await readJsonl(turnsPath);
+			for (const row of rows) {
+				const rec = asRecord(row);
+				if (!rec || rec.kind !== "operator.turn") {
+					continue;
+				}
+				const ts = typeof rec.ts_ms === "number" && Number.isFinite(rec.ts_ms) ? Math.trunc(rec.ts_ms) : null;
+				const requestId = nonEmptyString(rec.request_id);
+				const outcome = nonEmptyString(rec.outcome);
+				if (ts == null || !requestId || !outcome) {
+					continue;
+				}
+				const command = asRecord(rec.command);
+				turns.push({
+					ts_ms: ts,
+					request_id: requestId,
+					session_id: nonEmptyString(rec.session_id) ?? null,
+					turn_id: nonEmptyString(rec.turn_id) ?? null,
+					outcome,
+					reason: nonEmptyString(rec.reason) ?? null,
+					message_preview: nonEmptyString(rec.message_preview) ?? null,
+					command_kind: nonEmptyString(command?.kind) ?? null,
+				});
+			}
+		} catch (err) {
+			return jsonError(`failed to read operator turn audit: ${describeError(err)}`, {
+				pretty,
+				recovery: ["mu control diagnose-operator --json --pretty"],
+			});
+		}
+	}
+
+	turns.sort((a, b) => a.ts_ms - b.ts_ms);
+
+	const outcomeCounts: Record<string, number> = {};
+	for (const t of turns) {
+		outcomeCounts[t.outcome] = (outcomeCounts[t.outcome] ?? 0) + 1;
+	}
+
+	const recentTurns = turns.slice(-limit).reverse().map((t) => ({
+		ts_ms: t.ts_ms,
+		ts_iso: formatTs(t.ts_ms),
+		request_id: t.request_id,
+		outcome: t.outcome,
+		reason: t.reason,
+		command_kind: t.command_kind,
+		message_preview: t.message_preview,
+	}));
+
+	const problematicTurns = turns
+		.filter((t) => t.outcome === "invalid_directive" || t.outcome === "error")
+		.slice(-limit)
+		.reverse()
+		.map((t) => ({
+			ts_ms: t.ts_ms,
+			ts_iso: formatTs(t.ts_ms),
+			request_id: t.request_id,
+			outcome: t.outcome,
+			reason: t.reason,
+			message_preview: t.message_preview,
+		}));
+
+	const operatorLifecycleRows: Array<{
+		ts_ms: number;
+		event_type: string;
+		command_id: string;
+		target_type: string;
+		state: string;
+		error_code: string | null;
+		operator_session_id: string;
+		operator_turn_id: string | null;
+	}> = [];
+
+	if (await fileExists(paths.commandsPath)) {
+		try {
+			const commandRows = await readJsonl(paths.commandsPath);
+			for (const row of commandRows) {
+				const rec = asRecord(row);
+				if (!rec || rec.kind !== "command.lifecycle") {
+					continue;
+				}
+				const command = asRecord(rec.command);
+				if (!command) {
+					continue;
+				}
+				const sessionId = nonEmptyString(command.operator_session_id);
+				if (!sessionId) {
+					continue;
+				}
+				const ts = typeof rec.ts_ms === "number" && Number.isFinite(rec.ts_ms) ? Math.trunc(rec.ts_ms) : null;
+				const eventType = nonEmptyString(rec.event_type);
+				const commandId = nonEmptyString(command.command_id);
+				const targetType = nonEmptyString(command.target_type);
+				const state = nonEmptyString(command.state);
+				if (ts == null || !eventType || !commandId || !targetType || !state) {
+					continue;
+				}
+				operatorLifecycleRows.push({
+					ts_ms: ts,
+					event_type: eventType,
+					command_id: commandId,
+					target_type: targetType,
+					state,
+					error_code: nonEmptyString(command.error_code) ?? null,
+					operator_session_id: sessionId,
+					operator_turn_id: nonEmptyString(command.operator_turn_id) ?? null,
+				});
+			}
+		} catch (err) {
+			return jsonError(`failed to read command journal: ${describeError(err)}`, {
+				pretty,
+				recovery: ["mu control diagnose-operator --json --pretty"],
+			});
+		}
+	}
+
+	operatorLifecycleRows.sort((a, b) => a.ts_ms - b.ts_ms);
+	const operatorRunMutations = operatorLifecycleRows
+		.filter((row) => row.target_type === "run start" || row.target_type === "run resume" || row.target_type === "run interrupt")
+		.slice(-limit)
+		.reverse()
+		.map((row) => ({
+			ts_ms: row.ts_ms,
+			ts_iso: formatTs(row.ts_ms),
+			event_type: row.event_type,
+			command_id: row.command_id,
+			target_type: row.target_type,
+			state: row.state,
+			error_code: row.error_code,
+			operator_session_id: row.operator_session_id,
+			operator_turn_id: row.operator_turn_id,
+		}));
+
+	const payload = {
+		repo_root: ctx.repoRoot,
+		operator_turn_audit: {
+			path: turnsPath,
+			exists: turnsExists,
+			total: turns.length,
+			outcomes: outcomeCounts,
+			recent_problematic: problematicTurns,
+			recent_turns: recentTurns,
+		},
+		command_journal: {
+			path: paths.commandsPath,
+			operator_lifecycle_events: operatorLifecycleRows.length,
+			recent_operator_run_mutations: operatorRunMutations,
+		},
+		hints: [
+			!turnsExists
+				? "operator_turns.jsonl is missing. This usually means your running mu build predates operator turn auditing; upgrade and restart `mu serve`."
+				: null,
+			problematicTurns.length > 0
+				? "Recent invalid_directive/error outcomes detected. Inspect operator_turns.jsonl and ensure the operator emits MU_DECISION envelopes or plain text."
+				: null,
+			operatorRunMutations.length === 0
+				? "No operator-attributed run mutations found in command journal. In current architecture, operator-triggered runs should appear as brokered command lifecycle events."
+				: null,
+		].filter((line): line is string => line != null),
+	};
+
+	if (jsonMode) {
+		return ok(jsonText(payload, pretty));
+	}
+
+	let out = `Operator diagnostics for ${ctx.repoRoot}\n`;
+	out += `Audit file: ${turnsPath}\n`;
+	out += `Audit exists: ${turnsExists}\n`;
+	if (turnsExists) {
+		out += `Turns: ${turns.length}\n`;
+		const outcomes = Object.entries(outcomeCounts)
+			.sort((a, b) => a[0].localeCompare(b[0]))
+			.map(([k, v]) => `${k}=${v}`)
+			.join(", ");
+		out += `Outcomes: ${outcomes || "(none)"}\n`;
+	}
+
+	if (problematicTurns.length > 0) {
+		out += "\nRecent problematic turns:\n";
+		for (const t of problematicTurns) {
+			out += `  ${t.ts_iso} req=${t.request_id} outcome=${t.outcome} reason=${t.reason ?? "(none)"}\n`;
+		}
+	}
+
+	out += `\nOperator lifecycle events in commands journal: ${operatorLifecycleRows.length}\n`;
+	if (operatorRunMutations.length > 0) {
+		out += "Recent operator run mutations:\n";
+		for (const row of operatorRunMutations) {
+			out += `  ${row.ts_iso} ${row.target_type} ${row.event_type} command=${row.command_id}`;
+			if (row.error_code) {
+				out += ` error=${row.error_code}`;
+			}
+			out += "\n";
+		}
+	}
+
+	if (payload.hints.length > 0) {
+		out += "\nHints:\n";
+		for (const hint of payload.hints) {
+			out += `  - ${hint}\n`;
+		}
+	}
+
+	return ok(out);
 }
 
 async function controlLink(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {

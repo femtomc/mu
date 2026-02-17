@@ -175,6 +175,7 @@ test("mu --help", async () => {
 	expect(result.stdout.includes("Usage:")).toBe(true);
 	expect(result.stdout.includes("mu <command>")).toBe(true);
 	expect(result.stdout.includes("mu guide")).toBe(true);
+	expect(result.stdout.includes("store <subcmd>")).toBe(true);
 	expect(result.stdout.includes("chat [--message TEXT]")).toBe(true);
 	expect(result.stdout.includes("Getting started")).toBe(true);
 	expect(result.stdout.includes("Store discovery:")).toBe(true);
@@ -191,6 +192,68 @@ test("mu guide", async () => {
 	expect(result.stdout.includes("Command Overview")).toBe(true);
 	expect(result.stdout.includes(".mu Store Layout")).toBe(true);
 	expect(result.stdout.includes(".mu/")).toBe(true);
+	expect(result.stdout.includes("mu store <subcmd>")).toBe(true);
+	expect(result.stdout.includes("mu control diagnose-operator")).toBe(true);
+});
+
+test("mu store paths/ls/tail provide .mu navigation tools", async () => {
+	const dir = await mkTempRepo();
+	await mkdir(join(dir, ".mu", "control-plane"), { recursive: true });
+	await writeFile(
+		join(dir, ".mu", "control-plane", "operator_turns.jsonl"),
+		`${JSON.stringify({
+			kind: "operator.turn",
+			ts_ms: 123,
+			repo_root: dir,
+			channel: "telegram",
+			request_id: "req-1",
+			session_id: "session-1",
+			turn_id: "turn-1",
+			outcome: "invalid_directive",
+			reason: "operator_command_directive_invalid_json",
+			message_preview: "MU_COMMAND: {\"kind\":\"run_start\",\"prompt\":}",
+			command: null,
+		})}\n`,
+		"utf8",
+	);
+
+	const paths = await run(["store", "paths"], { cwd: dir });
+	expect(paths.exitCode).toBe(0);
+	expect(paths.stdout).toContain("cp_operator_turns");
+	expect(paths.stdout).toContain("control-plane/operator_turns.jsonl");
+
+	const lsJson = await run(["store", "ls", "--all", "--json", "--pretty"], { cwd: dir });
+	expect(lsJson.exitCode).toBe(0);
+	const lsPayload = JSON.parse(lsJson.stdout) as {
+		files: Array<{ key: string; exists: boolean }>;
+	};
+	expect(lsPayload.files.some((f) => f.key === "issues")).toBe(true);
+	expect(lsPayload.files.some((f) => f.key === "cp_operator_turns" && f.exists)).toBe(true);
+
+	const tailJson = await run(["store", "tail", "cp_operator_turns", "--limit", "1", "--json", "--pretty"], {
+		cwd: dir,
+	});
+	expect(tailJson.exitCode).toBe(0);
+	const tailPayload = JSON.parse(tailJson.stdout) as {
+		returned: number;
+		entries: Array<{ kind: string; outcome: string }>;
+	};
+	expect(tailPayload.returned).toBe(1);
+	expect(tailPayload.entries[0]?.kind).toBe("operator.turn");
+	expect(tailPayload.entries[0]?.outcome).toBe("invalid_directive");
+});
+
+
+test("mu control diagnose-operator reports missing audit with actionable hints", async () => {
+	const dir = await mkTempRepo();
+	const result = await run(["control", "diagnose-operator", "--json", "--pretty"], { cwd: dir });
+	expect(result.exitCode).toBe(0);
+	const payload = JSON.parse(result.stdout) as {
+		operator_turn_audit: { exists: boolean };
+		hints: string[];
+	};
+	expect(payload.operator_turn_audit.exists).toBe(false);
+	expect(payload.hints.some((hint) => hint.includes("operator_turns.jsonl is missing"))).toBe(true);
 });
 
 test("mu init is disabled and help still documents store layout", async () => {
