@@ -71,6 +71,74 @@ export function detectAdapters(config: ControlPlaneConfig): DetectedAdapter[] {
 	return adapters;
 }
 
+export type TelegramSendMessagePayload = {
+	chat_id: string;
+	text: string;
+	parse_mode?: "Markdown";
+	disable_web_page_preview?: boolean;
+};
+
+/**
+ * Telegram supports a markdown dialect that uses single markers for emphasis.
+ * Normalize the most common LLM/GitHub-style markers (`**bold**`, `__italic__`, headings)
+ * while preserving fenced code blocks verbatim.
+ */
+export function renderTelegramMarkdown(text: string): string {
+	const normalized = text.replaceAll("\r\n", "\n");
+	const lines = normalized.split("\n");
+	const out: string[] = [];
+	let inFence = false;
+
+	for (const line of lines) {
+		const trimmed = line.trimStart();
+		if (trimmed.startsWith("```")) {
+			inFence = !inFence;
+			out.push(line);
+			continue;
+		}
+		if (inFence) {
+			out.push(line);
+			continue;
+		}
+
+		let next = line;
+		next = next.replace(/^#{1,6}\s+(.+)$/, "*$1*");
+		next = next.replace(/\*\*(.+?)\*\*/g, "*$1*");
+		next = next.replace(/__(.+?)__/g, "_$1_");
+		out.push(next);
+	}
+
+	return out.join("\n");
+}
+
+export function buildTelegramSendMessagePayload(opts: {
+	chatId: string;
+	text: string;
+	richFormatting: boolean;
+}): TelegramSendMessagePayload {
+	if (!opts.richFormatting) {
+		return {
+			chat_id: opts.chatId,
+			text: opts.text,
+		};
+	}
+
+	return {
+		chat_id: opts.chatId,
+		text: renderTelegramMarkdown(opts.text),
+		parse_mode: "Markdown",
+		disable_web_page_preview: true,
+	};
+}
+
+async function postTelegramMessage(botToken: string, payload: TelegramSendMessagePayload): Promise<Response> {
+	return await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(payload),
+	});
+}
+
 function buildMessagingOperatorRuntime(opts: {
 	repoRoot: string;
 	config: ControlPlaneConfig;
@@ -192,31 +260,41 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 					return { kind: "retry", error: "telegram bot token not configured in .mu/config.json" };
 				}
 
-				const res = await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						chat_id: envelope.channel_conversation_id,
-						text: envelope.body,
-					}),
+				const richPayload = buildTelegramSendMessagePayload({
+					chatId: envelope.channel_conversation_id,
+					text: envelope.body,
+					richFormatting: true,
 				});
+				let res = await postTelegramMessage(telegramBotToken, richPayload);
+
+				// Fallback: if Telegram rejects markdown entities, retry as plain text.
+				if (!res.ok && res.status === 400 && richPayload.parse_mode) {
+					const plainPayload = buildTelegramSendMessagePayload({
+						chatId: envelope.channel_conversation_id,
+						text: envelope.body,
+						richFormatting: false,
+					});
+					res = await postTelegramMessage(telegramBotToken, plainPayload);
+				}
 
 				if (res.ok) {
 					return { kind: "delivered" };
 				}
+
+				const responseBody = await res.text().catch(() => "");
 				if (res.status === 429 || res.status >= 500) {
 					const retryAfter = res.headers.get("retry-after");
 					const retryDelayMs = retryAfter ? Number.parseInt(retryAfter, 10) * 1000 : undefined;
 					return {
 						kind: "retry",
-						error: `telegram sendMessage ${res.status}: ${await res.text().catch(() => "")}`,
+						error: `telegram sendMessage ${res.status}: ${responseBody}`,
 						retryDelayMs: retryDelayMs && Number.isFinite(retryDelayMs) ? retryDelayMs : undefined,
 					};
 				}
 
 				return {
 					kind: "retry",
-					error: `telegram sendMessage ${res.status}: ${await res.text().catch(() => "")}`,
+					error: `telegram sendMessage ${res.status}: ${responseBody}`,
 				};
 			}
 

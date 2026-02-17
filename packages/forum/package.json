@@ -1,8 +1,13 @@
 {
   "name": "@femtomc/mu-forum",
-  "version": "26.2.39",
+  "version": "26.2.40",
   "description": "Topic-based coordination message store used by mu.",
-  "keywords": ["mu", "forum", "messages", "coordination"],
+  "keywords": [
+    "mu",
+    "forum",
+    "messages",
+    "coordination"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,6 +21,6 @@
     "dist/**"
   ],
   "dependencies": {
-    "@femtomc/mu-core": "26.2.39"
+    "@femtomc/mu-core": "26.2.40"
   }
 }

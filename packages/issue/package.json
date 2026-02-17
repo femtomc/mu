@@ -1,8 +1,14 @@
 {
   "name": "@femtomc/mu-issue",
-  "version": "26.2.39",
+  "version": "26.2.40",
   "description": "Work item store with dependency graph helpers for mu.",
-  "keywords": ["mu", "issues", "work-items", "dependencies", "dag"],
+  "keywords": [
+    "mu",
+    "issues",
+    "work-items",
+    "dependencies",
+    "dag"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,6 +22,6 @@
     "dist/**"
   ],
   "dependencies": {
-    "@femtomc/mu-core": "26.2.39"
+    "@femtomc/mu-core": "26.2.40"
   }
 }

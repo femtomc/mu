@@ -80,6 +80,42 @@ async function writeConfigWithActiveAdapter(dir: string): Promise<void> {
 	);
 }
 
+async function writeConfigWithOperatorDefaults(dir: string, provider: string, model: string): Promise<void> {
+	const configPath = join(dir, ".mu", "config.json");
+	await mkdir(join(dir, ".mu"), { recursive: true });
+	await writeFile(
+		configPath,
+		`${JSON.stringify(
+			{
+				version: 1,
+				control_plane: {
+					adapters: {
+						slack: { signing_secret: null },
+						discord: { signing_secret: null },
+						telegram: { webhook_secret: null, bot_token: null, bot_username: null },
+						gmail: {
+							enabled: false,
+							webhook_secret: null,
+							client_id: null,
+							client_secret: null,
+							refresh_token: null,
+						},
+					},
+					operator: {
+						enabled: true,
+						run_triggers_enabled: true,
+						provider,
+						model,
+					},
+				},
+			},
+			null,
+			2,
+		)}\n`,
+		"utf8",
+	);
+}
+
 function mkMockSessionFactory(response: string) {
 	let promptCalls = 0;
 	let lastPrompt = "";
@@ -460,11 +496,45 @@ test("mu serve starts server + terminal session and shuts both down on chat exit
 	expect(chunks.stderr).toContain("mu server disconnected.");
 });
 
+test("mu serve passes operator provider/model defaults from .mu/config.json to terminal chat", async () => {
+	const dir = await mkTempRepo();
+	await writeConfigWithOperatorDefaults(dir, "openai-codex", "gpt-5.3-codex");
+
+	let seenProvider: string | undefined;
+	let seenModel: string | undefined;
+	let stopCalls = 0;
+	const result = await run(["serve", "--port", "3301", "--no-open"], {
+		cwd: dir,
+		serveDeps: {
+			startServer: async () => ({
+				activeAdapters: [],
+				stop: async () => {
+					stopCalls += 1;
+				},
+			}),
+			runOperatorSession: async ({ onReady, provider, model }) => {
+				seenProvider = provider;
+				seenModel = model;
+				onReady();
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+			registerSignalHandler: () => () => {},
+			isHeadless: () => true,
+			openBrowser: () => {},
+		},
+	});
+
+	expect(result.exitCode).toBe(0);
+	expect(stopCalls).toBe(1);
+	expect(seenProvider).toBe("openai-codex");
+	expect(seenModel).toBe("gpt-5.3-codex");
+});
+
 test("mu serve surfaces chat startup failure and still stops server", async () => {
 	const dir = await mkTempRepo();
 	let stopCalls = 0;
 	const { io, chunks } = mkCaptureIo();
-	const result = await run(["serve", "--port", "3301", "--no-open"], {
+	const result = await run(["serve", "--port", "3302", "--no-open"], {
 		cwd: dir,
 		io,
 		serveDeps: {

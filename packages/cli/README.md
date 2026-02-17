@@ -66,9 +66,15 @@ In headless environments, it provides SSH port forwarding instructions.
 
 ### Operator chat defaults
 
-`mu chat` is enabled by default and uses the same extension stack as `mu serve`.
+`mu serve`'s attached terminal chat uses the same extension stack as `mu chat` and
+inherits `.mu/config.json` defaults from `control_plane.operator.provider/model`
+when present.
 
-- Set defaults in `.mu/config.json` (`control_plane.operator.*`)
+Standalone `mu chat` can still be overridden explicitly via flags:
+
+```bash
+mu chat --provider openai-codex --model gpt-5.3-codex
+```
 
 Use `mu control status` to inspect current config-driven control-plane/operator state.
 

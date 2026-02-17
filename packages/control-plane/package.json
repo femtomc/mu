@@ -1,21 +1,29 @@
 {
-	"name": "@femtomc/mu-control-plane",
-	"version": "26.2.39",
-	"description": "Messaging integration runtime for mu with policy, confirmation, idempotency, and delivery.",
-	"keywords": ["mu", "messaging", "slack", "discord", "telegram"],
-	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"default": "./dist/index.js"
-		}
-	},
-	"files": ["dist/**"],
-	"dependencies": {
-		"@femtomc/mu-agent": "26.2.39",
-		"@femtomc/mu-core": "26.2.39",
-		"zod": "^4.1.9"
-	}
+  "name": "@femtomc/mu-control-plane",
+  "version": "26.2.40",
+  "description": "Messaging integration runtime for mu with policy, confirmation, idempotency, and delivery.",
+  "keywords": [
+    "mu",
+    "messaging",
+    "slack",
+    "discord",
+    "telegram"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**"
+  ],
+  "dependencies": {
+    "@femtomc/mu-agent": "26.2.40",
+    "@femtomc/mu-core": "26.2.40",
+    "zod": "^4.1.9"
+  }
 }

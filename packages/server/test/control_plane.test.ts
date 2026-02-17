@@ -5,7 +5,13 @@ import { join } from "node:path";
 import type { MessagingOperatorBackend, OperatorBackendTurnResult } from "@femtomc/mu-agent";
 import { getControlPlanePaths, IdentityStore, SlackControlPlaneAdapterSpec } from "@femtomc/mu-control-plane";
 import { DEFAULT_MU_CONFIG } from "../src/config.js";
-import { bootstrapControlPlane, type ControlPlaneConfig, type ControlPlaneHandle } from "../src/control_plane.js";
+import {
+	bootstrapControlPlane,
+	buildTelegramSendMessagePayload,
+	renderTelegramMarkdown,
+	type ControlPlaneConfig,
+	type ControlPlaneHandle,
+} from "../src/control_plane.js";
 
 const handlesToCleanup = new Set<ControlPlaneHandle>();
 const dirsToCleanup = new Set<string>();
@@ -110,6 +116,45 @@ async function linkSlackIdentity(repoRoot: string, scopes: string[]): Promise<vo
 		nowMs: 1_000,
 	});
 }
+
+describe("telegram markdown rendering", () => {
+	test("normalizes common markdown markers while preserving fenced code blocks", () => {
+		const input = [
+			"# Status update",
+			"Operator says **all good** and __ready__.",
+			"```ts",
+			'const raw = "**not-bold**";',
+			"```",
+		].join("\n");
+
+		const rendered = renderTelegramMarkdown(input);
+		expect(rendered).toContain("*Status update*");
+		expect(rendered).toContain("Operator says *all good* and _ready_.");
+		expect(rendered).toContain('const raw = "**not-bold**";');
+	});
+
+	test("buildTelegramSendMessagePayload toggles parse_mode for rich formatting", () => {
+		const rich = buildTelegramSendMessagePayload({
+			chatId: "123",
+			text: "Hello **world**",
+			richFormatting: true,
+		});
+		expect(rich.chat_id).toBe("123");
+		expect(rich.text).toBe("Hello *world*");
+		expect(rich.parse_mode).toBe("Markdown");
+		expect(rich.disable_web_page_preview).toBe(true);
+
+		const plain = buildTelegramSendMessagePayload({
+			chatId: "123",
+			text: "Hello **world**",
+			richFormatting: false,
+		});
+		expect(plain.chat_id).toBe("123");
+		expect(plain.text).toBe("Hello **world**");
+		expect(plain.parse_mode).toBeUndefined();
+		expect(plain.disable_web_page_preview).toBeUndefined();
+	});
+});
 
 describe("bootstrapControlPlane operator wiring", () => {
 	test("active adapter routes come from adapter specs", async () => {

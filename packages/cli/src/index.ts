@@ -39,7 +39,7 @@ type ServeServerHandle = {
 
 type ServeDeps = {
 	startServer: (opts: { repoRoot: string; port: number }) => Promise<ServeServerHandle>;
-	runOperatorSession: (opts: { onReady: () => void }) => Promise<RunResult>;
+	runOperatorSession: (opts: { onReady: () => void; provider?: string; model?: string }) => Promise<RunResult>;
 	registerSignalHandler: (signal: NodeJS.Signals, handler: () => void) => () => void;
 	openBrowser: (url: string) => void;
 	isHeadless: () => boolean;
@@ -209,6 +209,37 @@ function delayMs(ms: number): Promise<void> {
 
 async function fileExists(path: string): Promise<boolean> {
 	return await Bun.file(path).exists();
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+	if (typeof value !== "string") {
+		return undefined;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+async function readServeOperatorDefaults(repoRoot: string): Promise<{ provider?: string; model?: string }> {
+	const configPath = join(repoRoot, ".mu", "config.json");
+	try {
+		const raw = await Bun.file(configPath).text();
+		const parsed = JSON.parse(raw) as Record<string, unknown>;
+		const controlPlane = parsed.control_plane;
+		if (!controlPlane || typeof controlPlane !== "object" || Array.isArray(controlPlane)) {
+			return {};
+		}
+		const operator = (controlPlane as Record<string, unknown>).operator;
+		if (!operator || typeof operator !== "object" || Array.isArray(operator)) {
+			return {};
+		}
+		const operatorObj = operator as Record<string, unknown>;
+		return {
+			provider: nonEmptyString(operatorObj.provider),
+			model: nonEmptyString(operatorObj.model),
+		};
+	} catch {
+		return {};
+	}
 }
 
 async function ensureCtx(cwd: string): Promise<CliCtx> {
@@ -2281,10 +2312,17 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 				},
 			};
 		},
-		runOperatorSession: async ({ onReady }) => {
+		runOperatorSession: async ({ onReady, provider, model }) => {
 			const { serveExtensionPaths } = await import("@femtomc/mu-agent");
+			const chatArgv: string[] = [];
+			if (provider) {
+				chatArgv.push("--provider", provider);
+			}
+			if (model) {
+				chatArgv.push("--model", model);
+			}
 			return await cmdChat(
-				[],
+				chatArgv,
 				{ ...ctx, serveExtensionPaths },
 				{
 					onInteractiveReady: onReady,
@@ -2331,6 +2369,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"",
 				"Control plane configuration:",
 				"  .mu/config.json is the source of truth for adapter + assistant settings",
+				"  Attached terminal chat inherits control_plane.operator.provider/model when set",
 				"  Use `/mu-setup <adapter>` in mu serve chat for guided setup",
 				"  Use `mu control status` to inspect current config",
 				"",
@@ -2351,6 +2390,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 
 	await ensureStoreInitialized(ctx);
+	const operatorDefaults = await readServeOperatorDefaults(ctx.repoRoot);
 
 	const io = ctx.io;
 	const deps = buildServeDeps(ctx);
@@ -2425,11 +2465,17 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		}
 	};
 
-	const chatPromise = deps.runOperatorSession({ onReady: onChatReady }).catch((err) =>
-		jsonError(`chat session crashed: ${describeError(err)}`, {
-			recovery: ["mu chat --help"],
-		}),
-	);
+	const chatPromise = deps
+		.runOperatorSession({
+			onReady: onChatReady,
+			provider: operatorDefaults.provider,
+			model: operatorDefaults.model,
+		})
+		.catch((err) =>
+			jsonError(`chat session crashed: ${describeError(err)}`, {
+				recovery: ["mu chat --help"],
+			}),
+		);
 
 	let stopError: unknown | null = null;
 	let stopped = false;
