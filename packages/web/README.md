@@ -16,12 +16,12 @@ bun install
 The web UI is typically started via the main mu CLI:
 
 ```bash
-mu serve              # Start API + web UI and attach terminal operator chat
+mu serve              # Start API + web UI and attach terminal operator session
 mu serve --no-open    # Start without opening browser (headless-friendly)
 mu serve --port 8080  # Use custom shared port
 ```
 
-`mu serve` now runs the server and terminal chat together. Type `/exit` (or press Ctrl+C)
+`mu serve` now runs the server and terminal operator session together. Type `/exit` (or press Ctrl+C)
 in the terminal session to stop both.
 
 For development:

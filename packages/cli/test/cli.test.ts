@@ -116,7 +116,7 @@ async function writeConfigWithOperatorDefaults(dir: string, provider: string, mo
 	);
 }
 
-function mkMockSessionFactory(response: string) {
+function mkMockOperatorSessionFactory(response: string) {
 	let promptCalls = 0;
 	let lastPrompt = "";
 	let lastFactoryOpts: {
@@ -444,12 +444,12 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
 });
 
-test("mu chat one-shot uses operator defaults in chatSessionFactory", async () => {
+test("mu chat one-shot uses operator defaults in operatorSessionFactory", async () => {
 	const dir = await mkTempRepo();
-	const mock = mkMockSessionFactory("Hello from mu chat!");
+	const mock = mkMockOperatorSessionFactory("Hello from mu chat!");
 	const result = await run(["chat", "--message", "hello"], {
 		cwd: dir,
-		chatSessionFactory: mock.factory,
+		operatorSessionFactory: mock.factory,
 	});
 
 	expect(result.exitCode).toBe(0);
@@ -535,7 +535,7 @@ function mkCaptureIo(): {
 	};
 }
 
-test("mu serve starts server + terminal session and shuts both down on chat exit", async () => {
+test("mu serve starts server + terminal session and shuts both down on operator session exit", async () => {
 	const dir = await mkTempRepo();
 	const events: string[] = [];
 	let stopCalls = 0;
@@ -555,9 +555,9 @@ test("mu serve starts server + terminal session and shuts both down on chat exit
 				};
 			},
 			runOperatorSession: async ({ onReady }) => {
-				events.push("chat:start");
+				events.push("operator:start");
 				onReady();
-				events.push("chat:end");
+				events.push("operator:end");
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
 			registerSignalHandler: () => () => {},
@@ -570,14 +570,14 @@ test("mu serve starts server + terminal session and shuts both down on chat exit
 
 	expect(result.exitCode).toBe(0);
 	expect(stopCalls).toBe(1);
-	expect(events).toEqual(["server:start:3300", "chat:start", "chat:end", "server:stop"]);
-	expect(chunks.stderr).toContain("Chat terminal: connecting");
-	expect(chunks.stderr).toContain("Chat terminal: connected");
-	expect(chunks.stderr).toContain("Chat terminal: disconnected");
+	expect(events).toEqual(["server:start:3300", "operator:start", "operator:end", "server:stop"]);
+	expect(chunks.stderr).toContain("Operator terminal: connecting");
+	expect(chunks.stderr).toContain("Operator terminal: connected");
+	expect(chunks.stderr).toContain("Operator terminal: disconnected");
 	expect(chunks.stderr).toContain("mu server disconnected.");
 });
 
-test("mu serve passes operator provider/model defaults from .mu/config.json to terminal chat", async () => {
+test("mu serve passes operator provider/model defaults from .mu/config.json to terminal operator session", async () => {
 	const dir = await mkTempRepo();
 	await writeConfigWithOperatorDefaults(dir, "openai-codex", "gpt-5.3-codex");
 
@@ -611,7 +611,7 @@ test("mu serve passes operator provider/model defaults from .mu/config.json to t
 	expect(seenModel).toBe("gpt-5.3-codex");
 });
 
-test("mu serve surfaces chat startup failure and still stops server", async () => {
+test("mu serve surfaces operator-session startup failure and still stops server", async () => {
 	const dir = await mkTempRepo();
 	let stopCalls = 0;
 	const { io, chunks } = mkCaptureIo();
@@ -626,7 +626,7 @@ test("mu serve surfaces chat startup failure and still stops server", async () =
 				},
 			}),
 			runOperatorSession: async () => ({
-				stdout: '{"error":"interactive chat requires a TTY"}\n',
+				stdout: '{"error":"interactive operator session requires a TTY"}\n',
 				stderr: "",
 				exitCode: 1,
 			}),
@@ -640,15 +640,15 @@ test("mu serve surfaces chat startup failure and still stops server", async () =
 
 	expect(result.exitCode).toBe(1);
 	expect(stopCalls).toBe(1);
-	expect(result.stdout).toContain("interactive chat requires a TTY");
-	expect(chunks.stderr).toContain("Chat terminal: failed to connect.");
+	expect(result.stdout).toContain("interactive operator session requires a TTY");
+	expect(chunks.stderr).toContain("Operator terminal: failed to connect.");
 });
 
 test("mu serve forwards SIGINT lifecycle and exits cleanly", async () => {
 	const dir = await mkTempRepo();
 	const harness = mkSignalHarness();
 	let stopCalls = 0;
-	let chatResolveFn: (() => void) | null = null;
+	let operatorResolveFn: (() => void) | null = null;
 
 	const servePromise = run(["serve", "--port", "3302", "--no-open"], {
 		cwd: dir,
@@ -661,9 +661,9 @@ test("mu serve forwards SIGINT lifecycle and exits cleanly", async () => {
 			}),
 			runOperatorSession: ({ onReady }) => {
 				onReady();
-				// Simulate a long-running chat that resolves when we tell it to.
+				// Simulate a long-running operator session that resolves when we tell it to.
 				return new Promise((resolve) => {
-					chatResolveFn = () => resolve({ stdout: "", stderr: "", exitCode: 0 });
+					operatorResolveFn = () => resolve({ stdout: "", stderr: "", exitCode: 0 });
 				});
 			},
 			registerSignalHandler: harness.register,
@@ -675,19 +675,19 @@ test("mu serve forwards SIGINT lifecycle and exits cleanly", async () => {
 	});
 
 	await harness.ready;
-	// Simulate SIGINT; serve's signal handler races against chatPromise.
-	(chatResolveFn as (() => void) | null)?.();
+	// Simulate SIGINT; serve's signal handler races against operatorPromise.
+	(operatorResolveFn as (() => void) | null)?.();
 	harness.emit("SIGINT");
 
 	const result = await servePromise;
 	expect(stopCalls).toBe(1);
-	// Either chat finishes first (exit 0) or signal wins (exit 130) — both valid.
+	// Either operator session finishes first (exit 0) or signal wins (exit 130) — both valid.
 	expect(result.exitCode === 0 || result.exitCode === 130).toBe(true);
 });
 
-test("mu serve reports server startup errors without launching chat", async () => {
+test("mu serve reports server startup errors without launching operator session", async () => {
 	const dir = await mkTempRepo();
-	let chatCalls = 0;
+	let operatorCalls = 0;
 	const result = await run(["serve", "--port", "3303", "--no-open"], {
 		cwd: dir,
 		serveDeps: {
@@ -695,7 +695,7 @@ test("mu serve reports server startup errors without launching chat", async () =
 				throw new Error("EADDRINUSE");
 			},
 			runOperatorSession: async () => {
-				chatCalls += 1;
+				operatorCalls += 1;
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
 		},
@@ -704,7 +704,7 @@ test("mu serve reports server startup errors without launching chat", async () =
 	expect(result.exitCode).toBe(1);
 	expect(result.stdout).toContain("failed to start server");
 	expect(result.stdout).toContain("EADDRINUSE");
-	expect(chatCalls).toBe(0);
+	expect(operatorCalls).toBe(0);
 });
 
 test("mu serve releases control-plane writer lock when bind fails", async () => {
@@ -713,12 +713,12 @@ test("mu serve releases control-plane writer lock when bind fails", async () => 
 
 	const occupied = await occupyPort();
 	try {
-		let chatCalls = 0;
+		let operatorCalls = 0;
 		const result = await run(["serve", "--port", String(occupied.port), "--no-open"], {
 			cwd: dir,
 			serveDeps: {
 				runOperatorSession: async () => {
-					chatCalls += 1;
+					operatorCalls += 1;
 					return { stdout: "", stderr: "", exitCode: 0 };
 				},
 			},
@@ -726,7 +726,7 @@ test("mu serve releases control-plane writer lock when bind fails", async () => 
 
 		expect(result.exitCode).toBe(1);
 		expect(result.stdout).toContain("failed to start server");
-		expect(chatCalls).toBe(0);
+		expect(operatorCalls).toBe(0);
 
 		const lockPath = join(dir, ".mu", "control-plane", "writer.lock");
 		expect(await Bun.file(lockPath).exists()).toBe(false);

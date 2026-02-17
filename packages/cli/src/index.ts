@@ -45,7 +45,7 @@ type ServeDeps = {
 	isHeadless: () => boolean;
 };
 
-type ChatSession = {
+type OperatorSession = {
 	subscribe: (listener: (event: any) => void) => () => void;
 	prompt: (text: string, options?: { expandPromptTemplates?: boolean }) => Promise<void>;
 	dispose: () => void;
@@ -62,18 +62,18 @@ type CliCtx = {
 	paths: ReturnType<typeof getStorePaths>;
 	io?: CliIO;
 	backend?: BackendRunner;
-	chatSessionFactory?: (opts: {
+	operatorSessionFactory?: (opts: {
 		cwd: string;
 		systemPrompt: string;
 		provider?: string;
 		model?: string;
 		thinking?: string;
-	}) => Promise<ChatSession>;
+	}) => Promise<OperatorSession>;
 	serveDeps?: Partial<ServeDeps>;
 	serveExtensionPaths?: string[];
 };
 
-type ChatCommandOptions = {
+type OperatorSessionCommandOptions = {
 	onInteractiveReady?: () => void;
 };
 
@@ -374,11 +374,11 @@ function mainHelp(): string {
 		"  forum <subcmd>                        Coordination message commands",
 		"  run <prompt...>                       Start a new autonomous run",
 		"  resume <root-id>                      Resume a run",
-		"  chat [--message TEXT]                 Interactive assistant session",
+		"  chat [--message TEXT]                 Interactive operator session",
 		"  login [<provider>] [--list] [--logout] Authenticate with an AI provider",
 		"  replay <id|path> [--backend pi]       Replay a previous run log",
 		"  control <subcmd>                      Messaging integrations and identity",
-		"  serve [--port N] [--no-open]          Start API + web UI + operator chat",
+		"  serve [--port N] [--no-open]          Start API + web UI + terminal operator session",
 		"",
 		"Common workflow:",
 		'  mu issues create "Title" --parent <root-id> --role worker',
@@ -404,7 +404,7 @@ export async function run(
 		cwd?: string;
 		io?: CliIO;
 		backend?: BackendRunner;
-		chatSessionFactory?: CliCtx["chatSessionFactory"];
+		operatorSessionFactory?: CliCtx["operatorSessionFactory"];
 		serveDeps?: Partial<ServeDeps>;
 	} = {},
 ): Promise<RunResult> {
@@ -426,7 +426,7 @@ export async function run(
 		...ctx0,
 		io: opts.io,
 		backend: opts.backend,
-		chatSessionFactory: opts.chatSessionFactory,
+		operatorSessionFactory: opts.operatorSessionFactory,
 		serveDeps: opts.serveDeps,
 	};
 
@@ -451,7 +451,7 @@ export async function run(
 			return await cmdResume(rest, ctx);
 		case "chat": {
 			const { operatorExtensionPaths } = await import("@femtomc/mu-agent");
-			return await cmdChat(rest, {
+			return await cmdOperatorSession(rest, {
 				...ctx,
 				serveExtensionPaths: ctx.serveExtensionPaths ?? operatorExtensionPaths,
 			});
@@ -2318,7 +2318,11 @@ async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return ok(text.length > 0 && !text.endsWith("\n") ? `${text}\n` : text);
 }
 
-async function cmdChat(argv: string[], ctx: CliCtx, options: ChatCommandOptions = {}): Promise<RunResult> {
+async function cmdOperatorSession(
+	argv: string[],
+	ctx: CliCtx,
+	options: OperatorSessionCommandOptions = {},
+): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
 			[
@@ -2405,9 +2409,9 @@ async function cmdChat(argv: string[], ctx: CliCtx, options: ChatCommandOptions 
 	const thinking = thinkingRaw?.trim() || undefined;
 	const systemPrompt = systemPromptRaw?.trim() || DEFAULT_OPERATOR_SYSTEM_PROMPT;
 
-	const createSession = async (): Promise<ChatSession> => {
-		if (ctx.chatSessionFactory) {
-			return ctx.chatSessionFactory({ cwd: ctx.repoRoot, systemPrompt, provider, model, thinking });
+	const createOperatorSession = async (): Promise<OperatorSession> => {
+		if (ctx.operatorSessionFactory) {
+			return ctx.operatorSessionFactory({ cwd: ctx.repoRoot, systemPrompt, provider, model, thinking });
 		}
 
 		const { createMuSession } = await import("@femtomc/mu-agent");
@@ -2425,10 +2429,10 @@ async function cmdChat(argv: string[], ctx: CliCtx, options: ChatCommandOptions 
 
 	// One-shot mode: --message provided
 	if (message != null) {
-		const session = await createSession();
+		const session = await createOperatorSession();
 		try {
-			if (ctx.chatSessionFactory) {
-				// Test seam: use lightweight prompt path
+			if (ctx.operatorSessionFactory) {
+				// Test seam: use lightweight operator session path
 				let assistantText = "";
 				const unsub = session.subscribe((event: any) => {
 					if (event?.type === "message_end" && event?.message?.role === "assistant") {
@@ -2457,14 +2461,14 @@ async function cmdChat(argv: string[], ctx: CliCtx, options: ChatCommandOptions 
 
 	// Interactive mode: full pi TUI
 	if (!(process.stdin as { isTTY?: boolean }).isTTY) {
-		return jsonError("interactive chat requires a TTY; use --message for one-shot mode", {
+		return jsonError("interactive operator session requires a TTY; use --message for one-shot mode", {
 			recovery: ['mu chat --message "How do I configure the control plane?"'],
 		});
 	}
 
 	options.onInteractiveReady?.();
 
-	const session = await createSession();
+	const session = await createOperatorSession();
 	try {
 		const { InteractiveMode } = await import("@mariozechner/pi-coding-agent");
 		const mode = new InteractiveMode(session as any);
@@ -2617,15 +2621,15 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 		},
 		runOperatorSession: async ({ onReady, provider, model }) => {
 			const { operatorExtensionPaths } = await import("@femtomc/mu-agent");
-			const chatArgv: string[] = [];
+			const operatorArgv: string[] = [];
 			if (provider) {
-				chatArgv.push("--provider", provider);
+				operatorArgv.push("--provider", provider);
 			}
 			if (model) {
-				chatArgv.push("--model", model);
+				operatorArgv.push("--model", model);
 			}
-			return await cmdChat(
-				chatArgv,
+			return await cmdOperatorSession(
+				operatorArgv,
 				{ ...ctx, serveExtensionPaths: ctx.serveExtensionPaths ?? operatorExtensionPaths },
 				{
 					onInteractiveReady: onReady,
@@ -2673,7 +2677,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"Control plane configuration:",
 				"  .mu/config.json is the source of truth for adapter + assistant settings",
 				"  Attached terminal operator session inherits control_plane.operator.provider/model when set",
-				"  Use `/mu-setup <adapter>` in mu serve chat for guided setup",
+				"  Use `/mu-setup <adapter>` in mu serve operator session for guided setup",
 				"  Use `mu control status` to inspect current config",
 				"",
 				"See also: `mu chat --help`, `mu guide`",
@@ -2731,16 +2735,16 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		}
 	}
 
-	let chatConnected = false;
-	const onChatReady = (): void => {
-		if (chatConnected) {
+	let operatorConnected = false;
+	const onOperatorReady = (): void => {
+		if (operatorConnected) {
 			return;
 		}
-		chatConnected = true;
-		io?.stderr?.write("Chat terminal: connected\n");
+		operatorConnected = true;
+		io?.stderr?.write("Operator terminal: connected\n");
 	};
 
-	io?.stderr?.write("Chat terminal: connecting...\n");
+	io?.stderr?.write("Operator terminal: connecting...\n");
 
 	let resolveSignal: ((signal: NodeJS.Signals) => void) | null = null;
 	const signalPromise = new Promise<NodeJS.Signals>((resolve) => {
@@ -2768,14 +2772,14 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		}
 	};
 
-	const chatPromise = deps
+	const operatorPromise = deps
 		.runOperatorSession({
-			onReady: onChatReady,
+			onReady: onOperatorReady,
 			provider: operatorDefaults.provider,
 			model: operatorDefaults.model,
 		})
 		.catch((err) =>
-			jsonError(`chat session crashed: ${describeError(err)}`, {
+			jsonError(`operator session crashed: ${describeError(err)}`, {
 				recovery: ["mu chat --help"],
 			}),
 		);
@@ -2799,23 +2803,23 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	let result: RunResult = ok();
 	try {
 		const winner = await Promise.race([
-			chatPromise.then((chatResult) => ({ kind: "chat" as const, chatResult })),
+			operatorPromise.then((operatorResult) => ({ kind: "operator" as const, operatorResult })),
 			signalPromise.then((signal) => ({ kind: "signal" as const, signal })),
 		]);
 
 		if (winner.kind === "signal") {
-			io?.stderr?.write(`\nChat terminal: disconnected (${winner.signal}).\n`);
-			await Promise.race([chatPromise, delayMs(1_000)]);
+			io?.stderr?.write(`\nOperator terminal: disconnected (${winner.signal}).\n`);
+			await Promise.race([operatorPromise, delayMs(1_000)]);
 			result = { stdout: "", stderr: "", exitCode: signalExitCode(winner.signal) };
 		} else {
-			if (winner.chatResult.exitCode === 0) {
-				io?.stderr?.write("Chat terminal: disconnected.\n");
-			} else if (chatConnected) {
-				io?.stderr?.write("Chat terminal: disconnected (error).\n");
+			if (winner.operatorResult.exitCode === 0) {
+				io?.stderr?.write("Operator terminal: disconnected.\n");
+			} else if (operatorConnected) {
+				io?.stderr?.write("Operator terminal: disconnected (error).\n");
 			} else {
-				io?.stderr?.write("Chat terminal: failed to connect.\n");
+				io?.stderr?.write("Operator terminal: failed to connect.\n");
 			}
-			result = winner.chatResult;
+			result = winner.operatorResult;
 		}
 	} finally {
 		unregisterSignals();
@@ -3467,7 +3471,7 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	out += `  run_triggers_enabled ${operator.run_triggers_enabled}\n`;
 	out += `  provider             ${operator.provider ?? "(default)"}\n`;
 	out += `  model                ${operator.model ?? "(default)"}\n`;
-	out += "  Use `mu chat` for direct terminal assistant access.\n";
+	out += "  Use `mu chat` for direct terminal operator access.\n";
 
 	return ok(out);
 }

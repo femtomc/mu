@@ -27,7 +27,7 @@ packages/cli/dist/cli.js --help
 ### CLI Commands
 
 ```bash
-mu serve                   # Start server + operator chat + web UI (auto-inits .mu)
+mu serve                   # Start server + terminal operator session + web UI (auto-inits .mu)
 mu status                  # Show repository status
 mu issues list             # List all issues
 mu issues create "title"   # Create new issue
@@ -35,8 +35,8 @@ mu issues ready            # Show ready leaf issues
 mu forum post topic -m "message"  # Post to forum
 mu run "goal..."           # Run orchestration loop (auto-inits .mu)
 mu resume <root-id>        # Resume interrupted run
-mu chat                    # Interactive operator chat
-mu chat --message "..."    # One-shot chat turn
+mu chat                    # Interactive operator session
+mu chat --message "..."    # One-shot operator turn
 ```
 
 ### Programmatic API
@@ -55,18 +55,18 @@ The `mu serve` command starts the server with the bundled web UI and immediately
 attaches an interactive terminal operator session in the same shell:
 
 ```bash
-mu serve              # Default port: 3000 (chat + web UI)
+mu serve              # Default port: 3000 (operator session + web UI)
 mu serve --no-open    # Don't open browser
 mu serve --port 8080  # Custom port
 ```
 
-Type `/exit` in the chat prompt (or press Ctrl+C) to stop both chat and server.
+Type `/exit` in the operator prompt (or press Ctrl+C) to stop both operator session and server.
 
 In headless environments, it provides SSH port forwarding instructions.
 
-### Operator chat defaults
+### Operator session defaults
 
-`mu serve`'s attached terminal chat uses the same extension stack as `mu chat` and
+`mu serve`'s attached terminal operator session uses the same extension stack as `mu chat` and
 inherits `.mu/config.json` defaults from `control_plane.operator.provider/model`
 when present.
 

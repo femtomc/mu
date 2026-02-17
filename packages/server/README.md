@@ -115,7 +115,7 @@ Bun.serve(server);
 
 ### With Web UI (Recommended)
 
-The easiest way to run the server with the bundled web interface (and default terminal operator chat):
+The easiest way to run the server with the bundled web interface (and default terminal operator session):
 
 ```bash
 # From any mu repository
@@ -124,7 +124,7 @@ mu serve --no-open    # Skip browser auto-open (headless/SSH)
 mu serve --port 8080  # Custom shared API/web UI port
 ```
 
-Type `/exit` (or press Ctrl+C) to stop both the chat session and server.
+Type `/exit` (or press Ctrl+C) to stop both the operator session and server.
 
 ### Standalone Server
 
