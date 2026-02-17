@@ -29,23 +29,47 @@ function invariant(cond: unknown, msg: string): asserts cond {
 	if (!cond) throw new Error(msg);
 }
 
+async function resolveWorkspaceDeps(pkgDir: string): Promise<(() => Promise<void>) | null> {
+	const pkgPath = join(pkgDir, "package.json");
+	const raw = await Bun.file(pkgPath).text();
+	if (!raw.includes("workspace:")) return null;
+
+	const pkg = JSON.parse(raw);
+	for (const depKey of ["dependencies", "devDependencies", "peerDependencies"] as const) {
+		const deps = pkg[depKey];
+		if (!deps) continue;
+		for (const [name, ver] of Object.entries(deps)) {
+			if (typeof ver === "string" && ver.startsWith("workspace:")) {
+				deps[name] = pkg.version;
+			}
+		}
+	}
+	await Bun.write(pkgPath, JSON.stringify(pkg, null, "\t") + "\n");
+	return async () => { await Bun.write(pkgPath, raw); };
+}
+
 async function npmPack(pkgDir: string, packDest: string): Promise<string> {
-	const r = await runCmd("npm", ["pack", "--json", "--pack-destination", packDest], { cwd: pkgDir });
-	if (r.code !== 0) {
-		throw new Error(`npm pack failed in ${pkgDir} (code=${r.code})\n${r.stderr || r.stdout}`);
-	}
-
-	let parsed: any;
+	const restore = await resolveWorkspaceDeps(pkgDir);
 	try {
-		parsed = JSON.parse(r.stdout);
-	} catch (err) {
-		throw new Error(`npm pack did not return JSON in ${pkgDir}\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
-	}
+		const r = await runCmd("npm", ["pack", "--json", "--pack-destination", packDest], { cwd: pkgDir });
+		if (r.code !== 0) {
+			throw new Error(`npm pack failed in ${pkgDir} (code=${r.code})\n${r.stderr || r.stdout}`);
+		}
 
-	invariant(Array.isArray(parsed) && parsed.length > 0, `npm pack JSON missing entries in ${pkgDir}`);
-	const filename = parsed[0]?.filename;
-	invariant(typeof filename === "string" && filename.length > 0, `npm pack JSON missing filename in ${pkgDir}`);
-	return join(packDest, filename);
+		let parsed: any;
+		try {
+			parsed = JSON.parse(r.stdout);
+		} catch (err) {
+			throw new Error(`npm pack did not return JSON in ${pkgDir}\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+		}
+
+		invariant(Array.isArray(parsed) && parsed.length > 0, `npm pack JSON missing entries in ${pkgDir}`);
+		const filename = parsed[0]?.filename;
+		invariant(typeof filename === "string" && filename.length > 0, `npm pack JSON missing filename in ${pkgDir}`);
+		return join(packDest, filename);
+	} finally {
+		if (restore) await restore();
+	}
 }
 
 async function main(): Promise<void> {
