@@ -13,13 +13,18 @@ function streamFromLines(lines: string[]): ReadableStream<Uint8Array> {
 	});
 }
 
-async function waitFor<T>(fn: () => T, opts: { timeoutMs?: number; intervalMs?: number } = {}): Promise<T> {
+async function waitFor<T>(
+	fn: () => T | null | undefined | false,
+	opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T> {
 	const timeoutMs = opts.timeoutMs ?? 2_000;
 	const intervalMs = opts.intervalMs ?? 20;
 	const start = Date.now();
 	while (true) {
 		const value = fn();
-		if (value) return value;
+		if (value != null && value !== false) {
+			return value as T;
+		}
 		if (Date.now() - start > timeoutMs) {
 			throw new Error("timeout waiting for condition");
 		}

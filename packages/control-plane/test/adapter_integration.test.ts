@@ -1136,7 +1136,10 @@ describe("channel adapters integrated with control-plane", () => {
 			const interaction = ControlPlaneInteractionMessageSchema.parse(outbox.envelope.metadata.interaction_message);
 			expect(interaction.intent).toBe("result");
 			expect(outbox.envelope.metadata.interaction_contract_version).toBe(1);
-			expect(outbox.envelope.metadata.interaction_render_mode).toBe(expectedByChannel[outbox.envelope.channel]);
+			expect(outbox.envelope.channel in expectedByChannel).toBe(true);
+			expect(outbox.envelope.metadata.interaction_render_mode).toBe(
+				expectedByChannel[outbox.envelope.channel as keyof typeof expectedByChannel],
+			);
 			expect(outbox.envelope.body).toContain(interaction.summary);
 
 			if (outbox.envelope.channel === "telegram") {
