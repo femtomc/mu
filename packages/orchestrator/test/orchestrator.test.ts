@@ -2,10 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { FsJsonlStore, fsEventLog, getStorePaths } from "@femtomc/mu-core/node";
-import { ForumStore } from "@femtomc/mu-forum";
-import { IssueStore } from "@femtomc/mu-issue";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
 import type { BackendRunner, BackendRunOpts } from "@femtomc/mu-agent";
 import {
 	createMuResourceLoader,
@@ -14,7 +10,12 @@ import {
 	piStreamHasError,
 	systemPromptForRole,
 } from "@femtomc/mu-agent";
+import { FsJsonlStore, fsEventLog, getStorePaths } from "@femtomc/mu-core/node";
+import { ForumStore } from "@femtomc/mu-forum";
+import { IssueStore } from "@femtomc/mu-issue";
 import { DagRunner, PiStreamRenderer, resolveModelConfig } from "@femtomc/mu-orchestrator";
+import { getModels, getProviders } from "@mariozechner/pi-ai";
+import { renderAgentSelfMetadata } from "../src/dag_runner.js";
 
 const TEST_MODEL_OVERRIDES = { model: "gpt-5.3-codex" };
 
@@ -142,6 +143,21 @@ describe("PiStreamRenderer", () => {
 	});
 });
 
+describe("renderAgentSelfMetadata", () => {
+	test("renders model + thinking lines", () => {
+		expect(renderAgentSelfMetadata({ model: "gpt-5.3-codex", thinkingLevel: "xhigh" })).toBe(
+			"Model: gpt-5.3-codex\nThinking level: xhigh\n",
+		);
+	});
+
+	test("uses unknown placeholders when values are missing or blank", () => {
+		expect(renderAgentSelfMetadata({})).toBe("Model: unknown\nThinking level: unknown\n");
+		expect(renderAgentSelfMetadata({ model: "   ", thinkingLevel: "\t" })).toBe(
+			"Model: unknown\nThinking level: unknown\n",
+		);
+	});
+});
+
 describe("DagRunner", () => {
 	test("marks failure when backend doesn't close, and reopens for orchestration", async () => {
 		const { repoRoot, store, forum } = await mkTempRepo();
@@ -198,6 +214,8 @@ describe("DagRunner", () => {
 		expect(run.prompt).toContain("leaf-title");
 		expect(run.prompt).toContain("leaf-body");
 		expect(run.prompt).toContain("## Mu Run Context");
+		expect(run.prompt).toContain(`Model: ${run.model}`);
+		expect(run.prompt).toContain(`Thinking level: ${run.thinking}`);
 		expect(run.prompt).not.toContain("ORCH_TEMPLATE_MARKER");
 	});
 

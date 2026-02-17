@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { type BackendRunner, type MuRole, PiSdkBackend, roleFromTags, systemPromptForRole } from "@femtomc/mu-agent";
 import type { Issue, ValidationResult } from "@femtomc/mu-core";
 import {
 	currentRunId,
@@ -13,7 +14,6 @@ import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
 import type { ModelOverrides, ResolvedModelConfig } from "./model_resolution.js";
 import { resolveModelConfig } from "./model_resolution.js";
-import { type BackendRunner, type MuRole, PiSdkBackend, roleFromTags, systemPromptForRole } from "@femtomc/mu-agent";
 
 export type DagResult = {
 	status: "root_final" | "no_executable_leaf" | "max_steps_exhausted" | "error";
@@ -58,6 +58,11 @@ export type DagRunnerRunOpts = {
 
 type ResolvedConfig = ResolvedModelConfig;
 
+type AgentSelfMetadata = {
+	model?: string | null;
+	thinkingLevel?: string | null;
+};
+
 function roundTo(n: number, digits: number): number {
 	const f = 10 ** digits;
 	return Math.round(n * f) / f;
@@ -70,6 +75,20 @@ function relPath(repoRoot: string, path: string): string {
 	} catch {
 		return path;
 	}
+}
+
+function normalizeSelfMetadataValue(value: string | null | undefined): string {
+	if (typeof value !== "string") {
+		return "unknown";
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : "unknown";
+}
+
+export function renderAgentSelfMetadata(meta: AgentSelfMetadata): string {
+	const model = normalizeSelfMetadataValue(meta.model);
+	const thinkingLevel = normalizeSelfMetadataValue(meta.thinkingLevel);
+	return `Model: ${model}\nThinking level: ${thinkingLevel}\n`;
 }
 
 export class DagRunner {
@@ -106,6 +125,7 @@ export class DagRunner {
 		rootId: string,
 		step: number,
 		attempt: number = 1,
+		selfMetadata: AgentSelfMetadata = {},
 	) {
 		let rendered = issue.title ?? "";
 		if (issue.body) {
@@ -117,6 +137,7 @@ export class DagRunner {
 		if (runId) {
 			rendered += `Run: ${runId}\n`;
 		}
+		rendered += renderAgentSelfMetadata(selfMetadata);
 		if (attempt > 1) {
 			rendered += `\nAttempt: ${attempt} (previous attempt failed — check \`mu forum read issue:${issue.id}\` for context)\n`;
 		}
@@ -132,7 +153,10 @@ export class DagRunner {
 	): Promise<{ exitCode: number; elapsedS: number }> {
 		const role: MuRole = roleFromTags(issue.tags);
 		const logSuffix = opts.logSuffix ?? "";
-		const rendered = await this.#renderUserPrompt(issue, rootId, step, opts.attempt ?? 1);
+		const rendered = await this.#renderUserPrompt(issue, rootId, step, opts.attempt ?? 1, {
+			model: cfg.model,
+			thinkingLevel: cfg.reasoning,
+		});
 		const systemPrompt = await systemPromptForRole(role, this.#repoRoot);
 
 		const { logsDir } = getStorePaths(this.#repoRoot);
