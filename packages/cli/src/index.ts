@@ -1,6 +1,7 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import chalk from "chalk";
 import type { BackendRunner } from "@femtomc/mu-agent";
 import { DEFAULT_OPERATOR_SYSTEM_PROMPT } from "@femtomc/mu-agent";
 import type { Issue } from "@femtomc/mu-core";
@@ -89,12 +90,15 @@ function formatRecovery(recovery?: readonly string[] | null): string {
 	if (!recovery || recovery.length === 0) {
 		return "";
 	}
-	return ` Recovery: ${recovery.join(" | ")}`;
+	return `\n${chalk.dim("Try:")} ${recovery.map((r) => chalk.cyan(r)).join(chalk.dim(" | "))}`;
 }
 
 function jsonError(msg: string, opts: { pretty?: boolean; recovery?: readonly string[] } = {}): RunResult {
 	const pretty = opts.pretty ?? false;
-	return { stdout: jsonText({ error: `${msg}${formatRecovery(opts.recovery)}` }, pretty), stderr: "", exitCode: 1 };
+	if (pretty || !process.stdout.isTTY) {
+		return { stdout: jsonText({ error: `${msg}` }, pretty), stderr: "", exitCode: 1 };
+	}
+	return { stdout: "", stderr: `${chalk.red("error:")} ${msg}${formatRecovery(opts.recovery)}\n`, exitCode: 1 };
 }
 
 function hasHelpFlag(argv: readonly string[]): boolean {
@@ -343,50 +347,35 @@ async function resolveIssueId(
 }
 
 function mainHelp(): string {
+	const cmd = (s: string) => chalk.cyan(s);
+	const dim = (s: string) => chalk.dim(s);
+	const h = (s: string) => chalk.bold(s);
 	return [
-		"mu - personal agent for technical work",
+		`${chalk.bold.magenta("mu")} ${dim("— personal agent for technical work")}`,
 		"",
-		"Usage:",
-		"  mu <command> [args...]",
+		`${h("Usage:")}  mu ${dim("<command> [args...]")}`,
 		"",
-		"Getting started (from any subdirectory inside a git repo):",
-		'  1) mu run "Break down and execute this goal"   # auto-creates .mu/',
-		"  2) mu status",
-		"  3) mu issues ready --root <root-id>",
+		h("Getting started:"),
+		`  ${dim("1)")} mu run ${dim('"Break down and execute this goal"')}`,
+		`  ${dim("2)")} mu status`,
+		`  ${dim("3)")} mu issues ready --root ${dim("<root-id>")}`,
 		"",
-		"Store discovery:",
-		"  mu walks upward to the nearest directory containing .git.",
-		"  State is stored at <repo-root>/.mu/",
+		h("Commands:"),
+		`  ${cmd("guide")}                                 ${dim("In-CLI guide")}`,
+		`  ${cmd("status")} ${dim("[--json] [--pretty]")}            Show repo and work status`,
+		`  ${cmd("store")} ${dim("<subcmd>")}                        Inspect .mu store files and logs`,
+		`  ${cmd("issues")} ${dim("<subcmd>")}                       Work item commands`,
+		`  ${cmd("forum")} ${dim("<subcmd>")}                        Coordination message commands`,
+		`  ${cmd("run")} ${dim("<prompt...>")}                       Start a new autonomous run`,
+		`  ${cmd("resume")} ${dim("<root-id>")}                      Resume a run`,
+		`  ${cmd("chat")} ${dim("[--message TEXT]")}                 Interactive operator session`,
+		`  ${cmd("login")} ${dim("[<provider>] [--list]")}           Authenticate with an AI provider`,
+		`  ${cmd("replay")} ${dim("<id|path>")}                      Replay a previous run log`,
+		`  ${cmd("control")} ${dim("<subcmd>")}                      Messaging integrations and identity`,
+		`  ${cmd("serve")} ${dim("[--port N] [--no-open]")}          Start API + web UI + operator session`,
 		"",
-		"Commands:",
-		"  guide                                 In-CLI guide",
-		"  status [--json] [--pretty]            Show repo and work status",
-		"  store <subcmd>                        Inspect .mu store files and logs",
-		"  issues <subcmd>                       Work item commands",
-		"  forum <subcmd>                        Coordination message commands",
-		"  run <prompt...>                       Start a new autonomous run",
-		"  resume <root-id>                      Resume a run",
-		"  chat [--message TEXT]                 Interactive operator session",
-		"  login [<provider>] [--list] [--logout] Authenticate with an AI provider",
-		"  replay <id|path> [--backend pi]       Replay a previous run log",
-		"  control <subcmd>                      Messaging integrations and identity",
-		"  serve [--port N] [--no-open]          Start API + web UI + terminal operator session",
-		"",
-		"Common workflow:",
-		'  mu issues create "Title" --parent <root-id> --role worker',
-		"  mu issues get <id-or-prefix>",
-		"  mu issues dep <src-id> blocks <dst-id>",
-		"  mu issues claim <id-or-prefix>",
-		"  mu issues close <id-or-prefix> --outcome success",
-		'  mu forum post issue:<id> -m "status update" --author worker',
-		"",
-		"When commands fail:",
-		"  1) mu <command> --help",
-		"  2) mu issues list --limit 20",
-		"  3) mu issues ready --root <root-id>",
-		"  4) mu replay <root-id>/<issue-id>",
-		"",
-		"Run `mu guide` for the full in-CLI guide.",
+		`${dim("Running")} ${cmd("mu")} ${dim("with no arguments starts")} ${cmd("mu serve")}${dim(".")}`,
+		`${dim("Run")} ${cmd("mu guide")} ${dim("for the full in-CLI guide.")}`,
 	].join("\n");
 }
 
@@ -419,7 +408,7 @@ export async function run(
 	if (argv.includes("--version")) {
 		const pkgPath = join(dirname(new URL(import.meta.url).pathname), "..", "package.json");
 		const { version } = JSON.parse(await Bun.file(pkgPath).text()) as { version: string };
-		return ok(`mu ${version}\n`);
+		return ok(`${chalk.bold.magenta("mu")} ${chalk.dim(version)}\n`);
 	}
 
 	const cmd = argv[0]!;
@@ -531,22 +520,24 @@ async function cmdStatus(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		return ok(jsonText(payload, pretty));
 	}
 
-	let out = `Repo: ${ctx.repoRoot}\n`;
-	out += `Root issues: ${roots.length}\n`;
-	out += `Open issues: ${openIssues.length}\n`;
-	out += `Ready issues: ${ready.length}\n`;
+	const label = (s: string) => chalk.bold(s);
+	const val = (s: string | number) => chalk.cyan(String(s));
+	const dim = (s: string) => chalk.dim(s);
+
+	let out = `${label("Repo:")} ${val(ctx.repoRoot)}\n`;
+	out += `${label("Root issues:")} ${val(roots.length)}  ${label("Open:")} ${val(openIssues.length)}  ${label("Ready:")} ${val(ready.length)}\n`;
 
 	if (ready.length > 0) {
-		out += "\nReady:\n";
+		out += `\n${label("Ready:")}\n`;
 		for (const issue of ready.slice(0, 10)) {
-			out += `  ${issue.id} [p=${issue.priority ?? 3}] ${String(issue.title ?? "").slice(0, 80)}\n`;
+			out += `  ${chalk.yellow(issue.id)} ${dim(`[p=${issue.priority ?? 3}]`)} ${String(issue.title ?? "").slice(0, 80)}\n`;
 		}
 	}
 
 	if (topics.length > 0) {
-		out += "\nRecent issue topics:\n";
+		out += `\n${label("Recent issue topics:")}\n`;
 		for (const topic of topics.slice(0, 10)) {
-			out += `  ${topic.topic} (${topic.messages}) last_at=${topic.last_at}\n`;
+			out += `  ${chalk.yellow(topic.topic)} ${dim(`(${topic.messages})`)} ${dim(`last_at=${topic.last_at}`)}\n`;
 		}
 	}
 

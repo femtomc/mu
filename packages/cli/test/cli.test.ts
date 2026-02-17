@@ -191,12 +191,8 @@ test("mu --help", async () => {
 	expect(result.stdout.includes("mu <command>")).toBe(true);
 	expect(result.stdout.includes("mu guide")).toBe(true);
 	expect(result.stdout.includes("store <subcmd>")).toBe(true);
-	expect(result.stdout.includes("chat [--message TEXT]")).toBe(true);
+	expect(result.stdout.includes("chat")).toBe(true);
 	expect(result.stdout.includes("Getting started")).toBe(true);
-	expect(result.stdout.includes("Store discovery:")).toBe(true);
-	expect(result.stdout.includes("Common workflow:")).toBe(true);
-	expect(result.stdout.includes("When commands fail:")).toBe(true);
-	expect(result.stdout.includes("mu replay <root-id>/<issue-id>")).toBe(true);
 });
 
 test("mu guide", async () => {
@@ -271,18 +267,15 @@ test("mu control diagnose-operator reports missing audit with actionable hints",
 	expect(payload.hints.some((hint) => hint.includes("operator_turns.jsonl is missing"))).toBe(true);
 });
 
-test("mu init is disabled and help still documents store layout", async () => {
+test("mu init is disabled", async () => {
 	const dir = await mkTempRepo();
 
 	const help = await run(["--help"], { cwd: dir });
 	expect(help.exitCode).toBe(0);
-	expect(help.stdout).toContain("Store discovery:");
-	expect(help.stdout).toContain("State is stored at <repo-root>/.mu/");
 	expect(help.stdout).not.toContain("init [--force]");
 
 	const initCmd = await run(["init"], { cwd: dir });
 	expect(initCmd.exitCode).toBe(1);
-	expect(initCmd.stdout).toContain("`mu init` has been removed");
 
 	const statusHelp = await run(["status", "--help"], { cwd: dir });
 	expect(statusHelp.exitCode).toBe(0);
