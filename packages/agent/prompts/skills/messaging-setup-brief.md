@@ -1,24 +1,22 @@
-Help me set up {{adapter_name}} messaging integration for mu control-plane.
-Treat diagnostics below as authoritative and guide me step-by-step.
+Set up {{adapter_name}} messaging for mu control-plane. You have Bash, Read, Write, and Edit tools — use them to do the setup yourself.
 
-[Live diagnostics]
-action: {{action}}
+[Diagnostics]
 state: {{state}}
-support: {{support}}
+config: {{config_path}}
 route: {{route}}
-expected webhook URL: {{webhook_url}}
-missing required config fields: {{missing_fields}}
-next step: {{next_step}}
+webhook URL: {{webhook_url}}
+missing fields: {{missing_fields}}
 
-[Provider setup checklist]
-{{provider_steps}}
-
-[Current config field status]
+[Config field status]
 {{field_status}}
 
-{{notes}}
+[Provider setup steps]
+{{provider_steps}}
 
-[How you should respond]
-1) Ask for any missing values (secrets, public base URL, etc).
-2) Give exact provider-console steps and copy/paste commands.
-3) Finish with verification instructions using: {{verify_command}}
+[Instructions]
+1) Ask the user ONLY for values you cannot generate: secrets from external providers (e.g. bot tokens from @BotFather), public base URL.
+2) Generate values you CAN create yourself (e.g. webhook_secret — run `openssl rand -hex 32` via Bash).
+3) Use your tools to write the config file directly, call provider APIs (curl via Bash), and complete setup end-to-end.
+4) After setup, run {{verify_command}} to confirm everything works.
+
+Do NOT give the user copy-paste commands. Do the work yourself.

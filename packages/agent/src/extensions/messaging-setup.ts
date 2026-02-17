@@ -953,29 +953,24 @@ function adapterFieldStatusLines(adapter: AdapterConfig, check: AdapterCheck): s
 }
 
 function buildAgentSetupPrompt(opts: {
-	action: SetupAction;
 	check: AdapterCheck;
 	plan: AdapterPlan;
+	configPath: string | null;
 	publicBaseUrl?: string;
 }): string {
 	const adapter = adapterById(opts.check.id);
 	const normalizedBase = normalizePublicBaseUrl(opts.publicBaseUrl);
 	const webhookUrl = normalizedBase ? `${normalizedBase}${opts.plan.route}` : opts.plan.webhook_url;
 	const verifyFlag = normalizedBase ? ` --public-base-url ${normalizedBase}` : "";
-	const notesBlock =
-		opts.check.notes.length > 0 ? `[Notes]\n${opts.check.notes.map((n) => `- ${n}`).join("\n")}` : "";
 	return interpolateTemplate(MESSAGING_SETUP_BRIEF_TEMPLATE, {
 		adapter_name: adapter.name,
-		action: opts.action,
 		state: opts.check.state,
-		support: opts.check.support,
+		config_path: opts.configPath ?? ".mu/config.json",
 		route: opts.plan.route,
 		webhook_url: webhookUrl ?? "(need public base URL)",
 		missing_fields: opts.check.missing.join(", ") || "(none)",
-		next_step: opts.check.next_step,
 		provider_steps: adapter.providerSetupSteps.map((step, index) => `${index + 1}. ${step}`).join("\n"),
 		field_status: adapterFieldStatusLines(adapter, opts.check).join("\n"),
-		notes: notesBlock,
 		verify_command: `/mu-setup verify ${adapter.id}${verifyFlag}`,
 	});
 }
@@ -997,6 +992,7 @@ async function maybeDispatchAgentSetupBrief(opts: {
 	ctx: ExtensionCommandContext;
 	parsed: ParsedSetupCommand;
 	checks: AdapterCheck[];
+	runtime: RuntimeState;
 }): Promise<boolean> {
 	if (!opts.parsed.adapterId) return false;
 	if (!shouldDispatchSetupToAgent(opts.parsed)) return false;
@@ -1004,9 +1000,9 @@ async function maybeDispatchAgentSetupBrief(opts: {
 	if (!check) return false;
 	const plan = buildPlan(check, opts.parsed.publicBaseUrl);
 	const prompt = buildAgentSetupPrompt({
-		action: opts.parsed.action,
 		check,
 		plan,
+		configPath: opts.runtime.configPath,
 		publicBaseUrl: opts.parsed.publicBaseUrl,
 	});
 	dispatchSetupPromptToAgent(opts.pi, opts.ctx, prompt);
@@ -1147,9 +1143,9 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 						}
 						const plan = buildPlan(check, params.public_base_url);
 						const brief = buildAgentSetupPrompt({
-							action: params.action,
 							check,
 							plan,
+							configPath: runtime.configPath,
 							publicBaseUrl: params.public_base_url,
 						});
 						return textResult(brief, { checks, runtime, adapter: adapterId, plan });
@@ -1261,7 +1257,7 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 				}
 				case "preflight": {
 					const { checks, runtime } = await collectChecksCached(0);
-					if (await maybeDispatchAgentSetupBrief({ pi, ctx, parsed, checks })) {
+					if (await maybeDispatchAgentSetupBrief({ pi, ctx, parsed, checks, runtime })) {
 						if (runtime.fetchError) {
 							ctx.ui.notify(`runtime note: ${runtime.fetchError}`, "warning");
 						}
@@ -1274,7 +1270,7 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 				}
 				case "guide": {
 					const { checks, runtime } = await collectChecksCached(0);
-					if (await maybeDispatchAgentSetupBrief({ pi, ctx, parsed, checks })) {
+					if (await maybeDispatchAgentSetupBrief({ pi, ctx, parsed, checks, runtime })) {
 						if (runtime.fetchError) {
 							ctx.ui.notify(`runtime note: ${runtime.fetchError}`, "warning");
 						}
@@ -1289,8 +1285,8 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 					return;
 				}
 				case "plan": {
-					const { checks } = await collectChecksCached(0);
-					if (await maybeDispatchAgentSetupBrief({ pi, ctx, parsed, checks })) {
+					const { checks, runtime } = await collectChecksCached(0);
+					if (await maybeDispatchAgentSetupBrief({ pi, ctx, parsed, checks, runtime })) {
 						await refreshMessagingStatus(ctx);
 						return;
 					}
@@ -1314,8 +1310,8 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 					return;
 				}
 				case "verify": {
-					const { checks } = await collectChecksCached(0);
-					if (await maybeDispatchAgentSetupBrief({ pi, ctx, parsed, checks })) {
+					const { checks, runtime } = await collectChecksCached(0);
+					if (await maybeDispatchAgentSetupBrief({ pi, ctx, parsed, checks, runtime })) {
 						await refreshMessagingStatus(ctx);
 						return;
 					}

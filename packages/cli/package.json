@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu",
-	"version": "26.2.49",
+	"version": "26.2.50",
 	"description": "Personal agent CLI for technical work.",
 	"keywords": [
 		"mu",
@@ -25,13 +25,13 @@
 		"dist/**"
 	],
 	"dependencies": {
-		"@femtomc/mu-agent": "26.2.49",
-		"@femtomc/mu-core": "26.2.49",
-		"@femtomc/mu-forum": "26.2.49",
-		"@femtomc/mu-issue": "26.2.49",
-		"@femtomc/mu-orchestrator": "26.2.49",
-		"@femtomc/mu-control-plane": "26.2.49",
-		"@femtomc/mu-server": "26.2.49",
+		"@femtomc/mu-agent": "26.2.50",
+		"@femtomc/mu-core": "26.2.50",
+		"@femtomc/mu-forum": "26.2.50",
+		"@femtomc/mu-issue": "26.2.50",
+		"@femtomc/mu-orchestrator": "26.2.50",
+		"@femtomc/mu-control-plane": "26.2.50",
+		"@femtomc/mu-server": "26.2.50",
 		"@mariozechner/pi-coding-agent": "^0.52.12",
 		"@mariozechner/pi-ai": "^0.52.12"
 	}
