@@ -1,4 +1,10 @@
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import {
+	createBashTool,
+	createEditTool,
+	createReadTool,
+	createWriteTool,
+} from "@mariozechner/pi-coding-agent";
 import { createMuResourceLoader, resolveModel } from "./pi_sdk_backend.js";
 
 export type CreateMuSessionOpts = {
@@ -41,9 +47,17 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 	});
 	await resourceLoader.reload();
 
+	const tools = [
+		createBashTool(opts.cwd),
+		createReadTool(opts.cwd),
+		createWriteTool(opts.cwd),
+		createEditTool(opts.cwd),
+	];
+
 	const { session } = await createAgentSession({
 		cwd: opts.cwd,
 		model,
+		tools,
 		thinkingLevel: (opts.thinking ?? "minimal") as ThinkingLevel,
 		sessionManager: SessionManager.inMemory(opts.cwd),
 		settingsManager,
