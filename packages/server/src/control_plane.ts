@@ -289,6 +289,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 	let pipeline: ControlPlaneCommandPipeline | null = null;
 	let runSupervisor: ControlPlaneRunSupervisor | null = null;
 	let drainInterval: ReturnType<typeof setInterval> | null = null;
+	const adapterMap = new Map<string, { adapter: ControlPlaneAdapter; info: ActiveAdapter }>();
 
 	try {
 		await runtime.start();
@@ -425,7 +426,6 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		await pipeline.start();
 
 		let telegramBotToken: string | null = null;
-		const adapterMap = new Map<string, { adapter: ControlPlaneAdapter; info: ActiveAdapter }>();
 
 		for (const d of detected) {
 			let adapter: ControlPlaneAdapter;
@@ -451,6 +451,10 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 						outbox,
 						webhookSecret: d.webhookSecret,
 						botUsername: d.botUsername ?? undefined,
+						deferredIngress: true,
+						onOutboxEnqueued: () => {
+							scheduleOutboxDrainRef?.();
+						},
 					});
 					if (d.botToken) {
 						telegramBotToken = d.botToken;
@@ -622,6 +626,13 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 					clearInterval(drainInterval);
 					drainInterval = null;
 				}
+				for (const { adapter } of adapterMap.values()) {
+					try {
+						await adapter.stop?.();
+					} catch {
+						// Best effort adapter cleanup.
+					}
+				}
 				await runSupervisor?.stop();
 				try {
 					await pipeline?.stop();
@@ -634,6 +645,13 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		if (drainInterval) {
 			clearInterval(drainInterval);
 			drainInterval = null;
+		}
+		for (const { adapter } of adapterMap.values()) {
+			try {
+				await adapter.stop?.();
+			} catch {
+				// Best effort cleanup.
+			}
 		}
 		try {
 			await runSupervisor?.stop();

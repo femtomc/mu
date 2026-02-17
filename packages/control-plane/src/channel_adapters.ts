@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { AdapterAuditLog } from "./adapter_audit.js";
 import {
 	type AdapterIngressResult,
 	type ControlPlaneAdapter,
@@ -6,10 +8,12 @@ import {
 } from "./adapter_contract.js";
 import type { CommandPipelineResult, ControlPlaneCommandPipeline } from "./command_pipeline.js";
 import { type CommandRecord, correlationFromCommandRecord } from "./command_record.js";
+import type { CommandState } from "./command_state.js";
 import { assuranceTierForChannel, type Channel, ChannelSchema } from "./identity_store.js";
 import { formatAdapterAckMessage, presentPipelineResultMessage } from "./interaction_contract.js";
 import { type AssuranceTier, type InboundEnvelope, InboundEnvelopeSchema, type OutboundEnvelope } from "./models.js";
 import type { ControlPlaneOutbox, OutboxRecord } from "./outbox.js";
+import { TelegramIngressQueue, type TelegramIngressRecord } from "./telegram_ingress_queue.js";
 
 function sha256Hex(input: string): string {
 	const hasher = new Bun.CryptoHasher("sha256");
@@ -285,6 +289,101 @@ function outboundKindForPipelineResult(result: CommandPipelineResult): OutboundE
 	}
 }
 
+function pipelineResultErrorCode(result: CommandPipelineResult): string | null {
+	switch (result.kind) {
+		case "denied":
+		case "invalid":
+		case "noop":
+			return result.reason;
+		case "failed":
+			return result.reason;
+		default:
+			return null;
+	}
+}
+
+function syntheticStateForPipelineResult(result: CommandPipelineResult): CommandState {
+	switch (result.kind) {
+		case "awaiting_confirmation":
+			return "awaiting_confirmation";
+		case "deferred":
+			return "deferred";
+		case "cancelled":
+			return "cancelled";
+		case "expired":
+			return "expired";
+		case "failed":
+		case "denied":
+		case "invalid":
+			return "failed";
+		default:
+			return "completed";
+	}
+}
+
+async function enqueueFallbackPipelineResult(opts: {
+	outbox: ControlPlaneOutbox;
+	inbound: InboundEnvelope;
+	result: CommandPipelineResult;
+	nowMs: number;
+	metadata?: Record<string, unknown>;
+}): Promise<OutboxRecord | null> {
+	const presented = presentPipelineResultMessage(opts.result);
+	const syntheticState = syntheticStateForPipelineResult(opts.result);
+	const syntheticCommandId = `fb-${sha256Hex(opts.inbound.request_id).slice(0, 24)}`;
+	const envelope: OutboundEnvelope = {
+		v: 1,
+		ts_ms: opts.nowMs,
+		channel: opts.inbound.channel,
+		channel_tenant_id: opts.inbound.channel_tenant_id,
+		channel_conversation_id: opts.inbound.channel_conversation_id,
+		request_id: opts.inbound.request_id,
+		response_id: `resp-${sha256Hex(`${opts.inbound.request_id}:fallback:${opts.nowMs}`).slice(0, 20)}`,
+		kind: outboundKindForPipelineResult(opts.result),
+		body: presented.compact,
+		correlation: {
+			command_id: syntheticCommandId,
+			idempotency_key: opts.inbound.idempotency_key,
+			request_id: opts.inbound.request_id,
+			channel: opts.inbound.channel,
+			channel_tenant_id: opts.inbound.channel_tenant_id,
+			channel_conversation_id: opts.inbound.channel_conversation_id,
+			actor_id: opts.inbound.actor_id,
+			actor_binding_id: opts.inbound.actor_binding_id,
+			assurance_tier: opts.inbound.assurance_tier,
+			repo_root: opts.inbound.repo_root,
+			scope_required: opts.inbound.scope_required,
+			scope_effective: opts.inbound.scope_effective,
+			target_type: opts.inbound.target_type,
+			target_id: opts.inbound.target_id,
+			attempt: 1,
+			state: syntheticState,
+			error_code: pipelineResultErrorCode(opts.result),
+			operator_session_id: null,
+			operator_turn_id: null,
+			cli_invocation_id: null,
+			cli_command_kind: null,
+			run_root_id: null,
+		},
+		metadata: {
+			pipeline_result_kind: opts.result.kind,
+			interaction_contract_version: presented.message.v,
+			interaction_message: presented.message,
+			interaction_render_mode: "compact",
+			synthetic_correlation: true,
+			...(opts.metadata ?? {}),
+		},
+	};
+
+	const dedupeKey = `fallback:${opts.inbound.channel}:${opts.inbound.request_id}`;
+	const decision = await opts.outbox.enqueue({
+		dedupeKey,
+		envelope,
+		nowMs: opts.nowMs,
+	});
+	return decision.record;
+}
+
 async function enqueueDeferredPipelineResult(opts: {
 	outbox: ControlPlaneOutbox;
 	result: CommandPipelineResult;
@@ -405,6 +504,7 @@ async function runPipelineForInbound(opts: {
 	inbound: InboundEnvelope;
 	nowMs: number;
 	metadata?: Record<string, unknown>;
+	forceOutbox?: boolean;
 }): Promise<AdapterPipelineDispatchResult> {
 	const pipelineResult = await opts.pipeline.handleInbound(opts.inbound);
 	let outboxRecord = await enqueueDeferredPipelineResult({
@@ -416,6 +516,16 @@ async function runPipelineForInbound(opts: {
 
 	if (!outboxRecord && opts.inbound.channel === "telegram" && pipelineResult.kind === "operator_response") {
 		outboxRecord = await enqueueTelegramOperatorResponse({
+			outbox: opts.outbox,
+			inbound: opts.inbound,
+			result: pipelineResult,
+			nowMs: opts.nowMs,
+			metadata: opts.metadata,
+		});
+	}
+
+	if (!outboxRecord && opts.forceOutbox) {
+		outboxRecord = await enqueueFallbackPipelineResult({
 			outbox: opts.outbox,
 			inbound: opts.inbound,
 			result: pipelineResult,
@@ -843,6 +953,9 @@ export type TelegramControlPlaneAdapterOpts = {
 	tenantId?: string;
 	botUsername?: string | null;
 	nowMs?: () => number;
+	deferredIngress?: boolean;
+	ingressMaxAttempts?: number;
+	onOutboxEnqueued?: () => void;
 };
 
 export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
@@ -853,6 +966,16 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 	readonly #tenantId: string;
 	readonly #botUsername: string | null;
 	readonly #nowMs: () => number;
+	readonly #deferredIngress: boolean;
+	readonly #ingressMaxAttempts: number;
+	readonly #onOutboxEnqueued: (() => void) | null;
+	readonly #ingressQueue: TelegramIngressQueue | null;
+	readonly #adapterAudit: AdapterAuditLog | null;
+	#ingressDraining = false;
+	#ingressDrainRequested = false;
+	#ingressRetryTimer: ReturnType<typeof setTimeout> | null = null;
+	#ingressRetryTimerAtMs: number | null = null;
+	#stopped = false;
 
 	public constructor(opts: TelegramControlPlaneAdapterOpts) {
 		this.#pipeline = opts.pipeline;
@@ -861,6 +984,22 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		this.#tenantId = opts.tenantId ?? "telegram-bot";
 		this.#botUsername = opts.botUsername?.trim().replace(/^@/, "") || null;
 		this.#nowMs = opts.nowMs ?? Date.now;
+		this.#deferredIngress = opts.deferredIngress ?? false;
+		this.#ingressMaxAttempts = Math.max(1, Math.trunc(opts.ingressMaxAttempts ?? 5));
+		this.#onOutboxEnqueued = opts.onOutboxEnqueued ?? null;
+		if (this.#deferredIngress) {
+			this.#ingressQueue = new TelegramIngressQueue(
+				join(this.#pipeline.runtime.paths.controlPlaneDir, "telegram_ingress.jsonl"),
+				{
+					nowMs: this.#nowMs,
+				},
+			);
+			this.#adapterAudit = new AdapterAuditLog(this.#pipeline.runtime.paths.adapterAuditPath);
+			this.#requestIngressDrain();
+		} else {
+			this.#ingressQueue = null;
+			this.#adapterAudit = null;
+		}
 	}
 
 	#verifyRequest(req: Request): { ok: true } | { ok: false; status: number; reason: string } {
@@ -872,6 +1011,181 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			return { ok: false, status: 401, reason: "invalid_telegram_secret_token" };
 		}
 		return { ok: true };
+	}
+
+	#clearIngressRetryTimer(): void {
+		if (!this.#ingressRetryTimer) {
+			return;
+		}
+		clearTimeout(this.#ingressRetryTimer);
+		this.#ingressRetryTimer = null;
+		this.#ingressRetryTimerAtMs = null;
+	}
+
+	#scheduleIngressDrainAt(atMs: number): void {
+		if (!this.#deferredIngress || this.#stopped) {
+			return;
+		}
+		const nowMs = Math.trunc(this.#nowMs());
+		if (atMs <= nowMs) {
+			this.#requestIngressDrain();
+			return;
+		}
+		if (this.#ingressRetryTimer && this.#ingressRetryTimerAtMs != null && this.#ingressRetryTimerAtMs <= atMs) {
+			return;
+		}
+		this.#clearIngressRetryTimer();
+		this.#ingressRetryTimerAtMs = atMs;
+		this.#ingressRetryTimer = setTimeout(() => {
+			this.#ingressRetryTimer = null;
+			this.#ingressRetryTimerAtMs = null;
+			this.#requestIngressDrain();
+		}, atMs - nowMs);
+	}
+
+	#requestIngressDrain(): void {
+		if (!this.#deferredIngress || this.#stopped) {
+			return;
+		}
+		queueMicrotask(() => {
+			void this.#drainIngressQueue();
+		});
+	}
+
+	async #appendAudit(
+		inbound: InboundEnvelope,
+		event: string,
+		reason: string | null,
+		metadata: Record<string, unknown>,
+	): Promise<void> {
+		if (!this.#adapterAudit) {
+			return;
+		}
+		try {
+			await this.#adapterAudit.append({
+				ts_ms: Math.trunc(this.#nowMs()),
+				channel: inbound.channel,
+				request_id: inbound.request_id,
+				delivery_id: inbound.delivery_id,
+				channel_tenant_id: inbound.channel_tenant_id,
+				channel_conversation_id: inbound.channel_conversation_id,
+				actor_id: inbound.actor_id,
+				command_text: inbound.command_text,
+				event,
+				reason,
+				metadata,
+			});
+		} catch {
+			// Adapter audit should never break command handling.
+		}
+	}
+
+	async #processDeferredIngressRecord(record: TelegramIngressRecord): Promise<void> {
+		const ingressQueue = this.#ingressQueue;
+		if (!ingressQueue) {
+			return;
+		}
+		const startedAtMs = Math.trunc(this.#nowMs());
+		await this.#appendAudit(record.inbound, "telegram.ingress.process.start", null, {
+			ingress_id: record.ingress_id,
+			attempt: record.attempt_count + 1,
+			next_attempt_at_ms: record.next_attempt_at_ms,
+		});
+
+		try {
+			const nowMs = Math.trunc(this.#nowMs());
+			const dispatched = await runPipelineForInbound({
+				pipeline: this.#pipeline,
+				outbox: this.#outbox,
+				inbound: record.inbound,
+				nowMs,
+				metadata: {
+					adapter: this.spec.channel,
+					source: "telegram:deferred_ingress",
+					delivery_id: record.inbound.delivery_id,
+					ingress_id: record.ingress_id,
+				},
+				forceOutbox: true,
+			});
+			await ingressQueue.markCompleted(record.ingress_id, Math.trunc(this.#nowMs()));
+			if (dispatched.outboxRecord) {
+				this.#onOutboxEnqueued?.();
+			}
+			await this.#appendAudit(record.inbound, "telegram.ingress.process.completed", null, {
+				ingress_id: record.ingress_id,
+				pipeline_result_kind: dispatched.pipelineResult.kind,
+				outbox_enqueued: dispatched.outboxRecord != null,
+				elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - startedAtMs),
+			});
+		} catch (err) {
+			const errorMessage = err instanceof Error && err.message.length > 0 ? err.message : "telegram_ingress_processing_error";
+			const updated = await ingressQueue.markFailure(record.ingress_id, {
+				error: errorMessage,
+				nowMs: Math.trunc(this.#nowMs()),
+			});
+			if (updated?.state === "pending") {
+				this.#scheduleIngressDrainAt(updated.next_attempt_at_ms);
+			}
+			await this.#appendAudit(
+				record.inbound,
+				updated?.state === "dead_letter" ? "telegram.ingress.process.dead_letter" : "telegram.ingress.process.retry",
+				errorMessage,
+				{
+					ingress_id: record.ingress_id,
+					attempt_count: updated?.attempt_count ?? record.attempt_count + 1,
+					next_attempt_at_ms: updated?.next_attempt_at_ms ?? null,
+					elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - startedAtMs),
+				},
+			);
+		}
+	}
+
+	async #drainIngressQueue(): Promise<void> {
+		const ingressQueue = this.#ingressQueue;
+		if (!this.#deferredIngress || this.#stopped || !ingressQueue) {
+			return;
+		}
+		if (this.#ingressDraining) {
+			this.#ingressDrainRequested = true;
+			return;
+		}
+
+		this.#ingressDraining = true;
+		try {
+			do {
+				this.#ingressDrainRequested = false;
+				for (;;) {
+					if (this.#stopped) {
+						return;
+					}
+					const due = await ingressQueue.pendingDue(Math.trunc(this.#nowMs()), 20);
+					if (due.length === 0) {
+						break;
+					}
+					for (const record of due) {
+						if (this.#stopped) {
+							return;
+						}
+						await this.#processDeferredIngressRecord(record);
+					}
+					if (due.length < 20) {
+						break;
+					}
+				}
+				const nextPendingAttemptAtMs = await ingressQueue.nextPendingAttemptAtMs();
+				if (nextPendingAttemptAtMs != null) {
+					this.#scheduleIngressDrainAt(nextPendingAttemptAtMs);
+				}
+			} while (this.#ingressDrainRequested && !this.#stopped);
+		} finally {
+			this.#ingressDraining = false;
+		}
+	}
+
+	public async stop(): Promise<void> {
+		this.#stopped = true;
+		this.#ingressDrainRequested = false;
+		this.#clearIngressRetryTimer();
 	}
 
 	public async ingest(req: Request): Promise<AdapterIngressResult> {
@@ -999,6 +1313,51 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			fingerprint: `telegram-fp-${sha256Hex(normalizedCommandText.toLowerCase())}`,
 			metadata,
 		});
+
+		if (this.#deferredIngress) {
+			const ingressQueue = this.#ingressQueue;
+			if (!ingressQueue) {
+				throw new Error("telegram_ingress_queue_unavailable");
+			}
+			const enqueue = await ingressQueue.enqueue({
+				dedupeKey: `telegram:ingress:${sourceKind}:${sourceId}`,
+				inbound,
+				nowMs,
+				maxAttempts: this.#ingressMaxAttempts,
+			});
+			if (enqueue.record.state === "pending") {
+				this.#scheduleIngressDrainAt(enqueue.record.next_attempt_at_ms);
+			}
+			await this.#appendAudit(inbound, "telegram.ingress.ack", null, {
+				ingress_id: enqueue.record.ingress_id,
+				source,
+				source_kind: sourceKind,
+				source_id: sourceId,
+				queue_decision: enqueue.kind,
+				ack_mode: sourceKind === "callback" ? "answerCallbackQuery" : "sendChatAction",
+				deferred_ingress: true,
+			});
+			const response =
+				sourceKind === "callback"
+					? telegramWebhookMethodResponse({
+							method: "answerCallbackQuery",
+							callback_query_id: sourceId,
+							text: "Processing…",
+							show_alert: false,
+						})
+					: telegramWebhookMethodResponse({
+							method: "sendChatAction",
+							chat_id: conversationId,
+							action: "typing",
+						});
+			return acceptedIngressResult({
+				channel: this.spec.channel,
+				response,
+				inbound,
+				pipelineResult: null,
+				outboxRecord: null,
+			});
+		}
 
 		const dispatched = await runPipelineForInbound({
 			pipeline: this.#pipeline,

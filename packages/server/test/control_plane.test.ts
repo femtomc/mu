@@ -108,6 +108,23 @@ class StaticOperatorBackend implements MessagingOperatorBackend {
 	}
 }
 
+class DelayedOperatorBackend implements MessagingOperatorBackend {
+	readonly #delayMs: number;
+	readonly #result: OperatorBackendTurnResult;
+
+	public constructor(delayMs: number, result: OperatorBackendTurnResult) {
+		this.#delayMs = Math.max(0, Math.trunc(delayMs));
+		this.#result = result;
+	}
+
+	public async runTurn(): Promise<OperatorBackendTurnResult> {
+		if (this.#delayMs > 0) {
+			await Bun.sleep(this.#delayMs);
+		}
+		return this.#result;
+	}
+}
+
 async function mkRepoRoot(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), "mu-server-control-plane-"));
 	dirsToCleanup.add(root);
@@ -284,7 +301,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 
 		const telegramApiCalls: Array<{ url: string; body: Record<string, unknown> | null }> = [];
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 			if (url.startsWith("https://api.telegram.org/bot")) {
 				const parsedBody =
@@ -295,7 +312,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 					headers: { "content-type": "application/json" },
 				});
 			}
-			return await originalFetch(input as RequestInfo | URL, init);
+			return await originalFetch(input as any, init);
 		}) as typeof fetch;
 
 		try {
@@ -336,6 +353,135 @@ describe("bootstrapControlPlane operator wiring", () => {
 			expect(telegramApiCalls.length).toBeGreaterThan(0);
 			expect(telegramApiCalls[0]?.body?.chat_id).toBe("tg-chat-1");
 			expect(typeof telegramApiCalls[0]?.body?.text).toBe("string");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("Telegram deferred ingress returns typing ack before slow operator turn completes", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkTelegramIdentity(repoRoot, ["cp.read"]);
+
+		const telegramApiCalls: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.startsWith("https://api.telegram.org/bot")) {
+				const parsedBody =
+					typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				telegramApiCalls.push({ url, body: parsedBody });
+				return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return await originalFetch(input as any, init);
+		}) as typeof fetch;
+
+		try {
+			const handle = await bootstrapControlPlane({
+				repoRoot,
+				config: configWith({
+					telegramSecret: "telegram-secret",
+					telegramBotToken: "telegram-token",
+				}),
+				operatorBackend: new DelayedOperatorBackend(250, {
+					kind: "respond",
+					message: "slow operator response",
+				}),
+			});
+			expect(handle).not.toBeNull();
+			if (!handle) {
+				throw new Error("expected control plane handle");
+			}
+			handlesToCleanup.add(handle);
+
+			const startedAtMs = Date.now();
+			const response = await handle.handleWebhook(
+				"/webhooks/telegram",
+				telegramRequest({
+					secret: "telegram-secret",
+					updateId: 202,
+					text: "hello operator",
+				}),
+			);
+			const ackElapsedMs = Date.now() - startedAtMs;
+			expect(response).not.toBeNull();
+			if (!response) {
+				throw new Error("expected webhook response");
+			}
+			expect(response.status).toBe(200);
+			expect(ackElapsedMs).toBeLessThan(150);
+			const ack = (await response.json()) as { method?: string; chat_id?: string; action?: string };
+			expect(ack.method).toBe("sendChatAction");
+			expect(ack.chat_id).toBe("tg-chat-1");
+			expect(ack.action).toBe("typing");
+
+			for (let attempt = 0; attempt < 80 && telegramApiCalls.length === 0; attempt++) {
+				await Bun.sleep(10);
+			}
+			expect(telegramApiCalls.length).toBeGreaterThan(0);
+			expect(telegramApiCalls[0]?.body?.text).toContain("slow operator response");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("Telegram deferred ingress still delivers denied responses through outbox", async () => {
+		const repoRoot = await mkRepoRoot();
+		const telegramApiCalls: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.startsWith("https://api.telegram.org/bot")) {
+				const parsedBody =
+					typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				telegramApiCalls.push({ url, body: parsedBody });
+				return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return await originalFetch(input as any, init);
+		}) as typeof fetch;
+
+		try {
+			const handle = await bootstrapControlPlane({
+				repoRoot,
+				config: configWith({
+					telegramSecret: "telegram-secret",
+					telegramBotToken: "telegram-token",
+				}),
+			});
+			expect(handle).not.toBeNull();
+			if (!handle) {
+				throw new Error("expected control plane handle");
+			}
+			handlesToCleanup.add(handle);
+
+			const response = await handle.handleWebhook(
+				"/webhooks/telegram",
+				telegramRequest({
+					secret: "telegram-secret",
+					updateId: 303,
+					text: "/mu status",
+				}),
+			);
+			expect(response).not.toBeNull();
+			if (!response) {
+				throw new Error("expected webhook response");
+			}
+			const ack = (await response.json()) as { method?: string; chat_id?: string; action?: string };
+			expect(ack.method).toBe("sendChatAction");
+			expect(ack.chat_id).toBe("tg-chat-1");
+			expect(ack.action).toBe("typing");
+
+			for (let attempt = 0; attempt < 80 && telegramApiCalls.length === 0; attempt++) {
+				await Bun.sleep(10);
+			}
+			expect(telegramApiCalls.length).toBeGreaterThan(0);
+			expect(telegramApiCalls[0]?.body?.text).toContain("ERROR · DENIED");
+			expect(telegramApiCalls[0]?.body?.text).toContain("identity_not_linked");
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

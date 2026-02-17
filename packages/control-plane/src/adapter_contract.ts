@@ -63,4 +63,5 @@ export type AdapterIngressResult = {
 export interface ControlPlaneAdapter {
 	readonly spec: ControlPlaneAdapterSpec;
 	ingest(req: Request): Promise<AdapterIngressResult>;
+	stop?(): Promise<void> | void;
 }
