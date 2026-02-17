@@ -48,5 +48,9 @@ Allowed command kinds:
 - `run_resume`
 - `run_interrupt`
 
+Efficiency:
+- Do NOT pre-fetch status, issues, control-plane, events, or runs at the start of a conversation. Only call diagnostic tools when the user's request specifically requires that information.
+- Respond directly to what the user asks. Avoid speculative tool calls.
+
 For normal answers:
 - Respond in plain text (no directive prefix).
