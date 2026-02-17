@@ -818,6 +818,41 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(backend.turns[0]?.sessionId).not.toBe(backend.turns[2]?.sessionId);
 	});
 
+	test("chat-style Telegram messages are delivered through outbox as plain operator chat", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Hey from Telegram operator." }]);
+		const harness = await createHarness({
+			operatorBackend: backend,
+		});
+
+		const chat = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 700,
+				text: "hello operator",
+			}),
+		);
+		expect(chat.pipelineResult?.kind).toBe("operator_response");
+		if (chat.pipelineResult?.kind !== "operator_response") {
+			throw new Error(`expected operator_response, got ${chat.pipelineResult?.kind}`);
+		}
+		expect(chat.outboxRecord).not.toBeNull();
+		if (!chat.outboxRecord) {
+			throw new Error("expected telegram operator chat outbox record");
+		}
+		expect(chat.outboxRecord.envelope.channel).toBe("telegram");
+		expect(chat.outboxRecord.envelope.body).toBe("Hey from Telegram operator.");
+		expect(chat.outboxRecord.envelope.metadata.interaction_render_mode).toBe("chat_plain");
+
+		const chatAck = (await chat.response.json()) as { result?: string };
+		expect(chatAck.result).toContain("Operator · CHAT");
+		expect(chatAck.result).toContain("Delivery:");
+
+		await harness.dispatcher.drainDue();
+		expect(harness.deliveries.length).toBe(1);
+		expect(harness.deliveries[0]?.channel).toBe("telegram");
+		expect(harness.deliveries[0]?.body).toBe("Hey from Telegram operator.");
+	});
+
 	test("Slack operator path can kick off run starts and complete through confirmation", async () => {
 		const harness = await createHarness({
 			operatorResult: {
@@ -1062,6 +1097,12 @@ describe("channel adapters integrated with control-plane", () => {
 			expect(text).toContain("Key details:");
 		}
 
+		const expectedByChannel = {
+			slack: "detailed",
+			discord: "detailed",
+			telegram: "compact",
+		} as const;
+
 		for (const entry of [slack, discord, telegram]) {
 			const outbox = entry.outboxRecord;
 			expect(outbox).not.toBeNull();
@@ -1071,9 +1112,14 @@ describe("channel adapters integrated with control-plane", () => {
 			const interaction = ControlPlaneInteractionMessageSchema.parse(outbox.envelope.metadata.interaction_message);
 			expect(interaction.intent).toBe("result");
 			expect(outbox.envelope.metadata.interaction_contract_version).toBe(1);
-			expect(outbox.envelope.metadata.interaction_render_mode).toBe("detailed");
-			expect(outbox.envelope.body).toContain("Payload (structured; can be collapsed in rich clients):");
+			expect(outbox.envelope.metadata.interaction_render_mode).toBe(expectedByChannel[outbox.envelope.channel]);
 			expect(outbox.envelope.body).toContain(interaction.summary);
+
+			if (outbox.envelope.channel === "telegram") {
+				expect(outbox.envelope.body).not.toContain("Payload (structured; can be collapsed in rich clients):");
+			} else {
+				expect(outbox.envelope.body).toContain("Payload (structured; can be collapsed in rich clients):");
+			}
 		}
 	});
 

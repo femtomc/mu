@@ -223,6 +223,8 @@ async function enqueueDeferredPipelineResult(opts: {
 	}
 	const correlation = correlationFromCommandRecord(command);
 	const presented = presentPipelineResultMessage(opts.result);
+	const interactionRenderMode = command.channel === "telegram" ? "compact" : "detailed";
+	const envelopeBody = interactionRenderMode === "compact" ? presented.compact : presented.detailed;
 	const envelope: OutboundEnvelope = {
 		v: 1,
 		ts_ms: opts.nowMs,
@@ -232,17 +234,83 @@ async function enqueueDeferredPipelineResult(opts: {
 		request_id: command.request_id,
 		response_id: `resp-${sha256Hex(`${command.command_id}:${command.state}:${opts.nowMs}`).slice(0, 20)}`,
 		kind: outboundKindForPipelineResult(opts.result),
-		body: presented.detailed,
+		body: envelopeBody,
 		correlation,
 		metadata: {
 			pipeline_result_kind: opts.result.kind,
 			interaction_contract_version: presented.message.v,
 			interaction_message: presented.message,
-			interaction_render_mode: "detailed",
+			interaction_render_mode: interactionRenderMode,
 			...(opts.metadata ?? {}),
 		},
 	};
 	const dedupeKey = `${command.channel}:${command.command_id}:${opts.result.kind}:${command.state}`;
+	const decision = await opts.outbox.enqueue({
+		dedupeKey,
+		envelope,
+		nowMs: opts.nowMs,
+	});
+	return decision.record;
+}
+
+async function enqueueTelegramOperatorResponse(opts: {
+	outbox: ControlPlaneOutbox;
+	inbound: InboundEnvelope;
+	result: Extract<CommandPipelineResult, { kind: "operator_response" }>;
+	nowMs: number;
+	metadata?: Record<string, unknown>;
+}): Promise<OutboxRecord | null> {
+	const message = opts.result.message.trim();
+	if (message.length === 0) {
+		return null;
+	}
+
+	const syntheticCommandId = `op-${sha256Hex(opts.inbound.request_id).slice(0, 24)}`;
+	const presented = presentPipelineResultMessage(opts.result);
+	const envelope: OutboundEnvelope = {
+		v: 1,
+		ts_ms: opts.nowMs,
+		channel: opts.inbound.channel,
+		channel_tenant_id: opts.inbound.channel_tenant_id,
+		channel_conversation_id: opts.inbound.channel_conversation_id,
+		request_id: opts.inbound.request_id,
+		response_id: `resp-${sha256Hex(`${opts.inbound.request_id}:operator:${opts.nowMs}`).slice(0, 20)}`,
+		kind: "result",
+		body: message,
+		correlation: {
+			command_id: syntheticCommandId,
+			idempotency_key: opts.inbound.idempotency_key,
+			request_id: opts.inbound.request_id,
+			channel: opts.inbound.channel,
+			channel_tenant_id: opts.inbound.channel_tenant_id,
+			channel_conversation_id: opts.inbound.channel_conversation_id,
+			actor_id: opts.inbound.actor_id,
+			actor_binding_id: opts.inbound.actor_binding_id,
+			assurance_tier: opts.inbound.assurance_tier,
+			repo_root: opts.inbound.repo_root,
+			scope_required: opts.inbound.scope_required,
+			scope_effective: opts.inbound.scope_effective,
+			target_type: "operator_chat",
+			target_id: opts.inbound.target_id,
+			attempt: 1,
+			state: "completed",
+			error_code: null,
+			operator_session_id: null,
+			operator_turn_id: null,
+			cli_invocation_id: null,
+			cli_command_kind: null,
+			run_root_id: null,
+		},
+		metadata: {
+			pipeline_result_kind: opts.result.kind,
+			interaction_contract_version: presented.message.v,
+			interaction_message: presented.message,
+			interaction_render_mode: "chat_plain",
+			...(opts.metadata ?? {}),
+		},
+	};
+
+	const dedupeKey = `telegram:operator:${opts.inbound.request_id}`;
 	const decision = await opts.outbox.enqueue({
 		dedupeKey,
 		envelope,
@@ -265,12 +333,23 @@ async function runPipelineForInbound(opts: {
 	metadata?: Record<string, unknown>;
 }): Promise<AdapterPipelineDispatchResult> {
 	const pipelineResult = await opts.pipeline.handleInbound(opts.inbound);
-	const outboxRecord = await enqueueDeferredPipelineResult({
+	let outboxRecord = await enqueueDeferredPipelineResult({
 		outbox: opts.outbox,
 		result: pipelineResult,
 		nowMs: opts.nowMs,
 		metadata: opts.metadata,
 	});
+
+	if (!outboxRecord && opts.inbound.channel === "telegram" && pipelineResult.kind === "operator_response") {
+		outboxRecord = await enqueueTelegramOperatorResponse({
+			outbox: opts.outbox,
+			inbound: opts.inbound,
+			result: pipelineResult,
+			nowMs: opts.nowMs,
+			metadata: opts.metadata,
+		});
+	}
+
 	return {
 		pipelineResult,
 		outboxRecord,
