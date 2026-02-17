@@ -1,6 +1,6 @@
 # mu
 
-**The little long-running agent that could.**
+**The little long-running assistant that could.**
 
 `mu` is a personal assistant for technical work.
 
