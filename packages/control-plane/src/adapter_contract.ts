@@ -52,6 +52,7 @@ export const DEFAULT_CONTROL_PLANE_WEBHOOK_ROUTES = {
 	slack: "/webhooks/slack",
 	discord: "/webhooks/discord",
 	telegram: "/webhooks/telegram",
+	terminal: "/api/commands/submit",
 } as const satisfies Record<Channel, string>;
 
 export function defaultWebhookRouteForChannel(channel: Channel): string {

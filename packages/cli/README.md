@@ -35,8 +35,6 @@ mu issues ready            # Show ready leaf issues
 mu forum post topic -m "message"  # Post to forum
 mu run "goal..."           # Run orchestration loop (auto-inits .mu)
 mu resume <root-id>        # Resume interrupted run
-mu chat                    # Interactive operator session
-mu chat --message "..."    # One-shot operator turn
 ```
 
 ### Programmatic API
@@ -66,15 +64,9 @@ In headless environments, it provides SSH port forwarding instructions.
 
 ### Operator session defaults
 
-`mu serve`'s attached terminal operator session uses the same extension stack as `mu chat` and
-inherits `.mu/config.json` defaults from `control_plane.operator.provider/model`
-when present.
-
-Standalone `mu chat` can still be overridden explicitly via flags:
-
-```bash
-mu chat --provider openai-codex --model gpt-5.3-codex
-```
+`mu serve`'s attached terminal operator session inherits `.mu/config.json` defaults
+from `control_plane.operator.provider/model` when present. Commands issued in the
+terminal session route through the control plane pipeline via `/api/commands/submit`.
 
 Use `mu control status` to inspect current config-driven control-plane/operator state.
 

@@ -9,7 +9,7 @@ describe("first-platform channel scope", () => {
 		expect(ChannelSchema.safeParse("telegram").success).toBe(true);
 		expect(ChannelSchema.safeParse("imessage").success).toBe(false);
 		expect(channelFromString("imessage")).toBeNull();
-		expect(Object.keys(DEFAULT_CONTROL_PLANE_POLICY.ops.channels).sort()).toEqual(["discord", "slack", "telegram"]);
+		expect(Object.keys(DEFAULT_CONTROL_PLANE_POLICY.ops.channels).sort()).toEqual(["discord", "slack", "telegram", "terminal"]);
 	});
 
 	test("iMessage adapter is not exported by first-platform runtime", () => {

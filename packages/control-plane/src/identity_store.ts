@@ -2,13 +2,14 @@ import { appendJsonl, readJsonl } from "@femtomc/mu-core/node";
 import { z } from "zod";
 import { type AssuranceTier, AssuranceTierSchema } from "./models.js";
 
-export const ChannelSchema = z.enum(["slack", "discord", "telegram"]);
+export const ChannelSchema = z.enum(["slack", "discord", "telegram", "terminal"]);
 export type Channel = z.infer<typeof ChannelSchema>;
 
 export const CHANNEL_ASSURANCE_TIERS = {
 	slack: "tier_a",
 	discord: "tier_a",
 	telegram: "tier_b",
+	terminal: "tier_a",
 } as const satisfies Record<Channel, AssuranceTier>;
 
 export function assuranceTierForChannel(channel: Channel): AssuranceTier {
@@ -128,6 +129,23 @@ export const ROLE_SCOPES: Record<string, readonly string[]> = {
 	],
 	contributor: ["cp.read", "cp.issue.write", "cp.forum.write", "cp.run.execute", "cp.identity.self"],
 	viewer: ["cp.read"],
+};
+
+export const TERMINAL_IDENTITY_BINDING: IdentityBinding = {
+	binding_id: "terminal-local-binding",
+	operator_id: "local-operator",
+	channel: "terminal",
+	channel_tenant_id: "local",
+	channel_actor_id: "local-operator",
+	assurance_tier: "tier_a",
+	scopes: [...ROLE_SCOPES.operator],
+	status: "active",
+	linked_at_ms: 0,
+	updated_at_ms: 0,
+	unlinked_at_ms: null,
+	revoked_at_ms: null,
+	revoked_by_binding_id: null,
+	revoke_reason: null,
 };
 
 export class IdentityStore {

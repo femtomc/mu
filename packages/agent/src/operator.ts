@@ -469,6 +469,10 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		this.#sessionIdleTtlMs = Math.max(60_000, Math.trunc(opts.sessionIdleTtlMs ?? 30 * 60 * 1_000));
 		this.#maxSessions = Math.max(1, Math.trunc(opts.maxSessions ?? 32));
 		this.#auditTurns = opts.auditTurns ?? true;
+
+		// Signal to mu_command tool that commands are captured via event subscription,
+		// not executed directly. The tool returns a stub in this mode.
+		process.env.MU_OPERATOR_MESSAGING_MODE = "1";
 	}
 
 	#disposeSession(sessionId: string): void {

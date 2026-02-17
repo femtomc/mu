@@ -1,11 +1,11 @@
 /**
  * mu_command — Operator mutation tool.
  *
- * Registered only in operator sessions. The LLM calls this tool with a
- * structured command proposal instead of emitting fragile text directives.
- * The tool itself does nothing except confirm receipt — the actual command
- * is captured by the PiMessagingOperatorBackend subscriber on
- * tool_execution_start and routed through the existing broker/audit pipeline.
+ * Tri-modal execution:
+ * - Mode 1 (Messaging): MU_OPERATOR_MESSAGING_MODE=1. Returns stub "accepted".
+ *   The actual command is captured by PiMessagingOperatorBackend via event subscription.
+ * - Mode 2 (TUI with server): MU_SERVER_URL set. POSTs to /api/commands/submit.
+ * - Mode 3 (No server): Returns error directing user to start `mu serve`.
  */
 
 import { StringEnum } from "@mariozechner/pi-ai";
@@ -13,6 +13,62 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 export const MU_COMMAND_TOOL_NAME = "mu_command";
+
+type CommandParams = {
+	kind: string;
+	prompt?: string;
+	issue_id?: string;
+	topic?: string;
+	limit?: number;
+	root_issue_id?: string;
+	max_steps?: number;
+};
+
+async function executeViaServer(serverUrl: string, params: CommandParams): Promise<{
+	content: Array<{ type: "text"; text: string }>;
+	details: Record<string, unknown>;
+}> {
+	const url = `${serverUrl.replace(/\/+$/, "")}/api/commands/submit`;
+	const response = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(params),
+	});
+
+	const body = (await response.json()) as Record<string, unknown>;
+	if (!response.ok) {
+		const error = typeof body.error === "string" ? body.error : `HTTP ${response.status}`;
+		return {
+			content: [{ type: "text" as const, text: `Command failed: ${error}` }],
+			details: { kind: params.kind, error, status: response.status },
+		};
+	}
+
+	const result = body.result as Record<string, unknown> | undefined;
+	const resultKind = typeof result?.kind === "string" ? result.kind : "unknown";
+
+	let summary: string;
+	if (resultKind === "completed" || resultKind === "awaiting_confirmation") {
+		const command = result?.command as Record<string, unknown> | undefined;
+		summary = `Command ${resultKind}: ${params.kind}`;
+		if (command?.target_type) {
+			summary += ` (${command.target_type})`;
+		}
+		if (resultKind === "completed" && command?.result) {
+			summary += `\n${JSON.stringify(command.result, null, 2)}`;
+		}
+	} else if (resultKind === "denied" || resultKind === "invalid" || resultKind === "failed") {
+		const reason = result?.reason ?? "unknown";
+		summary = `Command ${resultKind}: ${reason}`;
+	} else {
+		summary = `Command result: ${resultKind}`;
+	}
+
+	return {
+		content: [{ type: "text" as const, text: summary }],
+		details: { kind: params.kind, pipeline_result: result },
+	};
+}
 
 export function operatorCommandExtension(pi: ExtensionAPI) {
 	const CommandParams = Type.Object({
@@ -47,9 +103,27 @@ export function operatorCommandExtension(pi: ExtensionAPI) {
 		].join(" "),
 		parameters: CommandParams,
 		async execute(_toolCallId, params) {
+			// Mode 1: Messaging backend captures the tool call via event subscription.
+			if (process.env.MU_OPERATOR_MESSAGING_MODE === "1") {
+				return {
+					content: [{ type: "text" as const, text: `Command proposal accepted: ${params.kind}` }],
+					details: { kind: params.kind },
+				};
+			}
+
+			// Mode 2: TUI with server — POST to /api/commands/submit.
+			const serverUrl = process.env.MU_SERVER_URL;
+			if (serverUrl) {
+				return await executeViaServer(serverUrl, params);
+			}
+
+			// Mode 3: No server available.
 			return {
-				content: [{ type: "text" as const, text: `Command proposal accepted: ${params.kind}` }],
-				details: { kind: params.kind },
+				content: [{
+					type: "text" as const,
+					text: "No server running. Start with `mu serve` for command execution, or use messaging adapters.",
+				}],
+				details: { kind: params.kind, error: "no_server" },
 			};
 		},
 	});

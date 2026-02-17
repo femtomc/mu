@@ -22,6 +22,10 @@ type MuCommandDispatcherState = {
 
 let singletonState: MuCommandDispatcherState | null = null;
 
+export function resetMuCommandDispatcher(): void {
+	singletonState = null;
+}
+
 const RESERVED_SUBCOMMANDS = new Set(["help", "?"]);
 
 function normalizeSubcommand(value: string): string {

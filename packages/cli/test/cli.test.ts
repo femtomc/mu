@@ -4,7 +4,6 @@ import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "@femtomc/mu";
-import { DEFAULT_OPERATOR_SYSTEM_PROMPT } from "@femtomc/mu-agent";
 
 async function mkTempRepo(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "mu-cli-"));
@@ -116,61 +115,6 @@ async function writeConfigWithOperatorDefaults(dir: string, provider: string, mo
 	);
 }
 
-function mkMockOperatorSessionFactory(response: string) {
-	let promptCalls = 0;
-	let lastPrompt = "";
-	let lastFactoryOpts: {
-		cwd: string;
-		systemPrompt: string;
-		provider?: string;
-		model?: string;
-		thinking?: string;
-	} | null = null;
-	const factory = async (opts: {
-		cwd: string;
-		systemPrompt: string;
-		provider?: string;
-		model?: string;
-		thinking?: string;
-	}) => {
-		lastFactoryOpts = opts;
-		const listeners = new Set<(event: any) => void>();
-		return {
-			subscribe: (listener: (event: any) => void) => {
-				listeners.add(listener);
-				return () => {
-					listeners.delete(listener);
-				};
-			},
-			prompt: async (text: string) => {
-				promptCalls += 1;
-				lastPrompt = text;
-				for (const listener of listeners) {
-					listener({
-						type: "message_end",
-						message: { role: "assistant", text: response },
-					});
-				}
-			},
-			dispose: () => {},
-			bindExtensions: async () => {},
-			agent: { waitForIdle: async () => {} },
-		};
-	};
-	return {
-		factory,
-		get promptCalls() {
-			return promptCalls;
-		},
-		get lastPrompt() {
-			return lastPrompt;
-		},
-		get lastFactoryOpts() {
-			return lastFactoryOpts;
-		},
-	};
-}
-
 async function expectStoreBootstrapped(dir: string): Promise<void> {
 	for (const relPath of ["issues.jsonl", "forum.jsonl", "events.jsonl"] as const) {
 		await readFile(join(dir, ".mu", relPath), "utf8");
@@ -191,7 +135,7 @@ test("mu --help", async () => {
 	expect(result.stdout.includes("mu <command>")).toBe(true);
 	expect(result.stdout.includes("mu guide")).toBe(true);
 	expect(result.stdout.includes("store <subcmd>")).toBe(true);
-	expect(result.stdout.includes("chat")).toBe(true);
+	expect(result.stdout.includes("serve")).toBe(true);
 	expect(result.stdout.includes("Getting started")).toBe(true);
 });
 
@@ -331,16 +275,15 @@ test("mu issues/forum help includes orchestrator + worker workflows", async () =
 	expect(forumTopicsHelp.stdout).toContain("mu forum topics --prefix issue:");
 });
 
-test("mu chat/serve help text", async () => {
+test("mu chat removed - returns unknown command", async () => {
 	const dir = await mkTempRepo();
+	const chatResult = await run(["chat"], { cwd: dir });
+	expect(chatResult.exitCode).toBe(1);
+	expect(chatResult.stdout).toContain("unknown command");
+});
 
-	const chatHelp = await run(["chat", "--help"], { cwd: dir });
-	expect(chatHelp.exitCode).toBe(0);
-	expect(chatHelp.stdout).toContain("interactive operator session");
-	expect(chatHelp.stdout).toContain("--message");
-	expect(chatHelp.stdout).toContain("--provider");
-	expect(chatHelp.stdout).toContain("--system-prompt");
-
+test("mu serve help text", async () => {
+	const dir = await mkTempRepo();
 	const serveHelp = await run(["serve", "--help"], { cwd: dir });
 	expect(serveHelp.exitCode).toBe(0);
 	expect(serveHelp.stdout).toContain("start server + terminal operator session + web UI");
@@ -586,32 +529,6 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
 });
 
-test("mu chat one-shot uses operator defaults in operatorSessionFactory", async () => {
-	const dir = await mkTempRepo();
-	const mock = mkMockOperatorSessionFactory("Hello from mu chat!");
-	const result = await run(["chat", "--message", "hello"], {
-		cwd: dir,
-		operatorSessionFactory: mock.factory,
-	});
-
-	expect(result.exitCode).toBe(0);
-	expect(mock.promptCalls).toBe(1);
-	expect(mock.lastFactoryOpts?.systemPrompt).toBe(DEFAULT_OPERATOR_SYSTEM_PROMPT);
-});
-
-test("mu chat rejects empty message", async () => {
-	const dir = await mkTempRepo();
-	const result = await run(["chat", "--message", "   "], { cwd: dir });
-	expect(result.exitCode).toBe(1);
-	expect(result.stdout).toContain("message must not be empty");
-});
-
-test("mu chat --json requires --message", async () => {
-	const dir = await mkTempRepo();
-	const result = await run(["chat", "--json"], { cwd: dir });
-	expect(result.exitCode).toBe(1);
-	expect(result.stdout).toContain("--json requires --message");
-});
 
 function mkSignalHarness(): {
 	register: (signal: NodeJS.Signals, handler: () => void) => () => void;

@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { brandingExtension } from "../src/extensions/branding.js";
 import { eventLogExtension } from "../src/extensions/event-log.js";
-import { registerMuSubcommand } from "../src/extensions/mu-command-dispatcher.js";
+import { registerMuSubcommand, resetMuCommandDispatcher } from "../src/extensions/mu-command-dispatcher.js";
 import { messagingSetupExtension } from "../src/extensions/messaging-setup.js";
 import { serverToolsExtension } from "../src/extensions/server-tools.js";
 
@@ -46,6 +46,10 @@ function createCommandContext() {
 }
 
 describe("mu command dispatcher", () => {
+	afterEach(() => {
+		resetMuCommandDispatcher();
+	});
+
 	test("registerMuSubcommand installs one /mu command and dispatches by subcommand", async () => {
 		const pi = createPiMock();
 		const calls: Array<{ subcommand: string; args: string }> = [];

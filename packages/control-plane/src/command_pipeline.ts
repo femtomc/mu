@@ -8,7 +8,7 @@ import {
 	transitionCommandRecord,
 } from "./command_record.js";
 import { ConfirmationManager } from "./confirmation_manager.js";
-import { ChannelSchema, type IdentityBinding, IdentityStore } from "./identity_store.js";
+import { ChannelSchema, type IdentityBinding, IdentityStore, TERMINAL_IDENTITY_BINDING } from "./identity_store.js";
 import { type InboundEnvelope, InboundEnvelopeSchema } from "./models.js";
 import { MuCliCommandSurface, MuCliRunner, type MuCliRunnerLike } from "./mu_cli_runner.js";
 import { DEFAULT_CONTROL_PLANE_POLICY, PolicyEngine, type RequestedCommandMode } from "./policy.js";
@@ -701,6 +701,17 @@ export class ControlPlaneCommandPipeline {
 			});
 		}
 
+		return await this.#processCommand({ inbound, binding, initiallyParsed });
+	}
+
+	async #processCommand(opts: {
+		inbound: InboundEnvelope;
+		binding: IdentityBinding;
+		initiallyParsed: ParsedCommand;
+		autoConfirm?: boolean;
+	}): Promise<CommandPipelineResult> {
+		const { inbound, binding, initiallyParsed, autoConfirm } = opts;
+
 		const resolvedParsed = await this.#resolveParsedCommand(initiallyParsed, inbound, binding);
 		if (resolvedParsed.kind === "result") {
 			return resolvedParsed.result;
@@ -816,6 +827,22 @@ export class ControlPlaneCommandPipeline {
 			await this.runtime.journal.appendLifecycle(record);
 
 			if (auth.rule.mutating) {
+				if (autoConfirm) {
+					record = await this.confirmations.requestAwaitingConfirmation({
+						record,
+						confirmationTtlMs: this.#confirmationTtlMs,
+						nowMs,
+					});
+					const confirmDecision = await this.confirmations.confirm({
+						commandId: record.command_id,
+						actorBindingId: binding.binding_id,
+						nowMs: Math.trunc(this.#nowMs()),
+					});
+					if (confirmDecision.kind === "queued") {
+						return await this.#handleConfirmedQueuedMutation(confirmDecision.command);
+					}
+					return { kind: "awaiting_confirmation", command: record };
+				}
 				record = await this.confirmations.requestAwaitingConfirmation({
 					record,
 					confirmationTtlMs: this.#confirmationTtlMs,
@@ -860,6 +887,52 @@ export class ControlPlaneCommandPipeline {
 			});
 			await this.runtime.journal.appendLifecycle(completed);
 			return { kind: "completed", command: completed };
+		});
+	}
+
+	public async handleTerminalInbound(opts: {
+		commandText: string;
+		repoRoot: string;
+		requestId?: string;
+	}): Promise<CommandPipelineResult> {
+		this.#assertStarted();
+
+		const requestId = opts.requestId ?? `terminal-${crypto.randomUUID()}`;
+		const deliveryId = `terminal-${crypto.randomUUID()}`;
+		const nowMs = Math.trunc(this.#nowMs());
+		const binding = TERMINAL_IDENTITY_BINDING;
+
+		const inbound = InboundEnvelopeSchema.parse({
+			received_at_ms: nowMs,
+			request_id: requestId,
+			delivery_id: deliveryId,
+			channel: "terminal",
+			channel_tenant_id: "local",
+			channel_conversation_id: "local",
+			actor_id: binding.channel_actor_id,
+			actor_binding_id: binding.binding_id,
+			assurance_tier: binding.assurance_tier,
+			repo_root: opts.repoRoot,
+			command_text: opts.commandText,
+			scope_required: "cp.read",
+			scope_effective: "cp.read",
+			target_type: "terminal",
+			target_id: "terminal",
+			idempotency_key: `terminal:${requestId}`,
+			fingerprint: `fp-terminal-${requestId}`,
+			metadata: { source: "terminal" },
+		});
+
+		const initiallyParsed = parseSeriousWorkCommand(opts.commandText);
+		if (initiallyParsed.kind === "invalid") {
+			return { kind: "invalid", reason: initiallyParsed.reason };
+		}
+
+		return await this.#processCommand({
+			inbound,
+			binding,
+			initiallyParsed,
+			autoConfirm: true,
 		});
 	}
 

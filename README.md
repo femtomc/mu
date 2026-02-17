@@ -84,7 +84,6 @@ npm install -g @femtomc/mu
 cd /path/to/your/repo
 
 mu run "build the thing"  # create .mu/ store + root issue + start orchestration
-mu chat          # talk to the built-in operator (default-on)
 mu serve         # start server + terminal operator + web UI
 mu status        # show DAG state (CLI)
 mu issues create "build the thing" --body "details here" --pretty
@@ -136,18 +135,8 @@ Recommended setup flow:
 
 ### Terminal Operator Chat
 
-`mu chat` launches an interactive terminal session with mu's operator.
-It is enabled by default.
-
-```bash
-mu chat
-mu chat --message "What is ready right now?"
-mu chat --message "How do I set up Slack control-plane webhooks?" --json
-```
-
-Disable by default via config:
-
-- Set `control_plane.operator.enabled=false` in `.mu/config.json`.
+`mu serve` attaches an interactive terminal operator session in the same shell as the server.
+The operator routes commands through the control plane pipeline via `/api/commands/submit`.
 
 ### Control Plane
 

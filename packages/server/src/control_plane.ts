@@ -9,6 +9,7 @@ import {
 import {
 	type AdapterIngressResult,
 	type Channel,
+	type CommandPipelineResult,
 	type ControlPlaneAdapter,
 	ControlPlaneCommandPipeline,
 	ControlPlaneOutbox,
@@ -109,6 +110,11 @@ export type ControlPlaneHandle = {
 		wakeMode?: string | null;
 	}): Promise<ControlPlaneRunHeartbeatResult>;
 	traceRun?(opts: { idOrRoot: string; limit?: number }): Promise<ControlPlaneRunTrace | null>;
+	submitTerminalCommand?(opts: {
+		commandText: string;
+		repoRoot: string;
+		requestId?: string;
+	}): Promise<CommandPipelineResult>;
 	stop(): Promise<void>;
 };
 
@@ -955,6 +961,7 @@ export type BootstrapControlPlaneOpts = {
 	generation?: ControlPlaneGenerationContext;
 	telemetry?: GenerationTelemetryRecorder | null;
 	telegramGenerationHooks?: TelegramGenerationSwapHooks;
+	terminalEnabled?: boolean;
 };
 
 export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Promise<ControlPlaneHandle | null> {
@@ -976,7 +983,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			}
 		: undefined;
 
-	if (detected.length === 0) {
+	if (detected.length === 0 && !opts.terminalEnabled) {
 		return null;
 	}
 
@@ -1373,6 +1380,17 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 
 			async traceRun(traceOpts: { idOrRoot: string; limit?: number }): Promise<ControlPlaneRunTrace | null> {
 				return (await runSupervisor?.trace(traceOpts.idOrRoot, { limit: traceOpts.limit })) ?? null;
+			},
+
+			async submitTerminalCommand(terminalOpts: {
+				commandText: string;
+				repoRoot: string;
+				requestId?: string;
+			}): Promise<CommandPipelineResult> {
+				if (!pipeline) {
+					throw new Error("control_plane_pipeline_unavailable");
+				}
+				return await pipeline.handleTerminalInbound(terminalOpts);
 			},
 
 			async stop(): Promise<void> {

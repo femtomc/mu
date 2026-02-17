@@ -413,7 +413,6 @@ function mainHelp(): string {
 		`  ${cmd("forum")} ${dim("<subcmd>")}                        Coordination message commands`,
 		`  ${cmd("run")} ${dim("<prompt...>")}                       Queue a run and attach operator session`,
 		`  ${cmd("resume")} ${dim("<root-id>")}                      Resume a run`,
-		`  ${cmd("chat")} ${dim("[--message TEXT]")}                 Interactive operator session`,
 		`  ${cmd("login")} ${dim("[<provider>] [--list]")}           Authenticate with an AI provider`,
 		`  ${cmd("replay")} ${dim("<id|path>")}                      Replay a previous run log`,
 		`  ${cmd("control")} ${dim("<subcmd>")}                      Messaging integrations and identity`,
@@ -488,13 +487,6 @@ export async function run(
 			return await cmdRunDirect(rest, ctx);
 		case "resume":
 			return await cmdResume(rest, ctx);
-		case "chat": {
-			const { operatorExtensionPaths } = await import("@femtomc/mu-agent");
-			return await cmdOperatorSession(rest, {
-				...ctx,
-				serveExtensionPaths: ctx.serveExtensionPaths ?? operatorExtensionPaths,
-			});
-		}
 		case "login":
 			return await cmdLogin(rest);
 		case "replay":
@@ -2573,27 +2565,24 @@ async function cmdOperatorSession(
 	if (hasHelpFlag(argv)) {
 		return ok(
 			[
-				"mu chat - interactive operator session",
+				"mu serve - operator session (server + terminal + web UI)",
 				"",
 				"Usage:",
-				"  mu chat [--message TEXT] [--json]",
-				"          [--provider ID] [--model ID] [--thinking LEVEL]",
-				"          [--system-prompt TEXT]",
+				"  mu serve [--port N] [--no-open]",
+				"           [--provider ID] [--model ID] [--thinking LEVEL]",
 				"",
 				"Options:",
-				"  --message, -m TEXT     One-shot mode (send a single message and exit)",
-				"  --json                 Emit JSON event stream (requires --message)",
-				"  --provider ID          LLM provider",
+				"  --port N               Server port (default: 3000)",
+				"  --no-open              Skip opening browser",
+				"  --provider ID          LLM provider for operator session",
 				"  --model ID             Model ID (default: gpt-5.3-codex)",
 				"  --thinking LEVEL       Thinking level (minimal|low|medium|high)",
-				"  --system-prompt TEXT   Override system prompt",
 				"",
 				"Examples:",
-				"  mu chat",
-				'  mu chat --message "What does mu status show right now?"',
-				'  mu chat --message "How do I set up Slack control-plane webhooks?"',
+				"  mu serve",
+				"  mu serve --port 8080",
 				"",
-				"See also: `mu guide`, `mu control status`, `mu serve --help`",
+				"See also: `mu guide`, `mu control status`",
 			].join("\n") + "\n",
 		);
 	}
@@ -2616,7 +2605,7 @@ async function cmdOperatorSession(
 	] as const) {
 		if (rawValue === "") {
 			return jsonError(`missing value for ${flagName}`, {
-				recovery: ["mu chat --help"],
+				recovery: ["mu serve --help"],
 			});
 		}
 	}
@@ -2624,21 +2613,21 @@ async function cmdOperatorSession(
 	let message = messageLong ?? messageShort;
 	if (message != null && message.trim().length === 0) {
 		return jsonError("message must not be empty", {
-			recovery: ['mu chat --message "What is ready?"'],
+			recovery: ["mu serve --help"],
 		});
 	}
 
 	if (rest.length > 0) {
 		if (rest.some((arg) => arg.startsWith("-"))) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, {
-				recovery: ["mu chat --help"],
+				recovery: ["mu serve --help"],
 			});
 		}
 		const positionalMessage = rest.join(" ").trim();
 		if (positionalMessage.length > 0) {
 			if (message != null) {
 				return jsonError("provide either --message/-m or positional text, not both", {
-					recovery: ["mu chat --help"],
+					recovery: ["mu serve --help"],
 				});
 			}
 			message = positionalMessage;
@@ -2647,7 +2636,7 @@ async function cmdOperatorSession(
 
 	if (jsonMode && message == null) {
 		return jsonError("--json requires --message", {
-			recovery: ['mu chat --message "What is ready?" --json'],
+			recovery: ["mu serve --help"],
 		});
 	}
 
@@ -2709,7 +2698,7 @@ async function cmdOperatorSession(
 	// Interactive mode: full pi TUI
 	if (!(process.stdin as { isTTY?: boolean }).isTTY) {
 		return jsonError("interactive operator session requires a TTY; use --message for one-shot mode", {
-			recovery: ['mu chat --message "How do I configure the control plane?"'],
+			recovery: ["mu serve --help"],
 		});
 	}
 
@@ -3190,7 +3179,7 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 			})
 			.catch((err) =>
 				jsonError(`operator session crashed: ${describeError(err)}`, {
-					recovery: ["mu chat --help"],
+					recovery: ["mu serve --help"],
 				}),
 			);
 
@@ -3249,7 +3238,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  Use `/mu setup <adapter>` in mu serve operator session for guided setup",
 				"  Use `mu control status` to inspect current config",
 				"",
-				"See also: `mu chat --help`, `mu guide`",
+				"See also: `mu serve --help`, `mu guide`",
 			].join("\n") + "\n",
 		);
 	}
@@ -3896,7 +3885,7 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	out += `  run_triggers_enabled ${operator.run_triggers_enabled}\n`;
 	out += `  provider             ${operator.provider ?? "(default)"}\n`;
 	out += `  model                ${operator.model ?? "(default)"}\n`;
-	out += "  Use `mu chat` for direct terminal operator access.\n";
+	out += "  Use `mu serve` for direct terminal operator access.\n";
 
 	return ok(out);
 }

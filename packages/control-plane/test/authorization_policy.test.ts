@@ -85,7 +85,7 @@ describe("PolicyEngine authorization", () => {
 	});
 
 	test("first-platform channel policy is explicit to Slack/Discord/Telegram and rejects unsupported iMessage overrides", () => {
-		expect(Object.keys(DEFAULT_CONTROL_PLANE_POLICY.ops.channels).sort()).toEqual(["discord", "slack", "telegram"]);
+		expect(Object.keys(DEFAULT_CONTROL_PLANE_POLICY.ops.channels).sort()).toEqual(["discord", "slack", "telegram", "terminal"]);
 
 		expect(() =>
 			buildControlPlanePolicy({

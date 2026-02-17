@@ -27,6 +27,7 @@ import {
 	redactMuConfigSecrets,
 	writeMuConfigFile,
 } from "./config.js";
+import type { CommandPipelineResult } from "@femtomc/mu-control-plane";
 import {
 	bootstrapControlPlane,
 	type ControlPlaneConfig,
@@ -350,6 +351,7 @@ export function createServer(options: ServerOptions = {}) {
 				heartbeatScheduler,
 				generation,
 				telemetry: generationTelemetry,
+				terminalEnabled: true,
 			});
 		});
 
@@ -404,6 +406,13 @@ export function createServer(options: ServerOptions = {}) {
 			const handle = controlPlaneCurrent;
 			if (!handle?.traceRun) return null;
 			return await handle.traceRun(opts);
+		},
+		async submitTerminalCommand(opts) {
+			const handle = controlPlaneCurrent;
+			if (!handle?.submitTerminalCommand) {
+				throw new Error("control_plane_unavailable");
+			}
+			return await handle.submitTerminalCommand(opts);
 		},
 		async stop() {
 			const handle = controlPlaneCurrent;
@@ -1289,6 +1298,101 @@ export function createServer(options: ServerOptions = {}) {
 				},
 				{ headers },
 			);
+		}
+
+		if (path === "/api/commands/submit") {
+			if (request.method !== "POST") {
+				return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+			}
+			let body: Record<string, unknown>;
+			try {
+				body = (await request.json()) as Record<string, unknown>;
+			} catch {
+				return Response.json({ error: "invalid json body" }, { status: 400, headers });
+			}
+			const kind = typeof body.kind === "string" ? body.kind.trim() : "";
+			if (!kind) {
+				return Response.json({ error: "kind is required" }, { status: 400, headers });
+			}
+
+			let commandText: string;
+			switch (kind) {
+				case "run_start": {
+					const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+					if (!prompt) {
+						return Response.json({ error: "prompt is required for run_start" }, { status: 400, headers });
+					}
+					const maxStepsSuffix =
+						typeof body.max_steps === "number" && Number.isFinite(body.max_steps)
+							? ` --max-steps ${Math.max(1, Math.trunc(body.max_steps))}`
+							: "";
+					commandText = `mu! run start ${prompt}${maxStepsSuffix}`;
+					break;
+				}
+				case "run_resume": {
+					const rootId = typeof body.root_issue_id === "string" ? body.root_issue_id.trim() : "";
+					const maxSteps =
+						typeof body.max_steps === "number" && Number.isFinite(body.max_steps)
+							? ` ${Math.max(1, Math.trunc(body.max_steps))}`
+							: "";
+					commandText = `mu! run resume${rootId ? ` ${rootId}` : ""}${maxSteps}`;
+					break;
+				}
+				case "run_interrupt": {
+					const rootId = typeof body.root_issue_id === "string" ? body.root_issue_id.trim() : "";
+					commandText = `mu! run interrupt${rootId ? ` ${rootId}` : ""}`;
+					break;
+				}
+				case "status":
+					commandText = "/mu status";
+					break;
+				case "issue_list":
+					commandText = "/mu issue list";
+					break;
+				case "issue_get": {
+					const issueId = typeof body.issue_id === "string" ? body.issue_id.trim() : "";
+					commandText = `/mu issue get${issueId ? ` ${issueId}` : ""}`;
+					break;
+				}
+				case "forum_read": {
+					const topic = typeof body.topic === "string" ? body.topic.trim() : "";
+					const limit =
+						typeof body.limit === "number" && Number.isFinite(body.limit)
+							? ` ${Math.max(1, Math.trunc(body.limit))}`
+							: "";
+					commandText = `/mu forum read${topic ? ` ${topic}` : ""}${limit}`;
+					break;
+				}
+				case "run_list":
+					commandText = "/mu run list";
+					break;
+				case "run_status": {
+					const rootId = typeof body.root_issue_id === "string" ? body.root_issue_id.trim() : "";
+					commandText = `/mu run status${rootId ? ` ${rootId}` : ""}`;
+					break;
+				}
+				case "ready":
+					commandText = "/mu ready";
+					break;
+				default:
+					return Response.json({ error: `unknown command kind: ${kind}` }, { status: 400, headers });
+			}
+
+			try {
+				if (!controlPlaneProxy.submitTerminalCommand) {
+					return Response.json({ error: "control plane not available" }, { status: 503, headers });
+				}
+				const result: CommandPipelineResult = await controlPlaneProxy.submitTerminalCommand({
+					commandText,
+					repoRoot: context.repoRoot,
+				});
+				return Response.json({ ok: true, result }, { headers });
+			} catch (err) {
+				return Response.json(
+					{ error: `command failed: ${describeError(err)}` },
+					{ status: 500, headers },
+				);
+			}
 		}
 
 		if (path === "/api/runs") {
@@ -2339,6 +2443,7 @@ export async function createServerAsync(
 			generation_seq: 0,
 		},
 		telemetry: generationTelemetry,
+		terminalEnabled: true,
 	});
 	const serverConfig = createServer({
 		...options,
