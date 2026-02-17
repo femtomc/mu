@@ -2,7 +2,7 @@
 
 **The little long-running agent that could.**
 
-`mu` is a personal agent for technical work.
+`mu` is a personal assistant for technical work.
 
 There's thousands of agents slopped into existence every day: the main distinguishing feature of this one is that it is
 designed _to be long running_ (allowing you to prompt, and then leave it running for many hours). 
