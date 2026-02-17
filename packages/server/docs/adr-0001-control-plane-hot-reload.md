@@ -47,8 +47,8 @@ Returns generation-scoped outcome metadata:
 
 - `generation`: attempt identity, coalescing flag, from/to/active generation,
   and outcome.
-- `telegram_generation` (optional): warmup/cutover/drain/rollback detail when
-  telegram generation handling is active.
+- `telegram_generation`: warmup/cutover/drain/rollback detail when telegram
+  generation handling is active.
 
 ### `/api/status`
 
@@ -77,6 +77,7 @@ parsing logs.
 
 ## Guardrail
 
-When generation-specific handling is unavailable (for example no
-`reloadTelegramGeneration` path), reload still falls back to the legacy
-re-bootstrap path and preserves existing `/api/control-plane/reload` behavior.
+Generation-scoped control-plane metadata is now part of the required contract
+for both `/api/control-plane/reload` and `/api/status`. Operator/agent clients
+must treat missing generation fields as a protocol error rather than silently
+continuing with compatibility fallbacks.

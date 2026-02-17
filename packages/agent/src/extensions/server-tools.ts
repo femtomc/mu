@@ -35,10 +35,7 @@ function cpRoutesFromStatus(routes: MuControlPlaneRoute[] | undefined, adapters:
 	}));
 }
 
-function generationSummary(generation: MuGenerationSupervisorSnapshot | undefined): string | null {
-	if (!generation) {
-		return null;
-	}
+function generationSummary(generation: MuGenerationSupervisorSnapshot): string {
 	const active = generation.active_generation?.generation_id ?? "(none)";
 	const pending = generation.pending_reload
 		? `${generation.pending_reload.attempt_id}:${generation.pending_reload.state}`
@@ -49,32 +46,23 @@ function generationSummary(generation: MuGenerationSupervisorSnapshot | undefine
 	return `generation: active=${active} pending=${pending} last=${last}`;
 }
 
-function observabilitySummary(counters: MuGenerationObservabilityCounters | undefined): string | null {
-	if (!counters) {
-		return null;
-	}
+function observabilitySummary(counters: MuGenerationObservabilityCounters): string {
 	return `observability: reload_success=${counters.reload_success_total} reload_failure=${counters.reload_failure_total} duplicate=${counters.duplicate_signal_total} drop=${counters.drop_signal_total}`;
 }
 
 function summarizeStatus(status: Awaited<ReturnType<typeof fetchMuStatus>>): string {
-	const cp = status.control_plane ?? { active: false, adapters: [] as string[], routes: [] as MuControlPlaneRoute[] };
+	const cp = status.control_plane;
 	const routes = cpRoutesFromStatus(cp.routes, cp.adapters);
 	const routeText = routes.length > 0 ? routes.map((entry) => `${entry.name}:${entry.route}`).join(", ") : "(none)";
-	const generationLine = generationSummary(cp.generation);
-	const observabilityLine = observabilitySummary(cp.observability?.counters);
 	const lines = [
 		`repo: ${status.repo_root}`,
 		`issues: open=${status.open_count} ready=${status.ready_count}`,
 		`control_plane: ${cp.active ? "active" : "inactive"}`,
 		`adapters: ${cp.adapters.length > 0 ? cp.adapters.join(", ") : "(none)"}`,
 		`routes: ${routeText}`,
+		generationSummary(cp.generation),
+		observabilitySummary(cp.observability.counters),
 	];
-	if (generationLine) {
-		lines.push(generationLine);
-	}
-	if (observabilityLine) {
-		lines.push(observabilityLine);
-	}
 	return lines.join("\n");
 }
 
@@ -133,7 +121,7 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 				"mu-status",
 				ctx.ui.theme.fg(
 					"dim",
-					`open ${status.open_count} · ready ${status.ready_count} · cp ${status.control_plane?.active ? "on" : "off"}`,
+					`open ${status.open_count} · ready ${status.ready_count} · cp ${status.control_plane.active ? "on" : "off"}`,
 				),
 			);
 		} catch {
@@ -165,14 +153,10 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		parameters: ControlPlaneParams,
 		async execute(_toolCallId, params) {
 			const status = await fetchMuStatus();
-			const cp = status.control_plane ?? {
-				active: false,
-				adapters: [] as string[],
-				routes: [] as MuControlPlaneRoute[],
-			};
+			const cp = status.control_plane;
 			const routes = cpRoutesFromStatus(cp.routes, cp.adapters);
-			const generation = cp.generation ?? null;
-			const observability = cp.observability?.counters ?? null;
+			const generation = cp.generation;
+			const observability = cp.observability.counters;
 			switch (params.action) {
 				case "status":
 					return textResult(
@@ -378,9 +362,13 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		channel: Type.Optional(Type.String({ description: "Channel: slack, discord, telegram (for link)" })),
 		actor_id: Type.Optional(Type.String({ description: "Channel actor ID (for link)" })),
 		tenant_id: Type.Optional(Type.String({ description: "Channel tenant ID (for link)" })),
-		role: Type.Optional(Type.String({ description: "Role: operator, contributor, viewer (for link, default operator)" })),
+		role: Type.Optional(
+			Type.String({ description: "Role: operator, contributor, viewer (for link, default operator)" }),
+		),
 		binding_id: Type.Optional(Type.String({ description: "Binding ID (for link/unlink)" })),
-		actor_binding_id: Type.Optional(Type.String({ description: "Actor binding ID (for unlink, usually same as binding_id)" })),
+		actor_binding_id: Type.Optional(
+			Type.String({ description: "Actor binding ID (for unlink, usually same as binding_id)" }),
+		),
 		reason: Type.Optional(Type.String({ description: "Unlink reason (for unlink)" })),
 		include_inactive: Type.Optional(Type.Boolean({ description: "Include inactive bindings (for list)" })),
 	});
@@ -388,7 +376,8 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 	pi.registerTool({
 		name: "mu_identity",
 		label: "Identity",
-		description: "Manage identity bindings. Actions: list (enumerate bindings), link (create binding), unlink (self-unlink).",
+		description:
+			"Manage identity bindings. Actions: list (enumerate bindings), link (create binding), unlink (self-unlink).",
 		parameters: IdentityParams,
 		async execute(_toolCallId, params) {
 			switch (params.action) {
@@ -462,25 +451,15 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		handler: async (_args, ctx) => {
 			try {
 				const status = await fetchMuStatus();
-				const cp = status.control_plane ?? {
-					active: false,
-					adapters: [] as string[],
-					routes: [] as MuControlPlaneRoute[],
-				};
+				const cp = status.control_plane;
 				const routes = cpRoutesFromStatus(cp.routes, cp.adapters);
 				const lines = [
 					`control_plane: ${cp.active ? "active" : "inactive"}`,
 					`adapters: ${cp.adapters.length > 0 ? cp.adapters.join(", ") : "(none)"}`,
 					`routes: ${routes.length > 0 ? routes.map((entry) => `${entry.name}:${entry.route}`).join(", ") : "(none)"}`,
+					generationSummary(cp.generation),
+					observabilitySummary(cp.observability.counters),
 				];
-				const generationLine = generationSummary(cp.generation);
-				if (generationLine) {
-					lines.push(generationLine);
-				}
-				const observabilityLine = observabilitySummary(cp.observability?.counters);
-				if (observabilityLine) {
-					lines.push(observabilityLine);
-				}
 				ctx.ui.notify(lines.join("\n"), "info");
 			} catch (err) {
 				ctx.ui.notify(`Failed: ${err instanceof Error ? err.message : String(err)}`, "error");

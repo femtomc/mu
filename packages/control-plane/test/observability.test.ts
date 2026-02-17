@@ -74,6 +74,25 @@ describe("GenerationTelemetryRecorder", () => {
 		}
 	});
 
+	test("generation tag payloads remain caller-scoped without legacy sentinels", () => {
+		const telemetry = new GenerationTelemetryRecorder();
+		const tags = {
+			generation_id: "control-plane-gen-0",
+			generation_seq: 0,
+			supervisor: "control_plane",
+			component: "test.bootstrap",
+		} as const;
+
+		telemetry.recordReloadSuccess(tags, { reason: "startup" });
+		const records = telemetry.records({ limit: 20 });
+		expect(records.length).toBeGreaterThan(0);
+		for (const record of records) {
+			expect(record.fields.generation_id).toBe("control-plane-gen-0");
+			expect(record.fields.generation_id).not.toBe("control-plane-gen-legacy");
+			expect(record.fields.generation_seq).toBe(0);
+		}
+	});
+
 	test("gate evaluation is non-blocking and reports exceeded thresholds", () => {
 		const telemetry = new GenerationTelemetryRecorder();
 		const tags = {

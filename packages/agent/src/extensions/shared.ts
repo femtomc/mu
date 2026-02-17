@@ -35,19 +35,21 @@ export type MuGenerationObservabilityCounters = {
 	drop_signal_total: number;
 };
 
+export type MuControlPlaneStatus = {
+	active: boolean;
+	adapters: string[];
+	routes?: MuControlPlaneRoute[];
+	generation: MuGenerationSupervisorSnapshot;
+	observability: {
+		counters: MuGenerationObservabilityCounters;
+	};
+};
+
 export type MuStatusResponse = {
 	repo_root: string;
 	open_count: number;
 	ready_count: number;
-	control_plane?: {
-		active: boolean;
-		adapters: string[];
-		routes?: MuControlPlaneRoute[];
-		generation?: MuGenerationSupervisorSnapshot;
-		observability?: {
-			counters: MuGenerationObservabilityCounters;
-		};
-	};
+	control_plane: MuControlPlaneStatus;
 };
 
 export function muServerUrl(): string | null {
@@ -95,8 +97,40 @@ export async function fetchMuJson<T>(
 	}
 }
 
+function ensureGenerationScopedStatus(status: MuStatusResponse): MuStatusResponse {
+	const controlPlane = (status as { control_plane?: unknown }).control_plane;
+	if (!controlPlane || typeof controlPlane !== "object") {
+		throw new Error("mu server /api/status missing control_plane payload (expected generation-scoped contract)");
+	}
+
+	const controlPlaneRecord = controlPlane as Record<string, unknown>;
+	if (!("generation" in controlPlaneRecord) || !controlPlaneRecord.generation) {
+		throw new Error("mu server /api/status missing control_plane.generation (expected generation-scoped contract)");
+	}
+	if (!("observability" in controlPlaneRecord) || !controlPlaneRecord.observability) {
+		throw new Error(
+			"mu server /api/status missing control_plane.observability (expected generation-scoped contract)",
+		);
+	}
+
+	const observability = controlPlaneRecord.observability;
+	if (
+		typeof observability !== "object" ||
+		observability == null ||
+		!("counters" in observability) ||
+		!(observability as Record<string, unknown>).counters
+	) {
+		throw new Error(
+			"mu server /api/status missing control_plane.observability.counters (expected generation-scoped contract)",
+		);
+	}
+
+	return status;
+}
+
 export async function fetchMuStatus(timeoutMs?: number): Promise<MuStatusResponse> {
-	return await fetchMuJson<MuStatusResponse>("/api/status", { timeoutMs });
+	const status = await fetchMuJson<MuStatusResponse>("/api/status", { timeoutMs });
+	return ensureGenerationScopedStatus(status);
 }
 
 export function textResult(text: string, details: Record<string, unknown> = {}) {

@@ -142,6 +142,17 @@ type ConfigWriteResponse = {
 	presence: ConfigPresence;
 };
 
+type ControlPlaneGenerationIdentity = { generation_id: string; generation_seq: number };
+
+type ControlPlaneReloadGenerationSummary = {
+	attempt_id: string;
+	coalesced: boolean;
+	from_generation: ControlPlaneGenerationIdentity | null;
+	to_generation: ControlPlaneGenerationIdentity;
+	active_generation: ControlPlaneGenerationIdentity | null;
+	outcome: "success" | "failure";
+};
+
 type ControlPlaneReloadApiResponse = {
 	ok: boolean;
 	reason: string;
@@ -155,15 +166,8 @@ type ControlPlaneReloadApiResponse = {
 		adapters: string[];
 		routes: Array<{ name: string; route: string }>;
 	};
-	generation?: {
-		attempt_id: string;
-		coalesced: boolean;
-		from_generation: { generation_id: string; generation_seq: number } | null;
-		to_generation: { generation_id: string; generation_seq: number };
-		active_generation: { generation_id: string; generation_seq: number } | null;
-		outcome: "success" | "failure";
-	};
-	telegram_generation?: {
+	generation: ControlPlaneReloadGenerationSummary;
+	telegram_generation: {
 		handled: boolean;
 		ok: boolean;
 		rollback: {
@@ -173,7 +177,7 @@ type ControlPlaneReloadApiResponse = {
 			ok: boolean;
 			error?: string;
 		};
-	};
+	} | null;
 	error?: string;
 };
 
@@ -634,6 +638,65 @@ function planSummary(plans: AdapterPlan[]): string {
 	return plans.map((plan) => planText(plan)).join("\n\n");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function isControlPlaneGenerationIdentity(value: unknown): value is ControlPlaneGenerationIdentity {
+	if (!isRecord(value)) return false;
+	return typeof value.generation_id === "string" && typeof value.generation_seq === "number";
+}
+
+function isControlPlaneReloadGenerationSummary(value: unknown): value is ControlPlaneReloadGenerationSummary {
+	if (!isRecord(value)) return false;
+	if (typeof value.attempt_id !== "string") return false;
+	if (typeof value.coalesced !== "boolean") return false;
+	if (value.from_generation !== null && !isControlPlaneGenerationIdentity(value.from_generation)) return false;
+	if (!isControlPlaneGenerationIdentity(value.to_generation)) return false;
+	if (value.active_generation !== null && !isControlPlaneGenerationIdentity(value.active_generation)) return false;
+	return value.outcome === "success" || value.outcome === "failure";
+}
+
+function parseControlPlaneReloadApiResponse(raw: string): {
+	response: ControlPlaneReloadApiResponse | null;
+	error: string | null;
+} {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw) as unknown;
+	} catch {
+		return {
+			response: null,
+			error: "control-plane reload returned invalid JSON response",
+		};
+	}
+
+	if (!isRecord(parsed)) {
+		return {
+			response: null,
+			error: "control-plane reload returned non-object payload",
+		};
+	}
+
+	if (!isControlPlaneReloadGenerationSummary(parsed.generation)) {
+		return {
+			response: null,
+			error: "control-plane reload response missing generation metadata (expected generation-scoped contract)",
+		};
+	}
+
+	const parsedRecord = parsed as Record<string, unknown>;
+	const response = {
+		...(parsed as ControlPlaneReloadApiResponse),
+		telegram_generation:
+			(parsedRecord.telegram_generation as ControlPlaneReloadApiResponse["telegram_generation"] | undefined) ?? null,
+	};
+	return {
+		response,
+		error: null,
+	};
+}
+
 async function reloadControlPlaneInProcess(reason: string): Promise<ControlPlaneReloadOutcome> {
 	const base = muServerUrl();
 	if (!base) {
@@ -651,18 +714,30 @@ async function reloadControlPlaneInProcess(reason: string): Promise<ControlPlane
 			body: JSON.stringify({ reason }),
 		});
 		const raw = await response.text();
-		let parsed: ControlPlaneReloadApiResponse | null = null;
-		try {
-			parsed = JSON.parse(raw) as ControlPlaneReloadApiResponse;
-		} catch {
-			parsed = null;
+		const parsedResult = parseControlPlaneReloadApiResponse(raw);
+		const parsed = parsedResult.response;
+
+		if (parsedResult.error) {
+			return {
+				ok: false,
+				response: null,
+				error: parsedResult.error,
+			};
 		}
 
-		if (!response.ok || !parsed?.ok) {
+		if (!parsed) {
+			return {
+				ok: false,
+				response: null,
+				error: "control-plane reload response missing payload",
+			};
+		}
+
+		if (!response.ok || !parsed.ok) {
 			return {
 				ok: false,
 				response: parsed,
-				error: parsed?.error ?? `control-plane reload failed (${response.status})`,
+				error: parsed.error ?? `control-plane reload failed (${response.status})`,
 			};
 		}
 
@@ -685,14 +760,15 @@ function reloadOutcomeSummary(reload: ControlPlaneReloadOutcome): string {
 		return `Control-plane reload failed: ${reload.error ?? "unknown error"}.`;
 	}
 	const response = reload.response;
-	const adapters = response?.control_plane?.adapters.join(", ") || "(none)";
-	const generation = response?.generation;
-	const generationSummary = generation
-		? `${generation.outcome} (${generation.active_generation?.generation_id ?? generation.to_generation.generation_id})`
-		: "success (legacy path)";
-	const telegramRollbackTrigger = response?.telegram_generation?.rollback.trigger;
+	if (!response) {
+		return "Control-plane reload failed: missing reload response payload.";
+	}
+
+	const adapters = response.control_plane?.adapters.join(", ") || "(none)";
+	const generationSummary = `${response.generation.outcome} (${response.generation.active_generation?.generation_id ?? response.generation.to_generation.generation_id})`;
+	const telegramRollbackTrigger = response.telegram_generation?.rollback.trigger;
 	const telegramNote =
-		response?.telegram_generation?.handled && telegramRollbackTrigger
+		response.telegram_generation?.handled && telegramRollbackTrigger
 			? ` rollback_trigger=${telegramRollbackTrigger}`
 			: "";
 	return `Control-plane reloaded in-process. Active adapters: ${adapters}. Generation: ${generationSummary}.${telegramNote}`;

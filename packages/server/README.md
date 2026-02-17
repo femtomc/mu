@@ -96,7 +96,7 @@ Bun.serve(server);
   ```json
   { "reason": "mu_setup_apply" }
   ```
-  - Response includes generation metadata and optional `telegram_generation` lifecycle detail.
+  - Response includes generation metadata and, when telegram generation handling runs, `telegram_generation` lifecycle detail.
 - `POST /api/control-plane/rollback` - Explicit rollback trigger (same pipeline, reason=`rollback`)
 
 ### Issues

@@ -95,6 +95,19 @@ export class ControlPlaneGenerationSupervisor {
 		return true;
 	}
 
+	public rollbackSwapInstalled(attemptId: string): boolean {
+		if (
+			!this.#pendingReload ||
+			this.#pendingReload.attempt_id !== attemptId ||
+			this.#pendingReload.swapped_at_ms == null
+		) {
+			return false;
+		}
+		this.#activeGeneration = cloneGeneration(this.#pendingReload.from_generation);
+		this.#generationSeq = this.#activeGeneration?.generation_seq ?? -1;
+		return true;
+	}
+
 	public finishReload(attemptId: string, outcome: "success" | "failure"): boolean {
 		if (!this.#pendingReload || this.#pendingReload.attempt_id !== attemptId) {
 			return false;

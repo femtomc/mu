@@ -1,10 +1,10 @@
 import { extname, join, resolve } from "node:path";
 import {
+	type GenerationSupervisorSnapshot,
+	type GenerationTelemetryCountersSnapshot,
 	GenerationTelemetryRecorder,
 	getControlPlanePaths,
 	IdentityStore,
-	type GenerationSupervisorSnapshot,
-	type GenerationTelemetryCountersSnapshot,
 	type ReloadableGenerationIdentity,
 	type ReloadLifecycleReason,
 	ROLE_SCOPES,
@@ -185,10 +185,6 @@ export function createServer(options: ServerOptions = {}) {
 				}
 			: null,
 	});
-	const legacyGeneration: ReloadableGenerationIdentity = {
-		generation_id: "control-plane-gen-legacy",
-		generation_seq: -1,
-	};
 	const generationTagsFor = (generation: ReloadableGenerationIdentity, component: string) => ({
 		generation_id: generation.generation_id,
 		generation_seq: generation.generation_seq,
@@ -343,6 +339,7 @@ export function createServer(options: ServerOptions = {}) {
 		let failedStage: "warmup" | "cutover" | "drain" = "warmup";
 		let drainDurationMs = 0;
 		let drainStartedAtMs: number | null = null;
+		let nextHandle: ControlPlaneHandle | null = null;
 
 		try {
 			logLifecycle({ level: "info", stage: "warmup", state: "start" });
@@ -560,6 +557,7 @@ export function createServer(options: ServerOptions = {}) {
 				config: latestConfig.control_plane,
 				generation: attempt.to_generation,
 			});
+			nextHandle = next;
 			logLifecycle({ level: "info", stage: "warmup", state: "complete" });
 
 			failedStage = "cutover";
@@ -672,34 +670,62 @@ export function createServer(options: ServerOptions = {}) {
 					stage: "rollback",
 					state: "start",
 					extra: {
-						rollback_mode: "post_cutover_unavailable",
+						rollback_reason: "reload_failed_after_cutover",
+						rollback_target_generation_id: attempt.from_generation?.generation_id ?? null,
+						rollback_source_generation_id: attempt.to_generation.generation_id,
 					},
 				});
-				logLifecycle({
-					level: "warn",
-					stage: "rollback",
-					state: "failed",
-					extra: {
-						rollback_mode: "post_cutover_unavailable",
-						rollback_reason: "manual_rollback_not_implemented",
-					},
-				});
+
+				if (!previous) {
+					logLifecycle({
+						level: "error",
+						stage: "rollback",
+						state: "failed",
+						extra: {
+							rollback_reason: "no_previous_generation",
+							rollback_source_generation_id: attempt.to_generation.generation_id,
+						},
+					});
+				} else {
+					try {
+						const restored = generationSupervisor.rollbackSwapInstalled(attempt.attempt_id);
+						if (!restored) {
+							throw new Error("generation_rollback_state_mismatch");
+						}
+						controlPlaneCurrent = previous;
+						if (nextHandle && nextHandle !== previous) {
+							await nextHandle.stop();
+						}
+						logLifecycle({
+							level: "info",
+							stage: "rollback",
+							state: "complete",
+							extra: {
+								active_generation_id: generationSupervisor.activeGeneration()?.generation_id ?? null,
+								rollback_target_generation_id: attempt.from_generation?.generation_id ?? null,
+							},
+						});
+					} catch (rollbackErr) {
+						logLifecycle({
+							level: "error",
+							stage: "rollback",
+							state: "failed",
+							extra: {
+								error: describeError(rollbackErr),
+								active_generation_id: generationSupervisor.activeGeneration()?.generation_id ?? null,
+								rollback_target_generation_id: attempt.from_generation?.generation_id ?? null,
+								rollback_source_generation_id: attempt.to_generation.generation_id,
+							},
+						});
+					}
+				}
 			} else {
 				logLifecycle({
-					level: "warn",
+					level: "debug",
 					stage: "rollback",
-					state: "start",
+					state: "skipped",
 					extra: {
-						rollback_mode: "pre_cutover_noop",
-					},
-				});
-				logLifecycle({
-					level: "info",
-					stage: "rollback",
-					state: "complete",
-					extra: {
-						rollback_mode: "pre_cutover_noop",
-						active_generation_id: generationSupervisor.activeGeneration()?.generation_id ?? null,
+						rollback_reason: "cutover_not_installed",
 					},
 				});
 			}
@@ -726,7 +752,7 @@ export function createServer(options: ServerOptions = {}) {
 				ok: false,
 				reason,
 				previous_control_plane: previousSummary,
-				control_plane: summarizeControlPlane(swapped ? controlPlaneCurrent : previous),
+				control_plane: summarizeControlPlane(controlPlaneCurrent),
 				generation: {
 					attempt_id: attempt.attempt_id,
 					coalesced: planned.coalesced,
@@ -743,17 +769,23 @@ export function createServer(options: ServerOptions = {}) {
 	const reloadControlPlane = async (reason: ReloadLifecycleReason): Promise<ControlPlaneReloadResult> => {
 		if (reloadInFlight) {
 			const pending = generationSupervisor.pendingReload();
-			const generation = pending?.to_generation ?? generationSupervisor.activeGeneration() ?? legacyGeneration;
-			generationTelemetry.recordDuplicateSignal(generationTagsFor(generation, "server.reload"), {
-				source: "server_reload",
-				signal: "coalesced_reload_request",
-				dedupe_key: pending?.attempt_id ?? "reload_in_flight",
-				record_id: pending?.attempt_id ?? "reload_in_flight",
-				metadata: {
-					reason,
-					pending_reason: pending?.reason ?? null,
-				},
-			});
+			const fallbackGeneration =
+				generationSupervisor.activeGeneration() ??
+				generationSupervisor.snapshot().last_reload?.to_generation ??
+				null;
+			const generation = pending?.to_generation ?? fallbackGeneration;
+			if (generation) {
+				generationTelemetry.recordDuplicateSignal(generationTagsFor(generation, "server.reload"), {
+					source: "server_reload",
+					signal: "coalesced_reload_request",
+					dedupe_key: pending?.attempt_id ?? "reload_in_flight",
+					record_id: pending?.attempt_id ?? "reload_in_flight",
+					metadata: {
+						reason,
+						pending_reason: pending?.reason ?? null,
+					},
+				});
+			}
 			return await reloadInFlight;
 		}
 		reloadInFlight = performControlPlaneReload(reason).finally(() => {

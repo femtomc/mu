@@ -113,6 +113,57 @@ describe("control-plane reload observability scaffold", () => {
 		expect(logMessages).toContain("reload transition drain:complete");
 		expect(logMessages).toContain("reload transition rollback:skipped");
 		expect(logMessages).toContain("reload transition warmup:failed");
+	});
+
+	test("post-cutover drain failures trigger rollback and restore previous generation", async () => {
+		const repoRoot = await mkRepoRoot();
+		const telemetry = new GenerationTelemetryRecorder();
+		let drainStopCalls = 0;
+		let rollbackStopCalls = 0;
+		const initial: ControlPlaneHandle = {
+			activeAdapters: [{ name: "slack", route: "/webhooks/slack" }],
+			handleWebhook: async () => null,
+			stop: async () => {
+				drainStopCalls += 1;
+				throw new Error("drain exploded");
+			},
+		};
+		const reloaded: ControlPlaneHandle = {
+			activeAdapters: [{ name: "discord", route: "/webhooks/discord" }],
+			handleWebhook: async () => null,
+			stop: async () => {
+				rollbackStopCalls += 1;
+			},
+		};
+
+		const server = createServer({
+			repoRoot,
+			controlPlane: initial,
+			generationTelemetry: telemetry,
+			controlPlaneReloader: async () => reloaded,
+		});
+
+		const response = await server.fetch(reloadRequest("drain_failure_case"));
+		expect(response.status).toBe(500);
+		const payload = (await response.json()) as {
+			ok: boolean;
+			control_plane: { adapters: string[] };
+			generation: {
+				outcome: "success" | "failure";
+				active_generation: { generation_id: string } | null;
+			};
+		};
+		expect(payload.ok).toBe(false);
+		expect(payload.control_plane.adapters).toEqual(["slack"]);
+		expect(payload.generation.outcome).toBe("failure");
+		expect(payload.generation.active_generation?.generation_id).toBe("control-plane-gen-0");
+		expect(drainStopCalls).toBe(1);
+		expect(rollbackStopCalls).toBe(1);
+
+		const logMessages = telemetry
+			.records({ kind: "log", limit: 200 })
+			.flatMap((record) => (record.kind === "log" ? [record.message] : []));
+		expect(logMessages).toContain("reload transition drain:failed");
 		expect(logMessages).toContain("reload transition rollback:start");
 		expect(logMessages).toContain("reload transition rollback:complete");
 	});

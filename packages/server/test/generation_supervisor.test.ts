@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ControlPlaneGenerationSupervisor } from "../src/generation_supervisor.js";
 
 describe("ControlPlaneGenerationSupervisor", () => {
-	test("tracks planned -> swapped -> failed lifecycle without reverting swapped generation", () => {
+	test("tracks planned -> swapped -> rollback -> failed lifecycle", () => {
 		let nowMs = 10_000;
 		const supervisor = new ControlPlaneGenerationSupervisor({
 			supervisorId: "control-plane",
@@ -24,11 +24,16 @@ describe("ControlPlaneGenerationSupervisor", () => {
 		expect(supervisor.activeGeneration()?.generation_id).toBe("control-plane-gen-1");
 
 		nowMs += 5;
+		expect(supervisor.rollbackSwapInstalled(begin.attempt.attempt_id)).toBe(true);
+		expect(supervisor.activeGeneration()?.generation_id).toBe("control-plane-gen-0");
+
+		nowMs += 5;
 		expect(supervisor.finishReload(begin.attempt.attempt_id, "failure")).toBe(true);
 		const snapshot = supervisor.snapshot();
 		expect(snapshot.pending_reload).toBeNull();
 		expect(snapshot.last_reload?.state).toBe("failed");
-		expect(snapshot.active_generation?.generation_id).toBe("control-plane-gen-1");
+		expect(snapshot.last_reload?.swapped_at_ms).toBe(10_005);
+		expect(snapshot.active_generation?.generation_id).toBe("control-plane-gen-0");
 	});
 
 	test("coalesces overlapping begin requests and advances sequence after completion", () => {

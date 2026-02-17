@@ -957,8 +957,8 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 	const controlPlaneConfig = opts.config ?? DEFAULT_MU_CONFIG.control_plane;
 	const detected = detectAdapters(controlPlaneConfig);
 	const generation: ControlPlaneGenerationContext = opts.generation ?? {
-		generation_id: "control-plane-gen-legacy",
-		generation_seq: -1,
+		generation_id: "control-plane-gen-0",
+		generation_seq: 0,
 	};
 	const telemetry = opts.telemetry ?? null;
 	const signalObserver: ControlPlaneSignalObserver | undefined = telemetry
