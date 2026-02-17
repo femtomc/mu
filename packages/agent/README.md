@@ -17,6 +17,7 @@ Bundled defaults now live as markdown files under `packages/agent/prompts/`:
 - `operator.md`
 - `orchestrator.md`
 - `worker.md`
+- `soul.md` (shared tail appended to all role prompts)
 
 These are loaded by runtime code and are the single source of truth for default system prompts.
 

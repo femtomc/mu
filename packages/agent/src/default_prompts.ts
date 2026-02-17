@@ -25,6 +25,21 @@ export function loadBundledPrompt(name: string): string {
 	return prompt;
 }
 
-export const DEFAULT_ORCHESTRATOR_PROMPT = loadBundledPrompt("orchestrator.md");
-export const DEFAULT_WORKER_PROMPT = loadBundledPrompt("worker.md");
-export const DEFAULT_OPERATOR_SYSTEM_PROMPT = loadBundledPrompt("operator.md");
+export function appendSharedSoul(basePrompt: string, soulPrompt: string): string {
+	const base = basePrompt.trim();
+	const soul = soulPrompt.trim();
+	if (soul.length === 0) {
+		return base;
+	}
+	return `${base}\n\n${soul}`;
+}
+
+export const DEFAULT_SOUL_PROMPT = loadBundledPrompt("soul.md");
+
+const BASE_ORCHESTRATOR_PROMPT = loadBundledPrompt("orchestrator.md");
+const BASE_WORKER_PROMPT = loadBundledPrompt("worker.md");
+const BASE_OPERATOR_SYSTEM_PROMPT = loadBundledPrompt("operator.md");
+
+export const DEFAULT_ORCHESTRATOR_PROMPT = appendSharedSoul(BASE_ORCHESTRATOR_PROMPT, DEFAULT_SOUL_PROMPT);
+export const DEFAULT_WORKER_PROMPT = appendSharedSoul(BASE_WORKER_PROMPT, DEFAULT_SOUL_PROMPT);
+export const DEFAULT_OPERATOR_SYSTEM_PROMPT = appendSharedSoul(BASE_OPERATOR_SYSTEM_PROMPT, DEFAULT_SOUL_PROMPT);
