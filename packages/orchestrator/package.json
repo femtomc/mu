@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-orchestrator",
-	"version": "26.2.51",
+	"version": "26.2.52",
 	"description": "Long-running execution engine for mu work plans.",
 	"keywords": [
 		"mu",
@@ -21,10 +21,10 @@
 		"dist/**"
 	],
 	"dependencies": {
-		"@femtomc/mu-agent": "26.2.51",
-		"@femtomc/mu-core": "26.2.51",
-		"@femtomc/mu-forum": "26.2.51",
-		"@femtomc/mu-issue": "26.2.51",
+		"@femtomc/mu-agent": "26.2.52",
+		"@femtomc/mu-core": "26.2.52",
+		"@femtomc/mu-forum": "26.2.52",
+		"@femtomc/mu-issue": "26.2.52",
 		"@mariozechner/pi-coding-agent": "^0.52.12",
 		"@mariozechner/pi-ai": "^0.52.12"
 	}

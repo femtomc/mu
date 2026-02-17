@@ -402,8 +402,19 @@ export async function run(
 ): Promise<RunResult> {
 	const cwd = opts.cwd ?? process.cwd();
 
-	if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
+	if (argv[0] === "--help" || argv[0] === "-h") {
 		return ok(`${mainHelp()}\n`);
+	}
+	if (argv.length === 0) {
+		const ctx0 = await ensureCtx(cwd);
+		const ctx: CliCtx = {
+			...ctx0,
+			io: opts.io,
+			backend: opts.backend,
+			operatorSessionFactory: opts.operatorSessionFactory,
+			serveDeps: opts.serveDeps,
+		};
+		return await cmdServe([], ctx);
 	}
 	if (argv.includes("--version")) {
 		const pkgPath = join(dirname(new URL(import.meta.url).pathname), "..", "package.json");
