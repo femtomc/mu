@@ -131,7 +131,8 @@ Recommended setup flow:
 1. Run `/mu-status`
 2. Run `/mu-control`
 3. Run `/mu-setup plan <adapter>` and `/mu-setup apply <adapter>`
-4. Run `/mu-setup verify <adapter>`
+4. Link your channel identity (`mu control link --channel <adapter> --actor-id <id> --tenant-id <tenant> --role <viewer|contributor|operator>`)
+5. Run `/mu-setup verify <adapter>`
 
 ### Terminal Operator Chat
 

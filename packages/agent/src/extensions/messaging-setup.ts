@@ -227,6 +227,7 @@ const ADAPTERS: AdapterConfig[] = [
 			"Create bot with @BotFather and place token in control_plane.adapters.telegram.bot_token.",
 			"Set control_plane.adapters.telegram.webhook_secret to a random secret string.",
 			"Call Telegram setWebhook using URL <public-base-url>/webhooks/telegram and matching secret_token.",
+			"Link your Telegram identity to control-plane policy (mu control link --channel telegram --actor-id <telegram-user-id> --tenant-id telegram-bot --role <viewer|contributor|operator>).",
 			"Optionally set control_plane.adapters.telegram.bot_username.",
 			"Send /mu in Telegram chat, then /mu-setup verify telegram.",
 		],

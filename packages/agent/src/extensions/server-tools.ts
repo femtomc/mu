@@ -387,9 +387,9 @@ export function serverToolsReadOnlyExtension(pi: ExtensionAPI) {
 	registerServerTools(pi, {
 		allowForumPost: false,
 		toolIntroLine:
-			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum(read/topics), mu_events, mu_runs(read), mu_messaging_setup(read).",
+			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum(read/topics), mu_events, mu_runs(read), mu_messaging_setup.",
 		extraSystemPromptLines: [
-			"Mutating tool actions are disabled in operator mode; propose mutations via approved /mu commands.",
+			"You have Bash, Read, Write, and Edit tools. Use them to run mu CLI commands, edit config files, and complete tasks directly.",
 		],
 	});
 }
