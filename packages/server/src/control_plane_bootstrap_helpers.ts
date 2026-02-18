@@ -7,14 +7,14 @@ import {
 	PiMessagingOperatorBackend,
 } from "@femtomc/mu-agent";
 import {
+	ControlPlaneOutbox,
 	ControlPlaneOutboxDispatcher,
-	type ControlPlaneOutbox,
 	type OutboxDeliveryHandlerResult,
 	type OutboxRecord,
 } from "@femtomc/mu-control-plane";
 import type { ControlPlaneConfig } from "./control_plane_contract.js";
 
-const DEFAULT_OUTBOX_DRAIN_INTERVAL_MS = 500;
+const OUTBOX_DRAIN_INTERVAL_MS = 500;
 
 export function buildMessagingOperatorRuntime(opts: {
 	repoRoot: string;
@@ -46,7 +46,6 @@ export function buildMessagingOperatorRuntime(opts: {
 export function createOutboxDrainLoop(opts: {
 	outbox: ControlPlaneOutbox;
 	deliver: (record: OutboxRecord) => Promise<undefined | OutboxDeliveryHandlerResult>;
-	intervalMs?: number;
 }): {
 	scheduleOutboxDrain: () => void;
 	stop: () => void;
@@ -56,11 +55,14 @@ export function createOutboxDrainLoop(opts: {
 		deliver: opts.deliver,
 	});
 
-	let drainInterval: ReturnType<typeof setInterval> | null = null;
 	let drainingOutbox = false;
 	let drainRequested = false;
+	let stopped = false;
 
 	const drainOutboxNow = async (): Promise<void> => {
+		if (stopped) {
+			return;
+		}
 		if (drainingOutbox) {
 			drainRequested = true;
 			return;
@@ -70,35 +72,36 @@ export function createOutboxDrainLoop(opts: {
 			do {
 				drainRequested = false;
 				await dispatcher.drainDue();
-			} while (drainRequested);
+			} while (drainRequested && !stopped);
 		} catch {
-			// Swallow errors — the dispatcher handles retries internally.
+			// Swallow errors — dispatcher handles retry progression internally.
 		} finally {
 			drainingOutbox = false;
 		}
 	};
 
 	const scheduleOutboxDrain = (): void => {
+		if (stopped) {
+			return;
+		}
 		queueMicrotask(() => {
 			void drainOutboxNow();
 		});
 	};
 
-	drainInterval = setInterval(
-		() => {
-			scheduleOutboxDrain();
-		},
-		Math.max(1, Math.trunc(opts.intervalMs ?? DEFAULT_OUTBOX_DRAIN_INTERVAL_MS)),
-	);
+	const interval = setInterval(() => {
+		scheduleOutboxDrain();
+	}, OUTBOX_DRAIN_INTERVAL_MS);
 	scheduleOutboxDrain();
 
 	return {
 		scheduleOutboxDrain,
 		stop: () => {
-			if (drainInterval) {
-				clearInterval(drainInterval);
-				drainInterval = null;
+			if (stopped) {
+				return;
 			}
+			stopped = true;
+			clearInterval(interval);
 		},
 	};
 }

@@ -1,6 +1,6 @@
 import {
-	correlationFromCommandRecord,
 	type ControlPlaneOutbox,
+	correlationFromCommandRecord,
 	type OutboundEnvelope,
 	type OutboxRecord,
 } from "@femtomc/mu-control-plane";
@@ -65,4 +65,3 @@ export async function enqueueRunEventOutbox(opts: {
 	});
 	return decision.record;
 }
-

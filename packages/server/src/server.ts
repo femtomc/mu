@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import {
 	type GenerationSupervisorSnapshot,
 	type GenerationTelemetryCountersSnapshot,
@@ -30,35 +29,10 @@ import { createProcessSessionLifecycle } from "./session_lifecycle.js";
 import { createServerProgramOrchestration } from "./server_program_orchestration.js";
 import { createServerRequestHandler } from "./server_routing.js";
 import type { ServerRuntime } from "./server_runtime.js";
-
-const MIME_TYPES: Record<string, string> = {
-	".html": "text/html; charset=utf-8",
-	".js": "text/javascript; charset=utf-8",
-	".css": "text/css; charset=utf-8",
-	".json": "application/json",
-	".png": "image/png",
-	".jpg": "image/jpeg",
-	".svg": "image/svg+xml",
-	".ico": "image/x-icon",
-	".woff": "font/woff",
-	".woff2": "font/woff2",
-};
-
-// Resolve public/ dir relative to this file (works in npm global installs)
-const PUBLIC_DIR = join(new URL(".", import.meta.url).pathname, "..", "public");
+import { toNonNegativeInt } from "./server_types.js";
 
 const DEFAULT_OPERATOR_WAKE_COALESCE_MS = 2_000;
 const DEFAULT_AUTO_RUN_HEARTBEAT_EVERY_MS = 15_000;
-
-function toNonNegativeInt(value: unknown, fallback: number): number {
-	if (typeof value === "number" && Number.isFinite(value)) {
-		return Math.max(0, Math.trunc(value));
-	}
-	if (typeof value === "string" && /^\d+$/.test(value.trim())) {
-		return Math.max(0, Number.parseInt(value, 10));
-	}
-	return Math.max(0, Math.trunc(fallback));
-}
 
 export { createProcessSessionLifecycle };
 
@@ -860,8 +834,6 @@ function createServer(options: ServerOptions = {}) {
 		registerAutoRunHeartbeatProgram,
 		disableAutoRunHeartbeatProgram,
 		describeError,
-		publicDir: PUBLIC_DIR,
-		mimeTypes: MIME_TYPES,
 	});
 
 	const server = {
