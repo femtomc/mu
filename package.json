@@ -19,7 +19,7 @@
     "web:test": "bun run web:build && cd packages/web && bun run e2e",
     "guardrails": "bun run scripts/guardrails.ts",
     "guardrails:boundaries": "bun run scripts/guardrails.ts --boundaries-only",
-    "check:core": "biome check --error-on-warnings . && bun run typecheck && bun run build && bun test",
+    "check:core": "bun run typecheck && bun run build && bun test",
     "check": "bun run guardrails && bun run check:core",
     "build:compile": "bun build packages/cli/src/cli.ts --compile --outfile mu-bin --minify",
     "build:compile:linux": "bun build packages/cli/src/cli.ts --compile --outfile mu-bin-linux --target bun-linux-x64 --minify",

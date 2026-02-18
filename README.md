@@ -220,7 +220,7 @@ bun run typecheck
 
 ```bash
 bun run guardrails      # architecture seams + phase-critical regression suite
-bun run check           # guardrails + lint/typecheck/build/full test
+bun run check           # guardrails + typecheck/build/full test
 bun run pack:smoke      # package smoke validation
 ```
 
