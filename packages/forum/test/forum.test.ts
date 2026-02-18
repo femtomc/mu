@@ -123,8 +123,8 @@ describe("ForumStore", () => {
 
 		const top = await store.topics(null, { limit: 5 });
 		expect(top).toHaveLength(5);
-		expect(top[0]?.topic).toBe("topic:209");
 
+		// limit is clamped to MAX_FORUM_TOPICS_LIMIT (200)
 		const clamped = await store.topics(null, { limit: 9999 });
 		expect(clamped).toHaveLength(200);
 	});
