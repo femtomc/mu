@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { JsonlStore } from "@femtomc/mu-core";
 import { FsJsonlStore, fsEventLog, readJsonl, writeJsonl } from "@femtomc/mu-core/node";
 import { ForumStore, ForumStoreValidationError } from "@femtomc/mu-forum";
 
@@ -71,6 +72,36 @@ describe("ForumStore", () => {
 
 		await expect(store.read("t1", 0)).rejects.toBeInstanceOf(ForumStoreValidationError);
 		await expect(store.read("t1", Number.NaN)).rejects.toBeInstanceOf(ForumStoreValidationError);
+	});
+
+	test("read uses streaming path for bounded topic queries when store supports stream()", async () => {
+		const rows: unknown[] = [];
+		const backing: JsonlStore<unknown> = {
+			read: async () => {
+				throw new Error("read() should not be used for bounded streaming query");
+			},
+			write: async (next) => {
+				rows.length = 0;
+				rows.push(...next);
+			},
+			append: async (row) => {
+				rows.push(row);
+			},
+			async *stream() {
+				for (const row of rows) {
+					yield row;
+				}
+			},
+		};
+		const store = new ForumStore(backing);
+
+		await store.post("t1", "a1");
+		await store.post("t2", "b1");
+		await store.post("t1", "a2");
+		await store.post("t1", "a3");
+
+		const msgs = await store.read("t1", 2);
+		expect(msgs.map((message) => message.body)).toEqual(["a2", "a3"]);
 	});
 
 	test("post/read normalize topic boundaries and clamp high limits", async () => {
