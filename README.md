@@ -136,6 +136,12 @@ Recommended setup flow:
 4. Link your channel identity (`mu control link --channel <adapter> --actor-id <id> --tenant-id <tenant> --role <viewer|contributor|operator>`)
 5. Run `/mu setup verify <adapter>`
 
+Operator query discipline (context-safe by default):
+
+- Start with bounded discovery (`limit` + filters like `contains`, `status`, `tag`, `source`).
+- Then inspect specific entities via ID (`get` / `status`) and request only needed fields (`fields`).
+- Prefer targeted lookups over repeated broad scans of issues/forum/events.
+
 ### Terminal Operator Chat
 
 `mu serve` attaches an interactive terminal operator session in the same shell as the server.
