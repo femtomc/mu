@@ -216,12 +216,26 @@ bun test
 bun run typecheck
 ```
 
+### Guardrails and CI parity checks
+
+```bash
+bun run guardrails      # architecture seams + phase-critical regression suite
+bun run check           # guardrails + lint/typecheck/build/full test
+bun run pack:smoke      # package smoke validation
+```
+
+`bun run check` mirrors the CI core gate sequence. For a deliberate boundary
+failure dry run, use:
+
+```bash
+MU_GUARDRAILS_DRY_RUN_FAIL=1 bun run guardrails:boundaries
+```
+
 ### Formatting
 
 ```bash
 bun run fmt
 bun run lint
-bun run check
 ```
 
 ### Pack smoke test
