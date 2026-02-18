@@ -1,8 +1,10 @@
 import {
+	DEFAULT_FORUM_TOPICS_LIMIT,
 	ForumStoreValidationError,
 	normalizeForumPrefix,
 	normalizeForumReadLimit,
 	normalizeForumTopic,
+	normalizeForumTopicsLimit,
 } from "@femtomc/mu-forum";
 import type { ServerContext } from "../server.js";
 
@@ -46,7 +48,10 @@ export async function forumRoutes(request: Request, context: ServerContext): Pro
 		// List topics - GET /api/forum/topics
 		if (path === "/topics" && method === "GET") {
 			const prefix = normalizeForumPrefix(url.searchParams.get("prefix"));
-			const topics = await context.forumStore.topics(prefix);
+			const limit = normalizeForumTopicsLimit(url.searchParams.get("limit"), {
+				defaultLimit: DEFAULT_FORUM_TOPICS_LIMIT,
+			});
+			const topics = await context.forumStore.topics(prefix, { limit });
 			return Response.json(topics);
 		}
 

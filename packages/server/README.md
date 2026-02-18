@@ -103,7 +103,8 @@ Bun.serve(server);
 ### Issues
 
 - `GET /api/issues` - List issues
-  - Query params: `?status=open&tag=bug`
+  - Query params: `?status=open&tag=bug&contains=crash&limit=50`
+  - `limit` defaults to `200` and is clamped to `<= 200`.
 - `GET /api/issues/:id` - Get issue by ID
 - `POST /api/issues` - Create new issue
   ```json
@@ -123,14 +124,17 @@ Bun.serve(server);
   ```
 - `POST /api/issues/:id/claim` - Claim issue (changes status to in_progress)
 - `GET /api/issues/ready` - Get ready issues
-  - Query param: `?root=issue-id`
+  - Query params: `?root=issue-id&contains=worker&limit=20`
+  - `limit` defaults to `200` and is clamped to `<= 200`.
 
 ### Forum
 
 - `GET /api/forum/topics` - List forum topics
-  - Query param: `?prefix=issue:`
+  - Query params: `?prefix=issue:&limit=20`
+  - `limit` defaults to `100` and is clamped to `<= 200`.
 - `GET /api/forum/read` - Read messages from topic
   - Query params: `?topic=issue:123&limit=50`
+  - `limit` defaults to `50` and is clamped to `<= 200`.
 - `POST /api/forum/post` - Post message to topic
   ```json
   {
