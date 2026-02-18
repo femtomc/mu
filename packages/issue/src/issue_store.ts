@@ -10,7 +10,13 @@ import {
 	shortId,
 	validateDag,
 } from "@femtomc/mu-core";
-import { normalizeIssueStatusFilter, normalizeIssueTagFilter } from "./contracts.js";
+import {
+	IssueStoreNotFoundError,
+	IssueStoreValidationError,
+	normalizeIssueDepInput,
+	normalizeIssueStatusFilter,
+	normalizeIssueTagFilter,
+} from "./contracts.js";
 
 export type CreateIssueOpts = {
 	body?: string;
@@ -113,9 +119,7 @@ export class IssueStore {
 		};
 		const issue = IssueSchema.parse(issueInput);
 
-		const rows = await this.#load();
-		rows.push(issue);
-		await this.#save(rows);
+		await this.#issues.append(issue);
 
 		await this.events.emit("issue.create", {
 			source: "issue_store",
@@ -146,10 +150,14 @@ export class IssueStore {
 	}
 
 	public async update(issueId: string, fields: Record<string, unknown>): Promise<Issue> {
+		if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+			throw new IssueStoreValidationError("update fields must be an object");
+		}
+
 		const rows = await this.#load();
 		const idx = this.#findIndex(rows, issueId);
 		if (idx < 0) {
-			throw new Error(issueId);
+			throw new IssueStoreNotFoundError(issueId);
 		}
 
 		const issueBefore = rows[idx]!;
@@ -274,40 +282,62 @@ export class IssueStore {
 	}
 
 	public async add_dep(srcId: string, depType: string, dstId: string): Promise<void> {
+		const normalizedSrcId = srcId.trim();
+		if (normalizedSrcId.length === 0) {
+			throw new IssueStoreValidationError("source issue id is required");
+		}
+		const normalizedDep = normalizeIssueDepInput({ depType, target: dstId });
+		if (normalizedDep.target === normalizedSrcId) {
+			throw new IssueStoreValidationError("dependency target cannot equal source issue id");
+		}
+
 		const rows = await this.#load();
-		const idx = this.#findIndex(rows, srcId);
+		const idx = this.#findIndex(rows, normalizedSrcId);
 		if (idx < 0) {
-			throw new Error(srcId);
+			throw new IssueStoreNotFoundError(normalizedSrcId);
+		}
+		if (this.#findIndex(rows, normalizedDep.target) < 0) {
+			throw new IssueStoreNotFoundError(normalizedDep.target);
 		}
 
 		const issue = rows[idx]!;
-		const exists = issue.deps.some((dep) => dep.type === depType && dep.target === dstId);
+		const exists = issue.deps.some(
+			(dep) => dep.type === normalizedDep.depType && dep.target === normalizedDep.target,
+		);
 		if (exists) {
 			return;
 		}
 
-		(issue.deps as any).push({ type: depType, target: dstId });
+		(issue.deps as any).push({ type: normalizedDep.depType, target: normalizedDep.target });
 		issue.updated_at = nowTs();
 		rows[idx] = IssueSchema.parse(issue);
 		await this.#save(rows);
 
 		await this.events.emit("issue.dep.add", {
 			source: "issue_store",
-			issueId: srcId,
-			payload: { type: depType, target: dstId },
+			issueId: normalizedSrcId,
+			payload: { type: normalizedDep.depType, target: normalizedDep.target },
 		});
 	}
 
 	public async remove_dep(srcId: string, depType: string, dstId: string): Promise<boolean> {
+		const normalizedSrcId = srcId.trim();
+		if (normalizedSrcId.length === 0) {
+			throw new IssueStoreValidationError("source issue id is required");
+		}
+		const normalizedDep = normalizeIssueDepInput({ depType, target: dstId });
+
 		const rows = await this.#load();
-		const idx = this.#findIndex(rows, srcId);
+		const idx = this.#findIndex(rows, normalizedSrcId);
 		if (idx < 0) {
-			throw new Error(srcId);
+			throw new IssueStoreNotFoundError(normalizedSrcId);
 		}
 
 		const issue = rows[idx]!;
 		const before = issue.deps.length;
-		issue.deps = issue.deps.filter((dep) => !(dep.type === depType && dep.target === dstId));
+		issue.deps = issue.deps.filter(
+			(dep) => !(dep.type === normalizedDep.depType && dep.target === normalizedDep.target),
+		);
 		const changed = issue.deps.length !== before;
 
 		if (changed) {
@@ -318,8 +348,8 @@ export class IssueStore {
 
 		await this.events.emit("issue.dep.remove", {
 			source: "issue_store",
-			issueId: srcId,
-			payload: { type: depType, target: dstId, ok: changed },
+			issueId: normalizedSrcId,
+			payload: { type: normalizedDep.depType, target: normalizedDep.target, ok: changed },
 		});
 
 		return changed;

@@ -28,9 +28,6 @@ export class ForumStore {
 		});
 	}
 
-	async #save(rows: readonly ForumMessage[]): Promise<void> {
-		await this.#forum.write(rows);
-	}
 
 	public async post(topic: string, body: string, author: string = "system"): Promise<ForumMessage> {
 		const normalizedTopic = normalizeForumTopic(topic);
@@ -50,9 +47,7 @@ export class ForumStore {
 			created_at: nowTs(),
 		});
 
-		const rows = await this.#load();
-		rows.push(msg);
-		await this.#save(rows);
+		await this.#forum.append(msg);
 
 		await this.events.emit("forum.post", {
 			source: "forum_store",

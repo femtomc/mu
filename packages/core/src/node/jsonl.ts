@@ -6,7 +6,8 @@ import type { JsonlStore } from "../persistence.js";
 
 function tmpPathFor(path: string): string {
 	const parsed = parsePath(path);
-	return join(parsed.dir, `${parsed.name}.tmp`);
+	const nonce = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	return join(parsed.dir, `${parsed.base}.${nonce}.tmp`);
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -21,6 +22,23 @@ async function exists(path: string): Promise<boolean> {
 	}
 }
 
+export class JsonlParseError extends SyntaxError {
+	public readonly filePath: string;
+	public readonly lineNumber: number;
+	public readonly rawLine: string;
+
+	public constructor(opts: { filePath: string; lineNumber: number; rawLine: string; cause: unknown }) {
+		const causeMessage = opts.cause instanceof Error ? opts.cause.message : String(opts.cause);
+		super(`invalid jsonl row at ${opts.filePath}:${opts.lineNumber}: ${causeMessage}`, {
+			cause: opts.cause,
+		});
+		this.name = "JsonlParseError";
+		this.filePath = opts.filePath;
+		this.lineNumber = opts.lineNumber;
+		this.rawLine = opts.rawLine;
+	}
+}
+
 export async function* streamJsonl(path: string): AsyncGenerator<unknown> {
 	if (!(await exists(path))) {
 		return;
@@ -28,13 +46,24 @@ export async function* streamJsonl(path: string): AsyncGenerator<unknown> {
 
 	const file = createReadStream(path, { encoding: "utf8" });
 	const rl = createInterface({ input: file, crlfDelay: Number.POSITIVE_INFINITY });
+	let lineNumber = 0;
 	try {
 		for await (const line of rl) {
+			lineNumber += 1;
 			const trimmed = line.trim();
 			if (trimmed.length === 0) {
 				continue;
 			}
-			yield JSON.parse(trimmed) as unknown;
+			try {
+				yield JSON.parse(trimmed) as unknown;
+			} catch (error) {
+				throw new JsonlParseError({
+					filePath: path,
+					lineNumber,
+					rawLine: trimmed,
+					cause: error,
+				});
+			}
 		}
 	} finally {
 		rl.close();

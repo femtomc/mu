@@ -1,4 +1,59 @@
+import { ISSUE_STATUS_VALUES, IssueStoreNotFoundError, IssueStoreValidationError } from "@femtomc/mu-issue";
 import type { ServerContext } from "../server.js";
+
+const ISSUE_STATUS_SET = new Set(ISSUE_STATUS_VALUES);
+
+function normalizeIssueId(value: string): string {
+	return decodeURIComponent(value).trim();
+}
+
+function normalizeIssueStatusFilter(value: string | null): (typeof ISSUE_STATUS_VALUES)[number] | undefined {
+	if (value == null) {
+		return undefined;
+	}
+	const normalized = value.trim();
+	if (normalized.length === 0) {
+		return undefined;
+	}
+	if (!ISSUE_STATUS_SET.has(normalized as (typeof ISSUE_STATUS_VALUES)[number])) {
+		throw new IssueStoreValidationError(`invalid issue status filter: ${normalized}`);
+	}
+	return normalized as (typeof ISSUE_STATUS_VALUES)[number];
+}
+
+async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
+	let body: unknown;
+	try {
+		body = await request.json();
+	} catch {
+		throw new IssueStoreValidationError("invalid json body");
+	}
+	if (!body || typeof body !== "object" || Array.isArray(body)) {
+		throw new IssueStoreValidationError("json body must be an object");
+	}
+	return body as Record<string, unknown>;
+}
+
+function errorResponse(status: number, message: string): Response {
+	return new Response(JSON.stringify({ error: message }), {
+		status,
+		headers: { "Content-Type": "application/json" },
+	});
+}
+
+function mapIssueRouteError(error: unknown): Response {
+	if (error instanceof IssueStoreNotFoundError) {
+		return errorResponse(404, error.message);
+	}
+	if (error instanceof IssueStoreValidationError) {
+		return errorResponse(400, error.message);
+	}
+	if (error instanceof Error && error.name === "ZodError") {
+		return errorResponse(400, error.message);
+	}
+	console.error("Issue API error:", error);
+	return errorResponse(500, error instanceof Error ? error.message : "Internal server error");
+}
 
 export async function issueRoutes(request: Request, context: ServerContext): Promise<Response> {
 	const url = new URL(request.url);
@@ -8,29 +63,26 @@ export async function issueRoutes(request: Request, context: ServerContext): Pro
 	try {
 		// List issues - GET /api/issues
 		if (path === "/" && method === "GET") {
-			const status = url.searchParams.get("status");
-			const tag = url.searchParams.get("tag");
-			const issues = await context.issueStore.list({
-				status: status as any,
-				tag: tag || undefined,
-			});
+			const status = normalizeIssueStatusFilter(url.searchParams.get("status"));
+			const tag = url.searchParams.get("tag")?.trim() || undefined;
+			const issues = await context.issueStore.list({ status, tag });
 			return Response.json(issues);
 		}
 
 		// Get ready issues - GET /api/issues/ready
 		if (path === "/ready" && method === "GET") {
-			const root = url.searchParams.get("root");
-			const issues = await context.issueStore.ready(root || undefined);
+			const root = url.searchParams.get("root")?.trim() || undefined;
+			const issues = await context.issueStore.ready(root);
 			return Response.json(issues);
 		}
 
 		// Get single issue - GET /api/issues/:id
 		if (path.startsWith("/") && method === "GET") {
-			const id = path.slice(1);
-			if (id) {
+			const id = normalizeIssueId(path.slice(1));
+			if (id.length > 0) {
 				const issue = await context.issueStore.get(id);
 				if (!issue) {
-					return new Response("Issue not found", { status: 404 });
+					return errorResponse(404, "issue not found");
 				}
 				return Response.json(issue);
 			}
@@ -38,11 +90,32 @@ export async function issueRoutes(request: Request, context: ServerContext): Pro
 
 		// Create issue - POST /api/issues
 		if (path === "/" && method === "POST") {
-			const body = (await request.json()) as any;
-			const { title, body: issueBody, tags, priority } = body;
-
+			const body = await readJsonBody(request);
+			const title = typeof body.title === "string" ? body.title.trim() : "";
 			if (!title) {
-				return new Response("Title is required", { status: 400 });
+				return errorResponse(400, "title is required");
+			}
+
+			const issueBody =
+				body.body == null ? undefined : typeof body.body === "string" ? body.body : undefined;
+			if (body.body != null && issueBody == null) {
+				return errorResponse(400, "body must be a string when provided");
+			}
+
+			let tags: string[] | undefined;
+			if (body.tags != null) {
+				if (!Array.isArray(body.tags) || !body.tags.every((tag) => typeof tag === "string")) {
+					return errorResponse(400, "tags must be a string[] when provided");
+				}
+				tags = body.tags.map((tag) => tag.trim());
+			}
+
+			let priority: number | undefined;
+			if (body.priority != null) {
+				if (typeof body.priority !== "number" || !Number.isFinite(body.priority) || !Number.isInteger(body.priority)) {
+					return errorResponse(400, "priority must be an integer when provided");
+				}
+				priority = body.priority;
 			}
 
 			const issue = await context.issueStore.create(title, {
@@ -56,22 +129,25 @@ export async function issueRoutes(request: Request, context: ServerContext): Pro
 
 		// Update issue - PATCH /api/issues/:id
 		if (path.startsWith("/") && method === "PATCH") {
-			const id = path.slice(1);
-			if (id) {
-				const body = (await request.json()) as Record<string, unknown>;
-				const issue = await context.issueStore.update(id, body);
-				return Response.json(issue);
+			const id = normalizeIssueId(path.slice(1));
+			if (id.length === 0) {
+				return errorResponse(400, "issue id is required");
 			}
+			const body = await readJsonBody(request);
+			const issue = await context.issueStore.update(id, body);
+			return Response.json(issue);
 		}
 
 		// Close issue - POST /api/issues/:id/close
 		if (path.endsWith("/close") && method === "POST") {
-			const id = path.slice(1, -6); // Remove leading / and trailing /close
-			const body = (await request.json()) as any;
-			const { outcome } = body;
-
+			const id = normalizeIssueId(path.slice(1, -"/close".length));
+			if (id.length === 0) {
+				return errorResponse(400, "issue id is required");
+			}
+			const body = await readJsonBody(request);
+			const outcome = typeof body.outcome === "string" ? body.outcome.trim() : "";
 			if (!outcome) {
-				return new Response("Outcome is required", { status: 400 });
+				return errorResponse(400, "outcome is required");
 			}
 
 			const issue = await context.issueStore.close(id, outcome);
@@ -80,23 +156,25 @@ export async function issueRoutes(request: Request, context: ServerContext): Pro
 
 		// Claim issue - POST /api/issues/:id/claim
 		if (path.endsWith("/claim") && method === "POST") {
-			const id = path.slice(1, -6); // Remove leading / and trailing /claim
+			const id = normalizeIssueId(path.slice(1, -"/claim".length));
+			if (id.length === 0) {
+				return errorResponse(400, "issue id is required");
+			}
 
 			const success = await context.issueStore.claim(id);
 			if (!success) {
-				return new Response("Failed to claim issue", { status: 409 });
+				return errorResponse(409, "failed to claim issue");
 			}
 
 			const issue = await context.issueStore.get(id);
+			if (!issue) {
+				return errorResponse(404, "issue not found");
+			}
 			return Response.json(issue);
 		}
 
 		return new Response("Not Found", { status: 404 });
 	} catch (error) {
-		console.error("Issue API error:", error);
-		return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Internal server error" }), {
-			status: 500,
-			headers: { "Content-Type": "application/json" },
-		});
+		return mapIssueRouteError(error);
 	}
 }
