@@ -48,19 +48,35 @@ function routesFromStatus(adapters: string[], routes: MuControlPlaneRoute[] | un
 	return adapters.map((name) => ({ name, route: `/webhooks/${name}` }));
 }
 
-function modelLabelFromContext(ctx: ExtensionContext): string {
-	if (!ctx.model) return "model:unknown";
-	return `${ctx.model.provider}/${ctx.model.id}`;
+function shortModelLabel(ctx: ExtensionContext): string {
+	if (!ctx.model) return "?";
+	return ctx.model.id;
 }
 
-function modelLabelFromEventModel(model: { provider: string; id: string }): string {
-	return `${model.provider}/${model.id}`;
+function shortModelLabelFromEvent(model: { id: string }): string {
+	return model.id;
+}
+
+const BAR_CHARS = ["░", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
+
+function contextBar(percent: number, barWidth: number): string {
+	const clamped = Math.max(0, Math.min(100, percent));
+	const filled = (clamped / 100) * barWidth;
+	const full = Math.floor(filled);
+	const frac = filled - full;
+	const fracIdx = Math.round(frac * (BAR_CHARS.length - 1));
+	const empty = barWidth - full - (fracIdx > 0 ? 1 : 0);
+	return (
+		BAR_CHARS[BAR_CHARS.length - 1].repeat(full) +
+		(fracIdx > 0 ? BAR_CHARS[fracIdx] : "") +
+		BAR_CHARS[0].repeat(Math.max(0, empty))
+	);
 }
 
 export function brandingExtension(pi: ExtensionAPI) {
 	let enabled = true;
 	let repoName = "mu";
-	let currentModel = "model:unknown";
+	let currentModelLabel = "?";
 	let snapshot: StatusSnapshot = { ...EMPTY_SNAPSHOT };
 	let activeCtx: ExtensionContext | null = null;
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -113,22 +129,36 @@ export function brandingExtension(pi: ExtensionAPI) {
 				},
 				invalidate() {},
 				render(width: number): string[] {
-					const cpLabel = snapshot.error
-						? theme.fg("warning", "cp:unavailable")
-						: snapshot.controlPlaneActive
-							? theme.fg("success", `cp:${snapshot.adapters.join(",") || "on"}`)
-							: theme.fg("muted", "cp:off");
-					const left = [
-						theme.fg("accent", "μ"),
-						theme.fg("dim", repoName),
-						theme.fg("muted", "·"),
-						theme.fg("dim", `open ${snapshot.openCount} ready ${snapshot.readyCount}`),
-						theme.fg("muted", "·"),
-						cpLabel,
-					].join(" ");
-
+					// Left: model · branch · ctx N% ████░░░░
 					const branch = footerData.getGitBranch();
-					const right = theme.fg("dim", branch ? `${currentModel} · ${branch}` : currentModel);
+					const leftParts: string[] = [theme.fg("dim", currentModelLabel)];
+					if (branch) {
+						leftParts.push(theme.fg("muted", "·"), theme.fg("dim", branch));
+					}
+
+					const usage = activeCtx?.getContextUsage();
+					if (usage && usage.percent != null) {
+						const pct = Math.round(usage.percent);
+						const barColor = pct >= 80 ? "warning" : pct >= 60 ? "muted" : "dim";
+						leftParts.push(
+							theme.fg("muted", "·"),
+							theme.fg(barColor, `ctx ${pct}%`),
+							theme.fg(barColor, contextBar(pct, 10)),
+						);
+					}
+
+					const left = leftParts.join(" ");
+
+					// Right: open N ready N
+					const rightParts: string[] = [];
+					if (snapshot.openCount > 0 || snapshot.readyCount > 0) {
+						rightParts.push(
+							theme.fg("dim", `open ${snapshot.openCount}`),
+							theme.fg("dim", `ready ${snapshot.readyCount}`),
+						);
+					}
+					const right = rightParts.join(" ");
+
 					const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
 					return [truncateToWidth(`${left}${pad}${right}`, width)];
 				},
@@ -143,7 +173,6 @@ export function brandingExtension(pi: ExtensionAPI) {
 		ctx.ui.setWidget("mu-quick-actions", undefined);
 		ctx.ui.setWorkingMessage();
 		ctx.ui.setStatus("mu-overview", undefined);
-		ctx.ui.setStatus("mu-model", undefined);
 	}
 
 	async function refreshStatus(ctx: ExtensionContext): Promise<void> {
@@ -207,7 +236,7 @@ export function brandingExtension(pi: ExtensionAPI) {
 	async function initialize(ctx: ExtensionContext): Promise<void> {
 		activeCtx = ctx;
 		repoName = basename(ctx.cwd);
-		currentModel = modelLabelFromContext(ctx);
+		currentModelLabel = shortModelLabel(ctx);
 		if (!ctx.hasUI) return;
 		if (enabled) {
 			applyDefaultTheme(ctx);
@@ -229,9 +258,13 @@ export function brandingExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("model_select", async (event, ctx) => {
-		currentModel = modelLabelFromEventModel(event.model);
+		currentModelLabel = shortModelLabelFromEvent(event.model);
 		if (!ctx.hasUI || !enabled) return;
-		ctx.ui.setStatus("mu-model", ctx.ui.theme.fg("dim", currentModel));
+		footerRequestRender?.();
+	});
+
+	pi.on("turn_end", async (_event, ctx) => {
+		if (!ctx.hasUI || !enabled) return;
 		footerRequestRender?.();
 	});
 
