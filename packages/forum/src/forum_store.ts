@@ -1,6 +1,11 @@
 import type { ForumMessage, JsonlStore } from "@femtomc/mu-core";
 import { EventLog, ForumMessageSchema, NullEventSink, nowTs } from "@femtomc/mu-core";
-import { normalizeForumPrefix, normalizeForumReadLimit, normalizeForumTopic } from "./contracts.js";
+import {
+	normalizeForumPrefix,
+	normalizeForumReadLimit,
+	normalizeForumTopic,
+	normalizeForumTopicsLimit,
+} from "./contracts.js";
 
 export type ForumTopicSummary = {
 	topic: string;
@@ -67,8 +72,9 @@ export class ForumStore {
 		return matching.slice(-normalizedLimit);
 	}
 
-	public async topics(prefix: string | null = null): Promise<ForumTopicSummary[]> {
+	public async topics(prefix: string | null = null, opts: { limit?: number | null } = {}): Promise<ForumTopicSummary[]> {
 		const normalizedPrefix = normalizeForumPrefix(prefix);
+		const normalizedLimit = normalizeForumTopicsLimit(opts.limit, { defaultLimit: null });
 		const rows = await this.#load();
 
 		const byTopic = new Map<string, ForumTopicSummary>();
@@ -98,6 +104,9 @@ export class ForumStore {
 			}
 			return 0;
 		});
+		if (normalizedLimit != null) {
+			return out.slice(0, normalizedLimit);
+		}
 		return out;
 	}
 }

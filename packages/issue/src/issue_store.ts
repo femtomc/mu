@@ -13,7 +13,9 @@ import {
 import {
 	IssueStoreNotFoundError,
 	IssueStoreValidationError,
+	normalizeIssueContainsFilter,
 	normalizeIssueDepInput,
+	normalizeIssueQueryLimit,
 	normalizeIssueStatusFilter,
 	normalizeIssueTagFilter,
 } from "./contracts.js";
@@ -25,8 +27,16 @@ export type CreateIssueOpts = {
 };
 
 export type ListIssueOpts = {
-	status?: Issue["status"];
-	tag?: string;
+	status?: Issue["status"] | null;
+	tag?: string | null;
+	contains?: string | null;
+	limit?: number | null;
+};
+
+export type ReadyIssueOpts = {
+	tags?: readonly string[] | null;
+	contains?: string | null;
+	limit?: number | null;
 };
 
 function deepEqualJson(a: unknown, b: unknown): boolean {
@@ -73,6 +83,11 @@ function deepEqualJson(a: unknown, b: unknown): boolean {
 		return true;
 	}
 	return false;
+}
+
+function issueContainsText(issue: Issue, contains: string): boolean {
+	const haystack = `${issue.title}\n${issue.body}`.toLowerCase();
+	return haystack.includes(contains);
 }
 
 export class IssueStore {
@@ -138,6 +153,8 @@ export class IssueStore {
 	public async list(opts: ListIssueOpts = {}): Promise<Issue[]> {
 		const status = normalizeIssueStatusFilter(opts.status);
 		const tag = normalizeIssueTagFilter(opts.tag);
+		const contains = normalizeIssueContainsFilter(opts.contains);
+		const limit = normalizeIssueQueryLimit(opts.limit, { defaultLimit: null });
 
 		let rows = await this.#load();
 		if (status) {
@@ -145,6 +162,12 @@ export class IssueStore {
 		}
 		if (tag) {
 			rows = rows.filter((row) => row.tags.includes(tag));
+		}
+		if (contains) {
+			rows = rows.filter((row) => issueContainsText(row, contains));
+		}
+		if (limit != null) {
+			rows = rows.slice(-limit);
 		}
 		return rows;
 	}
@@ -369,11 +392,20 @@ export class IssueStore {
 		return dagSubtreeIds(issues, rootId);
 	}
 
-	public async ready(rootId: string | null = null, opts: { tags?: readonly string[] | null } = {}): Promise<Issue[]> {
+	public async ready(rootId: string | null = null, opts: ReadyIssueOpts = {}): Promise<Issue[]> {
 		const rows = await this.#load();
 		const tags = opts.tags ?? undefined;
+		const contains = normalizeIssueContainsFilter(opts.contains);
+		const limit = normalizeIssueQueryLimit(opts.limit, { defaultLimit: null });
 		const root_id = rootId ?? undefined;
-		return readyLeaves(rows, { root_id, tags: tags ?? undefined });
+		let ready = readyLeaves(rows, { root_id, tags: tags ?? undefined });
+		if (contains) {
+			ready = ready.filter((issue) => issueContainsText(issue, contains));
+		}
+		if (limit != null) {
+			ready = ready.slice(0, limit);
+		}
+		return ready;
 	}
 
 	public async collapsible(rootId: string): Promise<Issue[]> {

@@ -39,6 +39,26 @@ export class JsonlParseError extends SyntaxError {
 	}
 }
 
+export class JsonlQueryValidationError extends TypeError {
+	public constructor(message: string, opts?: { cause?: unknown }) {
+		super(message, opts);
+		this.name = "JsonlQueryValidationError";
+	}
+}
+
+function normalizeReadLimit(limit: unknown): number | null {
+	if (limit == null) {
+		return null;
+	}
+	if (typeof limit !== "number" || !Number.isFinite(limit) || !Number.isInteger(limit)) {
+		throw new JsonlQueryValidationError("invalid jsonl read limit: expected positive integer");
+	}
+	if (limit < 1) {
+		throw new JsonlQueryValidationError("invalid jsonl read limit: must be >= 1");
+	}
+	return limit;
+}
+
 export async function* streamJsonl(path: string): AsyncGenerator<unknown> {
 	if (!(await exists(path))) {
 		return;
@@ -71,12 +91,33 @@ export async function* streamJsonl(path: string): AsyncGenerator<unknown> {
 	}
 }
 
-export async function readJsonl(path: string): Promise<unknown[]> {
-	const rows: unknown[] = [];
-	for await (const row of streamJsonl(path)) {
-		rows.push(row);
+export async function readJsonl(path: string, opts: { limit?: number | null } = {}): Promise<unknown[]> {
+	const limit = normalizeReadLimit(opts.limit);
+	if (limit == null) {
+		const rows: unknown[] = [];
+		for await (const row of streamJsonl(path)) {
+			rows.push(row);
+		}
+		return rows;
 	}
-	return rows;
+
+	const ring = new Array<unknown>(limit);
+	let total = 0;
+	for await (const row of streamJsonl(path)) {
+		ring[total % limit] = row;
+		total += 1;
+	}
+
+	if (total <= limit) {
+		return ring.slice(0, total);
+	}
+
+	const out: unknown[] = [];
+	const start = total % limit;
+	for (let i = 0; i < limit; i += 1) {
+		out.push(ring[(start + i) % limit]!);
+	}
+	return out;
 }
 
 export async function writeJsonl(path: string, rows: readonly unknown[]): Promise<void> {

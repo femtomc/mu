@@ -1,4 +1,12 @@
-export { appendJsonl, FsJsonlStore, JsonlParseError, readJsonl, streamJsonl, writeJsonl } from "./jsonl.js";
+export {
+	appendJsonl,
+	FsJsonlStore,
+	JsonlParseError,
+	JsonlQueryValidationError,
+	readJsonl,
+	streamJsonl,
+	writeJsonl,
+} from "./jsonl.js";
 export { currentRunId, runContext } from "./run_context.js";
 export type { StorePaths } from "./store.js";
 export { findRepoRoot, getStorePaths } from "./store.js";

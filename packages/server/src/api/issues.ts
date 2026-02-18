@@ -1,10 +1,21 @@
-import { ISSUE_STATUS_VALUES, IssueStoreNotFoundError, IssueStoreValidationError } from "@femtomc/mu-issue";
+import {
+	DEFAULT_ISSUE_QUERY_LIMIT,
+	ISSUE_STATUS_VALUES,
+	IssueStoreNotFoundError,
+	IssueStoreValidationError,
+	normalizeIssueContainsFilter,
+	normalizeIssueQueryLimit,
+} from "@femtomc/mu-issue";
 import type { ServerContext } from "../server.js";
 
 const ISSUE_STATUS_SET = new Set(ISSUE_STATUS_VALUES);
 
 function normalizeIssueId(value: string): string {
-	return decodeURIComponent(value).trim();
+	try {
+		return decodeURIComponent(value).trim();
+	} catch (cause) {
+		throw new IssueStoreValidationError("invalid issue id encoding", { cause });
+	}
 }
 
 function normalizeIssueStatusFilter(value: string | null): (typeof ISSUE_STATUS_VALUES)[number] | undefined {
@@ -65,27 +76,36 @@ export async function issueRoutes(request: Request, context: ServerContext): Pro
 		if (path === "/" && method === "GET") {
 			const status = normalizeIssueStatusFilter(url.searchParams.get("status"));
 			const tag = url.searchParams.get("tag")?.trim() || undefined;
-			const issues = await context.issueStore.list({ status, tag });
+			const contains = normalizeIssueContainsFilter(url.searchParams.get("contains"));
+			const limit = normalizeIssueQueryLimit(url.searchParams.get("limit"), {
+				defaultLimit: DEFAULT_ISSUE_QUERY_LIMIT,
+			});
+			const issues = await context.issueStore.list({ status, tag, contains, limit: limit ?? undefined });
 			return Response.json(issues);
 		}
 
 		// Get ready issues - GET /api/issues/ready
 		if (path === "/ready" && method === "GET") {
 			const root = url.searchParams.get("root")?.trim() || undefined;
-			const issues = await context.issueStore.ready(root);
+			const contains = normalizeIssueContainsFilter(url.searchParams.get("contains"));
+			const limit = normalizeIssueQueryLimit(url.searchParams.get("limit"), {
+				defaultLimit: DEFAULT_ISSUE_QUERY_LIMIT,
+			});
+			const issues = await context.issueStore.ready(root, { contains, limit: limit ?? undefined });
 			return Response.json(issues);
 		}
 
 		// Get single issue - GET /api/issues/:id
 		if (path.startsWith("/") && method === "GET") {
 			const id = normalizeIssueId(path.slice(1));
-			if (id.length > 0) {
-				const issue = await context.issueStore.get(id);
-				if (!issue) {
-					return errorResponse(404, "issue not found");
-				}
-				return Response.json(issue);
+			if (id.length === 0) {
+				return errorResponse(400, "issue id is required");
 			}
+			const issue = await context.issueStore.get(id);
+			if (!issue) {
+				return errorResponse(404, "issue not found");
+			}
+			return Response.json(issue);
 		}
 
 		// Create issue - POST /api/issues
