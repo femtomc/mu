@@ -10,6 +10,7 @@ import {
 	shortId,
 	validateDag,
 } from "@femtomc/mu-core";
+import { normalizeIssueStatusFilter, normalizeIssueTagFilter } from "./contracts.js";
 
 export type CreateIssueOpts = {
 	body?: string;
@@ -131,12 +132,15 @@ export class IssueStore {
 	}
 
 	public async list(opts: ListIssueOpts = {}): Promise<Issue[]> {
+		const status = normalizeIssueStatusFilter(opts.status);
+		const tag = normalizeIssueTagFilter(opts.tag);
+
 		let rows = await this.#load();
-		if (opts.status) {
-			rows = rows.filter((row) => row.status === opts.status);
+		if (status) {
+			rows = rows.filter((row) => row.status === status);
 		}
-		if (opts.tag) {
-			rows = rows.filter((row) => row.tags.includes(opts.tag!));
+		if (tag) {
+			rows = rows.filter((row) => row.tags.includes(tag));
 		}
 		return rows;
 	}

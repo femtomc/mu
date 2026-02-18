@@ -1,5 +1,6 @@
 import type { ForumMessage, JsonlStore } from "@femtomc/mu-core";
 import { EventLog, ForumMessageSchema, NullEventSink, nowTs } from "@femtomc/mu-core";
+import { normalizeForumPrefix, normalizeForumReadLimit, normalizeForumTopic } from "./contracts.js";
 
 export type ForumTopicSummary = {
 	topic: string;
@@ -32,16 +33,18 @@ export class ForumStore {
 	}
 
 	public async post(topic: string, body: string, author: string = "system"): Promise<ForumMessage> {
+		const normalizedTopic = normalizeForumTopic(topic);
+
 		let issueId: string | undefined;
-		if (topic.startsWith("issue:")) {
-			const candidate = topic.slice("issue:".length).trim();
+		if (normalizedTopic.startsWith("issue:")) {
+			const candidate = normalizedTopic.slice("issue:".length).trim();
 			if (candidate.length > 0) {
 				issueId = candidate;
 			}
 		}
 
 		const msg = ForumMessageSchema.parse({
-			topic,
+			topic: normalizedTopic,
 			body,
 			author,
 			created_at: nowTs(),
@@ -61,18 +64,22 @@ export class ForumStore {
 	}
 
 	public async read(topic: string, limit: number = 50): Promise<ForumMessage[]> {
+		const normalizedTopic = normalizeForumTopic(topic);
+		const normalizedLimit = normalizeForumReadLimit(limit);
+
 		const rows = await this.#load();
-		const matching = rows.filter((row) => row.topic === topic);
-		return matching.slice(-limit);
+		const matching = rows.filter((row) => row.topic === normalizedTopic);
+		return matching.slice(-normalizedLimit);
 	}
 
 	public async topics(prefix: string | null = null): Promise<ForumTopicSummary[]> {
+		const normalizedPrefix = normalizeForumPrefix(prefix);
 		const rows = await this.#load();
 
 		const byTopic = new Map<string, ForumTopicSummary>();
 		for (const row of rows) {
 			const topic = row.topic;
-			if (prefix && !topic.startsWith(prefix)) {
+			if (normalizedPrefix && !topic.startsWith(normalizedPrefix)) {
 				continue;
 			}
 
