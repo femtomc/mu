@@ -22,14 +22,11 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Build
-        run: bun run build
+      - name: Guardrails (architecture + phase-critical tests)
+        run: bun run guardrails
 
-      - name: Test
-        run: bun test
-
-      - name: Typecheck
-        run: bun run typecheck
+      - name: Check core pipeline
+        run: bun run check:core
 
       - name: Pack Smoke
         run: bun run pack:smoke
