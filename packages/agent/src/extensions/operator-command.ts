@@ -1,11 +1,11 @@
 /**
  * mu_command — Operator mutation tool.
  *
- * Tri-modal execution:
- * - Mode 1 (Messaging): MU_OPERATOR_MESSAGING_MODE=1. Returns stub "accepted".
- *   The actual command is captured by PiMessagingOperatorBackend via event subscription.
- * - Mode 2 (TUI with server): MU_SERVER_URL set. POSTs to /api/commands/submit.
- * - Mode 3 (No server): Returns error directing user to start `mu serve`.
+ * Single execution path:
+ * - Requires MU_SERVER_URL.
+ * - Always POSTs to /api/commands/submit.
+ *
+ * All command validation/execution must route through the server command pipeline.
  */
 
 import { StringEnum } from "@mariozechner/pi-ai";
@@ -35,7 +35,38 @@ async function executeViaServer(serverUrl: string, params: CommandParams): Promi
 		body: JSON.stringify(params),
 	});
 
-	const body = (await response.json()) as Record<string, unknown>;
+	const contentType = response.headers.get("content-type") ?? "";
+	const raw = await response.text();
+	let body: Record<string, unknown> | null = null;
+	try {
+		body = JSON.parse(raw) as Record<string, unknown>;
+	} catch {
+		body = null;
+	}
+
+	if (!body) {
+		const preview = raw.slice(0, 200).replaceAll(/\s+/g, " ").trim();
+		return {
+			content: [{
+				type: "text" as const,
+				text: [
+					`Command API mismatch at ${url}.`,
+					`Expected JSON response, got content-type ${contentType || "unknown"} (status ${response.status}).`,
+					preview ? `Body preview: ${preview}` : "",
+					"This usually means MU_SERVER_URL points at an outdated server or wrong base URL.",
+				].filter(Boolean).join("\n"),
+			}],
+			details: {
+				kind: params.kind,
+				error: "command_api_mismatch",
+				status: response.status,
+				content_type: contentType,
+				body_preview: preview,
+				url,
+			},
+		};
+	}
+
 	if (!response.ok) {
 		const error = typeof body.error === "string" ? body.error : `HTTP ${response.status}`;
 		return {
@@ -83,6 +114,8 @@ export function operatorCommandExtension(pi: ExtensionAPI) {
 			"run_start",
 			"run_resume",
 			"run_interrupt",
+			"reload",
+			"update",
 		] as const),
 		prompt: Type.Optional(Type.String({ description: "Prompt for run_start" })),
 		issue_id: Type.Optional(Type.String({ description: "Issue ID for issue_get" })),
@@ -103,25 +136,15 @@ export function operatorCommandExtension(pi: ExtensionAPI) {
 		].join(" "),
 		parameters: CommandParams,
 		async execute(_toolCallId, params) {
-			// Mode 1: Messaging backend captures the tool call via event subscription.
-			if (process.env.MU_OPERATOR_MESSAGING_MODE === "1") {
-				return {
-					content: [{ type: "text" as const, text: `Command proposal accepted: ${params.kind}` }],
-					details: { kind: params.kind },
-				};
-			}
-
-			// Mode 2: TUI with server — POST to /api/commands/submit.
 			const serverUrl = process.env.MU_SERVER_URL;
 			if (serverUrl) {
 				return await executeViaServer(serverUrl, params);
 			}
 
-			// Mode 3: No server available.
 			return {
 				content: [{
 					type: "text" as const,
-					text: "No server running. Start with `mu serve` for command execution, or use messaging adapters.",
+					text: "No server running. Start with `mu serve` for command execution.",
 				}],
 				details: { kind: params.kind, error: "no_server" },
 			};

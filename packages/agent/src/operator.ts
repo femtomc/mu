@@ -51,6 +51,8 @@ export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 		kind: z.literal("run_interrupt"),
 		root_issue_id: z.string().trim().min(1).optional(),
 	}),
+	z.object({ kind: z.literal("reload") }),
+	z.object({ kind: z.literal("update") }),
 	z.object({
 		kind: z.literal("run_start"),
 		prompt: z.string().trim().min(1),
@@ -211,6 +213,16 @@ export class ApprovedCommandBroker {
 				if (opts.proposal.root_issue_id) {
 					args.push(normalizeArg(opts.proposal.root_issue_id));
 				}
+				break;
+			}
+			case "reload": {
+				commandKey = "reload";
+				args = [];
+				break;
+			}
+			case "update": {
+				commandKey = "update";
+				args = [];
 				break;
 			}
 			case "run_start": {
@@ -470,9 +482,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		this.#maxSessions = Math.max(1, Math.trunc(opts.maxSessions ?? 32));
 		this.#auditTurns = opts.auditTurns ?? true;
 
-		// Signal to mu_command tool that commands are captured via event subscription,
-		// not executed directly. The tool returns a stub in this mode.
-		process.env.MU_OPERATOR_MESSAGING_MODE = "1";
+		// Command execution routes through the server command pipeline via mu_command.
 	}
 
 	#disposeSession(sessionId: string): void {
