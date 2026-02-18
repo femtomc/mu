@@ -1,7 +1,19 @@
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { clampInt, fetchMuJson, textResult, toJsonText } from "./shared.js";
+import {
+	asArray,
+	asNumber,
+	asRecord,
+	asString,
+	clampInt,
+	fetchMuJson,
+	parseFieldPaths,
+	previewText,
+	selectFields,
+	textResult,
+	toJsonText,
+} from "./shared.js";
 
 function trimOrNull(value: string | undefined): string | null {
 	if (value == null) return null;
@@ -14,6 +26,35 @@ function normalizedNumber(value: number | undefined): number | undefined {
 		return undefined;
 	}
 	return Math.trunc(value);
+}
+
+function summarizeCronProgram(program: Record<string, unknown>): Record<string, unknown> {
+	const target = asRecord(program.target);
+	const schedule = asRecord(program.schedule);
+	return {
+		program_id: asString(program.program_id),
+		title: previewText(program.title, 120),
+		enabled: program.enabled ?? null,
+		target_kind: target ? asString(target.kind) : asString(program.target_kind),
+		target_job_id: target ? asString(target.job_id) : asString(program.run_job_id),
+		target_root_issue_id: target ? asString(target.root_issue_id) : asString(program.run_root_issue_id),
+		target_activity_id: target ? asString(target.activity_id) : asString(program.activity_id),
+		schedule_kind: schedule ? asString(schedule.kind) : asString(program.schedule_kind),
+		schedule_preview: previewText(schedule ?? program, 180),
+		reason: asString(program.reason),
+		wake_mode: asString(program.wake_mode),
+		last_result: asString(program.last_result),
+		updated_at_ms: asNumber(program.updated_at_ms),
+	};
+}
+
+function summarizeCronMutation(payload: Record<string, unknown>): Record<string, unknown> {
+	const program = asRecord(payload.program);
+	return {
+		ok: payload.ok ?? null,
+		reason: asString(payload.reason),
+		program: program ? summarizeCronProgram(program) : null,
+	};
 }
 
 export function cronExtension(pi: ExtensionAPI) {
@@ -35,20 +76,26 @@ export function cronExtension(pi: ExtensionAPI) {
 		reason: Type.Optional(Type.String({ description: "Execution reason" })),
 		enabled: Type.Optional(Type.Boolean({ description: "Enabled state" })),
 		schedule_filter: Type.Optional(Type.String({ description: "Filter list by schedule kind" })),
-		limit: Type.Optional(Type.Number({ description: "Max returned items for list" })),
+		fields: Type.Optional(Type.String({ description: "Comma-separated fields for get selection" })),
+		limit: Type.Optional(Type.Number({ description: "Max returned items for list (default: 20)" })),
 	});
 
 	pi.registerTool({
 		name: "mu_cron",
 		label: "Cron",
 		description:
-			"Manage persistent cron programs. Actions: status, list, get, create, update, delete, trigger, enable, disable.",
+			"Manage persistent cron programs. Actions: status, list, get, create, update, delete, trigger, enable, disable. Summary-first output; use fields for precise retrieval.",
 		parameters: Params,
 		async execute(_toolCallId, params) {
 			switch (params.action) {
 				case "status": {
 					const payload = await fetchMuJson<Record<string, unknown>>("/api/cron/status");
-					return textResult(toJsonText(payload), { action: "status" });
+					const runningCount = asNumber(payload.running_count) ?? asNumber(payload.count_running) ?? null;
+					const totalCount = asNumber(payload.count) ?? null;
+					return textResult(
+						toJsonText({ running_count: runningCount, count: totalCount, status: previewText(payload, 240) }),
+						{ action: "status", payload },
+					);
 				}
 				case "list": {
 					const query = new URLSearchParams();
@@ -63,20 +110,28 @@ export function cronExtension(pi: ExtensionAPI) {
 					if (scheduleFilter) {
 						query.set("schedule_kind", scheduleFilter);
 					}
-					query.set("limit", String(clampInt(params.limit, 50, 1, 500)));
+					const limit = clampInt(params.limit, 20, 1, 500);
+					query.set("limit", String(limit));
 					const payload = await fetchMuJson<Record<string, unknown>>(`/api/cron?${query.toString()}`);
-					return textResult(toJsonText(payload), {
-						action: "list",
-						targetKind,
-						enabled: params.enabled,
-						scheduleFilter,
-					});
+					const programs = asArray(payload.programs)
+						.map((program) => asRecord(program))
+						.filter((program): program is Record<string, unknown> => program != null)
+						.map((program) => summarizeCronProgram(program));
+					return textResult(
+						toJsonText({ count: programs.length, programs }),
+						{ action: "list", targetKind, enabled: params.enabled, scheduleFilter, limit, payload },
+					);
 				}
 				case "get": {
 					const programId = trimOrNull(params.program_id);
 					if (!programId) return textResult("get requires program_id");
 					const payload = await fetchMuJson<Record<string, unknown>>(`/api/cron/${encodeURIComponent(programId)}`);
-					return textResult(toJsonText(payload), { action: "get", programId });
+					const fields = parseFieldPaths(trimOrNull(params.fields) ?? undefined);
+					const content =
+						fields.length > 0
+							? { program_id: programId, selected: selectFields(payload, fields) }
+							: { program: summarizeCronProgram(payload) };
+					return textResult(toJsonText(content), { action: "get", programId, fields, payload });
 				}
 				case "create": {
 					const title = trimOrNull(params.title);
@@ -104,11 +159,12 @@ export function cronExtension(pi: ExtensionAPI) {
 							enabled: typeof params.enabled === "boolean" ? params.enabled : undefined,
 						},
 					});
-					return textResult(toJsonText(payload), {
+					return textResult(toJsonText(summarizeCronMutation(payload)), {
 						action: "create",
 						title,
 						targetKind,
 						scheduleKind,
+						payload,
 					});
 				}
 				case "update": {
@@ -134,7 +190,7 @@ export function cronExtension(pi: ExtensionAPI) {
 							enabled: typeof params.enabled === "boolean" ? params.enabled : undefined,
 						},
 					});
-					return textResult(toJsonText(payload), { action: "update", programId });
+					return textResult(toJsonText(summarizeCronMutation(payload)), { action: "update", programId, payload });
 				}
 				case "delete": {
 					const programId = trimOrNull(params.program_id);
@@ -145,7 +201,7 @@ export function cronExtension(pi: ExtensionAPI) {
 							program_id: programId,
 						},
 					});
-					return textResult(toJsonText(payload), { action: "delete", programId });
+					return textResult(toJsonText(summarizeCronMutation(payload)), { action: "delete", programId, payload });
 				}
 				case "trigger": {
 					const programId = trimOrNull(params.program_id);
@@ -157,7 +213,7 @@ export function cronExtension(pi: ExtensionAPI) {
 							reason: trimOrNull(params.reason),
 						},
 					});
-					return textResult(toJsonText(payload), { action: "trigger", programId });
+					return textResult(toJsonText(summarizeCronMutation(payload)), { action: "trigger", programId, payload });
 				}
 				case "enable":
 				case "disable": {
@@ -170,9 +226,10 @@ export function cronExtension(pi: ExtensionAPI) {
 							enabled: params.action === "enable",
 						},
 					});
-					return textResult(toJsonText(payload), {
+					return textResult(toJsonText(summarizeCronMutation(payload)), {
 						action: params.action,
 						programId,
+						payload,
 					});
 				}
 				default:

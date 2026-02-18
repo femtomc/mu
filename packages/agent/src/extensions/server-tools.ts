@@ -9,6 +9,10 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 import {
+	asArray,
+	asNumber,
+	asRecord,
+	asString,
 	clampInt,
 	fetchMuJson,
 	fetchMuStatus,
@@ -16,6 +20,9 @@ import {
 	type MuGenerationObservabilityCounters,
 	type MuGenerationSupervisorSnapshot,
 	muServerUrl,
+	parseFieldPaths,
+	previewText,
+	selectFields,
 	textResult,
 	toJsonText,
 } from "./shared.js";
@@ -24,6 +31,75 @@ function trimOrNull(value: string | undefined): string | null {
 	if (value == null) return null;
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : null;
+}
+
+function stringArray(value: unknown, max: number = 20): string[] {
+	return asArray(value)
+		.map((item) => asString(item))
+		.filter((item): item is string => item != null)
+		.slice(0, max);
+}
+
+function summarizeIssue(issue: Record<string, unknown>, opts: { includeBodyPreview?: boolean } = {}): Record<string, unknown> {
+	const title = asString(issue.title) ?? "";
+	const body = asString(issue.body) ?? "";
+	const summary: Record<string, unknown> = {
+		id: asString(issue.id),
+		title: previewText(title, 140),
+		status: asString(issue.status),
+		priority: asNumber(issue.priority),
+		outcome: issue.outcome ?? null,
+		tags: stringArray(issue.tags, 12),
+		deps: asArray(issue.deps).length,
+		updated_at: asNumber(issue.updated_at),
+	};
+	if (opts.includeBodyPreview) {
+		summary.body_chars = body.length;
+		summary.body_preview = previewText(body, 220);
+	}
+	return summary;
+}
+
+function summarizeForumMessage(message: Record<string, unknown>): Record<string, unknown> {
+	const body = asString(message.body) ?? "";
+	return {
+		author: asString(message.author) ?? "unknown",
+		created_at: asNumber(message.created_at),
+		body_chars: body.length,
+		body_preview: previewText(body, 240),
+	};
+}
+
+function summarizeEvent(event: Record<string, unknown>): Record<string, unknown> {
+	return {
+		ts_ms: asNumber(event.ts_ms),
+		type: asString(event.type),
+		source: asString(event.source),
+		issue_id: asString(event.issue_id),
+		run_id: asString(event.run_id),
+		payload_preview: previewText(event.payload, 240),
+	};
+}
+
+function summarizeBinding(binding: Record<string, unknown>): Record<string, unknown> {
+	return {
+		binding_id: asString(binding.binding_id),
+		channel: asString(binding.channel),
+		actor_id: asString(binding.actor_id),
+		tenant_id: asString(binding.tenant_id),
+		role: asString(binding.role),
+		active: binding.active ?? null,
+		created_at_ms: asNumber(binding.created_at_ms),
+		updated_at_ms: asNumber(binding.updated_at_ms),
+	};
+}
+
+function includeByContains(contains: string | null, ...fragments: unknown[]): boolean {
+	if (!contains) {
+		return true;
+	}
+	const haystack = fragments.map((fragment) => previewText(fragment, 4_000).toLowerCase()).join("\n");
+	return haystack.includes(contains.toLowerCase());
 }
 
 function cpRoutesFromStatus(routes: MuControlPlaneRoute[] | undefined, adapters: string[]): MuControlPlaneRoute[] {
@@ -186,13 +262,16 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		status: Type.Optional(Type.String({ description: "Filter by status (for list)" })),
 		tag: Type.Optional(Type.String({ description: "Filter by tag (for list)" })),
 		root: Type.Optional(Type.String({ description: "Root issue ID (for ready)" })),
-		limit: Type.Optional(Type.Number({ description: "Max returned items (default 50, max 200)" })),
+		contains: Type.Optional(Type.String({ description: "Case-insensitive search text over issue title/body" })),
+		fields: Type.Optional(Type.String({ description: "Comma-separated fields for get (e.g. title,status,tags,body)" })),
+		limit: Type.Optional(Type.Number({ description: "Max returned items (default 20, max 200)" })),
 	});
 
 	pi.registerTool({
 		name: "mu_issues",
 		label: "Issues",
-		description: "Query mu issues. Actions: list, get, ready.",
+		description:
+			"Query mu issues. Actions: list, get, ready. Returns concise summaries by default. Use id + fields for precise retrieval.",
 		parameters: IssuesParams,
 		async execute(_toolCallId, params) {
 			switch (params.action) {
@@ -200,39 +279,58 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 					const query = new URLSearchParams();
 					const status = trimOrNull(params.status);
 					const tag = trimOrNull(params.tag);
+					const contains = trimOrNull(params.contains);
 					if (status) query.set("status", status);
 					if (tag) query.set("tag", tag);
 					const issues = await fetchMuJson<any[]>(`/api/issues${query.size > 0 ? `?${query.toString()}` : ""}`);
-					const sliced = sliceWithLimit(issues, params.limit);
+					const records = issues
+						.map((issue) => asRecord(issue))
+						.filter((issue): issue is Record<string, unknown> => issue != null)
+						.filter((issue) => includeByContains(contains, issue.title, issue.body, issue.tags));
+					const sliced = sliceWithLimit(records, params.limit, 20);
+					const summaries = sliced.items.map((issue) => summarizeIssue(issue, { includeBodyPreview: true }));
 					return textResult(
 						toJsonText({
 							total: sliced.total,
 							returned: sliced.returned,
 							truncated: sliced.truncated,
-							issues: sliced.items,
+							issues: summaries,
+							next: sliced.truncated ? "Refine filters or increase limit. Use mu_issues(action='get', id='...') for precise inspection." : null,
 						}),
-						{ query: { status, tag }, ...sliced },
+						{ query: { status, tag, contains }, ...sliced, issues: sliced.items },
 					);
 				}
 				case "get": {
 					const id = trimOrNull(params.id);
 					if (!id) return textResult("Error: id required for get");
 					const issue = await fetchMuJson<Record<string, unknown>>(`/api/issues/${encodeURIComponent(id)}`);
-					return textResult(toJsonText(issue), { id, issue });
+					const fields = parseFieldPaths(trimOrNull(params.fields) ?? undefined);
+					const content =
+						fields.length > 0
+							? { id, selected: selectFields(issue, fields) }
+							: { issue: summarizeIssue(issue, { includeBodyPreview: true }) };
+					return textResult(toJsonText(content), { id, fields, issue });
 				}
 				case "ready": {
 					const root = trimOrNull(params.root);
+					const contains = trimOrNull(params.contains);
 					const query = root ? `?root=${encodeURIComponent(root)}` : "";
 					const issues = await fetchMuJson<any[]>(`/api/issues/ready${query}`);
-					const sliced = sliceWithLimit(issues, params.limit);
+					const records = issues
+						.map((issue) => asRecord(issue))
+						.filter((issue): issue is Record<string, unknown> => issue != null)
+						.filter((issue) => includeByContains(contains, issue.title, issue.body, issue.tags));
+					const sliced = sliceWithLimit(records, params.limit, 20);
+					const summaries = sliced.items.map((issue) => summarizeIssue(issue, { includeBodyPreview: true }));
 					return textResult(
 						toJsonText({
 							total: sliced.total,
 							returned: sliced.returned,
 							truncated: sliced.truncated,
-							issues: sliced.items,
+							issues: summaries,
+							next: sliced.truncated ? "Narrow by root/contains or increase limit." : null,
 						}),
-						{ query: { root }, ...sliced },
+						{ query: { root, contains }, ...sliced, issues: sliced.items },
 					);
 				}
 				default:
@@ -246,27 +344,41 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		topic: Type.Optional(Type.String({ description: "Topic name (for read/post)" })),
 		body: Type.Optional(Type.String({ description: "Message body (for post)" })),
 		prefix: Type.Optional(Type.String({ description: "Topic prefix filter (for topics)" })),
-		limit: Type.Optional(Type.Number({ description: "Max returned items (default 50, max 200)" })),
+		contains: Type.Optional(Type.String({ description: "Case-insensitive search within message body for read" })),
+		limit: Type.Optional(Type.Number({ description: "Max returned items (default 20, max 200)" })),
 	});
 
 	pi.registerTool({
 		name: "mu_forum",
 		label: "Forum",
-		description: "Interact with mu forum. Actions: read, post, topics.",
+		description: "Interact with mu forum. Actions: read, post, topics. Read/topics return concise summaries for context safety.",
 		parameters: ForumParams,
 		async execute(_toolCallId, params) {
 			switch (params.action) {
 				case "read": {
 					const topic = trimOrNull(params.topic);
 					if (!topic) return textResult("Error: topic required for read");
-					const limit = clampInt(params.limit, 50, 1, 200);
-					const query = new URLSearchParams({ topic, limit: String(limit) });
+					const contains = trimOrNull(params.contains);
+					const limit = clampInt(params.limit, 20, 1, 200);
+					const query = new URLSearchParams({ topic, limit: String(Math.max(limit, 50)) });
 					const messages = await fetchMuJson<any[]>(`/api/forum/read?${query.toString()}`);
-					return textResult(toJsonText({ topic, count: messages.length, messages }), {
-						topic,
-						limit,
-						count: messages.length,
-					});
+					const records = messages
+						.map((message) => asRecord(message))
+						.filter((message): message is Record<string, unknown> => message != null)
+						.filter((message) => includeByContains(contains, message.body, message.author));
+					const sliced = sliceWithLimit(records, params.limit, 20);
+					const summaries = sliced.items.map((message) => summarizeForumMessage(message));
+					return textResult(
+						toJsonText({
+							topic,
+							total: sliced.total,
+							returned: sliced.returned,
+							truncated: sliced.truncated,
+							messages: summaries,
+							next: sliced.truncated ? "Use contains/topic filters or lower noise with smaller limit." : null,
+						}),
+						{ topic, contains, ...sliced, messages: sliced.items },
+					);
 				}
 				case "post": {
 					if (!opts.allowForumPost) {
@@ -293,10 +405,20 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 					const query = new URLSearchParams();
 					const prefix = trimOrNull(params.prefix);
 					if (prefix) query.set("prefix", prefix);
-					const topics = await fetchMuJson<string[]>(
-						`/api/forum/topics${query.size > 0 ? `?${query.toString()}` : ""}`,
-					);
-					const sliced = sliceWithLimit(topics, params.limit);
+					const topics = await fetchMuJson<unknown[]>(`/api/forum/topics${query.size > 0 ? `?${query.toString()}` : ""}`);
+					const records = topics
+						.map((topic) => asRecord(topic))
+						.filter((topic): topic is Record<string, unknown> => topic != null)
+						.map((topic) => ({
+							topic: asString(topic.topic) ?? previewText(topic, 120),
+							messages: asNumber(topic.messages) ?? null,
+							last_at: asNumber(topic.last_at) ?? null,
+						}));
+					const fallback = topics
+						.filter((topic) => typeof topic === "string")
+						.map((topic) => ({ topic: topic as string, messages: null, last_at: null }));
+					const merged = records.length > 0 ? records : fallback;
+					const sliced = sliceWithLimit(merged, params.limit, 20);
 					return textResult(
 						toJsonText({
 							total: sliced.total,
@@ -318,38 +440,63 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		type: Type.Optional(Type.String({ description: "Filter by event type" })),
 		source: Type.Optional(Type.String({ description: "Filter by event source" })),
 		since: Type.Optional(Type.Number({ description: "Only events >= ts_ms" })),
-		limit: Type.Optional(Type.Number({ description: "Max returned items (default 50, max 200)" })),
+		contains: Type.Optional(Type.String({ description: "Case-insensitive search over event payload preview" })),
+		limit: Type.Optional(Type.Number({ description: "Max returned items (default 20, max 200)" })),
 	});
 
 	pi.registerTool({
 		name: "mu_events",
 		label: "Events",
-		description: "Query mu event log. Actions: tail, query.",
+		description: "Query mu event log. Actions: tail, query. Returns compact event previews by default.",
 		parameters: EventsParams,
 		async execute(_toolCallId, params) {
 			switch (params.action) {
 				case "tail": {
-					const limit = clampInt(params.limit, 50, 1, 200);
-					const events = await fetchMuJson<any[]>(`/api/events/tail?n=${limit}`);
-					return textResult(toJsonText({ count: events.length, events }), { limit, count: events.length });
+					const contains = trimOrNull(params.contains);
+					const limit = clampInt(params.limit, 20, 1, 200);
+					const events = await fetchMuJson<any[]>(`/api/events/tail?n=${Math.max(limit, 50)}`);
+					const records = events
+						.map((event) => asRecord(event))
+						.filter((event): event is Record<string, unknown> => event != null)
+						.filter((event) => includeByContains(contains, event.type, event.source, event.payload));
+					const sliced = sliceWithLimit(records, params.limit, 20);
+					const summaries = sliced.items.map((event) => summarizeEvent(event));
+					return textResult(
+						toJsonText({
+							total: sliced.total,
+							returned: sliced.returned,
+							truncated: sliced.truncated,
+							events: summaries,
+						}),
+						{ action: "tail", contains, ...sliced, events: sliced.items },
+					);
 				}
 				case "query": {
 					const query = new URLSearchParams();
 					const type = trimOrNull(params.type);
 					const source = trimOrNull(params.source);
-					const limit = clampInt(params.limit, 50, 1, 200);
+					const contains = trimOrNull(params.contains);
+					const limit = clampInt(params.limit, 20, 1, 200);
 					if (type) query.set("type", type);
 					if (source) query.set("source", source);
 					if (params.since != null) query.set("since", String(Math.trunc(params.since)));
-					query.set("limit", String(limit));
+					query.set("limit", String(Math.max(limit, 50)));
 					const events = await fetchMuJson<any[]>(`/api/events?${query.toString()}`);
+					const records = events
+						.map((event) => asRecord(event))
+						.filter((event): event is Record<string, unknown> => event != null)
+						.filter((event) => includeByContains(contains, event.type, event.source, event.payload));
+					const sliced = sliceWithLimit(records, params.limit, 20);
+					const summaries = sliced.items.map((event) => summarizeEvent(event));
 					return textResult(
 						toJsonText({
-							filters: { type, source, since: params.since ?? null },
-							count: events.length,
-							events,
+							filters: { type, source, since: params.since ?? null, contains },
+							total: sliced.total,
+							returned: sliced.returned,
+							truncated: sliced.truncated,
+							events: summaries,
 						}),
-						{ type, source, since: params.since ?? null, limit, count: events.length },
+						{ type, source, since: params.since ?? null, contains, ...sliced, events: sliced.items },
 					);
 				}
 				default:
@@ -388,7 +535,11 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 					const data = await fetchMuJson<{ count: number; bindings: unknown[] }>(
 						`/api/identities${query.size > 0 ? `?${query.toString()}` : ""}`,
 					);
-					return textResult(toJsonText(data), { count: data.count });
+					const bindings = asArray(data.bindings)
+						.map((binding) => asRecord(binding))
+						.filter((binding): binding is Record<string, unknown> => binding != null)
+						.map((binding) => summarizeBinding(binding));
+					return textResult(toJsonText({ count: bindings.length, bindings }), { count: data.count, bindings: data.bindings });
 				}
 				case "link": {
 					const channel = trimOrNull(params.channel);
