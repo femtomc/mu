@@ -6,6 +6,7 @@ import {
 	createWriteTool,
 } from "@mariozechner/pi-coding-agent";
 import { createMuResourceLoader, resolveModel } from "./backend.js";
+import { MU_DEFAULT_THEME_NAME } from "./ui_defaults.js";
 
 export type CreateMuSessionOpts = {
 	cwd: string;
@@ -38,7 +39,7 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 		throw new Error(`Model "${modelId}" not found${scope} in pi-ai registry.`);
 	}
 
-	const settingsManager = SettingsManager.inMemory();
+	const settingsManager = SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME });
 	const resourceLoader = createMuResourceLoader({
 		cwd: opts.cwd,
 		systemPrompt: opts.systemPrompt ?? "You are mu, an AI assistant.",

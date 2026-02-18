@@ -45,12 +45,14 @@ not anonymous inline factories).
 
 Current stack:
 
-- `brandingExtension` — mu header/footer/widgets
+- `brandingExtension` — mu compact header/footer branding + default theme
 - `serverToolsExtension` — status + issues/forum/events/control-plane tools
 - `eventLogExtension` — event tail + watch widget
 - `messagingSetupExtension` — adapter diagnostics and setup guidance
 
 `mu serve` sets `MU_SERVER_URL` automatically for these extensions.
+
+Default operator UI theme is `mu-gruvbox-dark`.
 
 ## Slash commands (operator-facing)
 

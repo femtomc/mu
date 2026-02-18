@@ -125,6 +125,9 @@ Once `mu serve` is up, use these commands in the attached terminal chat:
 - `/mu events watch on` — live event watch widget
 - `/mu brand on|off|toggle` — toggle UI branding
 
+By default, `mu serve` uses a compact, information-dense chrome with a built-in
+`mu-gruvbox-dark` theme.
+
 Recommended setup flow:
 
 1. Run `/mu status`

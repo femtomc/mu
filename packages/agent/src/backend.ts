@@ -17,6 +17,7 @@ import {
 	SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import type { MuRole } from "./mu_roles.js";
+import { MU_DEFAULT_THEME_NAME, MU_DEFAULT_THEME_PATH } from "./ui_defaults.js";
 
 export type BackendRunOpts = {
 	issueId: string;
@@ -122,7 +123,7 @@ export class SdkBackend implements BackendRunner {
 			throw new Error(`Model "${opts.model}" not found${scope} in pi-ai registry.`);
 		}
 
-		const settingsManager = SettingsManager.inMemory();
+		const settingsManager = SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME });
 		const resourceLoader = createMuResourceLoader({
 			cwd: opts.cwd,
 			systemPrompt: opts.systemPrompt,
@@ -221,12 +222,18 @@ export type CreateMuResourceLoaderOpts = {
 	settingsManager?: SettingsManager;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
+	additionalThemePaths?: string[];
 };
 
 export function createMuResourceLoader(opts: CreateMuResourceLoaderOpts): DefaultResourceLoader {
 	const skillPaths = new Set<string>();
 	for (const p of opts.additionalSkillPaths ?? []) {
 		skillPaths.add(p);
+	}
+
+	const themePaths = new Set<string>([MU_DEFAULT_THEME_PATH]);
+	for (const p of opts.additionalThemePaths ?? []) {
+		themePaths.add(p);
 	}
 
 	// If a repo has a top-level `skills/` dir (like workshop/), load it.
@@ -238,9 +245,10 @@ export function createMuResourceLoader(opts: CreateMuResourceLoaderOpts): Defaul
 	return new DefaultResourceLoader({
 		cwd: opts.cwd,
 		agentDir: opts.agentDir,
-		settingsManager: opts.settingsManager ?? SettingsManager.inMemory(),
+		settingsManager: opts.settingsManager ?? SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME }),
 		additionalExtensionPaths: opts.additionalExtensionPaths,
 		additionalSkillPaths: [...skillPaths],
+		additionalThemePaths: [...themePaths],
 		systemPromptOverride: (_base) => opts.systemPrompt,
 		agentsFilesOverride: (base) => ({
 			agentsFiles: base.agentsFiles.filter((f) => basename(f.path) === "AGENTS.md"),
