@@ -2921,8 +2921,8 @@ function cleanupWriterLockIfOwnedByCurrentProcess(repoRoot: string): boolean {
 			return false;
 		}
 		ownerPid =
-			typeof parsed.owner_pid === "number" && Number.isFinite(parsed.owner_pid)
-				? Math.trunc(parsed.owner_pid)
+			typeof parsed.pid === "number" && Number.isFinite(parsed.pid)
+				? Math.trunc(parsed.pid)
 				: null;
 	} catch (err) {
 		const code = err instanceof Error && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
@@ -3239,6 +3239,9 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 	} finally {
 		unregisterSignals?.();
 		await stopServer();
+		// Belt-and-suspenders: sync-remove the lock in case the async
+		// release inside stopServer was interrupted or skipped.
+		cleanupWriterLockIfOwnedByCurrentProcess(ctx.repoRoot);
 		unregisterProcessExitCleanup?.();
 	}
 

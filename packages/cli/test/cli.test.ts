@@ -796,7 +796,9 @@ test("mu serve exit hook removes writer lock owned by current process", async ()
 	await writeFile(
 		lockPath,
 		`${JSON.stringify({
-			owner_pid: process.pid,
+			owner_id: `test:${process.pid}`,
+			pid: process.pid,
+			hostname: "test",
 			repo_root: dir,
 			acquired_at_ms: Date.now(),
 		})}\n`,
@@ -841,7 +843,9 @@ test("mu serve exit hook does not remove writer lock owned by another process", 
 	await writeFile(
 		lockPath,
 		`${JSON.stringify({
-			owner_pid: process.pid + 1,
+			owner_id: `test:${process.pid + 1}`,
+			pid: process.pid + 1,
+			hostname: "test",
 			repo_root: dir,
 			acquired_at_ms: Date.now(),
 		})}\n`,
