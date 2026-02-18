@@ -22,8 +22,8 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Guardrails (architecture + phase-critical tests)
-        run: bun run guardrails
+      - name: Architecture guardrails (dependency direction + seams)
+        run: bun run guardrails:architecture
 
       - name: Check core pipeline
         run: bun run check:core

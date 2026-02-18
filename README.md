@@ -219,16 +219,32 @@ bun run typecheck
 ### Guardrails and CI parity checks
 
 ```bash
-bun run guardrails      # architecture seams + phase-critical regression suite
-bun run check           # guardrails + typecheck/build/full test
-bun run pack:smoke      # package smoke validation
+bun run guardrails:architecture  # fast architecture invariants (CI gate)
+bun run guardrails               # architecture invariants + phase-critical regression suite
+bun run check                    # guardrails + typecheck/build/full test
+bun run pack:smoke               # package smoke validation
 ```
 
-`bun run check` mirrors the CI core gate sequence. For a deliberate boundary
-failure dry run, use:
+`bun run check` mirrors the CI core gate sequence.
+
+Architecture dependency invariants are enforced from `scripts/guardrails.ts`
+using the audit baseline plus explicit temporary overrides from:
+
+- `scripts/guardrails-allowlist.json`
+
+Override entries must include:
+- `from` / `to` package names
+- `reason`
+- `issue` (tracking link/id)
+- `expiresOn` (`YYYY-MM-DD`)
+
+Expired or malformed overrides fail guardrails/CI.
+
+For deliberate boundary dry-run failures, use:
 
 ```bash
-MU_GUARDRAILS_DRY_RUN_FAIL=1 bun run guardrails:boundaries
+MU_GUARDRAILS_DRY_RUN_FAIL=1 bun run guardrails:architecture
+MU_GUARDRAILS_DRY_RUN_DEPENDENCY_FAIL=1 bun run guardrails:architecture
 ```
 
 ### Formatting
