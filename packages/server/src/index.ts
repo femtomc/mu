@@ -66,9 +66,6 @@ export type {
 	ServerRuntimeCapabilities,
 	ServerRuntimeOptions,
 } from "./server.js";
-export {
-	composeServerRuntime,
-	createContext,
-	createProcessSessionLifecycle,
-	createServerFromRuntime,
-} from "./server.js";
+export { composeServerRuntime, createContext, createServerFromRuntime } from "./server.js";
+export type { ShellCommandResult, ShellCommandRunner } from "./session_lifecycle.js";
+export { createProcessSessionLifecycle } from "./session_lifecycle.js";
