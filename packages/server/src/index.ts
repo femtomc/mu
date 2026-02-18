@@ -25,7 +25,7 @@ export type {
 	ControlPlaneSessionLifecycle,
 	ControlPlaneSessionMutationAction,
 	ControlPlaneSessionMutationResult,
-} from "./control_plane.js";
+} from "./control_plane_contract.js";
 export { bootstrapControlPlane, detectAdapters } from "./control_plane.js";
 export type {
 	CronProgramLifecycleAction,

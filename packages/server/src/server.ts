@@ -28,15 +28,15 @@ import {
 	writeMuConfigFile,
 } from "./config.js";
 import type { CommandPipelineResult } from "@femtomc/mu-control-plane";
-import {
-	bootstrapControlPlane,
-	type ControlPlaneConfig,
-	type ControlPlaneHandle,
-	type ControlPlaneSessionLifecycle,
-	type ControlPlaneSessionMutationAction,
-	type ControlPlaneSessionMutationResult,
-	type TelegramGenerationReloadResult,
-} from "./control_plane.js";
+import { bootstrapControlPlane } from "./control_plane.js";
+import type {
+	ControlPlaneConfig,
+	ControlPlaneHandle,
+	ControlPlaneSessionLifecycle,
+	ControlPlaneSessionMutationAction,
+	ControlPlaneSessionMutationResult,
+	TelegramGenerationReloadResult,
+} from "./control_plane_contract.js";
 import { CronProgramRegistry, type CronProgramTarget } from "./cron_programs.js";
 import { ControlPlaneGenerationSupervisor } from "./generation_supervisor.js";
 import {
