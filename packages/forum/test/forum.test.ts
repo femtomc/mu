@@ -111,4 +111,30 @@ describe("ForumStore", () => {
 		expect(issues[0]).toMatchObject({ messages: 1, last_at: 4 });
 	});
 
+	test("topics supports limit clamping", async () => {
+		const dir = await mkTempDir();
+		const forumPath = join(dir, ".mu", "forum.jsonl");
+		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
+		const store = new ForumStore(new FsJsonlStore(forumPath), { events: eventLog });
+
+		for (let i = 0; i < 210; i += 1) {
+			await store.post(`topic:${i}`, `m${i}`);
+		}
+
+		const top = await store.topics(null, { limit: 5 });
+		expect(top).toHaveLength(5);
+		expect(top[0]?.topic).toBe("topic:209");
+
+		const clamped = await store.topics(null, { limit: 9999 });
+		expect(clamped).toHaveLength(200);
+	});
+
+	test("topics rejects invalid limits", async () => {
+		const dir = await mkTempDir();
+		const forumPath = join(dir, ".mu", "forum.jsonl");
+		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
+		const store = new ForumStore(new FsJsonlStore(forumPath), { events: eventLog });
+
+		await expect(store.topics(null, { limit: 0 })).rejects.toBeInstanceOf(ForumStoreValidationError);
+	});
 });
