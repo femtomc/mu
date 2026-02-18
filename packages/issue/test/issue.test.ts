@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { JsonlStore } from "@femtomc/mu-core";
 import { FsJsonlStore, fsEventLog, readJsonl, writeJsonl } from "@femtomc/mu-core/node";
 import { IssueStore, IssueStoreNotFoundError, IssueStoreValidationError } from "@femtomc/mu-issue";
 
@@ -99,6 +100,35 @@ describe("IssueStore", () => {
 		const store = new IssueStore(new FsJsonlStore(issuesPath), { events: eventLog });
 
 		await expect(store.list({ limit: 0 })).rejects.toBeInstanceOf(IssueStoreValidationError);
+	});
+
+	test("list uses streaming path for bounded queries when store supports stream()", async () => {
+		const rows: unknown[] = [];
+		const backing: JsonlStore<unknown> = {
+			read: async () => {
+				throw new Error("read() should not be used for bounded streaming query");
+			},
+			write: async (next) => {
+				rows.length = 0;
+				rows.push(...next);
+			},
+			append: async (row) => {
+				rows.push(row);
+			},
+			async *stream() {
+				for (const row of rows) {
+					yield row;
+				}
+			},
+		};
+		const store = new IssueStore(backing);
+
+		await store.create("a");
+		await store.create("b");
+		await store.create("c");
+
+		const bounded = await store.list({ limit: 2 });
+		expect(bounded.map((issue) => issue.title)).toEqual(["b", "c"]);
 	});
 
 	test("update ignores id and emits issue.update + issue.close on close transition", async () => {
