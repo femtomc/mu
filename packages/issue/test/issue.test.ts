@@ -75,6 +75,32 @@ describe("IssueStore", () => {
 		await expect(store.list({ status: "invalid" as any })).rejects.toBeInstanceOf(IssueStoreValidationError);
 	});
 
+	test("list supports contains + limit query bounds", async () => {
+		const dir = await mkTempDir();
+		const issuesPath = join(dir, ".mu", "issues.jsonl");
+		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
+		const store = new IssueStore(new FsJsonlStore(issuesPath), { events: eventLog });
+
+		await store.create("alpha setup", { body: "all good" });
+		const b = await store.create("beta crash", { body: "first ERROR path" });
+		const c = await store.create("gamma", { body: "second error path" });
+
+		const allMatches = await store.list({ contains: "error" });
+		expect(allMatches.map((issue) => issue.id)).toEqual([b.id, c.id]);
+
+		const bounded = await store.list({ contains: "error", limit: 1 });
+		expect(bounded.map((issue) => issue.id)).toEqual([c.id]);
+	});
+
+	test("list rejects invalid query limits", async () => {
+		const dir = await mkTempDir();
+		const issuesPath = join(dir, ".mu", "issues.jsonl");
+		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
+		const store = new IssueStore(new FsJsonlStore(issuesPath), { events: eventLog });
+
+		await expect(store.list({ limit: 0 })).rejects.toBeInstanceOf(IssueStoreValidationError);
+	});
+
 	test("update ignores id and emits issue.update + issue.close on close transition", async () => {
 		const dir = await mkTempDir();
 		const issuesPath = join(dir, ".mu", "issues.jsonl");
@@ -243,6 +269,9 @@ describe("IssueStore", () => {
 		await store.close("mu-blocker", "success");
 		const readyAfter = await store.ready("mu-root");
 		expect(readyAfter.map((i) => i.id)).toEqual(["mu-leaf2", "mu-leaf1"]);
+
+		const readyBounded = await store.ready("mu-root", { contains: "leaf", limit: 1 });
+		expect(readyBounded.map((i) => i.id)).toEqual(["mu-leaf2"]);
 
 		const collapsible = await store.collapsible("mu-root");
 		expect(collapsible).toHaveLength(0); // root has open children
