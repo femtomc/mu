@@ -43,6 +43,13 @@ function truncateToWidth(text: string, width: number): string {
 	return `${plain.slice(0, width - 1)}…`;
 }
 
+function centerLine(text: string, width: number): string {
+	const vw = visibleWidth(text);
+	if (vw >= width) return truncateToWidth(text, width);
+	const pad = Math.floor((width - vw) / 2);
+	return " ".repeat(pad) + text;
+}
+
 function routesFromStatus(adapters: string[], routes: MuControlPlaneRoute[] | undefined): MuControlPlaneRoute[] {
 	if (routes && routes.length > 0) return routes;
 	return adapters.map((name) => ({ name, route: `/webhooks/${name}` }));
@@ -111,7 +118,7 @@ export function brandingExtension(pi: ExtensionAPI) {
 					theme.fg("muted", "·"),
 					theme.fg("dim", repoName),
 				].join(" ") + cpPart;
-				return [truncateToWidth(line, width)];
+				return [centerLine(line, width)];
 			},
 			invalidate() {},
 		}));
@@ -129,38 +136,32 @@ export function brandingExtension(pi: ExtensionAPI) {
 				},
 				invalidate() {},
 				render(width: number): string[] {
-					// Left: model · branch · ctx N% ████░░░░
+					const parts: string[] = [theme.fg("dim", currentModelLabel)];
+
 					const branch = footerData.getGitBranch();
-					const leftParts: string[] = [theme.fg("dim", currentModelLabel)];
 					if (branch) {
-						leftParts.push(theme.fg("muted", "·"), theme.fg("dim", branch));
+						parts.push(theme.fg("muted", "·"), theme.fg("dim", branch));
 					}
 
 					const usage = activeCtx?.getContextUsage();
 					if (usage && usage.percent != null) {
 						const pct = Math.round(usage.percent);
 						const barColor = pct >= 80 ? "warning" : pct >= 60 ? "muted" : "dim";
-						leftParts.push(
+						parts.push(
 							theme.fg("muted", "·"),
 							theme.fg(barColor, `ctx ${pct}%`),
 							theme.fg(barColor, contextBar(pct, 10)),
 						);
 					}
 
-					const left = leftParts.join(" ");
-
-					// Right: open N ready N
-					const rightParts: string[] = [];
 					if (snapshot.openCount > 0 || snapshot.readyCount > 0) {
-						rightParts.push(
-							theme.fg("dim", `open ${snapshot.openCount}`),
-							theme.fg("dim", `ready ${snapshot.readyCount}`),
+						parts.push(
+							theme.fg("muted", "·"),
+							theme.fg("dim", `open ${snapshot.openCount} ready ${snapshot.readyCount}`),
 						);
 					}
-					const right = rightParts.join(" ");
 
-					const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
-					return [truncateToWidth(`${left}${pad}${right}`, width)];
+					return [centerLine(parts.join(" "), width)];
 				},
 			};
 		});
