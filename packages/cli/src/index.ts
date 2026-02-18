@@ -3136,26 +3136,14 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 
 	const serverUrl = `http://localhost:${opts.port}`;
 	Bun.env.MU_SERVER_URL = serverUrl;
-	io?.stderr?.write(`mu server connected at ${serverUrl}\n`);
-	io?.stderr?.write(`Repository: ${ctx.repoRoot}\n`);
-	if (server.activeAdapters.length > 0) {
-		io?.stderr?.write("Control plane: active\n");
-		for (const adapter of server.activeAdapters) {
-			io?.stderr?.write(`  ${adapter.name.padEnd(12)} ${adapter.route}\n`);
-		}
-	}
 
 	const isHeadless = deps.isHeadless();
 	const shouldOpen = !opts.noOpen && !isHeadless;
-	if (isHeadless) {
-		io?.stderr?.write("\nHeadless environment detected. Use SSH port forwarding:\n");
-		io?.stderr?.write(`  ssh -L ${opts.port}:localhost:${opts.port} <your-server>\n\n`);
-	} else if (shouldOpen) {
+	if (!isHeadless && shouldOpen) {
 		try {
 			deps.openBrowser(serverUrl);
-			io?.stderr?.write(`Opening ${serverUrl} in browser...\n`);
 		} catch {
-			io?.stderr?.write(`Could not open browser. Please visit ${serverUrl}\n`);
+			// Browser open is best-effort; the TUI header shows the server URL.
 		}
 	}
 
@@ -3168,10 +3156,9 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 		stopped = true;
 		try {
 			await server.stop();
-			io?.stderr?.write("mu server disconnected.\n");
 		} catch (err) {
 			stopError = err;
-			io?.stderr?.write(`mu serve: failed to stop server cleanly: ${describeError(err)}\n`);
+			io?.stderr?.write(`mu: server shutdown failed: ${describeError(err)}\n`);
 		}
 	};
 
@@ -3194,10 +3181,7 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 				return;
 			}
 			operatorConnected = true;
-			io?.stderr?.write("Operator terminal: connected\n");
 		};
-
-		io?.stderr?.write("Operator terminal: connecting...\n");
 
 		let resolveSignal: ((signal: NodeJS.Signals) => void) | null = null;
 		const signalPromise = new Promise<NodeJS.Signals>((resolve) => {
@@ -3244,16 +3228,11 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 		]);
 
 		if (winner.kind === "signal") {
-			io?.stderr?.write(`\nOperator terminal: disconnected (${winner.signal}).\n`);
 			await Promise.race([operatorPromise, delayMs(1_000)]);
 			result = { stdout: "", stderr: "", exitCode: signalExitCode(winner.signal) };
 		} else {
-			if (winner.operatorResult.exitCode === 0) {
-				io?.stderr?.write("Operator terminal: disconnected.\n");
-			} else if (operatorConnected) {
-				io?.stderr?.write("Operator terminal: disconnected (error).\n");
-			} else {
-				io?.stderr?.write("Operator terminal: failed to connect.\n");
+			if (winner.operatorResult.exitCode !== 0 && !operatorConnected) {
+				io?.stderr?.write("mu: operator terminal failed to connect.\n");
 			}
 			result = winner.operatorResult;
 		}

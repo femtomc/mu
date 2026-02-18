@@ -431,7 +431,6 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 	});
 	expect(chunks.stderr).toContain("Queued run: run-job-1 root=mu-root1234 max_steps=7");
 	expect(chunks.stderr).toContain("Run heartbeat: registered (hb-1)");
-	expect(chunks.stderr).toContain("Operator terminal: connecting");
 });
 
 test("mu run rejects removed --json/--raw-stream flows with recovery guidance", async () => {
@@ -630,10 +629,6 @@ test("mu serve starts server + terminal session and shuts both down on operator 
 	expect(result.exitCode).toBe(0);
 	expect(stopCalls).toBe(1);
 	expect(events).toEqual(["server:start:3300", "operator:start", "operator:end", "server:stop"]);
-	expect(chunks.stderr).toContain("Operator terminal: connecting");
-	expect(chunks.stderr).toContain("Operator terminal: connected");
-	expect(chunks.stderr).toContain("Operator terminal: disconnected");
-	expect(chunks.stderr).toContain("mu server disconnected.");
 });
 
 test("mu serve passes operator provider/model defaults from .mu/config.json to terminal operator session", async () => {
@@ -700,7 +695,7 @@ test("mu serve surfaces operator-session startup failure and still stops server"
 	expect(result.exitCode).toBe(1);
 	expect(stopCalls).toBe(1);
 	expect(result.stdout).toContain("interactive operator session requires a TTY");
-	expect(chunks.stderr).toContain("Operator terminal: failed to connect.");
+	expect(chunks.stderr).toContain("mu: operator terminal failed to connect.");
 });
 
 test("mu serve forwards SIGINT lifecycle and exits cleanly", async () => {
