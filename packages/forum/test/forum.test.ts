@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FsJsonlStore, fsEventLog, readJsonl, writeJsonl } from "@femtomc/mu-core/node";
-import { ForumStore } from "@femtomc/mu-forum";
+import { ForumStore, ForumStoreValidationError } from "@femtomc/mu-forum";
 
 async function mkTempDir(): Promise<string> {
 	return await mkdtemp(join(tmpdir(), "mu-forum-"));
@@ -60,6 +60,33 @@ describe("ForumStore", () => {
 
 		const msgs = await store.read("t1", 2);
 		expect(msgs.map((m) => m.body)).toEqual(["a2", "a3"]);
+	});
+
+	test("read rejects non-positive/invalid limits", async () => {
+		const dir = await mkTempDir();
+		const forumPath = join(dir, ".mu", "forum.jsonl");
+		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
+		const store = new ForumStore(new FsJsonlStore(forumPath), { events: eventLog });
+		await store.post("t1", "a1");
+
+		await expect(store.read("t1", 0)).rejects.toBeInstanceOf(ForumStoreValidationError);
+		await expect(store.read("t1", Number.NaN)).rejects.toBeInstanceOf(ForumStoreValidationError);
+	});
+
+	test("post/read normalize topic boundaries and clamp high limits", async () => {
+		const dir = await mkTempDir();
+		const forumPath = join(dir, ".mu", "forum.jsonl");
+		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
+		const store = new ForumStore(new FsJsonlStore(forumPath), { events: eventLog });
+
+		for (let i = 0; i < 210; i++) {
+			await store.post("  t-normalized  ", `m${i}`);
+		}
+
+		const msgs = await store.read("t-normalized", 9999);
+		expect(msgs).toHaveLength(200);
+		expect(msgs[0]?.body).toBe("m10");
+		expect(msgs[msgs.length - 1]?.body).toBe("m209");
 	});
 
 	test("topics summarizes and sorts by most-recent activity and supports prefix filtering", async () => {

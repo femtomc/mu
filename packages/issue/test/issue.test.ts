@@ -3,7 +3,7 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FsJsonlStore, fsEventLog, readJsonl, writeJsonl } from "@femtomc/mu-core/node";
-import { IssueStore } from "@femtomc/mu-issue";
+import { IssueStore, IssueStoreNotFoundError, IssueStoreValidationError } from "@femtomc/mu-issue";
 
 async function mkTempDir(): Promise<string> {
 	return await mkdtemp(join(tmpdir(), "mu-issue-"));
@@ -66,6 +66,15 @@ describe("IssueStore", () => {
 		expect(t2.map((i) => i.id).sort()).toEqual([b.id].sort());
 	});
 
+	test("list rejects invalid status filters", async () => {
+		const dir = await mkTempDir();
+		const issuesPath = join(dir, ".mu", "issues.jsonl");
+		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
+		const store = new IssueStore(new FsJsonlStore(issuesPath), { events: eventLog });
+
+		await expect(store.list({ status: "invalid" as any })).rejects.toBeInstanceOf(IssueStoreValidationError);
+	});
+
 	test("update ignores id and emits issue.update + issue.close on close transition", async () => {
 		const dir = await mkTempDir();
 		const issuesPath = join(dir, ".mu", "issues.jsonl");
@@ -84,6 +93,15 @@ describe("IssueStore", () => {
 		const types = events.map((e) => e.type);
 		expect(types).toContain("issue.update");
 		expect(types).toContain("issue.close");
+	});
+
+	test("update raises typed not-found errors for unknown issue ids", async () => {
+		const dir = await mkTempDir();
+		const issuesPath = join(dir, ".mu", "issues.jsonl");
+		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
+		const store = new IssueStore(new FsJsonlStore(issuesPath), { events: eventLog });
+
+		await expect(store.update("mu-missing", { title: "nope" })).rejects.toBeInstanceOf(IssueStoreNotFoundError);
 	});
 
 	test("claim returns ok/failed and emits issue.claim", async () => {
@@ -130,6 +148,17 @@ describe("IssueStore", () => {
 		expect(events.some((e) => e.type === "issue.dep.add")).toBe(true);
 		expect(events.some((e) => e.type === "issue.dep.remove" && e.payload?.ok === true)).toBe(true);
 		expect(events.some((e) => e.type === "issue.dep.remove" && e.payload?.ok === false)).toBe(true);
+	});
+
+	test("add_dep enforces target existence and blocks self-dependencies", async () => {
+		const dir = await mkTempDir();
+		const issuesPath = join(dir, ".mu", "issues.jsonl");
+		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
+		const store = new IssueStore(new FsJsonlStore(issuesPath), { events: eventLog });
+		const a = await store.create("a");
+
+		await expect(store.add_dep(a.id, "blocks", "mu-missing")).rejects.toBeInstanceOf(IssueStoreNotFoundError);
+		await expect(store.add_dep(a.id, "blocks", a.id)).rejects.toBeInstanceOf(IssueStoreValidationError);
 	});
 
 	test("children/subtree_ids/ready/collapsible/validate behave as expected", async () => {

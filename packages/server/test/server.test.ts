@@ -1239,6 +1239,26 @@ describe("mu-server", () => {
 			expect(issues[0].title).toBe("Test issue");
 		});
 
+		test("list issues rejects invalid status filters", async () => {
+			const response = await server.fetch(new Request("http://localhost/api/issues?status=bogus"));
+			expect(response.status).toBe(400);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("invalid issue status filter");
+		});
+
+		test("create issue rejects invalid json", async () => {
+			const response = await server.fetch(
+				new Request("http://localhost/api/issues", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: "{",
+				}),
+			);
+			expect(response.status).toBe(400);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("invalid json body");
+		});
+
 		test("get issue by id", async () => {
 			// Create an issue first
 			const createResponse = await server.fetch(
@@ -1286,6 +1306,20 @@ describe("mu-server", () => {
 			expect(issue.status).toBe("in_progress");
 		});
 
+		test("update issue returns 404 for unknown ids", async () => {
+			const response = await server.fetch(
+				new Request("http://localhost/api/issues/mu-missing", {
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title: "Updated title" }),
+				}),
+			);
+
+			expect(response.status).toBe(404);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("issue not found");
+		});
+
 		test("close issue", async () => {
 			// Create an issue first
 			const createResponse = await server.fetch(
@@ -1309,6 +1343,20 @@ describe("mu-server", () => {
 			const issue = await response.json();
 			expect(issue.status).toBe("closed");
 			expect(issue.outcome).toBe("success");
+		});
+
+		test("close issue returns 404 for unknown ids", async () => {
+			const response = await server.fetch(
+				new Request("http://localhost/api/issues/mu-missing/close", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ outcome: "success" }),
+				}),
+			);
+
+			expect(response.status).toBe(404);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("issue not found");
 		});
 
 		test("claim issue", async () => {
@@ -1377,6 +1425,26 @@ describe("mu-server", () => {
 			expect(messages).toHaveLength(1);
 			expect(messages[0].topic).toBe("test:topic");
 			expect(messages[0].body).toBe("Test message");
+		});
+
+		test("read messages rejects invalid limits", async () => {
+			const response = await server.fetch(new Request("http://localhost/api/forum/read?topic=test:topic&limit=0"));
+			expect(response.status).toBe(400);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("invalid limit");
+		});
+
+		test("post message rejects invalid json", async () => {
+			const response = await server.fetch(
+				new Request("http://localhost/api/forum/post", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: "{",
+				}),
+			);
+			expect(response.status).toBe(400);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("invalid json body");
 		});
 
 		test("list topics", async () => {

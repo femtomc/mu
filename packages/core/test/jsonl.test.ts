@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendJsonl, readJsonl, streamJsonl, writeJsonl } from "@femtomc/mu-core/node";
+import { appendJsonl, JsonlParseError, readJsonl, streamJsonl, writeJsonl } from "@femtomc/mu-core/node";
 
 async function mkTempDir(): Promise<string> {
 	return await mkdtemp(join(tmpdir(), "mu-core-"));
@@ -25,6 +25,23 @@ test("streamJsonl tolerates blank lines and trailing newlines", async () => {
 		rows.push(row);
 	}
 	expect(rows).toEqual([{ a: 1 }, { b: 2 }]);
+});
+
+test("readJsonl reports file + line context for invalid JSON rows", async () => {
+	const dir = await mkTempDir();
+	const path = join(dir, "broken.jsonl");
+	await writeFile(path, `{"a":1}\n{broken}\n`, "utf8");
+
+	try {
+		await readJsonl(path);
+		expect.unreachable("expected JsonlParseError");
+	} catch (error) {
+		expect(error).toBeInstanceOf(JsonlParseError);
+		const parseError = error as JsonlParseError;
+		expect(parseError.filePath).toBe(path);
+		expect(parseError.lineNumber).toBe(2);
+		expect(parseError.message).toContain(`${path}:2`);
+	}
 });
 
 test("writeJsonl writes and readJsonl reads back", async () => {
