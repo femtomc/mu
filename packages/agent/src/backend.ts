@@ -123,7 +123,7 @@ export class SdkBackend implements BackendRunner {
 			throw new Error(`Model "${opts.model}" not found${scope} in pi-ai registry.`);
 		}
 
-		const settingsManager = SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME });
+		const settingsManager = SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME, quietStartup: true });
 		const resourceLoader = createMuResourceLoader({
 			cwd: opts.cwd,
 			systemPrompt: opts.systemPrompt,
@@ -245,7 +245,7 @@ export function createMuResourceLoader(opts: CreateMuResourceLoaderOpts): Defaul
 	return new DefaultResourceLoader({
 		cwd: opts.cwd,
 		agentDir: opts.agentDir,
-		settingsManager: opts.settingsManager ?? SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME }),
+		settingsManager: opts.settingsManager ?? SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME, quietStartup: true }),
 		additionalExtensionPaths: opts.additionalExtensionPaths,
 		additionalSkillPaths: [...skillPaths],
 		additionalThemePaths: [...themePaths],

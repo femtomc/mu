@@ -39,7 +39,7 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 		throw new Error(`Model "${modelId}" not found${scope} in pi-ai registry.`);
 	}
 
-	const settingsManager = SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME });
+	const settingsManager = SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME, quietStartup: true });
 	const resourceLoader = createMuResourceLoader({
 		cwd: opts.cwd,
 		systemPrompt: opts.systemPrompt ?? "You are mu, an AI assistant.",

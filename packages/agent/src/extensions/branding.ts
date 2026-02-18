@@ -9,7 +9,7 @@
 
 import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { MU_DEFAULT_THEME_NAME } from "../ui_defaults.js";
+import { MU_DEFAULT_THEME_NAME, MU_VERSION } from "../ui_defaults.js";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 import { fetchMuStatus, type MuControlPlaneRoute, muServerUrl } from "./shared.js";
 
@@ -83,7 +83,18 @@ export function brandingExtension(pi: ExtensionAPI) {
 
 		ctx.ui.setHeader((_tui, theme) => ({
 			render(width: number): string[] {
-				const line = theme.fg("accent", theme.bold("μ"));
+				const cpPart = snapshot.error
+					? ""
+					: snapshot.controlPlaneActive
+						? ` ${theme.fg("muted", "·")} ${theme.fg("success", `cp:${snapshot.adapters.join(",") || "on"}`)}`
+						: "";
+				const line = [
+					theme.fg("accent", theme.bold("μ")),
+					theme.fg("muted", "·"),
+					theme.fg("dim", `v${MU_VERSION}`),
+					theme.fg("muted", "·"),
+					theme.fg("dim", repoName),
+				].join(" ") + cpPart;
 				return [truncateToWidth(line, width)];
 			},
 			invalidate() {},
