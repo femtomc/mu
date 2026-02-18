@@ -99,12 +99,20 @@ export function cronExtension(pi: ExtensionAPI, opts: CronExtensionOpts = {}) {
 			switch (params.action) {
 				case "status": {
 					const payload = await fetchMuJson<Record<string, unknown>>("/api/cron/status");
-					const runningCount = asNumber(payload.running_count) ?? asNumber(payload.count_running) ?? null;
-					const totalCount = asNumber(payload.count) ?? null;
-					return textResult(
-						toJsonText({ running_count: runningCount, count: totalCount, status: previewText(payload, 240) }),
-						{ action: "status", payload },
-					);
+					const status = {
+						count: asNumber(payload.count) ?? 0,
+						enabled_count: asNumber(payload.enabled_count),
+						armed_count: asNumber(payload.armed_count),
+						running_count: asNumber(payload.running_count) ?? asNumber(payload.count_running) ?? null,
+						armed: asArray(payload.armed)
+							.map((entry) => asRecord(entry))
+							.filter((entry): entry is Record<string, unknown> => entry != null)
+							.map((entry) => ({
+								program_id: asString(entry.program_id),
+								due_at_ms: asNumber(entry.due_at_ms),
+							})),
+					};
+					return textResult(toJsonText(status), { action: "status", payload });
 				}
 				case "list": {
 					const query = new URLSearchParams();
@@ -126,10 +134,14 @@ export function cronExtension(pi: ExtensionAPI, opts: CronExtensionOpts = {}) {
 						.map((program) => asRecord(program))
 						.filter((program): program is Record<string, unknown> => program != null)
 						.map((program) => summarizeCronProgram(program));
-					return textResult(
-						toJsonText({ count: programs.length, programs }),
-						{ action: "list", targetKind, enabled: params.enabled, scheduleFilter, limit, payload },
-					);
+					return textResult(toJsonText({ count: programs.length, programs }), {
+						action: "list",
+						targetKind,
+						enabled: params.enabled,
+						scheduleFilter,
+						limit,
+						payload,
+					});
 				}
 				case "get": {
 					const programId = trimOrNull(params.program_id);

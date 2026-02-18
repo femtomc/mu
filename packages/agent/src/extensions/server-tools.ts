@@ -50,7 +50,10 @@ function stringArray(value: unknown, max: number = 20): string[] {
 		.slice(0, max);
 }
 
-function summarizeIssue(issue: Record<string, unknown>, opts: { includeBodyPreview?: boolean } = {}): Record<string, unknown> {
+function summarizeIssue(
+	issue: Record<string, unknown>,
+	opts: { includeBodyPreview?: boolean } = {},
+): Record<string, unknown> {
 	const title = asString(issue.title) ?? "";
 	const body = asString(issue.body) ?? "";
 	const summary: Record<string, unknown> = {
@@ -81,25 +84,48 @@ function summarizeForumMessage(message: Record<string, unknown>): Record<string,
 }
 
 function summarizeEvent(event: Record<string, unknown>): Record<string, unknown> {
+	const payload = asRecord(event.payload);
+	const payloadKeys = payload ? Object.keys(payload).slice(0, 8) : [];
 	return {
 		ts_ms: asNumber(event.ts_ms),
 		type: asString(event.type),
 		source: asString(event.source),
 		issue_id: asString(event.issue_id),
 		run_id: asString(event.run_id),
-		payload_preview: previewText(event.payload, 240),
+		payload_keys: payloadKeys,
+		payload_preview: previewText(event.payload, 140),
 	};
 }
 
+function deriveBindingRoleFromScopes(scopes: string[]): "operator" | "contributor" | "viewer" | null {
+	const scopeSet = new Set(scopes);
+	if (scopeSet.has("cp.ops.admin") || scopeSet.has("cp.identity.admin")) {
+		return "operator";
+	}
+	if (scopeSet.has("cp.issue.write") || scopeSet.has("cp.forum.write") || scopeSet.has("cp.run.execute")) {
+		return "contributor";
+	}
+	if (scopeSet.has("cp.read")) {
+		return "viewer";
+	}
+	return null;
+}
+
 function summarizeBinding(binding: Record<string, unknown>): Record<string, unknown> {
+	const scopes = stringArray(binding.scopes, 20);
+	const derivedRole = deriveBindingRoleFromScopes(scopes);
+	const status = asString(binding.status);
+	const active = binding.active ?? (status ? status === "active" : null);
 	return {
 		binding_id: asString(binding.binding_id),
 		channel: asString(binding.channel),
-		actor_id: asString(binding.actor_id),
-		tenant_id: asString(binding.tenant_id),
-		role: asString(binding.role),
-		active: binding.active ?? null,
-		created_at_ms: asNumber(binding.created_at_ms),
+		actor_id: asString(binding.actor_id) ?? asString(binding.channel_actor_id),
+		tenant_id: asString(binding.tenant_id) ?? asString(binding.channel_tenant_id),
+		role: asString(binding.role) ?? derivedRole,
+		status,
+		active,
+		scopes,
+		created_at_ms: asNumber(binding.created_at_ms) ?? asNumber(binding.linked_at_ms),
 		updated_at_ms: asNumber(binding.updated_at_ms),
 	};
 }
@@ -294,7 +320,9 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		outcome: Type.Optional(Type.String({ description: "Outcome (for close/update)" })),
 		root: Type.Optional(Type.String({ description: "Root issue ID (for ready)" })),
 		contains: Type.Optional(Type.String({ description: "Case-insensitive search text over issue title/body" })),
-		fields: Type.Optional(Type.String({ description: "Comma-separated fields for get (e.g. title,status,tags,body)" })),
+		fields: Type.Optional(
+			Type.String({ description: "Comma-separated fields for get (e.g. title,status,tags,body)" }),
+		),
 		limit: Type.Optional(Type.Number({ description: "Max returned items (default 20, max 200)" })),
 	});
 
@@ -310,18 +338,20 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 				switch (params.action) {
 					case "list": {
 						const query = new URLSearchParams();
-						const status = trimOrNull(params.status);
+						const status = trimOrNull(params.status) ?? "open";
 						const tag = trimOrNull(params.tag);
 						const contains = trimOrNull(params.contains);
-						if (status) query.set("status", status);
+						const limit = clampInt(params.limit, 20, 1, 200);
+						query.set("status", status);
+						query.set("limit", String(limit));
 						if (tag) query.set("tag", tag);
-						const issues = await fetchMuJson<any[]>(`/api/issues${query.size > 0 ? `?${query.toString()}` : ""}`);
+						if (contains) query.set("contains", contains);
+						const issues = await fetchMuJson<any[]>(`/api/issues?${query.toString()}`);
 						const records = issues
 							.map((issue) => asRecord(issue))
-							.filter((issue): issue is Record<string, unknown> => issue != null)
-							.filter((issue) => includeByContains(contains, issue.title, issue.body, issue.tags));
+							.filter((issue): issue is Record<string, unknown> => issue != null);
 						const sliced = sliceWithLimit(records, params.limit, 20);
-						const summaries = sliced.items.map((issue) => summarizeIssue(issue, { includeBodyPreview: true }));
+						const summaries = sliced.items.map((issue) => summarizeIssue(issue));
 						return textResult(
 							toJsonText({
 								total: sliced.total,
@@ -332,7 +362,7 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 									? "Refine filters or increase limit. Use mu_issues(action='get', id='...') for precise inspection."
 									: null,
 							}),
-							{ query: { status, tag, contains }, ...sliced, issues: sliced.items },
+							{ query: { status, tag, contains, limit }, ...sliced, issues: sliced.items },
 						);
 					}
 					case "get": {
@@ -349,14 +379,16 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 					case "ready": {
 						const root = trimOrNull(params.root);
 						const contains = trimOrNull(params.contains);
-						const query = root ? `?root=${encodeURIComponent(root)}` : "";
-						const issues = await fetchMuJson<any[]>(`/api/issues/ready${query}`);
+						const limit = clampInt(params.limit, 20, 1, 200);
+						const query = new URLSearchParams({ limit: String(limit) });
+						if (root) query.set("root", root);
+						if (contains) query.set("contains", contains);
+						const issues = await fetchMuJson<any[]>(`/api/issues/ready?${query.toString()}`);
 						const records = issues
 							.map((issue) => asRecord(issue))
-							.filter((issue): issue is Record<string, unknown> => issue != null)
-							.filter((issue) => includeByContains(contains, issue.title, issue.body, issue.tags));
+							.filter((issue): issue is Record<string, unknown> => issue != null);
 						const sliced = sliceWithLimit(records, params.limit, 20);
-						const summaries = sliced.items.map((issue) => summarizeIssue(issue, { includeBodyPreview: true }));
+						const summaries = sliced.items.map((issue) => summarizeIssue(issue));
 						return textResult(
 							toJsonText({
 								total: sliced.total,
@@ -365,7 +397,7 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 								issues: summaries,
 								next: sliced.truncated ? "Narrow by root/contains or increase limit." : null,
 							}),
-							{ query: { root, contains }, ...sliced, issues: sliced.items },
+							{ query: { root, contains, limit }, ...sliced, issues: sliced.items },
 						);
 					}
 					case "create": {
@@ -421,7 +453,9 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 							patch.priority = Math.trunc(params.priority);
 						}
 						if (Object.keys(patch).length === 0) {
-							return textResult("Error: update requires at least one field (title/body/status/outcome/tags/priority)");
+							return textResult(
+								"Error: update requires at least one field (title/body/status/outcome/tags/priority)",
+							);
 						}
 						const issue = await fetchMuJson<Record<string, unknown>>(`/api/issues/${encodeURIComponent(id)}`, {
 							method: "PATCH",
@@ -443,10 +477,13 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 						}
 						const id = trimOrNull(params.id);
 						if (!id) return textResult("Error: id required for claim");
-						const issue = await fetchMuJson<Record<string, unknown>>(`/api/issues/${encodeURIComponent(id)}/claim`, {
-							method: "POST",
-							body: {},
-						});
+						const issue = await fetchMuJson<Record<string, unknown>>(
+							`/api/issues/${encodeURIComponent(id)}/claim`,
+							{
+								method: "POST",
+								body: {},
+							},
+						);
 						return textResult(toJsonText({ issue: summarizeIssue(issue, { includeBodyPreview: true }) }), {
 							action: "claim",
 							id,
@@ -463,10 +500,13 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 						const id = trimOrNull(params.id);
 						if (!id) return textResult("Error: id required for close");
 						const outcome = trimOrNull(params.outcome) ?? "success";
-						const issue = await fetchMuJson<Record<string, unknown>>(`/api/issues/${encodeURIComponent(id)}/close`, {
-							method: "POST",
-							body: { outcome },
-						});
+						const issue = await fetchMuJson<Record<string, unknown>>(
+							`/api/issues/${encodeURIComponent(id)}/close`,
+							{
+								method: "POST",
+								body: { outcome },
+							},
+						);
 						return textResult(toJsonText({ issue: summarizeIssue(issue, { includeBodyPreview: true }) }), {
 							action: "close",
 							id,
@@ -551,7 +591,9 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 						const query = new URLSearchParams();
 						const prefix = trimOrNull(params.prefix);
 						if (prefix) query.set("prefix", prefix);
-						const topics = await fetchMuJson<unknown[]>(`/api/forum/topics${query.size > 0 ? `?${query.toString()}` : ""}`);
+						const topics = await fetchMuJson<unknown[]>(
+							`/api/forum/topics${query.size > 0 ? `?${query.toString()}` : ""}`,
+						);
 						const records = topics
 							.map((topic) => asRecord(topic))
 							.filter((topic): topic is Record<string, unknown> => topic != null)
@@ -586,6 +628,8 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		action: StringEnum(["tail", "query"] as const),
 		type: Type.Optional(Type.String({ description: "Filter by event type" })),
 		source: Type.Optional(Type.String({ description: "Filter by event source" })),
+		issue_id: Type.Optional(Type.String({ description: "Filter by correlated issue_id" })),
+		run_id: Type.Optional(Type.String({ description: "Filter by correlated run_id" })),
 		since: Type.Optional(Type.Number({ description: "Only events >= ts_ms" })),
 		contains: Type.Optional(Type.String({ description: "Case-insensitive search over event payload preview" })),
 		limit: Type.Optional(Type.Number({ description: "Max returned items (default 20, max 200)" })),
@@ -600,51 +644,101 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 			async execute(_toolCallId, params) {
 				switch (params.action) {
 					case "tail": {
+						const type = trimOrNull(params.type);
+						const source = trimOrNull(params.source);
+						const issueId = trimOrNull(params.issue_id);
+						const runId = trimOrNull(params.run_id);
 						const contains = trimOrNull(params.contains);
 						const limit = clampInt(params.limit, 20, 1, 200);
-						const events = await fetchMuJson<any[]>(`/api/events/tail?n=${Math.max(limit, 50)}`);
+						const tailFetch = Math.max(limit * 3, 50);
+						const events = await fetchMuJson<any[]>(`/api/events/tail?n=${tailFetch}`);
 						const records = events
 							.map((event) => asRecord(event))
 							.filter((event): event is Record<string, unknown> => event != null)
-							.filter((event) => includeByContains(contains, event.type, event.source, event.payload));
+							.filter((event) => (type ? asString(event.type) === type : true))
+							.filter((event) => (source ? asString(event.source) === source : true))
+							.filter((event) => (issueId ? asString(event.issue_id) === issueId : true))
+							.filter((event) => (runId ? asString(event.run_id) === runId : true))
+							.filter((event) =>
+								includeByContains(
+									contains,
+									event.type,
+									event.source,
+									event.issue_id,
+									event.run_id,
+									event.payload,
+								),
+							);
 						const sliced = sliceWithLimit(records, params.limit, 20);
 						const summaries = sliced.items.map((event) => summarizeEvent(event));
 						return textResult(
 							toJsonText({
+								filters: { type, source, issue_id: issueId, run_id: runId, contains },
 								total: sliced.total,
 								returned: sliced.returned,
 								truncated: sliced.truncated,
 								events: summaries,
 							}),
-							{ action: "tail", contains, ...sliced, events: sliced.items },
+							{ action: "tail", type, source, issueId, runId, contains, ...sliced, events: sliced.items },
 						);
 					}
 					case "query": {
 						const query = new URLSearchParams();
 						const type = trimOrNull(params.type);
 						const source = trimOrNull(params.source);
+						const issueId = trimOrNull(params.issue_id);
+						const runId = trimOrNull(params.run_id);
 						const contains = trimOrNull(params.contains);
 						const limit = clampInt(params.limit, 20, 1, 200);
 						if (type) query.set("type", type);
 						if (source) query.set("source", source);
+						if (issueId) query.set("issue_id", issueId);
+						if (runId) query.set("run_id", runId);
 						if (params.since != null) query.set("since", String(Math.trunc(params.since)));
 						query.set("limit", String(Math.max(limit, 50)));
 						const events = await fetchMuJson<any[]>(`/api/events?${query.toString()}`);
 						const records = events
 							.map((event) => asRecord(event))
 							.filter((event): event is Record<string, unknown> => event != null)
-							.filter((event) => includeByContains(contains, event.type, event.source, event.payload));
+							.filter((event) => (issueId ? asString(event.issue_id) === issueId : true))
+							.filter((event) => (runId ? asString(event.run_id) === runId : true))
+							.filter((event) =>
+								includeByContains(
+									contains,
+									event.type,
+									event.source,
+									event.issue_id,
+									event.run_id,
+									event.payload,
+								),
+							);
 						const sliced = sliceWithLimit(records, params.limit, 20);
 						const summaries = sliced.items.map((event) => summarizeEvent(event));
 						return textResult(
 							toJsonText({
-								filters: { type, source, since: params.since ?? null, contains },
+								filters: {
+									type,
+									source,
+									issue_id: issueId,
+									run_id: runId,
+									since: params.since ?? null,
+									contains,
+								},
 								total: sliced.total,
 								returned: sliced.returned,
 								truncated: sliced.truncated,
 								events: summaries,
 							}),
-							{ type, source, since: params.since ?? null, contains, ...sliced, events: sliced.items },
+							{
+								type,
+								source,
+								issueId,
+								runId,
+								since: params.since ?? null,
+								contains,
+								...sliced,
+								events: sliced.items,
+							},
 						);
 					}
 					default:
@@ -691,7 +785,10 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 							.map((binding) => asRecord(binding))
 							.filter((binding): binding is Record<string, unknown> => binding != null)
 							.map((binding) => summarizeBinding(binding));
-						return textResult(toJsonText({ count: bindings.length, bindings }), { count: data.count, bindings: data.bindings });
+						return textResult(toJsonText({ count: bindings.length, bindings }), {
+							count: data.count,
+							bindings: data.bindings,
+						});
 					}
 					case "link": {
 						if (!opts.allowIdentityMutations) {
@@ -808,7 +905,8 @@ export function serverToolsExtension(pi: ExtensionAPI, opts: ServerToolsExtensio
 			opts.toolIntroLine ??
 			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events, mu_runs, mu_activities, mu_heartbeats, mu_cron, mu_identity.",
 		usageLine:
-			opts.usageLine ?? "Use these tools to inspect repository state and control-plane runtime before advising users.",
+			opts.usageLine ??
+			"Use these tools to inspect repository state and control-plane runtime before advising users.",
 		extraSystemPromptLines: opts.extraSystemPromptLines ?? [],
 	});
 }

@@ -532,6 +532,48 @@ describe("mu-server", () => {
 		expect(heartbeatPayload.ok).toBe(true);
 	});
 
+	test("events API supports issue_id/run_id/contains query filters", async () => {
+		const eventsPath = join(tempDir, ".mu", "events.jsonl");
+		const rows = [
+			{
+				v: 1,
+				ts_ms: 100,
+				type: "backend.run.start",
+				source: "backend",
+				issue_id: "mu-root-1",
+				run_id: "run-1",
+				payload: { note: "alpha" },
+			},
+			{
+				v: 1,
+				ts_ms: 200,
+				type: "backend.run.start",
+				source: "backend",
+				issue_id: "mu-root-2",
+				run_id: "run-2",
+				payload: { note: "beta" },
+			},
+		] as const;
+		await Bun.write(eventsPath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+
+		const queryRes = await server.fetch(
+			new Request(
+				"http://localhost/api/events?type=backend.run.start&issue_id=mu-root-1&run_id=run-1&contains=alpha&limit=10",
+			),
+		);
+		expect(queryRes.status).toBe(200);
+		const queryEvents = (await queryRes.json()) as Array<{ run_id?: string; issue_id?: string }>;
+		expect(queryEvents).toHaveLength(1);
+		expect(queryEvents[0]?.run_id).toBe("run-1");
+		expect(queryEvents[0]?.issue_id).toBe("mu-root-1");
+
+		const tailRes = await server.fetch(new Request("http://localhost/api/events/tail?n=10&run_id=run-2"));
+		expect(tailRes.status).toBe(200);
+		const tailEvents = (await tailRes.json()) as Array<{ run_id?: string }>;
+		expect(tailEvents).toHaveLength(1);
+		expect(tailEvents[0]?.run_id).toBe("run-2");
+	});
+
 	test("cron/heartbeat triggers emit coalesced operator wake artifacts", async () => {
 		const wakeServer = await createServerForTest({
 			repoRoot: tempDir,

@@ -509,6 +509,9 @@ function summarizeChecks(checks: AdapterCheck[]): string {
 
 function preflightSummary(checks: AdapterCheck[], runtime: RuntimeState): string {
 	const lines = ["Messaging adapter preflight:", ""];
+	if (checks.length === 0) {
+		lines.push("(no matching adapters)");
+	}
 	for (const check of checks) {
 		const route = check.route ? ` · route ${check.route}` : "";
 		const missing = check.missing.length > 0 ? ` · missing ${check.missing.join(", ")}` : "";
@@ -1103,6 +1106,14 @@ function findCheckByAdapter(checks: AdapterCheck[], adapterId: AdapterId): Adapt
 	return checks.find((check) => check.id === adapterId) ?? null;
 }
 
+function checksForAdapter(checks: AdapterCheck[], adapterId: AdapterId | null): AdapterCheck[] {
+	if (!adapterId) {
+		return checks;
+	}
+	const match = checks.find((check) => check.id === adapterId);
+	return match ? [match] : [];
+}
+
 async function maybeDispatchAgentSetupBrief(opts: {
 	pi: ExtensionAPI;
 	ctx: ExtensionCommandContext;
@@ -1238,7 +1249,7 @@ export function messagingSetupExtension(pi: ExtensionAPI, opts: MessagingSetupEx
 			? "Messaging setup workflow. Actions: check/preflight/guide/plan/apply/verify. For apply, pass field values via the fields parameter (e.g. fields={bot_token:'...', webhook_secret:'...'})."
 			: "Messaging setup query workflow. Actions: check/preflight/guide/plan/verify. Apply is disabled in query-only mode.",
 		parameters: SetupParams,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			const adapterId = params.adapter ? normalizeAdapterId(params.adapter) : null;
 			if (params.adapter && !adapterId) {
 				return textResult(
@@ -1249,20 +1260,27 @@ export function messagingSetupExtension(pi: ExtensionAPI, opts: MessagingSetupEx
 			switch (params.action) {
 				case "check": {
 					const { checks, runtime } = await collectChecksCached();
+					const filteredChecks = checksForAdapter(checks, adapterId);
 					return textResult(
 						toJsonText({
-							checks,
+							checks: filteredChecks,
 							runtime: { ...runtime, routesByAdapter: Object.fromEntries(runtime.routesByAdapter) },
 						}),
 						{
-							checks,
+							checks: filteredChecks,
 							runtime,
+							adapter: adapterId,
 						},
 					);
 				}
 				case "preflight": {
 					const { checks, runtime } = await collectChecksCached();
-					return textResult(preflightSummary(checks, runtime), { checks, runtime });
+					const filteredChecks = checksForAdapter(checks, adapterId);
+					return textResult(preflightSummary(filteredChecks, runtime), {
+						checks: filteredChecks,
+						runtime,
+						adapter: adapterId,
+					});
 				}
 				case "guide":
 				case "plan": {
@@ -1370,9 +1388,10 @@ export function messagingSetupExtension(pi: ExtensionAPI, opts: MessagingSetupEx
 			switch (parsed.action) {
 				case "check": {
 					const { checks, runtime } = await collectChecksCached(0);
+					const filteredChecks = checksForAdapter(checks, parsed.adapterId);
 					ctx.ui.notify(
 						toJsonText({
-							checks,
+							checks: filteredChecks,
 							runtime: { ...runtime, routesByAdapter: Object.fromEntries(runtime.routesByAdapter) },
 						}),
 						"info",
@@ -1389,7 +1408,8 @@ export function messagingSetupExtension(pi: ExtensionAPI, opts: MessagingSetupEx
 						await refreshMessagingStatus(ctx);
 						return;
 					}
-					ctx.ui.notify(preflightSummary(checks, runtime), "info");
+					const filteredChecks = checksForAdapter(checks, parsed.adapterId);
+					ctx.ui.notify(preflightSummary(filteredChecks, runtime), "info");
 					await refreshMessagingStatus(ctx);
 					return;
 				}
@@ -1426,7 +1446,10 @@ export function messagingSetupExtension(pi: ExtensionAPI, opts: MessagingSetupEx
 				}
 				case "apply": {
 					if (!allowApply) {
-						ctx.ui.notify("apply is disabled in query-only mode. Use /mu setup plan and /mu setup verify.", "warning");
+						ctx.ui.notify(
+							"apply is disabled in query-only mode. Use /mu setup plan and /mu setup verify.",
+							"warning",
+						);
 						return;
 					}
 					if (!parsed.adapterId) {
