@@ -31,4 +31,5 @@ Workflow:
 Guardrails:
 - Prefer concrete evidence over claims (test output, build output, repro checks).
 - Report what changed and why.
+- Keep command output focused: use bounded reads first (`--limit`, scoped filters) and drill into specific IDs/files next.
 - Be concise.

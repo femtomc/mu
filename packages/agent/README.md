@@ -83,6 +83,23 @@ Default operator UI theme is `mu-gruvbox-dark`.
   - `action`: `check | preflight | guide | plan | apply | verify`
   - `adapter`: `slack | discord | telegram | gmail`
 
+### Query contract (context-safe by default)
+
+Read-heavy `mu_*` tools are designed to be summary-first, with explicit narrowing:
+
+- `limit` controls result size (default is usually `20` for list/query/read actions).
+- `contains` performs case-insensitive content filtering where relevant.
+- `fields` (comma-separated paths) supports precise retrieval on targeted actions (`get`, `status`, `trace`, etc.).
+
+Recommended flow:
+
+1. Discover with bounded list/query (`limit` + filters).
+2. Select a concrete ID.
+3. Retrieve only required fields via `fields`.
+
+Tool `details` may still include richer payloads for diagnostics, but `content` is
+kept compact to reduce context pollution.
+
 ## Messaging setup notes
 
 - Runtime setup state comes from `GET /api/config` and `.mu/config.json`.

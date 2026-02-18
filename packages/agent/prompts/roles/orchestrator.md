@@ -32,3 +32,4 @@ Guardrails:
 - Never close with `success`, `failure`, `needs_work`, or `skipped`.
 - Keep plans small, explicit, and testable.
 - Plans should include proposed evidence for successful completion.
+- Keep command output focused: prefer bounded reads (`--limit`, scoped filters) before deep inspection.

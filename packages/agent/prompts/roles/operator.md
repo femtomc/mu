@@ -52,5 +52,10 @@ Efficiency:
 - Do NOT pre-fetch status, issues, control-plane, events, or runs at the start of a conversation. Only call diagnostic tools when the user's request specifically requires that information.
 - Respond directly to what the user asks. Avoid speculative tool calls.
 
+Context hygiene for `mu_*` query tools:
+- Prefer narrow discovery first (`limit` + filters like `contains`, `status`, `tag`, `source`).
+- Then do targeted retrieval by ID (`get`/`status`) with `fields` when available.
+- Avoid broad repeated scans when a precise lookup would answer the question.
+
 For normal answers:
 - Respond in plain text (no directive prefix).
