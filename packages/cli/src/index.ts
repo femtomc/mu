@@ -2938,9 +2938,40 @@ function cleanupWriterLockIfOwnedByCurrentProcess(repoRoot: string): boolean {
 
 	try {
 		rmSync(lockPath, { force: true });
+		rmSync(join(repoRoot, ".mu", "control-plane", "server.json"), { force: true });
 		return true;
 	} catch {
 		return false;
+	}
+}
+
+async function detectRunningServer(repoRoot: string): Promise<{ url: string; port: number; pid: number } | null> {
+	const discoveryPath = join(repoRoot, ".mu", "control-plane", "server.json");
+	try {
+		const raw = await Bun.file(discoveryPath).text();
+		const parsed = JSON.parse(raw.trim());
+		const pid = parsed?.pid;
+		const port = parsed?.port;
+		if (typeof pid !== "number" || typeof port !== "number") return null;
+
+		// Check if PID is alive
+		try {
+			process.kill(pid, 0);
+		} catch {
+			return null;
+		}
+
+		// Probe health endpoint
+		const url = `http://localhost:${port}`;
+		try {
+			const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(2000) });
+			if (res.ok) return { url, port, pid };
+		} catch {
+			/* server not responding */
+		}
+		return null;
+	} catch {
+		return null;
 	}
 }
 
@@ -2963,9 +2994,20 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 				throw err;
 			}
 
+			const discoveryPath = join(repoRoot, ".mu", "control-plane", "server.json");
+			await Bun.write(
+				discoveryPath,
+				JSON.stringify({ pid: process.pid, port, url: `http://localhost:${port}` }) + "\n",
+			);
+
 			return {
 				activeAdapters: runtime.controlPlane?.activeAdapters ?? [],
 				stop: async () => {
+					try {
+						rmSync(discoveryPath, { force: true });
+					} catch {
+						// best-effort
+					}
 					await runtime.controlPlane?.stop();
 					server.stop();
 				},
@@ -3120,6 +3162,22 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 
 	const io = ctx.io;
 	const deps = buildServeDeps(ctx);
+
+	// Check for existing running server — connect as client-only
+	const existingServer = await detectRunningServer(ctx.repoRoot);
+	if (existingServer) {
+		const serverUrl = existingServer.url;
+		Bun.env.MU_SERVER_URL = serverUrl;
+		io?.stderr?.write(`mu: connecting to existing server at ${serverUrl} (pid ${existingServer.pid})\n`);
+
+		return await deps.runOperatorSession({
+			onReady: () => {},
+			provider: operatorProvider,
+			model: operatorModel,
+			thinking: opts.operatorThinking,
+		});
+	}
+
 	let server: ServeServerHandle;
 	try {
 		server = await deps.startServer({ repoRoot: ctx.repoRoot, port: opts.port });
