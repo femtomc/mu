@@ -48,9 +48,17 @@ function summarizeHeartbeatMutation(payload: Record<string, unknown>): Record<st
 	};
 }
 
-export function heartbeatsExtension(pi: ExtensionAPI) {
+export type HeartbeatsExtensionOpts = {
+	allowMutations?: boolean;
+};
+
+export function heartbeatsExtension(pi: ExtensionAPI, opts: HeartbeatsExtensionOpts = {}) {
+	const allowMutations = opts.allowMutations ?? true;
+	const heartbeatActions = allowMutations
+		? (["list", "get", "create", "update", "delete", "trigger", "enable", "disable"] as const)
+		: (["list", "get"] as const);
 	const Params = Type.Object({
-		action: StringEnum(["list", "get", "create", "update", "delete", "trigger", "enable", "disable"] as const),
+		action: StringEnum(heartbeatActions),
 		program_id: Type.Optional(Type.String({ description: "Heartbeat program ID" })),
 		title: Type.Optional(Type.String({ description: "Program title" })),
 		target_kind: Type.Optional(Type.String({ description: "Target kind (run|activity)" })),
@@ -67,8 +75,9 @@ export function heartbeatsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "mu_heartbeats",
 		label: "Heartbeats",
-		description:
-			"Program and manage persistent heartbeat schedules. Actions: list, get, create, update, delete, trigger, enable, disable. Summary-first output; use fields for precise retrieval.",
+		description: allowMutations
+			? "Program and manage persistent heartbeat schedules. Actions: list, get, create, update, delete, trigger, enable, disable. Summary-first output; use fields for precise retrieval."
+			: "Read heartbeat programs. Actions: list, get. Query-only mode excludes mutations.",
 		parameters: Params,
 		async execute(_toolCallId, params) {
 			switch (params.action) {

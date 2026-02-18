@@ -53,11 +53,17 @@ function summarizeActivityMutation(payload: Record<string, unknown>): Record<str
 	};
 }
 
-export function activitiesExtension(pi: ExtensionAPI) {
+export type ActivitiesExtensionOpts = {
+	allowMutations?: boolean;
+};
+
+export function activitiesExtension(pi: ExtensionAPI, opts: ActivitiesExtensionOpts = {}) {
+	const allowMutations = opts.allowMutations ?? true;
+	const activityActions = allowMutations
+		? (["list", "get", "start", "progress", "heartbeat", "complete", "fail", "cancel", "events"] as const)
+		: (["list", "get", "events"] as const);
 	const ActivitiesParams = Type.Object({
-		action: StringEnum(
-			["list", "get", "start", "progress", "heartbeat", "complete", "fail", "cancel", "events"] as const,
-		),
+		action: StringEnum(activityActions),
 		activity_id: Type.Optional(Type.String({ description: "Activity ID" })),
 		title: Type.Optional(Type.String({ description: "Title for start" })),
 		kind: Type.Optional(Type.String({ description: "Activity kind for start/list filtering" })),
@@ -73,8 +79,9 @@ export function activitiesExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "mu_activities",
 		label: "Activities",
-		description:
-			"Manage generic long-running activities. Actions: list, get, start, progress, heartbeat, complete, fail, cancel, events. List/events are summary-first; use fields for precise retrieval.",
+		description: allowMutations
+			? "Manage generic long-running activities. Actions: list, get, start, progress, heartbeat, complete, fail, cancel, events. List/events are summary-first; use fields for precise retrieval."
+			: "Read-only activity inspection. Actions: list, get, events. Mutation actions are disabled in query-only mode.",
 		parameters: ActivitiesParams,
 		async execute(_toolCallId, params) {
 			switch (params.action) {
@@ -145,6 +152,12 @@ export function activitiesExtension(pi: ExtensionAPI) {
 					return textResult(toJsonText(content), { action: "events", activityId, contains, limit, fields, payload });
 				}
 				case "start": {
+					if (!allowMutations) {
+						return textResult("activity mutations are disabled in query-only mode.", {
+							blocked: true,
+							reason: "activities_query_only_mode",
+						});
+					}
 					const title = trimOrNull(params.title);
 					if (!title) return textResult("start requires title");
 					const kind = trimOrNull(params.kind);
@@ -169,6 +182,12 @@ export function activitiesExtension(pi: ExtensionAPI) {
 					});
 				}
 				case "progress": {
+					if (!allowMutations) {
+						return textResult("activity mutations are disabled in query-only mode.", {
+							blocked: true,
+							reason: "activities_query_only_mode",
+						});
+					}
 					const activityId = trimOrNull(params.activity_id);
 					if (!activityId) return textResult("progress requires activity_id");
 					const message = trimOrNull(params.message) ?? "progress updated";
@@ -187,6 +206,12 @@ export function activitiesExtension(pi: ExtensionAPI) {
 					});
 				}
 				case "heartbeat": {
+					if (!allowMutations) {
+						return textResult("activity mutations are disabled in query-only mode.", {
+							blocked: true,
+							reason: "activities_query_only_mode",
+						});
+					}
 					const activityId = trimOrNull(params.activity_id);
 					if (!activityId) return textResult("heartbeat requires activity_id");
 					const reason = trimOrNull(params.reason) ?? "manual";

@@ -33,6 +33,16 @@ function trimOrNull(value: string | undefined): string | null {
 	return trimmed.length > 0 ? trimmed : null;
 }
 
+function parseCommaList(value: string | undefined): string[] | null {
+	const text = trimOrNull(value);
+	if (!text) return null;
+	const items = text
+		.split(",")
+		.map((item) => item.trim())
+		.filter((item) => item.length > 0);
+	return items.length > 0 ? items : null;
+}
+
 function stringArray(value: unknown, max: number = 20): string[] {
 	return asArray(value)
 		.map((item) => asString(item))
@@ -168,7 +178,16 @@ function sliceWithLimit<T>(
 
 export type ServerToolsExtensionOpts = {
 	allowForumPost?: boolean;
+	allowIssueMutations?: boolean;
+	allowIdentityMutations?: boolean;
+	includeStatusTool?: boolean;
+	includeControlPlaneTool?: boolean;
+	includeIssuesTool?: boolean;
+	includeForumTool?: boolean;
+	includeEventsTool?: boolean;
+	includeIdentityTool?: boolean;
 	toolIntroLine?: string;
+	usageLine?: string;
 	extraSystemPromptLines?: string[];
 };
 
@@ -180,7 +199,7 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 			"",
 			`[MU SERVER] Connected at ${url}.`,
 			opts.toolIntroLine,
-			"Use these tools to inspect repository state and control-plane runtime before advising users.",
+			opts.usageLine,
 			...opts.extraSystemPromptLines,
 		].join("\n");
 		return {
@@ -206,141 +225,265 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		}
 	});
 
-	pi.registerTool({
-		name: "mu_status",
-		label: "mu Status",
-		description: "Get high-level mu server status (repo root, issue counts, control-plane activity).",
-		parameters: Type.Object({}),
-		async execute() {
-			const status = await fetchMuStatus();
-			return textResult(summarizeStatus(status), {
-				status,
-			});
-		},
-	});
+	if (opts.includeStatusTool) {
+		pi.registerTool({
+			name: "mu_status",
+			label: "mu Status",
+			description: "Get high-level mu server status (repo root, issue counts, control-plane activity).",
+			parameters: Type.Object({}),
+			async execute() {
+				const status = await fetchMuStatus();
+				return textResult(summarizeStatus(status), {
+					status,
+				});
+			},
+		});
+	}
 
 	const ControlPlaneParams = Type.Object({
 		action: StringEnum(["status", "adapters", "routes"] as const),
 	});
 
-	pi.registerTool({
-		name: "mu_control_plane",
-		label: "Control Plane",
-		description: "Inspect control-plane runtime state: active flag, mounted adapters, and webhook routes.",
-		parameters: ControlPlaneParams,
-		async execute(_toolCallId, params) {
-			const status = await fetchMuStatus();
-			const cp = status.control_plane;
-			const routes = cpRoutesFromStatus(cp.routes, cp.adapters);
-			const generation = cp.generation;
-			const observability = cp.observability.counters;
-			switch (params.action) {
-				case "status":
-					return textResult(
-						toJsonText({
-							active: cp.active,
-							adapters: cp.adapters,
-							routes,
-							generation,
-							observability,
-						}),
-						{ control_plane: cp, routes, generation, observability },
-					);
-				case "adapters":
-					return textResult(toJsonText(cp.adapters), { adapters: cp.adapters });
-				case "routes":
-					return textResult(toJsonText(routes), { routes });
-				default:
-					return textResult(`Unknown action: ${params.action}`);
-			}
-		},
-	});
+	if (opts.includeControlPlaneTool) {
+		pi.registerTool({
+			name: "mu_control_plane",
+			label: "Control Plane",
+			description: "Inspect control-plane runtime state: active flag, mounted adapters, and webhook routes.",
+			parameters: ControlPlaneParams,
+			async execute(_toolCallId, params) {
+				const status = await fetchMuStatus();
+				const cp = status.control_plane;
+				const routes = cpRoutesFromStatus(cp.routes, cp.adapters);
+				const generation = cp.generation;
+				const observability = cp.observability.counters;
+				switch (params.action) {
+					case "status":
+						return textResult(
+							toJsonText({
+								active: cp.active,
+								adapters: cp.adapters,
+								routes,
+								generation,
+								observability,
+							}),
+							{ control_plane: cp, routes, generation, observability },
+						);
+					case "adapters":
+						return textResult(toJsonText(cp.adapters), { adapters: cp.adapters });
+					case "routes":
+						return textResult(toJsonText(routes), { routes });
+					default:
+						return textResult(`Unknown action: ${params.action}`);
+				}
+			},
+		});
+	}
 
+	const issueActions = opts.allowIssueMutations
+		? (["list", "get", "ready", "create", "update", "claim", "close"] as const)
+		: (["list", "get", "ready"] as const);
 	const IssuesParams = Type.Object({
-		action: StringEnum(["list", "get", "ready"] as const),
-		id: Type.Optional(Type.String({ description: "Issue ID (for get)" })),
-		status: Type.Optional(Type.String({ description: "Filter by status (for list)" })),
+		action: StringEnum(issueActions),
+		id: Type.Optional(Type.String({ description: "Issue ID (for get/update/claim/close)" })),
+		title: Type.Optional(Type.String({ description: "Issue title (for create/update)" })),
+		body: Type.Optional(Type.String({ description: "Issue body (for create/update)" })),
+		status: Type.Optional(Type.String({ description: "Filter by status (list) or status to set (update)" })),
 		tag: Type.Optional(Type.String({ description: "Filter by tag (for list)" })),
+		tags: Type.Optional(Type.String({ description: "Comma-separated tags (for create/update)" })),
+		priority: Type.Optional(Type.Number({ description: "Priority (for create/update)" })),
+		outcome: Type.Optional(Type.String({ description: "Outcome (for close/update)" })),
 		root: Type.Optional(Type.String({ description: "Root issue ID (for ready)" })),
 		contains: Type.Optional(Type.String({ description: "Case-insensitive search text over issue title/body" })),
 		fields: Type.Optional(Type.String({ description: "Comma-separated fields for get (e.g. title,status,tags,body)" })),
 		limit: Type.Optional(Type.Number({ description: "Max returned items (default 20, max 200)" })),
 	});
 
-	pi.registerTool({
-		name: "mu_issues",
-		label: "Issues",
-		description:
-			"Query mu issues. Actions: list, get, ready. Returns concise summaries by default. Use id + fields for precise retrieval.",
-		parameters: IssuesParams,
-		async execute(_toolCallId, params) {
-			switch (params.action) {
-				case "list": {
-					const query = new URLSearchParams();
-					const status = trimOrNull(params.status);
-					const tag = trimOrNull(params.tag);
-					const contains = trimOrNull(params.contains);
-					if (status) query.set("status", status);
-					if (tag) query.set("tag", tag);
-					const issues = await fetchMuJson<any[]>(`/api/issues${query.size > 0 ? `?${query.toString()}` : ""}`);
-					const records = issues
-						.map((issue) => asRecord(issue))
-						.filter((issue): issue is Record<string, unknown> => issue != null)
-						.filter((issue) => includeByContains(contains, issue.title, issue.body, issue.tags));
-					const sliced = sliceWithLimit(records, params.limit, 20);
-					const summaries = sliced.items.map((issue) => summarizeIssue(issue, { includeBodyPreview: true }));
-					return textResult(
-						toJsonText({
-							total: sliced.total,
-							returned: sliced.returned,
-							truncated: sliced.truncated,
-							issues: summaries,
-							next: sliced.truncated ? "Refine filters or increase limit. Use mu_issues(action='get', id='...') for precise inspection." : null,
-						}),
-						{ query: { status, tag, contains }, ...sliced, issues: sliced.items },
-					);
+	if (opts.includeIssuesTool) {
+		pi.registerTool({
+			name: "mu_issues",
+			label: "Issues",
+			description: opts.allowIssueMutations
+				? "Read and update mu issues. Actions: list, get, ready, create, update, claim, close. Returns concise summaries by default; use fields for precise retrieval."
+				: "Query mu issues. Actions: list, get, ready. Returns concise summaries by default. Use id + fields for precise retrieval.",
+			parameters: IssuesParams,
+			async execute(_toolCallId, params) {
+				switch (params.action) {
+					case "list": {
+						const query = new URLSearchParams();
+						const status = trimOrNull(params.status);
+						const tag = trimOrNull(params.tag);
+						const contains = trimOrNull(params.contains);
+						if (status) query.set("status", status);
+						if (tag) query.set("tag", tag);
+						const issues = await fetchMuJson<any[]>(`/api/issues${query.size > 0 ? `?${query.toString()}` : ""}`);
+						const records = issues
+							.map((issue) => asRecord(issue))
+							.filter((issue): issue is Record<string, unknown> => issue != null)
+							.filter((issue) => includeByContains(contains, issue.title, issue.body, issue.tags));
+						const sliced = sliceWithLimit(records, params.limit, 20);
+						const summaries = sliced.items.map((issue) => summarizeIssue(issue, { includeBodyPreview: true }));
+						return textResult(
+							toJsonText({
+								total: sliced.total,
+								returned: sliced.returned,
+								truncated: sliced.truncated,
+								issues: summaries,
+								next: sliced.truncated
+									? "Refine filters or increase limit. Use mu_issues(action='get', id='...') for precise inspection."
+									: null,
+							}),
+							{ query: { status, tag, contains }, ...sliced, issues: sliced.items },
+						);
+					}
+					case "get": {
+						const id = trimOrNull(params.id);
+						if (!id) return textResult("Error: id required for get");
+						const issue = await fetchMuJson<Record<string, unknown>>(`/api/issues/${encodeURIComponent(id)}`);
+						const fields = parseFieldPaths(trimOrNull(params.fields) ?? undefined);
+						const content =
+							fields.length > 0
+								? { id, selected: selectFields(issue, fields) }
+								: { issue: summarizeIssue(issue, { includeBodyPreview: true }) };
+						return textResult(toJsonText(content), { id, fields, issue });
+					}
+					case "ready": {
+						const root = trimOrNull(params.root);
+						const contains = trimOrNull(params.contains);
+						const query = root ? `?root=${encodeURIComponent(root)}` : "";
+						const issues = await fetchMuJson<any[]>(`/api/issues/ready${query}`);
+						const records = issues
+							.map((issue) => asRecord(issue))
+							.filter((issue): issue is Record<string, unknown> => issue != null)
+							.filter((issue) => includeByContains(contains, issue.title, issue.body, issue.tags));
+						const sliced = sliceWithLimit(records, params.limit, 20);
+						const summaries = sliced.items.map((issue) => summarizeIssue(issue, { includeBodyPreview: true }));
+						return textResult(
+							toJsonText({
+								total: sliced.total,
+								returned: sliced.returned,
+								truncated: sliced.truncated,
+								issues: summaries,
+								next: sliced.truncated ? "Narrow by root/contains or increase limit." : null,
+							}),
+							{ query: { root, contains }, ...sliced, issues: sliced.items },
+						);
+					}
+					case "create": {
+						if (!opts.allowIssueMutations) {
+							return textResult("issue mutations are disabled in query-only mode.", {
+								blocked: true,
+								reason: "issue_query_only_mode",
+							});
+						}
+						const title = trimOrNull(params.title);
+						if (!title) return textResult("Error: title required for create");
+						const bodyText = trimOrNull(params.body);
+						const tags = parseCommaList(params.tags);
+						const priority =
+							typeof params.priority === "number" && Number.isFinite(params.priority)
+								? Math.trunc(params.priority)
+								: undefined;
+						const issue = await fetchMuJson<Record<string, unknown>>("/api/issues", {
+							method: "POST",
+							body: {
+								title,
+								body: bodyText ?? undefined,
+								tags: tags ?? undefined,
+								priority,
+							},
+						});
+						return textResult(toJsonText({ issue: summarizeIssue(issue, { includeBodyPreview: true }) }), {
+							action: "create",
+							issue,
+						});
+					}
+					case "update": {
+						if (!opts.allowIssueMutations) {
+							return textResult("issue mutations are disabled in query-only mode.", {
+								blocked: true,
+								reason: "issue_query_only_mode",
+							});
+						}
+						const id = trimOrNull(params.id);
+						if (!id) return textResult("Error: id required for update");
+						const patch: Record<string, unknown> = {};
+						const title = trimOrNull(params.title);
+						if (title != null) patch.title = title;
+						const bodyText = trimOrNull(params.body);
+						if (bodyText != null) patch.body = bodyText;
+						const status = trimOrNull(params.status);
+						if (status != null) patch.status = status;
+						const outcome = trimOrNull(params.outcome);
+						if (outcome != null) patch.outcome = outcome;
+						const tags = parseCommaList(params.tags);
+						if (tags != null) patch.tags = tags;
+						if (typeof params.priority === "number" && Number.isFinite(params.priority)) {
+							patch.priority = Math.trunc(params.priority);
+						}
+						if (Object.keys(patch).length === 0) {
+							return textResult("Error: update requires at least one field (title/body/status/outcome/tags/priority)");
+						}
+						const issue = await fetchMuJson<Record<string, unknown>>(`/api/issues/${encodeURIComponent(id)}`, {
+							method: "PATCH",
+							body: patch,
+						});
+						return textResult(toJsonText({ issue: summarizeIssue(issue, { includeBodyPreview: true }) }), {
+							action: "update",
+							id,
+							patch,
+							issue,
+						});
+					}
+					case "claim": {
+						if (!opts.allowIssueMutations) {
+							return textResult("issue mutations are disabled in query-only mode.", {
+								blocked: true,
+								reason: "issue_query_only_mode",
+							});
+						}
+						const id = trimOrNull(params.id);
+						if (!id) return textResult("Error: id required for claim");
+						const issue = await fetchMuJson<Record<string, unknown>>(`/api/issues/${encodeURIComponent(id)}/claim`, {
+							method: "POST",
+							body: {},
+						});
+						return textResult(toJsonText({ issue: summarizeIssue(issue, { includeBodyPreview: true }) }), {
+							action: "claim",
+							id,
+							issue,
+						});
+					}
+					case "close": {
+						if (!opts.allowIssueMutations) {
+							return textResult("issue mutations are disabled in query-only mode.", {
+								blocked: true,
+								reason: "issue_query_only_mode",
+							});
+						}
+						const id = trimOrNull(params.id);
+						if (!id) return textResult("Error: id required for close");
+						const outcome = trimOrNull(params.outcome) ?? "success";
+						const issue = await fetchMuJson<Record<string, unknown>>(`/api/issues/${encodeURIComponent(id)}/close`, {
+							method: "POST",
+							body: { outcome },
+						});
+						return textResult(toJsonText({ issue: summarizeIssue(issue, { includeBodyPreview: true }) }), {
+							action: "close",
+							id,
+							outcome,
+							issue,
+						});
+					}
+					default:
+						return textResult(`Unknown action: ${params.action}`);
 				}
-				case "get": {
-					const id = trimOrNull(params.id);
-					if (!id) return textResult("Error: id required for get");
-					const issue = await fetchMuJson<Record<string, unknown>>(`/api/issues/${encodeURIComponent(id)}`);
-					const fields = parseFieldPaths(trimOrNull(params.fields) ?? undefined);
-					const content =
-						fields.length > 0
-							? { id, selected: selectFields(issue, fields) }
-							: { issue: summarizeIssue(issue, { includeBodyPreview: true }) };
-					return textResult(toJsonText(content), { id, fields, issue });
-				}
-				case "ready": {
-					const root = trimOrNull(params.root);
-					const contains = trimOrNull(params.contains);
-					const query = root ? `?root=${encodeURIComponent(root)}` : "";
-					const issues = await fetchMuJson<any[]>(`/api/issues/ready${query}`);
-					const records = issues
-						.map((issue) => asRecord(issue))
-						.filter((issue): issue is Record<string, unknown> => issue != null)
-						.filter((issue) => includeByContains(contains, issue.title, issue.body, issue.tags));
-					const sliced = sliceWithLimit(records, params.limit, 20);
-					const summaries = sliced.items.map((issue) => summarizeIssue(issue, { includeBodyPreview: true }));
-					return textResult(
-						toJsonText({
-							total: sliced.total,
-							returned: sliced.returned,
-							truncated: sliced.truncated,
-							issues: summaries,
-							next: sliced.truncated ? "Narrow by root/contains or increase limit." : null,
-						}),
-						{ query: { root, contains }, ...sliced, issues: sliced.items },
-					);
-				}
-				default:
-					return textResult(`Unknown action: ${params.action}`);
-			}
-		},
-	});
+			},
+		});
+	}
 
+	const forumActions = opts.allowForumPost ? (["read", "post", "topics"] as const) : (["read", "topics"] as const);
 	const ForumParams = Type.Object({
-		action: StringEnum(["read", "post", "topics"] as const),
+		action: StringEnum(forumActions),
 		topic: Type.Optional(Type.String({ description: "Topic name (for read/post)" })),
 		body: Type.Optional(Type.String({ description: "Message body (for post)" })),
 		prefix: Type.Optional(Type.String({ description: "Topic prefix filter (for topics)" })),
@@ -348,92 +491,96 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		limit: Type.Optional(Type.Number({ description: "Max returned items (default 20, max 200)" })),
 	});
 
-	pi.registerTool({
-		name: "mu_forum",
-		label: "Forum",
-		description: "Interact with mu forum. Actions: read, post, topics. Read/topics return concise summaries for context safety.",
-		parameters: ForumParams,
-		async execute(_toolCallId, params) {
-			switch (params.action) {
-				case "read": {
-					const topic = trimOrNull(params.topic);
-					if (!topic) return textResult("Error: topic required for read");
-					const contains = trimOrNull(params.contains);
-					const limit = clampInt(params.limit, 20, 1, 200);
-					const query = new URLSearchParams({ topic, limit: String(Math.max(limit, 50)) });
-					const messages = await fetchMuJson<any[]>(`/api/forum/read?${query.toString()}`);
-					const records = messages
-						.map((message) => asRecord(message))
-						.filter((message): message is Record<string, unknown> => message != null)
-						.filter((message) => includeByContains(contains, message.body, message.author));
-					const sliced = sliceWithLimit(records, params.limit, 20);
-					const summaries = sliced.items.map((message) => summarizeForumMessage(message));
-					return textResult(
-						toJsonText({
-							topic,
-							total: sliced.total,
-							returned: sliced.returned,
-							truncated: sliced.truncated,
-							messages: summaries,
-							next: sliced.truncated ? "Use contains/topic filters or lower noise with smaller limit." : null,
-						}),
-						{ topic, contains, ...sliced, messages: sliced.items },
-					);
-				}
-				case "post": {
-					if (!opts.allowForumPost) {
+	if (opts.includeForumTool) {
+		pi.registerTool({
+			name: "mu_forum",
+			label: "Forum",
+			description: opts.allowForumPost
+				? "Interact with mu forum. Actions: read, post, topics. Read/topics return concise summaries for context safety."
+				: "Read forum context. Actions: read, topics. Query-only mode excludes post.",
+			parameters: ForumParams,
+			async execute(_toolCallId, params) {
+				switch (params.action) {
+					case "read": {
+						const topic = trimOrNull(params.topic);
+						if (!topic) return textResult("Error: topic required for read");
+						const contains = trimOrNull(params.contains);
+						const limit = clampInt(params.limit, 20, 1, 200);
+						const query = new URLSearchParams({ topic, limit: String(Math.max(limit, 50)) });
+						const messages = await fetchMuJson<any[]>(`/api/forum/read?${query.toString()}`);
+						const records = messages
+							.map((message) => asRecord(message))
+							.filter((message): message is Record<string, unknown> => message != null)
+							.filter((message) => includeByContains(contains, message.body, message.author));
+						const sliced = sliceWithLimit(records, params.limit, 20);
+						const summaries = sliced.items.map((message) => summarizeForumMessage(message));
 						return textResult(
-							"forum post is disabled in operator read-only mode; use approved /mu command flow for mutations.",
-							{ blocked: true, reason: "operator_read_only_tools" },
+							toJsonText({
+								topic,
+								total: sliced.total,
+								returned: sliced.returned,
+								truncated: sliced.truncated,
+								messages: summaries,
+								next: sliced.truncated ? "Use contains/topic filters or lower noise with smaller limit." : null,
+							}),
+							{ topic, contains, ...sliced, messages: sliced.items },
 						);
 					}
-					const topic = trimOrNull(params.topic);
-					const body = trimOrNull(params.body);
-					if (!topic) return textResult("Error: topic required for post");
-					if (!body) return textResult("Error: body required for post");
-					const message = await fetchMuJson<Record<string, unknown>>("/api/forum/post", {
-						method: "POST",
-						body: {
-							topic,
-							body,
-							author: "mu-agent",
-						},
-					});
-					return textResult(toJsonText(message), { topic, posted: true });
+					case "post": {
+						if (!opts.allowForumPost) {
+							return textResult(
+								"forum post is disabled in operator read-only mode; use approved /mu command flow for mutations.",
+								{ blocked: true, reason: "operator_read_only_tools" },
+							);
+						}
+						const topic = trimOrNull(params.topic);
+						const body = trimOrNull(params.body);
+						if (!topic) return textResult("Error: topic required for post");
+						if (!body) return textResult("Error: body required for post");
+						const message = await fetchMuJson<Record<string, unknown>>("/api/forum/post", {
+							method: "POST",
+							body: {
+								topic,
+								body,
+								author: "mu-agent",
+							},
+						});
+						return textResult(toJsonText(message), { topic, posted: true });
+					}
+					case "topics": {
+						const query = new URLSearchParams();
+						const prefix = trimOrNull(params.prefix);
+						if (prefix) query.set("prefix", prefix);
+						const topics = await fetchMuJson<unknown[]>(`/api/forum/topics${query.size > 0 ? `?${query.toString()}` : ""}`);
+						const records = topics
+							.map((topic) => asRecord(topic))
+							.filter((topic): topic is Record<string, unknown> => topic != null)
+							.map((topic) => ({
+								topic: asString(topic.topic) ?? previewText(topic, 120),
+								messages: asNumber(topic.messages) ?? null,
+								last_at: asNumber(topic.last_at) ?? null,
+							}));
+						const fallback = topics
+							.filter((topic) => typeof topic === "string")
+							.map((topic) => ({ topic: topic as string, messages: null, last_at: null }));
+						const merged = records.length > 0 ? records : fallback;
+						const sliced = sliceWithLimit(merged, params.limit, 20);
+						return textResult(
+							toJsonText({
+								total: sliced.total,
+								returned: sliced.returned,
+								truncated: sliced.truncated,
+								topics: sliced.items,
+							}),
+							{ prefix, ...sliced },
+						);
+					}
+					default:
+						return textResult(`Unknown action: ${params.action}`);
 				}
-				case "topics": {
-					const query = new URLSearchParams();
-					const prefix = trimOrNull(params.prefix);
-					if (prefix) query.set("prefix", prefix);
-					const topics = await fetchMuJson<unknown[]>(`/api/forum/topics${query.size > 0 ? `?${query.toString()}` : ""}`);
-					const records = topics
-						.map((topic) => asRecord(topic))
-						.filter((topic): topic is Record<string, unknown> => topic != null)
-						.map((topic) => ({
-							topic: asString(topic.topic) ?? previewText(topic, 120),
-							messages: asNumber(topic.messages) ?? null,
-							last_at: asNumber(topic.last_at) ?? null,
-						}));
-					const fallback = topics
-						.filter((topic) => typeof topic === "string")
-						.map((topic) => ({ topic: topic as string, messages: null, last_at: null }));
-					const merged = records.length > 0 ? records : fallback;
-					const sliced = sliceWithLimit(merged, params.limit, 20);
-					return textResult(
-						toJsonText({
-							total: sliced.total,
-							returned: sliced.returned,
-							truncated: sliced.truncated,
-							topics: sliced.items,
-						}),
-						{ prefix, ...sliced },
-					);
-				}
-				default:
-					return textResult(`Unknown action: ${params.action}`);
-			}
-		},
-	});
+			},
+		});
+	}
 
 	const EventsParams = Type.Object({
 		action: StringEnum(["tail", "query"] as const),
@@ -444,69 +591,72 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		limit: Type.Optional(Type.Number({ description: "Max returned items (default 20, max 200)" })),
 	});
 
-	pi.registerTool({
-		name: "mu_events",
-		label: "Events",
-		description: "Query mu event log. Actions: tail, query. Returns compact event previews by default.",
-		parameters: EventsParams,
-		async execute(_toolCallId, params) {
-			switch (params.action) {
-				case "tail": {
-					const contains = trimOrNull(params.contains);
-					const limit = clampInt(params.limit, 20, 1, 200);
-					const events = await fetchMuJson<any[]>(`/api/events/tail?n=${Math.max(limit, 50)}`);
-					const records = events
-						.map((event) => asRecord(event))
-						.filter((event): event is Record<string, unknown> => event != null)
-						.filter((event) => includeByContains(contains, event.type, event.source, event.payload));
-					const sliced = sliceWithLimit(records, params.limit, 20);
-					const summaries = sliced.items.map((event) => summarizeEvent(event));
-					return textResult(
-						toJsonText({
-							total: sliced.total,
-							returned: sliced.returned,
-							truncated: sliced.truncated,
-							events: summaries,
-						}),
-						{ action: "tail", contains, ...sliced, events: sliced.items },
-					);
+	if (opts.includeEventsTool) {
+		pi.registerTool({
+			name: "mu_events",
+			label: "Events",
+			description: "Query mu event log. Actions: tail, query. Returns compact event previews by default.",
+			parameters: EventsParams,
+			async execute(_toolCallId, params) {
+				switch (params.action) {
+					case "tail": {
+						const contains = trimOrNull(params.contains);
+						const limit = clampInt(params.limit, 20, 1, 200);
+						const events = await fetchMuJson<any[]>(`/api/events/tail?n=${Math.max(limit, 50)}`);
+						const records = events
+							.map((event) => asRecord(event))
+							.filter((event): event is Record<string, unknown> => event != null)
+							.filter((event) => includeByContains(contains, event.type, event.source, event.payload));
+						const sliced = sliceWithLimit(records, params.limit, 20);
+						const summaries = sliced.items.map((event) => summarizeEvent(event));
+						return textResult(
+							toJsonText({
+								total: sliced.total,
+								returned: sliced.returned,
+								truncated: sliced.truncated,
+								events: summaries,
+							}),
+							{ action: "tail", contains, ...sliced, events: sliced.items },
+						);
+					}
+					case "query": {
+						const query = new URLSearchParams();
+						const type = trimOrNull(params.type);
+						const source = trimOrNull(params.source);
+						const contains = trimOrNull(params.contains);
+						const limit = clampInt(params.limit, 20, 1, 200);
+						if (type) query.set("type", type);
+						if (source) query.set("source", source);
+						if (params.since != null) query.set("since", String(Math.trunc(params.since)));
+						query.set("limit", String(Math.max(limit, 50)));
+						const events = await fetchMuJson<any[]>(`/api/events?${query.toString()}`);
+						const records = events
+							.map((event) => asRecord(event))
+							.filter((event): event is Record<string, unknown> => event != null)
+							.filter((event) => includeByContains(contains, event.type, event.source, event.payload));
+						const sliced = sliceWithLimit(records, params.limit, 20);
+						const summaries = sliced.items.map((event) => summarizeEvent(event));
+						return textResult(
+							toJsonText({
+								filters: { type, source, since: params.since ?? null, contains },
+								total: sliced.total,
+								returned: sliced.returned,
+								truncated: sliced.truncated,
+								events: summaries,
+							}),
+							{ type, source, since: params.since ?? null, contains, ...sliced, events: sliced.items },
+						);
+					}
+					default:
+						return textResult(`Unknown action: ${params.action}`);
 				}
-				case "query": {
-					const query = new URLSearchParams();
-					const type = trimOrNull(params.type);
-					const source = trimOrNull(params.source);
-					const contains = trimOrNull(params.contains);
-					const limit = clampInt(params.limit, 20, 1, 200);
-					if (type) query.set("type", type);
-					if (source) query.set("source", source);
-					if (params.since != null) query.set("since", String(Math.trunc(params.since)));
-					query.set("limit", String(Math.max(limit, 50)));
-					const events = await fetchMuJson<any[]>(`/api/events?${query.toString()}`);
-					const records = events
-						.map((event) => asRecord(event))
-						.filter((event): event is Record<string, unknown> => event != null)
-						.filter((event) => includeByContains(contains, event.type, event.source, event.payload));
-					const sliced = sliceWithLimit(records, params.limit, 20);
-					const summaries = sliced.items.map((event) => summarizeEvent(event));
-					return textResult(
-						toJsonText({
-							filters: { type, source, since: params.since ?? null, contains },
-							total: sliced.total,
-							returned: sliced.returned,
-							truncated: sliced.truncated,
-							events: summaries,
-						}),
-						{ type, source, since: params.since ?? null, contains, ...sliced, events: sliced.items },
-					);
-				}
-				default:
-					return textResult(`Unknown action: ${params.action}`);
-			}
-		},
-	});
+			},
+		});
+	}
 
+	const identityActions = opts.allowIdentityMutations ? (["list", "link", "unlink"] as const) : (["list"] as const);
 	const IdentityParams = Type.Object({
-		action: StringEnum(["list", "link", "unlink"] as const),
+		action: StringEnum(identityActions),
 		channel: Type.Optional(Type.String({ description: "Channel: slack, discord, telegram (for link)" })),
 		actor_id: Type.Optional(Type.String({ description: "Channel actor ID (for link)" })),
 		tenant_id: Type.Optional(Type.String({ description: "Channel tenant ID (for link)" })),
@@ -521,115 +671,144 @@ function registerServerTools(pi: ExtensionAPI, opts: Required<ServerToolsExtensi
 		include_inactive: Type.Optional(Type.Boolean({ description: "Include inactive bindings (for list)" })),
 	});
 
-	pi.registerTool({
-		name: "mu_identity",
-		label: "Identity",
-		description:
-			"Manage identity bindings. Actions: list (enumerate bindings), link (create binding), unlink (self-unlink).",
-		parameters: IdentityParams,
-		async execute(_toolCallId, params) {
-			switch (params.action) {
-				case "list": {
-					const query = new URLSearchParams();
-					if (params.include_inactive) query.set("include_inactive", "true");
-					const data = await fetchMuJson<{ count: number; bindings: unknown[] }>(
-						`/api/identities${query.size > 0 ? `?${query.toString()}` : ""}`,
-					);
-					const bindings = asArray(data.bindings)
-						.map((binding) => asRecord(binding))
-						.filter((binding): binding is Record<string, unknown> => binding != null)
-						.map((binding) => summarizeBinding(binding));
-					return textResult(toJsonText({ count: bindings.length, bindings }), { count: data.count, bindings: data.bindings });
+	if (opts.includeIdentityTool) {
+		pi.registerTool({
+			name: "mu_identity",
+			label: "Identity",
+			description: opts.allowIdentityMutations
+				? "Manage identity bindings. Actions: list (enumerate bindings), link (create binding), unlink (self-unlink)."
+				: "Read identity bindings. Action: list.",
+			parameters: IdentityParams,
+			async execute(_toolCallId, params) {
+				switch (params.action) {
+					case "list": {
+						const query = new URLSearchParams();
+						if (params.include_inactive) query.set("include_inactive", "true");
+						const data = await fetchMuJson<{ count: number; bindings: unknown[] }>(
+							`/api/identities${query.size > 0 ? `?${query.toString()}` : ""}`,
+						);
+						const bindings = asArray(data.bindings)
+							.map((binding) => asRecord(binding))
+							.filter((binding): binding is Record<string, unknown> => binding != null)
+							.map((binding) => summarizeBinding(binding));
+						return textResult(toJsonText({ count: bindings.length, bindings }), { count: data.count, bindings: data.bindings });
+					}
+					case "link": {
+						if (!opts.allowIdentityMutations) {
+							return textResult(
+								"identity mutations are disabled in query-only mode; use list/get workflows or approved operator mutation flow.",
+								{ blocked: true, reason: "identity_query_only_mode" },
+							);
+						}
+						const channel = trimOrNull(params.channel);
+						const actorId = trimOrNull(params.actor_id);
+						const tenantId = trimOrNull(params.tenant_id);
+						if (!channel) return textResult("Error: channel required for link");
+						if (!actorId) return textResult("Error: actor_id required for link");
+						if (!tenantId) return textResult("Error: tenant_id required for link");
+						const body: Record<string, unknown> = {
+							channel,
+							actor_id: actorId,
+							tenant_id: tenantId,
+						};
+						const role = trimOrNull(params.role);
+						if (role) body.role = role;
+						const bindingId = trimOrNull(params.binding_id);
+						if (bindingId) body.binding_id = bindingId;
+						const result = await fetchMuJson<Record<string, unknown>>("/api/identities/link", {
+							method: "POST",
+							body,
+						});
+						return textResult(toJsonText(result), result);
+					}
+					case "unlink": {
+						if (!opts.allowIdentityMutations) {
+							return textResult(
+								"identity mutations are disabled in query-only mode; use list/get workflows or approved operator mutation flow.",
+								{ blocked: true, reason: "identity_query_only_mode" },
+							);
+						}
+						const bindingId = trimOrNull(params.binding_id);
+						const actorBindingId = trimOrNull(params.actor_binding_id);
+						if (!bindingId) return textResult("Error: binding_id required for unlink");
+						if (!actorBindingId) return textResult("Error: actor_binding_id required for unlink");
+						const body: Record<string, unknown> = {
+							binding_id: bindingId,
+							actor_binding_id: actorBindingId,
+						};
+						const reason = trimOrNull(params.reason);
+						if (reason) body.reason = reason;
+						const result = await fetchMuJson<Record<string, unknown>>("/api/identities/unlink", {
+							method: "POST",
+							body,
+						});
+						return textResult(toJsonText(result), result);
+					}
+					default:
+						return textResult(`Unknown action: ${params.action}`);
 				}
-				case "link": {
-					const channel = trimOrNull(params.channel);
-					const actorId = trimOrNull(params.actor_id);
-					const tenantId = trimOrNull(params.tenant_id);
-					if (!channel) return textResult("Error: channel required for link");
-					if (!actorId) return textResult("Error: actor_id required for link");
-					if (!tenantId) return textResult("Error: tenant_id required for link");
-					const body: Record<string, unknown> = {
-						channel,
-						actor_id: actorId,
-						tenant_id: tenantId,
-					};
-					const role = trimOrNull(params.role);
-					if (role) body.role = role;
-					const bindingId = trimOrNull(params.binding_id);
-					if (bindingId) body.binding_id = bindingId;
-					const result = await fetchMuJson<Record<string, unknown>>("/api/identities/link", {
-						method: "POST",
-						body,
-					});
-					return textResult(toJsonText(result), result);
-				}
-				case "unlink": {
-					const bindingId = trimOrNull(params.binding_id);
-					const actorBindingId = trimOrNull(params.actor_binding_id);
-					if (!bindingId) return textResult("Error: binding_id required for unlink");
-					if (!actorBindingId) return textResult("Error: actor_binding_id required for unlink");
-					const body: Record<string, unknown> = {
-						binding_id: bindingId,
-						actor_binding_id: actorBindingId,
-					};
-					const reason = trimOrNull(params.reason);
-					if (reason) body.reason = reason;
-					const result = await fetchMuJson<Record<string, unknown>>("/api/identities/unlink", {
-						method: "POST",
-						body,
-					});
-					return textResult(toJsonText(result), result);
-				}
-				default:
-					return textResult(`Unknown action: ${params.action}`);
-			}
-		},
-	});
+			},
+		});
+	}
 
-	registerMuSubcommand(pi, {
-		subcommand: "status",
-		summary: "Show concise mu server status",
-		usage: "/mu status",
-		handler: async (_args, ctx) => {
-			try {
-				const status = await fetchMuStatus();
-				ctx.ui.notify(summarizeStatus(status), "info");
-			} catch (err) {
-				ctx.ui.notify(`Failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-			}
-		},
-	});
+	if (opts.includeStatusTool) {
+		registerMuSubcommand(pi, {
+			subcommand: "status",
+			summary: "Show concise mu server status",
+			usage: "/mu status",
+			handler: async (_args, ctx) => {
+				try {
+					const status = await fetchMuStatus();
+					ctx.ui.notify(summarizeStatus(status), "info");
+				} catch (err) {
+					ctx.ui.notify(`Failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+				}
+			},
+		});
+	}
 
-	registerMuSubcommand(pi, {
-		subcommand: "control",
-		summary: "Show control-plane adapter/runtime status",
-		usage: "/mu control",
-		handler: async (_args, ctx) => {
-			try {
-				const status = await fetchMuStatus();
-				const cp = status.control_plane;
-				const routes = cpRoutesFromStatus(cp.routes, cp.adapters);
-				const lines = [
-					`control_plane: ${cp.active ? "active" : "inactive"}`,
-					`adapters: ${cp.adapters.length > 0 ? cp.adapters.join(", ") : "(none)"}`,
-					`routes: ${routes.length > 0 ? routes.map((entry) => `${entry.name}:${entry.route}`).join(", ") : "(none)"}`,
-					generationSummary(cp.generation),
-					observabilitySummary(cp.observability.counters),
-				];
-				ctx.ui.notify(lines.join("\n"), "info");
-			} catch (err) {
-				ctx.ui.notify(`Failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-			}
-		},
-	});
+	if (opts.includeControlPlaneTool) {
+		registerMuSubcommand(pi, {
+			subcommand: "control",
+			summary: "Show control-plane adapter/runtime status",
+			usage: "/mu control",
+			handler: async (_args, ctx) => {
+				try {
+					const status = await fetchMuStatus();
+					const cp = status.control_plane;
+					const routes = cpRoutesFromStatus(cp.routes, cp.adapters);
+					const lines = [
+						`control_plane: ${cp.active ? "active" : "inactive"}`,
+						`adapters: ${cp.adapters.length > 0 ? cp.adapters.join(", ") : "(none)"}`,
+						`routes: ${routes.length > 0 ? routes.map((entry) => `${entry.name}:${entry.route}`).join(", ") : "(none)"}`,
+						generationSummary(cp.generation),
+						observabilitySummary(cp.observability.counters),
+					];
+					ctx.ui.notify(lines.join("\n"), "info");
+				} catch (err) {
+					ctx.ui.notify(`Failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+				}
+			},
+		});
+	}
 }
 
 export function serverToolsExtension(pi: ExtensionAPI, opts: ServerToolsExtensionOpts = {}) {
 	registerServerTools(pi, {
 		allowForumPost: opts.allowForumPost ?? true,
+		allowIssueMutations: opts.allowIssueMutations ?? true,
+		allowIdentityMutations: opts.allowIdentityMutations ?? true,
+		includeStatusTool: opts.includeStatusTool ?? true,
+		includeControlPlaneTool: opts.includeControlPlaneTool ?? true,
+		includeIssuesTool: opts.includeIssuesTool ?? true,
+		includeForumTool: opts.includeForumTool ?? true,
+		includeEventsTool: opts.includeEventsTool ?? true,
+		includeIdentityTool: opts.includeIdentityTool ?? true,
 		toolIntroLine:
 			opts.toolIntroLine ??
 			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum, mu_events, mu_runs, mu_activities, mu_heartbeats, mu_cron, mu_identity.",
+		usageLine:
+			opts.usageLine ?? "Use these tools to inspect repository state and control-plane runtime before advising users.",
 		extraSystemPromptLines: opts.extraSystemPromptLines ?? [],
 	});
 }
@@ -637,11 +816,37 @@ export function serverToolsExtension(pi: ExtensionAPI, opts: ServerToolsExtensio
 export function serverToolsReadOnlyExtension(pi: ExtensionAPI) {
 	registerServerTools(pi, {
 		allowForumPost: false,
+		allowIssueMutations: false,
+		allowIdentityMutations: false,
+		includeStatusTool: true,
+		includeControlPlaneTool: true,
+		includeIssuesTool: true,
+		includeForumTool: true,
+		includeEventsTool: true,
+		includeIdentityTool: true,
 		toolIntroLine:
-			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum(read/topics), mu_events, mu_runs(read), mu_messaging_setup, mu_identity.",
+			"Tools: mu_status, mu_control_plane, mu_issues, mu_forum(read/topics), mu_events, mu_runs(read), mu_messaging_setup(read), mu_identity(list).",
+		usageLine: "Use these tools to inspect repository state and control-plane runtime before advising users.",
 		extraSystemPromptLines: [
 			"You have Bash, Read, Write, and Edit tools. Use them to run mu CLI commands, edit config files, and complete tasks directly.",
 		],
+	});
+}
+
+export function serverToolsIssueForumExtension(pi: ExtensionAPI) {
+	registerServerTools(pi, {
+		allowForumPost: true,
+		allowIssueMutations: true,
+		allowIdentityMutations: false,
+		includeStatusTool: false,
+		includeControlPlaneTool: false,
+		includeIssuesTool: true,
+		includeForumTool: true,
+		includeEventsTool: false,
+		includeIdentityTool: false,
+		toolIntroLine: "Tools: mu_issues, mu_forum.",
+		usageLine: "Use these tools to coordinate issue status and forum updates for your assigned work.",
+		extraSystemPromptLines: [],
 	});
 }
 

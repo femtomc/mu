@@ -1185,7 +1185,12 @@ async function runInteractiveApply(ctx: ExtensionCommandContext, adapterId: Adap
 	return lines.join("\n");
 }
 
-export function messagingSetupExtension(pi: ExtensionAPI) {
+export type MessagingSetupExtensionOpts = {
+	allowApply?: boolean;
+};
+
+export function messagingSetupExtension(pi: ExtensionAPI, opts: MessagingSetupExtensionOpts = {}) {
+	const allowApply = opts.allowApply ?? true;
 	pi.on("before_agent_start", async (event) => {
 		const { checks } = await collectChecksCached();
 		const summary = summarizeChecks(checks);
@@ -1193,7 +1198,9 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 			"",
 			"[MU MESSAGING]",
 			summary.length > 0 ? summary : "no adapter status available",
-			"Use mu_messaging_setup(action=preflight|plan|apply|verify|guide) for operator workflow.",
+			allowApply
+				? "Use mu_messaging_setup(action=preflight|plan|apply|verify|guide) for operator workflow."
+				: "Use mu_messaging_setup(action=preflight|plan|verify|guide) for query workflow.",
 		];
 		return {
 			systemPrompt: `${event.systemPrompt}${lines.join("\n")}`,
@@ -1204,8 +1211,11 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 		await refreshMessagingStatus(ctx);
 	});
 
+	const setupActions = allowApply
+		? (["check", "preflight", "guide", "plan", "apply", "verify"] as const)
+		: (["check", "preflight", "guide", "plan", "verify"] as const);
 	const SetupParams = Type.Object({
-		action: StringEnum(["check", "preflight", "guide", "plan", "apply", "verify"] as const),
+		action: StringEnum(setupActions),
 		adapter: Type.Optional(Type.String({ description: "Adapter name: slack, discord, telegram, gmail" })),
 		public_base_url: Type.Optional(
 			Type.String({
@@ -1224,8 +1234,9 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "mu_messaging_setup",
 		label: "Messaging Setup",
-		description:
-			"Messaging setup workflow. Actions: check/preflight/guide/plan/apply/verify. For apply, pass field values via the fields parameter (e.g. fields={bot_token:'...', webhook_secret:'...'}).",
+		description: allowApply
+			? "Messaging setup workflow. Actions: check/preflight/guide/plan/apply/verify. For apply, pass field values via the fields parameter (e.g. fields={bot_token:'...', webhook_secret:'...'})."
+			: "Messaging setup query workflow. Actions: check/preflight/guide/plan/verify. Apply is disabled in query-only mode.",
 		parameters: SetupParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const adapterId = params.adapter ? normalizeAdapterId(params.adapter) : null;
@@ -1277,6 +1288,12 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 					return textResult(planSummary(plans), { plans, runtime, adapter: null });
 				}
 				case "apply": {
+					if (!allowApply) {
+						return textResult("apply is disabled in query-only mode. Use plan/guide/verify actions.", {
+							blocked: true,
+							reason: "messaging_setup_query_only_mode",
+						});
+					}
 					if (!adapterId) {
 						return textResult("apply requires adapter (slack|discord|telegram)");
 					}
@@ -1408,6 +1425,10 @@ export function messagingSetupExtension(pi: ExtensionAPI) {
 					return;
 				}
 				case "apply": {
+					if (!allowApply) {
+						ctx.ui.notify("apply is disabled in query-only mode. Use /mu setup plan and /mu setup verify.", "warning");
+						return;
+					}
 					if (!parsed.adapterId) {
 						ctx.ui.notify("apply requires adapter. Example: /mu setup apply slack", "error");
 						return;

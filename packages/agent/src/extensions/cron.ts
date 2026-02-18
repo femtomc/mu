@@ -57,9 +57,17 @@ function summarizeCronMutation(payload: Record<string, unknown>): Record<string,
 	};
 }
 
-export function cronExtension(pi: ExtensionAPI) {
+export type CronExtensionOpts = {
+	allowMutations?: boolean;
+};
+
+export function cronExtension(pi: ExtensionAPI, opts: CronExtensionOpts = {}) {
+	const allowMutations = opts.allowMutations ?? true;
+	const cronActions = allowMutations
+		? (["status", "list", "get", "create", "update", "delete", "trigger", "enable", "disable"] as const)
+		: (["status", "list", "get"] as const);
 	const Params = Type.Object({
-		action: StringEnum(["status", "list", "get", "create", "update", "delete", "trigger", "enable", "disable"] as const),
+		action: StringEnum(cronActions),
 		program_id: Type.Optional(Type.String({ description: "Cron program ID" })),
 		title: Type.Optional(Type.String({ description: "Program title" })),
 		target_kind: Type.Optional(Type.String({ description: "Target kind (run|activity)" })),
@@ -83,8 +91,9 @@ export function cronExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "mu_cron",
 		label: "Cron",
-		description:
-			"Manage persistent cron programs. Actions: status, list, get, create, update, delete, trigger, enable, disable. Summary-first output; use fields for precise retrieval.",
+		description: allowMutations
+			? "Manage persistent cron programs. Actions: status, list, get, create, update, delete, trigger, enable, disable. Summary-first output; use fields for precise retrieval."
+			: "Read cron programs. Actions: status, list, get. Query-only mode excludes mutations.",
 		parameters: Params,
 		async execute(_toolCallId, params) {
 			switch (params.action) {
