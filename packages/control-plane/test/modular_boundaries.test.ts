@@ -26,7 +26,7 @@ describe("control-plane modular boundaries", () => {
 		expect(source).toContain("ControlPlaneCommandPipeline");
 	});
 
-	test("inventory: command pipeline currently couples to mu-agent (P0 seam to remove)", async () => {
+	test("command pipeline is isolated from mu-agent runtime package", async () => {
 		const [source, packageJsonRaw] = await Promise.all([
 			readFile(commandPipelinePath, "utf8"),
 			readFile(controlPlanePackageJsonPath, "utf8"),
@@ -35,7 +35,9 @@ describe("control-plane modular boundaries", () => {
 			dependencies?: Record<string, string>;
 		};
 
-		expect(source).toContain("@femtomc/mu-agent");
-		expect(packageJson.dependencies?.["@femtomc/mu-agent"]).toBeDefined();
+		expect(source).not.toContain("@femtomc/mu-agent");
+		expect(packageJson.dependencies?.["@femtomc/mu-agent"]).toBeUndefined();
+		expect(source).toContain("MessagingOperatorRuntimeLike");
+		expect(source).toContain("DefaultCommandContextResolver");
 	});
 });

@@ -1,4 +1,7 @@
-import { CommandContextResolver, type MessagingOperatorRuntime } from "@femtomc/mu-agent";
+import {
+	type CommandContextResolverLike,
+	DefaultCommandContextResolver,
+} from "./command_context.js";
 import { type ParsedCommand, parseSeriousWorkCommand } from "./command_parser.js";
 import {
 	applyCommandRecordTrace,
@@ -11,6 +14,7 @@ import { ConfirmationManager } from "./confirmation_manager.js";
 import { ChannelSchema, type IdentityBinding, IdentityStore, TERMINAL_IDENTITY_BINDING } from "./identity_store.js";
 import { type InboundEnvelope, InboundEnvelopeSchema } from "./models.js";
 import { MuCliCommandSurface, MuCliRunner, type MuCliRunnerLike } from "./mu_cli_runner.js";
+import type { MessagingOperatorRuntimeLike } from "./operator_contract.js";
 import { DEFAULT_CONTROL_PLANE_POLICY, PolicyEngine, type RequestedCommandMode } from "./policy.js";
 import type { ControlPlaneRuntime } from "./runtime.js";
 
@@ -87,8 +91,8 @@ export type ControlPlaneCommandPipelineOpts = {
 	cliInvocationIdFactory?: () => string;
 	mutationExecutor?: MutationCommandExecutor;
 	readonlyExecutor?: ReadonlyCommandExecutor;
-	operator?: MessagingOperatorRuntime | null;
-	contextResolver?: CommandContextResolver;
+	operator?: MessagingOperatorRuntimeLike | null;
+	contextResolver?: CommandContextResolverLike;
 	cliCommandSurface?: MuCliCommandSurface | null;
 	cliRunner?: MuCliRunnerLike | null;
 };
@@ -134,8 +138,8 @@ export class ControlPlaneCommandPipeline {
 	readonly #policyPath: string | null;
 	readonly #mutationExecutor: MutationCommandExecutor | null;
 	readonly #readonlyExecutor: ReadonlyCommandExecutor | null;
-	readonly #operator: MessagingOperatorRuntime | null;
-	readonly #contextResolver: CommandContextResolver;
+	readonly #operator: MessagingOperatorRuntimeLike | null;
+	readonly #contextResolver: CommandContextResolverLike;
 	readonly #cliCommandSurface: MuCliCommandSurface | null;
 	readonly #cliRunner: MuCliRunnerLike | null;
 	#started = false;
@@ -156,7 +160,7 @@ export class ControlPlaneCommandPipeline {
 		this.#readonlyExecutor = opts.readonlyExecutor ?? null;
 		this.#operator = opts.operator ?? null;
 		this.#contextResolver =
-			opts.contextResolver ?? new CommandContextResolver({ allowedRepoRoots: [this.runtime.paths.repoRoot] });
+			opts.contextResolver ?? new DefaultCommandContextResolver({ allowedRepoRoots: [this.runtime.paths.repoRoot] });
 		this.#cliCommandSurface = opts.cliCommandSurface ?? new MuCliCommandSurface();
 		this.#cliRunner = opts.cliRunner ?? new MuCliRunner();
 		this.confirmations = new ConfirmationManager(this.runtime.journal, { nowMs: this.#nowMs });

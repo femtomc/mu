@@ -22,7 +22,6 @@
     "dist/**"
   ],
   "dependencies": {
-    "@femtomc/mu-agent": "workspace:*",
     "@femtomc/mu-core": "workspace:*",
     "zod": "^4.1.9"
   }

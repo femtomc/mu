@@ -1,6 +1,7 @@
 export * from "./adapter_audit.js";
 export * from "./adapter_contract.js";
 export * from "./channel_adapters.js";
+export * from "./command_context.js";
 export * from "./command_journal.js";
 export * from "./command_parser.js";
 export * from "./command_pipeline.js";
@@ -13,6 +14,7 @@ export * from "./interaction_contract.js";
 export * from "./models.js";
 export * from "./mu_cli_runner.js";
 export * from "./observability.js";
+export * from "./operator_contract.js";
 export * from "./operator_tooling.js";
 export * from "./outbox.js";
 export * from "./paths.js";
