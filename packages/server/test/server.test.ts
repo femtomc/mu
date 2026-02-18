@@ -1246,6 +1246,43 @@ describe("mu-server", () => {
 			expect(payload.error).toContain("invalid issue status filter");
 		});
 
+		test("list issues supports contains + limit query bounds", async () => {
+			await server.fetch(
+				new Request("http://localhost/api/issues", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title: "alpha" }),
+				}),
+			);
+			await server.fetch(
+				new Request("http://localhost/api/issues", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title: "beta", body: "contains worker marker" }),
+				}),
+			);
+			await server.fetch(
+				new Request("http://localhost/api/issues", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title: "gamma", body: "another WORKER marker" }),
+				}),
+			);
+
+			const response = await server.fetch(new Request("http://localhost/api/issues?contains=worker&limit=1"));
+			expect(response.status).toBe(200);
+			const issues = (await response.json()) as Array<{ title: string }>;
+			expect(issues).toHaveLength(1);
+			expect(issues[0]?.title).toBe("gamma");
+		});
+
+		test("list issues rejects invalid limits", async () => {
+			const response = await server.fetch(new Request("http://localhost/api/issues?limit=0"));
+			expect(response.status).toBe(400);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("invalid issue query limit");
+		});
+
 		test("create issue rejects invalid json", async () => {
 			const response = await server.fetch(
 				new Request("http://localhost/api/issues", {
@@ -1276,6 +1313,13 @@ describe("mu-server", () => {
 			const issue = await response.json();
 			expect(issue.id).toBe(created.id);
 			expect(issue.title).toBe("Test issue");
+		});
+
+		test("get issue rejects invalid id encoding", async () => {
+			const response = await server.fetch(new Request("http://localhost/api/issues/%E0%A4%A"));
+			expect(response.status).toBe(400);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("invalid issue id encoding");
 		});
 
 		test("update issue", async () => {
@@ -1382,6 +1426,36 @@ describe("mu-server", () => {
 			const issue = await response.json();
 			expect(issue.status).toBe("in_progress");
 		});
+
+		test("ready issues supports contains + limit query bounds", async () => {
+			await server.fetch(
+				new Request("http://localhost/api/issues", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title: "worker alpha" }),
+				}),
+			);
+			await server.fetch(
+				new Request("http://localhost/api/issues", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title: "worker beta" }),
+				}),
+			);
+
+			const response = await server.fetch(new Request("http://localhost/api/issues/ready?contains=worker&limit=1"));
+			expect(response.status).toBe(200);
+			const issues = (await response.json()) as Array<{ title: string }>;
+			expect(issues).toHaveLength(1);
+			expect(issues[0]?.title).toContain("worker");
+		});
+
+		test("ready issues rejects invalid limits", async () => {
+			const response = await server.fetch(new Request("http://localhost/api/issues/ready?limit=0"));
+			expect(response.status).toBe(400);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("invalid issue query limit");
+		});
 	});
 
 	describe("forum API", () => {
@@ -1478,6 +1552,34 @@ describe("mu-server", () => {
 			expect(topics).toHaveLength(2);
 			expect(topics.map((t: any) => t.topic)).toContain("test:topic1");
 			expect(topics.map((t: any) => t.topic)).toContain("test:topic2");
+		});
+
+		test("list topics supports limit query bounds", async () => {
+			for (let i = 0; i < 5; i += 1) {
+				await server.fetch(
+					new Request("http://localhost/api/forum/post", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							topic: `topic:${i}`,
+							body: `Message ${i}`,
+						}),
+					}),
+				);
+			}
+
+			const response = await server.fetch(new Request("http://localhost/api/forum/topics?limit=2"));
+			expect(response.status).toBe(200);
+			const topics = (await response.json()) as Array<{ topic: string }>;
+			expect(topics).toHaveLength(2);
+			expect(topics[0]?.topic).toBe("topic:4");
+		});
+
+		test("list topics rejects invalid limits", async () => {
+			const response = await server.fetch(new Request("http://localhost/api/forum/topics?limit=0"));
+			expect(response.status).toBe(400);
+			const payload = (await response.json()) as { error: string };
+			expect(payload.error).toContain("invalid topics limit");
 		});
 	});
 });

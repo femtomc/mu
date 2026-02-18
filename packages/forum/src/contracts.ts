@@ -66,10 +66,7 @@ export function normalizeForumReadLimit(limit: unknown): number {
 	);
 }
 
-export function normalizeForumTopicsLimit(
-	limit: unknown,
-	opts: { defaultLimit?: number | null } = {},
-): number | null {
+export function normalizeForumTopicsLimit(limit: unknown, opts: { defaultLimit?: number | null } = {}): number | null {
 	return normalizeForumLimit(limit, {
 		defaultLimit: opts.defaultLimit ?? null,
 		max: MAX_FORUM_TOPICS_LIMIT,

@@ -286,5 +286,4 @@ describe("IssueStore", () => {
 		const v = await store.validate("mu-root");
 		expect(v).toEqual({ is_final: true, reason: "all work completed" });
 	});
-
 });

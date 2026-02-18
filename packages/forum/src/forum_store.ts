@@ -22,17 +22,34 @@ export class ForumStore {
 		this.events = opts.events ?? new EventLog(new NullEventSink());
 	}
 
-	async #load(): Promise<ForumMessage[]> {
-		const rows = await this.#forum.read();
-		return rows.map((row, idx) => {
-			const parsed = ForumMessageSchema.safeParse(row);
-			if (!parsed.success) {
-				throw new Error(`invalid forum row ${idx}: ${parsed.error.message}`);
-			}
-			return parsed.data;
-		});
+	#parseForumRow(row: unknown, idx: number): ForumMessage {
+		const parsed = ForumMessageSchema.safeParse(row);
+		if (!parsed.success) {
+			throw new Error(`invalid forum row ${idx}: ${parsed.error.message}`);
+		}
+		return parsed.data;
 	}
 
+	async #load(): Promise<ForumMessage[]> {
+		const rows = await this.#forum.read();
+		return rows.map((row, idx) => this.#parseForumRow(row, idx));
+	}
+
+	async *#streamRows(): AsyncGenerator<ForumMessage> {
+		if (this.#forum.stream) {
+			let idx = 0;
+			for await (const row of this.#forum.stream()) {
+				yield this.#parseForumRow(row, idx);
+				idx += 1;
+			}
+			return;
+		}
+
+		const rows = await this.#forum.read();
+		for (let idx = 0; idx < rows.length; idx += 1) {
+			yield this.#parseForumRow(rows[idx], idx);
+		}
+	}
 
 	public async post(topic: string, body: string, author: string = "system"): Promise<ForumMessage> {
 		const normalizedTopic = normalizeForumTopic(topic);
@@ -67,12 +84,29 @@ export class ForumStore {
 		const normalizedTopic = normalizeForumTopic(topic);
 		const normalizedLimit = normalizeForumReadLimit(limit);
 
+		if (this.#forum.stream) {
+			const bounded: ForumMessage[] = [];
+			for await (const row of this.#streamRows()) {
+				if (row.topic !== normalizedTopic) {
+					continue;
+				}
+				bounded.push(row);
+				if (bounded.length > normalizedLimit) {
+					bounded.shift();
+				}
+			}
+			return bounded;
+		}
+
 		const rows = await this.#load();
 		const matching = rows.filter((row) => row.topic === normalizedTopic);
 		return matching.slice(-normalizedLimit);
 	}
 
-	public async topics(prefix: string | null = null, opts: { limit?: number | null } = {}): Promise<ForumTopicSummary[]> {
+	public async topics(
+		prefix: string | null = null,
+		opts: { limit?: number | null } = {},
+	): Promise<ForumTopicSummary[]> {
 		const normalizedPrefix = normalizeForumPrefix(prefix);
 		const normalizedLimit = normalizeForumTopicsLimit(opts.limit, { defaultLimit: null });
 		const rows = await this.#load();

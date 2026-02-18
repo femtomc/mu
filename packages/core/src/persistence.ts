@@ -2,6 +2,7 @@ export type JsonlStore<T = unknown> = {
 	read(): Promise<T[]>;
 	write(rows: readonly T[]): Promise<void>;
 	append(row: T): Promise<void>;
+	stream?(): AsyncGenerator<T>;
 };
 
 export class InMemoryJsonlStore<T = unknown> implements JsonlStore<T> {
@@ -21,5 +22,11 @@ export class InMemoryJsonlStore<T = unknown> implements JsonlStore<T> {
 
 	public async append(row: T): Promise<void> {
 		this.#rows.push(row);
+	}
+
+	public async *stream(): AsyncGenerator<T> {
+		for (const row of this.#rows) {
+			yield row;
+		}
 	}
 }

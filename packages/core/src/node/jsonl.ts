@@ -159,4 +159,10 @@ export class FsJsonlStore<T = unknown> implements JsonlStore<T> {
 	public async append(row: T): Promise<void> {
 		await appendJsonl(this.path, row as unknown);
 	}
+
+	public async *stream(): AsyncGenerator<T> {
+		for await (const row of streamJsonl(this.path)) {
+			yield row as T;
+		}
+	}
 }

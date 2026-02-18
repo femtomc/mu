@@ -99,15 +99,33 @@ export class IssueStore {
 		this.events = opts.events ?? new EventLog(new NullEventSink());
 	}
 
+	#parseIssueRow(row: unknown, idx: number): Issue {
+		const parsed = IssueSchema.safeParse(row);
+		if (!parsed.success) {
+			throw new Error(`invalid issue row ${idx}: ${parsed.error.message}`);
+		}
+		return parsed.data;
+	}
+
 	async #load(): Promise<Issue[]> {
 		const rows = await this.#issues.read();
-		return rows.map((row, idx) => {
-			const parsed = IssueSchema.safeParse(row);
-			if (!parsed.success) {
-				throw new Error(`invalid issue row ${idx}: ${parsed.error.message}`);
+		return rows.map((row, idx) => this.#parseIssueRow(row, idx));
+	}
+
+	async *#streamRows(): AsyncGenerator<Issue> {
+		if (this.#issues.stream) {
+			let idx = 0;
+			for await (const row of this.#issues.stream()) {
+				yield this.#parseIssueRow(row, idx);
+				idx += 1;
 			}
-			return parsed.data;
-		});
+			return;
+		}
+
+		const rows = await this.#issues.read();
+		for (let idx = 0; idx < rows.length; idx += 1) {
+			yield this.#parseIssueRow(rows[idx], idx);
+		}
 	}
 
 	async #save(rows: readonly Issue[]): Promise<void> {
@@ -155,6 +173,26 @@ export class IssueStore {
 		const tag = normalizeIssueTagFilter(opts.tag);
 		const contains = normalizeIssueContainsFilter(opts.contains);
 		const limit = normalizeIssueQueryLimit(opts.limit, { defaultLimit: null });
+
+		if (limit != null && this.#issues.stream) {
+			const bounded: Issue[] = [];
+			for await (const row of this.#streamRows()) {
+				if (status && row.status !== status) {
+					continue;
+				}
+				if (tag && !row.tags.includes(tag)) {
+					continue;
+				}
+				if (contains && !issueContainsText(row, contains)) {
+					continue;
+				}
+				bounded.push(row);
+				if (bounded.length > limit) {
+					bounded.shift();
+				}
+			}
+			return bounded;
+		}
 
 		let rows = await this.#load();
 		if (status) {

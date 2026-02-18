@@ -116,8 +116,7 @@ export async function issueRoutes(request: Request, context: ServerContext): Pro
 				return errorResponse(400, "title is required");
 			}
 
-			const issueBody =
-				body.body == null ? undefined : typeof body.body === "string" ? body.body : undefined;
+			const issueBody = body.body == null ? undefined : typeof body.body === "string" ? body.body : undefined;
 			if (body.body != null && issueBody == null) {
 				return errorResponse(400, "body must be a string when provided");
 			}
@@ -132,7 +131,11 @@ export async function issueRoutes(request: Request, context: ServerContext): Pro
 
 			let priority: number | undefined;
 			if (body.priority != null) {
-				if (typeof body.priority !== "number" || !Number.isFinite(body.priority) || !Number.isInteger(body.priority)) {
+				if (
+					typeof body.priority !== "number" ||
+					!Number.isFinite(body.priority) ||
+					!Number.isInteger(body.priority)
+				) {
 					return errorResponse(400, "priority must be an integer when provided");
 				}
 				priority = body.priority;
