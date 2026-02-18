@@ -1,39 +1,39 @@
 {
-	"name": "@femtomc/mu",
-	"version": "26.2.65",
-	"description": "Personal agent CLI for technical work.",
-	"keywords": [
-		"mu",
-		"agent",
-		"automation",
-		"orchestration",
-		"cli"
-	],
-	"type": "module",
-	"bin": {
-		"mu": "./dist/cli.js"
-	},
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"default": "./dist/index.js"
-		}
-	},
-	"files": [
-		"dist/**"
-	],
-	"dependencies": {
-		"@femtomc/mu-agent": "workspace:*",
-		"@femtomc/mu-control-plane": "workspace:*",
-		"@femtomc/mu-core": "workspace:*",
-		"@femtomc/mu-forum": "workspace:*",
-		"@femtomc/mu-issue": "workspace:*",
-		"@femtomc/mu-orchestrator": "workspace:*",
-		"@femtomc/mu-server": "workspace:*",
-		"@mariozechner/pi-ai": "^0.53.0",
-		"@mariozechner/pi-coding-agent": "^0.53.0",
-		"chalk": "^5.6.2"
-	}
+  "name": "@femtomc/mu",
+  "version": "26.2.69",
+  "description": "Personal agent CLI for technical work.",
+  "keywords": [
+    "mu",
+    "agent",
+    "automation",
+    "orchestration",
+    "cli"
+  ],
+  "type": "module",
+  "bin": {
+    "mu": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**"
+  ],
+  "dependencies": {
+    "@femtomc/mu-agent": "workspace:*",
+    "@femtomc/mu-control-plane": "workspace:*",
+    "@femtomc/mu-core": "workspace:*",
+    "@femtomc/mu-forum": "workspace:*",
+    "@femtomc/mu-issue": "workspace:*",
+    "@femtomc/mu-orchestrator": "workspace:*",
+    "@femtomc/mu-server": "workspace:*",
+    "@mariozechner/pi-ai": "^0.53.0",
+    "@mariozechner/pi-coding-agent": "^0.53.0",
+    "chalk": "^5.6.2"
+  }
 }

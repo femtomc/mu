@@ -1,3 +1,4 @@
+import { readFileSync, rmSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -73,6 +74,7 @@ type ServeDeps = {
 		run: QueuedRunSnapshot;
 	}) => Promise<RunHeartbeatRegistration>;
 	registerSignalHandler: (signal: NodeJS.Signals, handler: () => void) => () => void;
+	registerProcessExitHandler: (handler: () => void) => () => void;
 	openBrowser: (url: string) => void;
 	isHeadless: () => boolean;
 };
@@ -2905,18 +2907,56 @@ function heartbeatProgramMatchesRun(program: Record<string, unknown>, run: Queue
 	return false;
 }
 
+function cleanupWriterLockIfOwnedByCurrentProcess(repoRoot: string): boolean {
+	const lockPath = join(repoRoot, ".mu", "control-plane", "writer.lock");
+	let ownerPid: number | null = null;
+
+	try {
+		const raw = readFileSync(lockPath, "utf8").trim();
+		if (raw.length === 0) {
+			return false;
+		}
+		const parsed = asRecord(JSON.parse(raw));
+		if (!parsed) {
+			return false;
+		}
+		ownerPid =
+			typeof parsed.owner_pid === "number" && Number.isFinite(parsed.owner_pid)
+				? Math.trunc(parsed.owner_pid)
+				: null;
+	} catch (err) {
+		const code = err instanceof Error && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+		if (code === "ENOENT") {
+			return false;
+		}
+		return false;
+	}
+
+	if (ownerPid !== process.pid) {
+		return false;
+	}
+
+	try {
+		rmSync(lockPath, { force: true });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function buildServeDeps(ctx: CliCtx): ServeDeps {
 	const defaults: ServeDeps = {
 		startServer: async ({ repoRoot, port }) => {
-			const { createServerAsync } = await import("@femtomc/mu-server");
-			const { serverConfig, controlPlane } = await createServerAsync({ repoRoot, port });
+			const { composeServerRuntime, createServerFromRuntime } = await import("@femtomc/mu-server");
+			const runtime = await composeServerRuntime({ repoRoot });
+			const serverConfig = createServerFromRuntime(runtime, { port });
 
 			let server: ReturnType<typeof Bun.serve>;
 			try {
 				server = Bun.serve(serverConfig);
 			} catch (err) {
 				try {
-					await controlPlane?.stop();
+					await runtime.controlPlane?.stop();
 				} catch {
 					// Best effort cleanup. Preserve the original startup error.
 				}
@@ -2924,9 +2964,9 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 			}
 
 			return {
-				activeAdapters: controlPlane?.activeAdapters ?? [],
+				activeAdapters: runtime.controlPlane?.activeAdapters ?? [],
 				stop: async () => {
-					await controlPlane?.stop();
+					await runtime.controlPlane?.stop();
 					server.stop();
 				},
 			};
@@ -3048,6 +3088,16 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 				process.removeListener(signal, handler);
 			};
 		},
+		registerProcessExitHandler: (handler) => {
+			process.on("exit", handler);
+			return () => {
+				if (typeof process.off === "function") {
+					process.off("exit", handler);
+					return;
+				}
+				process.removeListener("exit", handler);
+			};
+		},
 		openBrowser: (url) => {
 			if (process.platform === "darwin") {
 				Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
@@ -3078,6 +3128,11 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 			recovery: [`mu ${opts.commandName} --port 3000`, `mu ${opts.commandName} --help`],
 		});
 	}
+
+	let unregisterProcessExitCleanup: (() => void) | null = null;
+	unregisterProcessExitCleanup = deps.registerProcessExitHandler(() => {
+		cleanupWriterLockIfOwnedByCurrentProcess(ctx.repoRoot);
+	});
 
 	const serverUrl = `http://localhost:${opts.port}`;
 	Bun.env.MU_SERVER_URL = serverUrl;
@@ -3205,6 +3260,7 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 	} finally {
 		unregisterSignals?.();
 		await stopServer();
+		unregisterProcessExitCleanup?.();
 	}
 
 	if (stopError && result.exitCode === 0) {

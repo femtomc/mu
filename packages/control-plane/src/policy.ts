@@ -257,6 +257,20 @@ const DEFAULT_COMMANDS: Record<string, CommandPolicyRule> = {
 		min_assurance_tier: "tier_b",
 		ops_class: "identity_admin",
 	},
+	reload: {
+		scopes: ["cp.ops.admin"],
+		mutating: true,
+		confirmation_required: true,
+		min_assurance_tier: "tier_a",
+		ops_class: "ops_admin",
+	},
+	update: {
+		scopes: ["cp.ops.admin"],
+		mutating: true,
+		confirmation_required: true,
+		min_assurance_tier: "tier_a",
+		ops_class: "ops_admin",
+	},
 	"kill-switch set": {
 		scopes: ["cp.ops.admin"],
 		mutating: true,

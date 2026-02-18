@@ -65,6 +65,24 @@ describe("parseSeriousWorkCommand", () => {
 			commandKey: "run interrupt",
 			args: ["mu-abc123"],
 		});
+
+		const reload = parseSeriousWorkCommand("/reload");
+		expect(reload).toMatchObject({
+			kind: "command",
+			invocation: "slash",
+			requestedMode: "auto",
+			commandKey: "reload",
+			args: [],
+		});
+
+		const update = parseSeriousWorkCommand("/update");
+		expect(update).toMatchObject({
+			kind: "command",
+			invocation: "slash",
+			requestedMode: "auto",
+			commandKey: "update",
+			args: [],
+		});
 	});
 
 	test("parses confirm/cancel commands", () => {

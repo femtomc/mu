@@ -63,6 +63,18 @@ describe("ApprovedCommandBroker", () => {
 		});
 		expect(runInterrupt).toEqual({ kind: "approved", commandText: "/mu run interrupt mu-root1234" });
 
+		const reload = broker.approve({
+			proposal: { kind: "reload" },
+			inbound: mkInbound(),
+		});
+		expect(reload).toEqual({ kind: "approved", commandText: "/mu reload" });
+
+		const update = broker.approve({
+			proposal: { kind: "update" },
+			inbound: mkInbound(),
+		});
+		expect(update).toEqual({ kind: "approved", commandText: "/mu update" });
+
 		const invalidArg = broker.approve({
 			proposal: { kind: "run_resume", root_issue_id: "mu-abc12345 --raw-stream" },
 			inbound: mkInbound(),

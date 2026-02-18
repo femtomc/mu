@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ControlPlaneHandle } from "../src/control_plane.js";
-import { createServer } from "../src/server.js";
+import { composeServerRuntime, createServerFromRuntime } from "../src/server.js";
 
 async function waitFor<T>(
 	fn: () => T | Promise<T>,
@@ -24,6 +24,18 @@ async function waitFor<T>(
 	}
 }
 
+async function createServerForTest(opts: {
+	repoRoot: string;
+	controlPlane?: ControlPlaneHandle | null;
+	serverOptions?: Parameters<typeof createServerFromRuntime>[1];
+}) {
+	const runtime = await composeServerRuntime({
+		repoRoot: opts.repoRoot,
+		controlPlane: opts.controlPlane ?? null,
+	});
+	return createServerFromRuntime(runtime, opts.serverOptions);
+}
+
 describe("mu-server", () => {
 	let tempDir: string;
 	let server: any;
@@ -39,7 +51,7 @@ describe("mu-server", () => {
 		await Bun.write(join(muDir, "events.jsonl"), "");
 
 		// Create server instance
-		server = createServer({ repoRoot: tempDir });
+		server = await createServerForTest({ repoRoot: tempDir });
 	});
 
 	afterEach(async () => {
@@ -83,6 +95,49 @@ describe("mu-server", () => {
 				},
 			},
 		});
+	});
+
+	test("composeServerRuntime wires session lifecycle into initial control-plane generation", async () => {
+		const calls: string[] = [];
+		const runtime = await composeServerRuntime({
+			repoRoot: tempDir,
+			sessionLifecycle: {
+				reload: async () => {
+					calls.push("reload");
+					return { ok: true, action: "reload", message: "reload scheduled" };
+				},
+				update: async () => {
+					calls.push("update");
+					return { ok: true, action: "update", message: "update scheduled" };
+				},
+			},
+		});
+		expect(runtime.controlPlane).not.toBeNull();
+		if (!runtime.controlPlane) {
+			throw new Error("expected control plane");
+		}
+		expect(runtime.repoRoot).toBe(tempDir);
+		expect(runtime.capabilities.session_lifecycle_actions).toEqual(["reload", "update"]);
+		expect(runtime.capabilities.control_plane_bootstrapped).toBe(true);
+		expect(runtime.capabilities.control_plane_adapters).toEqual([]);
+
+		const serverFromRuntime = createServerFromRuntime(runtime, { port: 3011 });
+		expect(serverFromRuntime.port).toBe(3011);
+
+		const reload = await runtime.controlPlane.submitTerminalCommand?.({
+			commandText: "/mu reload",
+			repoRoot: tempDir,
+		});
+		expect(reload?.kind).toBe("completed");
+
+		const update = await runtime.controlPlane.submitTerminalCommand?.({
+			commandText: "/mu update",
+			repoRoot: tempDir,
+		});
+		expect(update?.kind).toBe("completed");
+		expect(calls).toEqual(["reload", "update"]);
+
+		await runtime.controlPlane.stop();
 	});
 
 	test("config endpoint returns default config shape", async () => {
@@ -162,7 +217,7 @@ describe("mu-server", () => {
 	});
 
 	test("status endpoint includes control-plane routes when active", async () => {
-		const serverWithControlPlane = createServer({
+		const serverWithControlPlane = await createServerForTest({
 			repoRoot: tempDir,
 			controlPlane: {
 				activeAdapters: [{ name: "slack", route: "/webhooks/slack" }],
@@ -206,12 +261,14 @@ describe("mu-server", () => {
 			stop: async () => {},
 		};
 
-		const serverWithReload = createServer({
+		const serverWithReload = await createServerForTest({
 			repoRoot: tempDir,
 			controlPlane: initial,
-			controlPlaneReloader: async ({ previous }) => {
-				expect(previous).toBe(initial);
-				return reloaded;
+			serverOptions: {
+				controlPlaneReloader: async ({ previous }) => {
+					expect(previous).toBe(initial);
+					return reloaded;
+				},
 			},
 		});
 
@@ -269,11 +326,13 @@ describe("mu-server", () => {
 			},
 		};
 
-		const serverWithReload = createServer({
+		const serverWithReload = await createServerForTest({
 			repoRoot: tempDir,
 			controlPlane: initial,
-			controlPlaneReloader: async () => {
-				throw new Error("reload failed");
+			serverOptions: {
+				controlPlaneReloader: async () => {
+					throw new Error("reload failed");
+				},
 			},
 		});
 
@@ -327,10 +386,12 @@ describe("mu-server", () => {
 			stop: async () => {},
 		};
 
-		const serverWithReload = createServer({
+		const serverWithReload = await createServerForTest({
 			repoRoot: tempDir,
 			controlPlane: initial,
-			controlPlaneReloader: async () => reloaded,
+			serverOptions: {
+				controlPlaneReloader: async () => reloaded,
+			},
 		});
 
 		const rollbackResponse = await serverWithReload.fetch(
@@ -347,6 +408,39 @@ describe("mu-server", () => {
 		expect(payload.ok).toBe(true);
 		expect(payload.reason).toBe("rollback");
 		expect(payload.generation.outcome).toBe("success");
+	});
+
+	test("/api/commands/submit maps reload/update kinds to terminal control-plane commands", async () => {
+		const submitted: string[] = [];
+		const controlPlane: ControlPlaneHandle = {
+			activeAdapters: [{ name: "telegram", route: "/webhooks/telegram" }],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async (opts) => {
+				submitted.push(opts.commandText);
+				return { kind: "invalid", reason: "stubbed" } as any;
+			},
+			stop: async () => {},
+		};
+		const serverWithCommands = await createServerForTest({ repoRoot: tempDir, controlPlane });
+
+		const reloadRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "reload" }),
+			}),
+		);
+		expect(reloadRes.status).toBe(200);
+
+		const updateRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "update" }),
+			}),
+		);
+		expect(updateRes.status).toBe(200);
+		expect(submitted).toEqual(["/mu reload", "/mu update"]);
 	});
 
 	test("run management APIs proxy through control-plane handle", async () => {
@@ -378,7 +472,7 @@ describe("mu-server", () => {
 			traceRun: async () => ({ run, stdout: ["a"], stderr: ["b"], log_hints: [".mu/logs/x"], trace_files: [] }),
 			stop: async () => {},
 		};
-		const serverWithRuns = createServer({ repoRoot: tempDir, controlPlane });
+		const serverWithRuns = await createServerForTest({ repoRoot: tempDir, controlPlane });
 
 		const listRes = await serverWithRuns.fetch(new Request("http://localhost/api/runs?limit=10"));
 		expect(listRes.status).toBe(200);
@@ -439,7 +533,10 @@ describe("mu-server", () => {
 	});
 
 	test("cron/heartbeat triggers emit coalesced operator wake artifacts", async () => {
-		const wakeServer = createServer({ repoRoot: tempDir, operatorWakeCoalesceMs: 1_000 });
+		const wakeServer = await createServerForTest({
+			repoRoot: tempDir,
+			serverOptions: { operatorWakeCoalesceMs: 1_000 },
+		});
 
 		const activityStart = await wakeServer.fetch(
 			new Request("http://localhost/api/activities/start", {
@@ -647,7 +744,11 @@ describe("mu-server", () => {
 			stop: async () => {},
 		};
 
-		const serverWithAuto = createServer({ repoRoot: tempDir, controlPlane, autoRunHeartbeatEveryMs: 5_000 });
+		const serverWithAuto = await createServerForTest({
+			repoRoot: tempDir,
+			controlPlane,
+			serverOptions: { autoRunHeartbeatEveryMs: 5_000 },
+		});
 
 		const startRes = await serverWithAuto.fetch(
 			new Request("http://localhost/api/runs/start", {
@@ -1002,7 +1103,7 @@ describe("mu-server", () => {
 		server.heartbeatPrograms.stop();
 		server.activitySupervisor.stop();
 
-		const restarted = createServer({ repoRoot: tempDir });
+		const restarted = await createServerForTest({ repoRoot: tempDir });
 		await Bun.sleep(180);
 		const restartedGetRes = await restarted.fetch(new Request(`http://localhost/api/cron/${programId}`));
 		expect(restartedGetRes.status).toBe(200);

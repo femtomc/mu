@@ -18,7 +18,14 @@ export {
 	redactMuConfigSecrets,
 	writeMuConfigFile,
 } from "./config.js";
-export type { ActiveAdapter, ControlPlaneConfig, ControlPlaneHandle } from "./control_plane.js";
+export type {
+	ActiveAdapter,
+	ControlPlaneConfig,
+	ControlPlaneHandle,
+	ControlPlaneSessionLifecycle,
+	ControlPlaneSessionMutationAction,
+	ControlPlaneSessionMutationResult,
+} from "./control_plane.js";
 export { bootstrapControlPlane, detectAdapters } from "./control_plane.js";
 export type {
 	CronProgramLifecycleAction,
@@ -51,5 +58,17 @@ export type {
 	HeartbeatTickHandler,
 } from "./heartbeat_scheduler.js";
 export { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
-export type { ServerContext, ServerOptions, ServerWithControlPlane } from "./server.js";
-export { createContext, createServer, createServerAsync } from "./server.js";
+export type {
+	ServerContext,
+	ServerInstanceOptions,
+	ServerOptions,
+	ServerRuntime,
+	ServerRuntimeCapabilities,
+	ServerRuntimeOptions,
+} from "./server.js";
+export {
+	composeServerRuntime,
+	createContext,
+	createProcessSessionLifecycle,
+	createServerFromRuntime,
+} from "./server.js";

@@ -32,6 +32,9 @@ import {
 	bootstrapControlPlane,
 	type ControlPlaneConfig,
 	type ControlPlaneHandle,
+	type ControlPlaneSessionLifecycle,
+	type ControlPlaneSessionMutationAction,
+	type ControlPlaneSessionMutationResult,
 	type TelegramGenerationReloadResult,
 } from "./control_plane.js";
 import { CronProgramRegistry, type CronProgramTarget } from "./cron_programs.js";
@@ -81,6 +84,176 @@ function toNonNegativeInt(value: unknown, fallback: number): number {
 		return Math.max(0, Number.parseInt(value, 10));
 	}
 	return Math.max(0, Math.trunc(fallback));
+}
+
+function shellQuoteArg(value: string): string {
+	return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function shellJoin(args: string[]): string {
+	return args.map(shellQuoteArg).join(" ");
+}
+
+type ShellCommandResult = {
+	exitCode: number;
+	stdout: string;
+	stderr: string;
+};
+
+type ShellCommandRunner = (command: string) => Promise<ShellCommandResult>;
+
+function createShellCommandRunner(repoRoot: string): ShellCommandRunner {
+	return async (command: string): Promise<ShellCommandResult> => {
+		const proc = Bun.spawn({
+			cmd: ["bash", "-lc", command],
+			cwd: repoRoot,
+			env: Bun.env,
+			stdin: "ignore",
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [exitCode, stdout, stderr] = await Promise.all([
+			proc.exited,
+			proc.stdout ? new Response(proc.stdout).text() : Promise.resolve(""),
+			proc.stderr ? new Response(proc.stderr).text() : Promise.resolve(""),
+		]);
+		return {
+			exitCode: Number.isFinite(exitCode) ? Number(exitCode) : 1,
+			stdout,
+			stderr,
+		};
+	};
+}
+
+export function createProcessSessionLifecycle(opts: {
+	repoRoot: string;
+	runShellCommand?: ShellCommandRunner;
+}): ControlPlaneSessionLifecycle {
+	const runShellCommand = opts.runShellCommand ?? createShellCommandRunner(opts.repoRoot);
+	let sessionMutationScheduled: { action: "reload" | "update"; at_ms: number } | null = null;
+
+	const scheduleReload = async (): Promise<ControlPlaneSessionMutationResult> => {
+		if (sessionMutationScheduled) {
+			return {
+				ok: true,
+				action: sessionMutationScheduled.action,
+				message: `session ${sessionMutationScheduled.action} already scheduled`,
+				details: { scheduled_at_ms: sessionMutationScheduled.at_ms },
+			};
+		}
+
+		const nowMs = Date.now();
+		const restartCommand = Bun.env.MU_RESTART_COMMAND?.trim();
+		const inferredArgs =
+			process.argv[0] === process.execPath
+				? [process.execPath, ...process.argv.slice(1)]
+				: [process.execPath, ...process.argv];
+		const restartShellCommand =
+			restartCommand && restartCommand.length > 0 ? restartCommand : shellJoin(inferredArgs);
+		if (!restartShellCommand.trim()) {
+			return {
+				ok: false,
+				action: "reload",
+				message: "unable to determine restart command",
+			};
+		}
+
+		const exitDelayMs = 1_000;
+		const launchDelayMs = exitDelayMs + 300;
+		const delayedShellCommand = `sleep ${(launchDelayMs / 1_000).toFixed(2)}; ${restartShellCommand}`;
+
+		let spawnedPid: number | null = null;
+		try {
+			const proc = Bun.spawn({
+				cmd: ["bash", "-lc", delayedShellCommand],
+				cwd: opts.repoRoot,
+				env: Bun.env,
+				stdin: "ignore",
+				stdout: "inherit",
+				stderr: "inherit",
+			});
+			spawnedPid = proc.pid ?? null;
+		} catch (err) {
+			return {
+				ok: false,
+				action: "reload",
+				message: `failed to spawn replacement process: ${describeError(err)}`,
+			};
+		}
+
+		sessionMutationScheduled = { action: "reload", at_ms: nowMs };
+		setTimeout(() => {
+			process.exit(0);
+		}, exitDelayMs);
+
+		return {
+			ok: true,
+			action: "reload",
+			message: "reload scheduled; restarting process",
+			details: {
+				restart_command: restartShellCommand,
+				restart_launch_command: delayedShellCommand,
+				spawned_pid: spawnedPid,
+				exit_delay_ms: exitDelayMs,
+				launch_delay_ms: launchDelayMs,
+			},
+		};
+	};
+
+	const scheduleUpdate = async (): Promise<ControlPlaneSessionMutationResult> => {
+		if (sessionMutationScheduled) {
+			return {
+				ok: true,
+				action: sessionMutationScheduled.action,
+				message: `session ${sessionMutationScheduled.action} already scheduled`,
+				details: { scheduled_at_ms: sessionMutationScheduled.at_ms },
+			};
+		}
+
+		const updateCommand = Bun.env.MU_UPDATE_COMMAND?.trim() || "npm install -g @femtomc/mu@latest";
+		const result = await runShellCommand(updateCommand);
+		if (result.exitCode !== 0) {
+			return {
+				ok: false,
+				action: "update",
+				message: `update command failed (exit ${result.exitCode})`,
+				details: {
+					update_command: updateCommand,
+					stdout: result.stdout.slice(-4_000),
+					stderr: result.stderr.slice(-4_000),
+				},
+			};
+		}
+
+		const reloadResult = await scheduleReload();
+		if (!reloadResult.ok) {
+			return {
+				ok: false,
+				action: "update",
+				message: reloadResult.message,
+				details: {
+					update_command: updateCommand,
+					reload: reloadResult.details ?? null,
+				},
+			};
+		}
+
+		return {
+			ok: true,
+			action: "update",
+			message: "update applied; reload scheduled",
+			details: {
+				update_command: updateCommand,
+				reload: reloadResult.details ?? null,
+				update_stdout_tail: result.stdout.slice(-1_000),
+			},
+		};
+	};
+
+	return {
+		reload: scheduleReload,
+		update: scheduleUpdate,
+	};
 }
 
 type ControlPlaneSummary = {
@@ -144,7 +317,23 @@ export type ServerOptions = {
 	config?: MuConfig;
 	configReader?: ConfigReader;
 	configWriter?: ConfigWriter;
+	sessionLifecycle?: ControlPlaneSessionLifecycle;
 };
+
+export type ServerRuntimeOptions = {
+	repoRoot?: string;
+	controlPlane?: ControlPlaneHandle | null;
+	heartbeatScheduler?: ActivityHeartbeatScheduler;
+	generationTelemetry?: GenerationTelemetryRecorder;
+	config?: MuConfig;
+	configReader?: ConfigReader;
+	sessionLifecycle?: ControlPlaneSessionLifecycle;
+};
+
+export type ServerInstanceOptions = Omit<
+	ServerOptions,
+	"repoRoot" | "controlPlane" | "heartbeatScheduler" | "generationTelemetry" | "config" | "sessionLifecycle"
+>;
 
 export type ServerContext = {
 	repoRoot: string;
@@ -257,7 +446,7 @@ export function createContext(repoRoot: string): ServerContext {
 	return { repoRoot, issueStore, forumStore, eventLog, eventsStore };
 }
 
-export function createServer(options: ServerOptions = {}) {
+function createServer(options: ServerOptions = {}) {
 	const repoRoot = options.repoRoot || process.cwd();
 	const context = createContext(repoRoot);
 
@@ -293,6 +482,7 @@ export function createServer(options: ServerOptions = {}) {
 	);
 	const operatorWakeLastByKey = new Map<string, number>();
 	const autoRunHeartbeatProgramByJobId = new Map<string, string>();
+	const sessionLifecycle = options.sessionLifecycle ?? createProcessSessionLifecycle({ repoRoot });
 
 	const emitOperatorWake = async (opts: {
 		dedupeKey: string;
@@ -351,6 +541,7 @@ export function createServer(options: ServerOptions = {}) {
 				heartbeatScheduler,
 				generation,
 				telemetry: generationTelemetry,
+				sessionLifecycle,
 				terminalEnabled: true,
 			});
 		});
@@ -1343,6 +1534,12 @@ export function createServer(options: ServerOptions = {}) {
 					commandText = `mu! run interrupt${rootId ? ` ${rootId}` : ""}`;
 					break;
 				}
+				case "reload":
+					commandText = "/mu reload";
+					break;
+				case "update":
+					commandText = "/mu update";
+					break;
 				case "status":
 					commandText = "/mu status";
 					break;
@@ -2422,38 +2619,72 @@ export function createServer(options: ServerOptions = {}) {
 	return server;
 }
 
-export type ServerWithControlPlane = {
-	serverConfig: ReturnType<typeof createServer>;
-	controlPlane: ControlPlaneHandle | null;
+export type ServerRuntimeCapabilities = {
+	session_lifecycle_actions: readonly ControlPlaneSessionMutationAction[];
+	control_plane_bootstrapped: boolean;
+	control_plane_adapters: string[];
 };
 
-export async function createServerAsync(
-	options: Omit<ServerOptions, "controlPlane"> = {},
-): Promise<ServerWithControlPlane> {
-	const repoRoot = options.repoRoot || process.cwd();
-	const config = options.config ?? (await readMuConfigFile(repoRoot));
-	const heartbeatScheduler = options.heartbeatScheduler ?? new ActivityHeartbeatScheduler();
-	const generationTelemetry = options.generationTelemetry ?? new GenerationTelemetryRecorder();
-	const controlPlane = await bootstrapControlPlane({
-		repoRoot,
-		config: config.control_plane,
-		heartbeatScheduler,
-		generation: {
-			generation_id: "control-plane-gen-0",
-			generation_seq: 0,
-		},
-		telemetry: generationTelemetry,
-		terminalEnabled: true,
-	});
-	const serverConfig = createServer({
-		...options,
-		heartbeatScheduler,
-		controlPlane,
-		config,
-		generationTelemetry,
-	});
+export type ServerRuntime = {
+	repoRoot: string;
+	config: MuConfig;
+	heartbeatScheduler: ActivityHeartbeatScheduler;
+	generationTelemetry: GenerationTelemetryRecorder;
+	sessionLifecycle: ControlPlaneSessionLifecycle;
+	controlPlane: ControlPlaneHandle | null;
+	capabilities: ServerRuntimeCapabilities;
+};
+
+function computeServerRuntimeCapabilities(controlPlane: ControlPlaneHandle | null): ServerRuntimeCapabilities {
 	return {
-		serverConfig,
-		controlPlane: serverConfig.controlPlane,
+		session_lifecycle_actions: ["reload", "update"] as const,
+		control_plane_bootstrapped: controlPlane !== null,
+		control_plane_adapters: controlPlane?.activeAdapters.map((adapter) => adapter.name) ?? [],
 	};
 }
+
+export async function composeServerRuntime(options: ServerRuntimeOptions = {}): Promise<ServerRuntime> {
+	const repoRoot = options.repoRoot || process.cwd();
+	const readConfig: ConfigReader = options.configReader ?? readMuConfigFile;
+	const config = options.config ?? (await readConfig(repoRoot));
+	const heartbeatScheduler = options.heartbeatScheduler ?? new ActivityHeartbeatScheduler();
+	const generationTelemetry = options.generationTelemetry ?? new GenerationTelemetryRecorder();
+	const sessionLifecycle = options.sessionLifecycle ?? createProcessSessionLifecycle({ repoRoot });
+	const controlPlane =
+		options.controlPlane !== undefined
+			? options.controlPlane
+			: await bootstrapControlPlane({
+				repoRoot,
+				config: config.control_plane,
+				heartbeatScheduler,
+				generation: {
+					generation_id: "control-plane-gen-0",
+					generation_seq: 0,
+				},
+				telemetry: generationTelemetry,
+				sessionLifecycle,
+				terminalEnabled: true,
+			});
+	return {
+		repoRoot,
+		config,
+		heartbeatScheduler,
+		generationTelemetry,
+		sessionLifecycle,
+		controlPlane,
+		capabilities: computeServerRuntimeCapabilities(controlPlane),
+	};
+}
+
+export function createServerFromRuntime(runtime: ServerRuntime, options: ServerInstanceOptions = {}) {
+	return createServer({
+		...options,
+		repoRoot: runtime.repoRoot,
+		config: runtime.config,
+		heartbeatScheduler: runtime.heartbeatScheduler,
+		generationTelemetry: runtime.generationTelemetry,
+		sessionLifecycle: runtime.sessionLifecycle,
+		controlPlane: runtime.controlPlane,
+	});
+}
+

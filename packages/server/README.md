@@ -11,18 +11,19 @@ bun add @femtomc/mu-server
 ## Usage
 
 ```typescript
-import { createServer } from "@femtomc/mu-server";
+import { composeServerRuntime, createServerFromRuntime } from "@femtomc/mu-server";
 
-// Create server with default options (uses current directory as repo root)
-const server = createServer();
+const runtime = await composeServerRuntime({
+  repoRoot: "/path/to/repo"
+});
 
-// Or specify custom repo root and port
-const server = createServer({
-  repoRoot: "/path/to/repo",
+// Optional: inspect startup capabilities
+console.log(runtime.capabilities);
+
+const server = createServerFromRuntime(runtime, {
   port: 8080
 });
 
-// Start the server
 Bun.serve(server);
 ```
 

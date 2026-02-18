@@ -58,7 +58,7 @@ const KNOWN_TWO_TOKEN_COMMANDS = new Set([
 	"run interrupt",
 ]);
 
-const KNOWN_ONE_TOKEN_COMMANDS = new Set(["status", "ready", "revoke"]);
+const KNOWN_ONE_TOKEN_COMMANDS = new Set(["status", "ready", "revoke", "reload", "update"]);
 
 function parseInvocation(raw: string): {
 	invocation: CommandInvocation;
@@ -68,6 +68,15 @@ function parseInvocation(raw: string): {
 	const trimmed = raw.trim();
 	if (trimmed.length === 0) {
 		return null;
+	}
+
+	const slashReloadMatch = /^\/(reload|update)(?:\s+(.*))?$/i.exec(trimmed);
+	if (slashReloadMatch) {
+		return {
+			invocation: "slash",
+			requestedMode: "auto",
+			body: [slashReloadMatch[1]?.toLowerCase() ?? "", (slashReloadMatch[2] ?? "").trim()].filter(Boolean).join(" "),
+		};
 	}
 
 	const slashMatch = /^\/mu(?:\s+(.*))?$/.exec(trimmed);

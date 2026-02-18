@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { findRepoRoot } from "@femtomc/mu-core/node";
-import { createServerAsync } from "./server.js";
+import { composeServerRuntime, createServerFromRuntime } from "./server.js";
 
 const port = parseInt(Bun.env.PORT || "3000", 10);
 
@@ -16,14 +16,15 @@ try {
 console.log(`Starting mu-server on port ${port}...`);
 console.log(`Repository root: ${repoRoot}`);
 
-const { serverConfig, controlPlane } = await createServerAsync({ repoRoot, port });
+const runtime = await composeServerRuntime({ repoRoot });
+const serverConfig = createServerFromRuntime(runtime, { port });
 
 let server: ReturnType<typeof Bun.serve>;
 try {
 	server = Bun.serve(serverConfig);
 } catch (err) {
 	try {
-		await controlPlane?.stop();
+		await runtime.controlPlane?.stop();
 	} catch {
 		// Best effort cleanup. Preserve the startup error.
 	}
@@ -31,10 +32,11 @@ try {
 }
 
 console.log(`Server running at http://localhost:${port}`);
+console.log(`Capabilities: lifecycle=[${runtime.capabilities.session_lifecycle_actions.join(",")}]`);
 
-if (controlPlane && controlPlane.activeAdapters.length > 0) {
+if (runtime.controlPlane && runtime.controlPlane.activeAdapters.length > 0) {
 	console.log("Control plane: active");
-	for (const a of controlPlane.activeAdapters) {
+	for (const a of runtime.controlPlane.activeAdapters) {
 		console.log(`  ${a.name.padEnd(12)} ${a.route}`);
 	}
 } else {
@@ -43,7 +45,7 @@ if (controlPlane && controlPlane.activeAdapters.length > 0) {
 }
 
 const cleanup = async () => {
-	await controlPlane?.stop();
+	await runtime.controlPlane?.stop();
 	server.stop();
 	process.exit(0);
 };

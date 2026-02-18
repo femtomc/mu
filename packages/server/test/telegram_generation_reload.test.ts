@@ -3,8 +3,14 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_MU_CONFIG, type MuConfig } from "../src/config.js";
-import { bootstrapControlPlane, type TelegramGenerationSwapHooks } from "../src/control_plane.js";
-import { createServer } from "../src/server.js";
+import {
+	bootstrapControlPlane,
+	type BootstrapControlPlaneOpts,
+	type ControlPlaneHandle,
+	type ControlPlaneSessionLifecycle,
+	type TelegramGenerationSwapHooks,
+} from "../src/control_plane.js";
+import { composeServerRuntime, createServerFromRuntime } from "../src/server.js";
 
 const dirsToCleanup = new Set<string>();
 const stopFns = new Set<() => Promise<void>>();
@@ -19,6 +25,34 @@ afterEach(async () => {
 	}
 	dirsToCleanup.clear();
 });
+
+const TEST_SESSION_LIFECYCLE: ControlPlaneSessionLifecycle = {
+	reload: async () => ({ ok: true, action: "reload", message: "test reload scheduled" }),
+	update: async () => ({ ok: true, action: "update", message: "test update scheduled" }),
+};
+
+function bootstrapControlPlaneForTest(
+	opts: Omit<BootstrapControlPlaneOpts, "sessionLifecycle"> & {
+		sessionLifecycle?: ControlPlaneSessionLifecycle;
+	},
+) {
+	return bootstrapControlPlane({
+		...opts,
+		sessionLifecycle: opts.sessionLifecycle ?? TEST_SESSION_LIFECYCLE,
+	});
+}
+
+async function createServerForTest(opts: {
+	repoRoot: string;
+	controlPlane: ControlPlaneHandle;
+	serverOptions?: Parameters<typeof createServerFromRuntime>[1];
+}) {
+	const runtime = await composeServerRuntime({
+		repoRoot: opts.repoRoot,
+		controlPlane: opts.controlPlane,
+	});
+	return createServerFromRuntime(runtime, opts.serverOptions);
+}
 
 async function mkRepoRoot(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), "mu-server-telegram-generation-"));
@@ -109,7 +143,7 @@ describe("telegram blue/green generation reload", () => {
 			},
 		};
 
-		const controlPlane = await bootstrapControlPlane({
+		const controlPlane = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: config.control_plane,
 			telegramGenerationHooks: hooks,
@@ -120,10 +154,12 @@ describe("telegram blue/green generation reload", () => {
 		}
 		stopFns.add(async () => await controlPlane.stop());
 
-		const server = createServer({
+		const server = await createServerForTest({
 			repoRoot,
 			controlPlane,
-			configReader: async () => config,
+			serverOptions: {
+				configReader: async () => config,
+			},
 		});
 
 		config = configWithTelegram({
@@ -183,7 +219,7 @@ describe("telegram blue/green generation reload", () => {
 			},
 		};
 
-		const controlPlane = await bootstrapControlPlane({
+		const controlPlane = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: config.control_plane,
 			telegramGenerationHooks: hooks,
@@ -194,10 +230,12 @@ describe("telegram blue/green generation reload", () => {
 		}
 		stopFns.add(async () => await controlPlane.stop());
 
-		const server = createServer({
+		const server = await createServerForTest({
 			repoRoot,
 			controlPlane,
-			configReader: async () => config,
+			serverOptions: {
+				configReader: async () => config,
+			},
 		});
 
 		config = configWithTelegram({
@@ -243,7 +281,7 @@ describe("telegram blue/green generation reload", () => {
 			},
 		};
 
-		const controlPlane = await bootstrapControlPlane({
+		const controlPlane = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: config.control_plane,
 			telegramGenerationHooks: hooks,
@@ -254,10 +292,12 @@ describe("telegram blue/green generation reload", () => {
 		}
 		stopFns.add(async () => await controlPlane.stop());
 
-		const server = createServer({
+		const server = await createServerForTest({
 			repoRoot,
 			controlPlane,
-			configReader: async () => config,
+			serverOptions: {
+				configReader: async () => config,
+			},
 		});
 
 		config = configWithTelegram({
@@ -288,7 +328,7 @@ describe("telegram blue/green generation reload", () => {
 			botToken: "telegram-token-v1",
 		});
 
-		const controlPlane = await bootstrapControlPlane({
+		const controlPlane = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: config.control_plane,
 		});
@@ -298,10 +338,12 @@ describe("telegram blue/green generation reload", () => {
 		}
 		stopFns.add(async () => await controlPlane.stop());
 
-		const server = createServer({
+		const server = await createServerForTest({
 			repoRoot,
 			controlPlane,
-			configReader: async () => config,
+			serverOptions: {
+				configReader: async () => config,
+			},
 		});
 
 		config = configWithTelegram({

@@ -76,6 +76,27 @@ describe("PolicyEngine authorization", () => {
 		});
 		expect(runMissingScope).toMatchObject({ kind: "deny", reason: "missing_scope" });
 
+		const reloadAllowed = policy.authorizeCommand({
+			commandKey: "reload",
+			requestedMode: "auto",
+			binding: mkBinding({ scopes: ["cp.ops.admin"], assurance_tier: "tier_a", channel: "terminal" }),
+		});
+		expect(reloadAllowed.kind).toBe("allow");
+
+		const reloadMissingScope = policy.authorizeCommand({
+			commandKey: "reload",
+			requestedMode: "auto",
+			binding: mkBinding({ scopes: ["cp.read"], assurance_tier: "tier_a", channel: "terminal" }),
+		});
+		expect(reloadMissingScope).toMatchObject({ kind: "deny", reason: "missing_scope" });
+
+		const reloadLowAssurance = policy.authorizeCommand({
+			commandKey: "reload",
+			requestedMode: "auto",
+			binding: mkBinding({ scopes: ["cp.ops.admin"], assurance_tier: "tier_b", channel: "terminal" }),
+		});
+		expect(reloadLowAssurance).toMatchObject({ kind: "deny", reason: "assurance_tier_too_low" });
+
 		const unmapped = policy.authorizeCommand({
 			commandKey: "issue blast",
 			requestedMode: "auto",

@@ -13,8 +13,10 @@ import { DEFAULT_MU_CONFIG } from "../src/config.js";
 import {
 	bootstrapControlPlane,
 	buildTelegramSendMessagePayload,
+	type BootstrapControlPlaneOpts,
 	type ControlPlaneConfig,
 	type ControlPlaneHandle,
+	type ControlPlaneSessionLifecycle,
 	containsTelegramMathNotation,
 	renderTelegramMarkdown,
 } from "../src/control_plane.js";
@@ -34,6 +36,22 @@ afterEach(async () => {
 	}
 	dirsToCleanup.clear();
 });
+
+const TEST_SESSION_LIFECYCLE: ControlPlaneSessionLifecycle = {
+	reload: async () => ({ ok: true, action: "reload", message: "test reload scheduled" }),
+	update: async () => ({ ok: true, action: "update", message: "test update scheduled" }),
+};
+
+function bootstrapControlPlaneForTest(
+	opts: Omit<BootstrapControlPlaneOpts, "sessionLifecycle"> & {
+		sessionLifecycle?: ControlPlaneSessionLifecycle;
+	},
+) {
+	return bootstrapControlPlane({
+		...opts,
+		sessionLifecycle: opts.sessionLifecycle ?? TEST_SESSION_LIFECYCLE,
+	});
+}
 
 function hmac(secret: string, input: string): string {
 	const hasher = new Bun.CryptoHasher("sha256", secret);
@@ -282,7 +300,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
-		const handle = await bootstrapControlPlane({
+		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({ slackSecret: "slack-secret" }),
 		});
@@ -302,7 +320,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
-		const handle = await bootstrapControlPlane({
+		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({ slackSecret: "slack-secret" }),
 			operatorBackend: new StaticOperatorBackend({
@@ -356,7 +374,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		}) as typeof fetch;
 
 		try {
-			const handle = await bootstrapControlPlane({
+			const handle = await bootstrapControlPlaneForTest({
 				repoRoot,
 				config: configWith({
 					telegramSecret: "telegram-secret",
@@ -419,7 +437,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		}) as typeof fetch;
 
 		try {
-			const handle = await bootstrapControlPlane({
+			const handle = await bootstrapControlPlaneForTest({
 				repoRoot,
 				config: configWith({
 					telegramSecret: "telegram-secret",
@@ -486,7 +504,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		}) as typeof fetch;
 
 		try {
-			const handle = await bootstrapControlPlane({
+			const handle = await bootstrapControlPlaneForTest({
 				repoRoot,
 				config: configWith({
 					telegramSecret: "telegram-secret",
@@ -535,7 +553,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			message: "This should not be used when disabled.",
 		});
 
-		const handle = await bootstrapControlPlane({
+		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({
 				slackSecret: "slack-secret",
@@ -573,7 +591,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read", "cp.run.execute"]);
 
-		const handle = await bootstrapControlPlane({
+		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({
 				slackSecret: "slack-secret",
@@ -609,6 +627,46 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(body.text).toContain("operator_action_disallowed");
 	});
 
+	test("terminal reload/update commands route through session lifecycle", async () => {
+		const repoRoot = await mkRepoRoot();
+		const calls: string[] = [];
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({}),
+			sessionLifecycle: {
+				reload: async () => {
+					calls.push("reload");
+					return { ok: true, action: "reload", message: "reload scheduled" };
+				},
+				update: async () => {
+					calls.push("update");
+					return { ok: true, action: "update", message: "update scheduled" };
+				},
+			},
+			terminalEnabled: true,
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const reloadResult = await handle.submitTerminalCommand?.({
+			commandText: "/mu reload",
+			repoRoot,
+		});
+		expect(reloadResult?.kind).toBe("completed");
+
+		const updateResult = await handle.submitTerminalCommand?.({
+			commandText: "/update",
+			repoRoot,
+		});
+		expect(updateResult?.kind).toBe("completed");
+
+		expect(calls).toEqual(["reload", "update"]);
+	});
+
 	test("command-originated run lifecycle/heartbeat notifications stay routable via outbox", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read", "cp.run.execute"]);
@@ -618,7 +676,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			resolveExit = resolve;
 		});
 
-		const handle = await bootstrapControlPlane({
+		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({ slackSecret: "slack-secret" }),
 			runSupervisorSpawnProcess: () => {
@@ -710,7 +768,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		await mkdir(identitiesPath, { recursive: true });
 
 		await expect(
-			bootstrapControlPlane({
+			bootstrapControlPlaneForTest({
 				repoRoot,
 				config: configWith({
 					slackSecret: "slack-secret",

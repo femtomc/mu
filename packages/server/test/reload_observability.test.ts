@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GenerationTelemetryRecorder } from "@femtomc/mu-control-plane";
 import type { ControlPlaneHandle } from "../src/control_plane.js";
-import { createServer } from "../src/server.js";
+import { composeServerRuntime, createServerFromRuntime } from "../src/server.js";
 
 const dirsToCleanup = new Set<string>();
 
@@ -44,6 +44,20 @@ function deferred<T>(): {
 	return { promise, resolve };
 }
 
+async function createServerForTest(opts: {
+	repoRoot: string;
+	controlPlane: ControlPlaneHandle;
+	generationTelemetry?: GenerationTelemetryRecorder;
+	serverOptions?: Parameters<typeof createServerFromRuntime>[1];
+}) {
+	const runtime = await composeServerRuntime({
+		repoRoot: opts.repoRoot,
+		controlPlane: opts.controlPlane,
+		generationTelemetry: opts.generationTelemetry,
+	});
+	return createServerFromRuntime(runtime, opts.serverOptions);
+}
+
 describe("control-plane reload observability scaffold", () => {
 	test("reload emits warmup/cutover/drain/rollback lifecycle logs plus success/failure counters", async () => {
 		const repoRoot = await mkRepoRoot();
@@ -62,14 +76,16 @@ describe("control-plane reload observability scaffold", () => {
 			stop: async () => {},
 		};
 
-		const server = createServer({
+		const server = await createServerForTest({
 			repoRoot,
 			controlPlane: initial,
 			generationTelemetry: telemetry,
-			controlPlaneReloader: async ({ generation }) => {
-				expect(generation.generation_id).toBe("control-plane-gen-1");
-				expect(generation.generation_seq).toBe(1);
-				return reloaded;
+			serverOptions: {
+				controlPlaneReloader: async ({ generation }) => {
+					expect(generation.generation_id).toBe("control-plane-gen-1");
+					expect(generation.generation_seq).toBe(1);
+					return reloaded;
+				},
 			},
 		});
 
@@ -82,12 +98,14 @@ describe("control-plane reload observability scaffold", () => {
 		expect(countersAfterSuccess.reload_failure_total).toBe(0);
 		expect(countersAfterSuccess.reload_drain_duration_samples_total).toBe(1);
 
-		const failingServer = createServer({
+		const failingServer = await createServerForTest({
 			repoRoot,
 			controlPlane: reloaded,
 			generationTelemetry: telemetry,
-			controlPlaneReloader: async () => {
-				throw new Error("reload exploded");
+			serverOptions: {
+				controlPlaneReloader: async () => {
+					throw new Error("reload exploded");
+				},
 			},
 		});
 		const failure = await failingServer.fetch(reloadRequest("failure_case"));
@@ -136,11 +154,13 @@ describe("control-plane reload observability scaffold", () => {
 			},
 		};
 
-		const server = createServer({
+		const server = await createServerForTest({
 			repoRoot,
 			controlPlane: initial,
 			generationTelemetry: telemetry,
-			controlPlaneReloader: async () => reloaded,
+			serverOptions: {
+				controlPlaneReloader: async () => reloaded,
+			},
 		});
 
 		const response = await server.fetch(reloadRequest("drain_failure_case"));
@@ -185,14 +205,16 @@ describe("control-plane reload observability scaffold", () => {
 		const started = deferred<void>();
 		const release = deferred<void>();
 
-		const server = createServer({
+		const server = await createServerForTest({
 			repoRoot,
 			controlPlane: initial,
 			generationTelemetry: telemetry,
-			controlPlaneReloader: async () => {
-				started.resolve(undefined);
-				await release.promise;
-				return reloaded;
+			serverOptions: {
+				controlPlaneReloader: async () => {
+					started.resolve(undefined);
+					await release.promise;
+					return reloaded;
+				},
 			},
 		});
 

@@ -1,40 +1,40 @@
 {
-	"name": "@femtomc/mu-server",
-	"version": "26.2.65",
-	"description": "HTTP API server for mu status, work items, messaging setup, and web UI.",
-	"keywords": [
-		"mu",
-		"server",
-		"api",
-		"web",
-		"automation"
-	],
-	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"bin": {
-		"mu-server": "./dist/cli.js"
-	},
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"default": "./dist/index.js"
-		}
-	},
-	"files": [
-		"dist/**",
-		"public/**"
-	],
-	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
-		"test": "bun test",
-		"start": "bun run dist/cli.js"
-	},
-	"dependencies": {
-		"@femtomc/mu-agent": "workspace:*",
-		"@femtomc/mu-control-plane": "workspace:*",
-		"@femtomc/mu-core": "workspace:*",
-		"@femtomc/mu-forum": "workspace:*",
-		"@femtomc/mu-issue": "workspace:*"
-	}
+  "name": "@femtomc/mu-server",
+  "version": "26.2.69",
+  "description": "HTTP API server for mu status, work items, messaging setup, and web UI.",
+  "keywords": [
+    "mu",
+    "server",
+    "api",
+    "web",
+    "automation"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "mu-server": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**",
+    "public/**"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "bun test",
+    "start": "bun run dist/cli.js"
+  },
+  "dependencies": {
+    "@femtomc/mu-agent": "workspace:*",
+    "@femtomc/mu-control-plane": "workspace:*",
+    "@femtomc/mu-core": "workspace:*",
+    "@femtomc/mu-forum": "workspace:*",
+    "@femtomc/mu-issue": "workspace:*"
+  }
 }

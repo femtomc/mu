@@ -793,3 +793,93 @@ test("mu serve releases control-plane writer lock when bind fails", async () => 
 		await occupied.close();
 	}
 });
+
+test("mu serve exit hook removes writer lock owned by current process", async () => {
+	const dir = await mkTempRepo();
+	const lockPath = join(dir, ".mu", "control-plane", "writer.lock");
+	await mkdir(join(dir, ".mu", "control-plane"), { recursive: true });
+	await writeFile(
+		lockPath,
+		`${JSON.stringify({
+			owner_pid: process.pid,
+			repo_root: dir,
+			acquired_at_ms: Date.now(),
+		})}\n`,
+		"utf8",
+	);
+
+	let exitHandler: (() => void) | null = null;
+	const result = await run(["serve", "--port", "3304", "--no-open"], {
+		cwd: dir,
+		serveDeps: {
+			startServer: async () => ({
+				activeAdapters: [],
+				stop: async () => {},
+			}),
+			runOperatorSession: async ({ onReady }) => {
+				onReady();
+				exitHandler?.();
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+			registerSignalHandler: () => () => {},
+			registerProcessExitHandler: (handler) => {
+				exitHandler = handler;
+				return () => {
+					if (exitHandler === handler) {
+						exitHandler = null;
+					}
+				};
+			},
+			isHeadless: () => true,
+			openBrowser: () => {},
+		},
+	});
+
+	expect(result.exitCode).toBe(0);
+	expect(await Bun.file(lockPath).exists()).toBe(false);
+});
+
+test("mu serve exit hook does not remove writer lock owned by another process", async () => {
+	const dir = await mkTempRepo();
+	const lockPath = join(dir, ".mu", "control-plane", "writer.lock");
+	await mkdir(join(dir, ".mu", "control-plane"), { recursive: true });
+	await writeFile(
+		lockPath,
+		`${JSON.stringify({
+			owner_pid: process.pid + 1,
+			repo_root: dir,
+			acquired_at_ms: Date.now(),
+		})}\n`,
+		"utf8",
+	);
+
+	let exitHandler: (() => void) | null = null;
+	const result = await run(["serve", "--port", "3305", "--no-open"], {
+		cwd: dir,
+		serveDeps: {
+			startServer: async () => ({
+				activeAdapters: [],
+				stop: async () => {},
+			}),
+			runOperatorSession: async ({ onReady }) => {
+				onReady();
+				exitHandler?.();
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+			registerSignalHandler: () => () => {},
+			registerProcessExitHandler: (handler) => {
+				exitHandler = handler;
+				return () => {
+					if (exitHandler === handler) {
+						exitHandler = null;
+					}
+				};
+			},
+			isHeadless: () => true,
+			openBrowser: () => {},
+		},
+	});
+
+	expect(result.exitCode).toBe(0);
+	expect(await Bun.file(lockPath).exists()).toBe(true);
+});
