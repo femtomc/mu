@@ -1,6 +1,8 @@
 # @femtomc/mu-server
 
-HTTP API server for mu. Powers `mu serve`, the web UI, and programmatic status/control endpoints.
+HTTP API server for mu control-plane infrastructure. Powers `mu serve`, messaging frontend transport routes, and control-plane/session coordination endpoints.
+
+> Scope note: server-routed business query/mutation gateway endpoints have been removed. Business reads/writes are CLI-first, while long-lived runtime coordination (runs/activities/heartbeats/cron) stays server-owned.
 
 ## Installation
 
@@ -39,8 +41,6 @@ Bun.serve(server);
   ```json
   {
     "repo_root": "/path/to/repo",
-    "open_count": 10,
-    "ready_count": 3,
     "control_plane": {
       "active": true,
       "adapters": ["slack"],
@@ -132,66 +132,27 @@ Bun.serve(server);
   - Optional overrides: `session_file`, `session_dir`, `provider`, `model`, `thinking`, `extension_profile`
   - Response includes: `turn.reply`, `turn.context_entry_id`, `turn.session_file`
 
-### Issues
+### Control-plane Coordination Endpoints
 
-- `GET /api/issues` - List issues
-  - Query params: `?status=open&tag=bug&contains=crash&limit=50`
-  - `limit` defaults to `200` and is clamped to `<= 200`.
-- `GET /api/issues/:id` - Get issue by ID
-- `POST /api/issues` - Create new issue
-  ```json
-  {
-    "title": "Issue title",
-    "body": "Issue description",
-    "tags": ["bug", "priority", "role:worker"],
-    "priority": 2
-  }
-  ```
-- `PATCH /api/issues/:id` - Update issue
-- `POST /api/issues/:id/close` - Close issue
-  ```json
-  {
-    "outcome": "success"
-  }
-  ```
-- `POST /api/issues/:id/claim` - Claim issue (changes status to in_progress)
-- `GET /api/issues/ready` - Get ready issues
-  - Query params: `?root=issue-id&contains=worker&limit=20`
-  - `limit` defaults to `200` and is clamped to `<= 200`.
-
-### Forum
-
-- `GET /api/forum/topics` - List forum topics
-  - Query params: `?prefix=issue:&limit=20`
-  - `limit` defaults to `100` and is clamped to `<= 200`.
-- `GET /api/forum/read` - Read messages from topic
-  - Query params: `?topic=issue:123&limit=50`
-  - `limit` defaults to `50` and is clamped to `<= 200`.
-- `POST /api/forum/post` - Post message to topic
-  ```json
-  {
-    "topic": "issue:123",
-    "body": "Message content",
-    "author": "username"
-  }
-  ```
-
-### Context Retrieval (Cross-store historical memory)
-
-- `GET /api/context/search` - Search across `.mu` history stores
-  - Query params: `query`/`q`, `limit`, `source`/`sources`, `issue_id`, `run_id`, `session_id`,
-    `conversation_key`, `channel`, `channel_tenant_id`, `channel_conversation_id`, `actor_binding_id`,
-    `topic`, `author`, `role`, `since`, `until`.
-- `GET /api/context/timeline` - Ordered timeline view anchored to a scope
-  - Requires at least one anchor filter: `conversation_key`, `issue_id`, `run_id`, `session_id`, `topic`, or `channel`.
-  - Supports `order=asc|desc` and same filters as search.
-- `GET /api/context/stats` - Source-level cardinality/text-size stats for indexed context items.
-
-Context source kinds:
-
-- `issues`, `forum`, `events`
-- `cp_commands`, `cp_outbox`, `cp_adapter_audit`, `cp_operator_turns`, `cp_telegram_ingress`, `session_flash`
-- `operator_sessions`, `cp_operator_sessions`
+- Runs:
+  - `GET /api/runs`
+  - `POST /api/runs/start`
+  - `POST /api/runs/resume`
+  - `POST /api/runs/interrupt`
+  - `POST /api/runs/heartbeat`
+  - `GET /api/runs/:id`
+  - `GET /api/runs/:id/trace`
+- Scheduling + orchestration:
+  - `GET|POST|PATCH|DELETE /api/heartbeats...`
+  - `GET|POST|PATCH|DELETE /api/cron...`
+  - `GET|POST /api/activities...`
+- Identity bindings:
+  - `GET /api/identities`
+  - `POST /api/identities/link`
+  - `POST /api/identities/unlink`
+- Observability:
+  - `GET /api/events`
+  - `GET /api/events/tail`
 
 ## Running the Server
 
@@ -247,13 +208,9 @@ bun run start
 ## Architecture
 
 The server uses:
-- Filesystem-backed JSONL stores (FsJsonlStore)
-- IssueStore and ForumStore from mu packages
+- Filesystem-backed JSONL event storage (FsJsonlStore)
 - Bun's built-in HTTP server
-- Simple REST-style JSON API
+- Control-plane adapter/webhook transport + session coordination routes
 - Generation-supervised control-plane hot reload lifecycle (see `docs/adr-0001-control-plane-hot-reload.md`)
 
-All data is persisted to `.mu/` directory:
-- `.mu/issues.jsonl` - Issue data
-- `.mu/forum.jsonl` - Forum messages
-- `.mu/events.jsonl` - Event log
+Control-plane/coordination data is persisted to `.mu/` (for example `.mu/events.jsonl` and `.mu/control-plane/*`).

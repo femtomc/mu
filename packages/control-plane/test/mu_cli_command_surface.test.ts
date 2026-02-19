@@ -15,7 +15,7 @@ describe("MuCliCommandSurface", () => {
 			throw new Error(`expected ok, got ${ok.kind}`);
 		}
 		expect(ok.plan.commandKind).toBe("run_resume");
-		expect(ok.plan.argv).toEqual(["mu", "resume", "mu-abcd1234", "--max-steps", "30", "--json"]);
+		expect(ok.plan.argv).toEqual(["mu", "runs", "resume", "mu-abcd1234", "--max-steps", "30"]);
 
 		const list = surface.build({
 			commandKey: "run list",
@@ -27,7 +27,7 @@ describe("MuCliCommandSurface", () => {
 			throw new Error(`expected ok, got ${list.kind}`);
 		}
 		expect(list.plan.commandKind).toBe("run_list");
-		expect(list.plan.argv).toEqual(["mu", "issues", "list", "--tag", "node:root"]);
+		expect(list.plan.argv).toEqual(["mu", "runs", "list", "--limit", "100"]);
 
 		const status = surface.build({
 			commandKey: "run status",
@@ -39,7 +39,7 @@ describe("MuCliCommandSurface", () => {
 			throw new Error(`expected ok, got ${status.kind}`);
 		}
 		expect(status.plan.commandKind).toBe("run_status");
-		expect(status.plan.argv).toEqual(["mu", "issues", "get", "mu-abcd1234"]);
+		expect(status.plan.argv).toEqual(["mu", "runs", "get", "mu-abcd1234"]);
 
 		const rejectFlag = surface.build({
 			commandKey: "run start",
@@ -48,12 +48,17 @@ describe("MuCliCommandSurface", () => {
 		});
 		expect(rejectFlag).toMatchObject({ kind: "reject", reason: "cli_validation_failed" });
 
-		const rejectInterrupt = surface.build({
+		const interrupt = surface.build({
 			commandKey: "run interrupt",
 			args: ["mu-abcd1234"],
 			invocationId: "cli-5",
 		});
-		expect(rejectInterrupt).toMatchObject({ kind: "reject", reason: "operator_action_disallowed" });
+		expect(interrupt.kind).toBe("ok");
+		if (interrupt.kind !== "ok") {
+			throw new Error(`expected ok, got ${interrupt.kind}`);
+		}
+		expect(interrupt.plan.commandKind).toBe("run_interrupt");
+		expect(interrupt.plan.argv).toEqual(["mu", "runs", "interrupt", "mu-abcd1234"]);
 
 		const unknown = surface.build({
 			commandKey: "shell exec",

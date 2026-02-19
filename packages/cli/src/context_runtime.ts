@@ -4,14 +4,13 @@ import { join, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { getStorePaths } from "@femtomc/mu-core/node";
 import { getControlPlanePaths } from "@femtomc/mu-control-plane";
-import type { ServerContext } from "../server.js";
 
 const DEFAULT_LIMIT = 40;
 const MAX_LIMIT = 500;
 const MAX_TEXT_LENGTH = 8_000;
 const PREVIEW_LENGTH = 240;
 
-const CONTEXT_SOURCE_KINDS = [
+export const CONTEXT_SOURCE_KINDS = [
 	"issues",
 	"forum",
 	"events",
@@ -25,9 +24,9 @@ const CONTEXT_SOURCE_KINDS = [
 	"cp_operator_sessions",
 ] as const;
 
-type ContextSourceKind = (typeof CONTEXT_SOURCE_KINDS)[number];
+export type ContextSourceKind = (typeof CONTEXT_SOURCE_KINDS)[number];
 
-type ContextItem = {
+export type ContextItem = {
 	id: string;
 	ts_ms: number;
 	source_kind: ContextSourceKind;
@@ -51,7 +50,7 @@ type ContextItem = {
 	metadata: Record<string, unknown>;
 };
 
-type SearchFilters = {
+export type SearchFilters = {
 	query: string | null;
 	sources: Set<ContextSourceKind> | null;
 	limit: number;
@@ -70,7 +69,7 @@ type SearchFilters = {
 	role: string | null;
 };
 
-type TimelineFilters = SearchFilters & {
+export type TimelineFilters = SearchFilters & {
 	order: "asc" | "desc";
 };
 
@@ -79,12 +78,12 @@ type JsonlRow = {
 	value: unknown;
 };
 
-class QueryValidationError extends Error {
+export class ContextQueryValidationError extends Error {
 	readonly status = 400;
 
 	public constructor(message: string) {
 		super(message);
-		this.name = "QueryValidationError";
+		this.name = "ContextQueryValidationError";
 	}
 }
 
@@ -201,10 +200,10 @@ function parseLimit(value: string | null): number {
 	}
 	const parsed = Number.parseInt(value, 10);
 	if (!Number.isFinite(parsed)) {
-		throw new QueryValidationError("invalid limit: expected integer");
+		throw new ContextQueryValidationError("invalid limit: expected integer");
 	}
 	if (parsed < 1) {
-		throw new QueryValidationError("invalid limit: must be >= 1");
+		throw new ContextQueryValidationError("invalid limit: must be >= 1");
 	}
 	return Math.min(parsed, MAX_LIMIT);
 }
@@ -215,7 +214,7 @@ function parseOptionalTs(value: string | null, name: string): number | null {
 	}
 	const parsed = Number.parseInt(value, 10);
 	if (!Number.isFinite(parsed)) {
-		throw new QueryValidationError(`invalid ${name}: expected integer epoch ms`);
+		throw new ContextQueryValidationError(`invalid ${name}: expected integer epoch ms`);
 	}
 	return parsed;
 }
@@ -238,7 +237,7 @@ function parseSourceFilter(value: string | null): Set<ContextSourceKind> | null 
 			out.add(normalized as ContextSourceKind);
 			continue;
 		}
-		throw new QueryValidationError(
+		throw new ContextQueryValidationError(
 			`unknown context source: ${part}. valid sources: ${CONTEXT_SOURCE_KINDS.join(", ")}`,
 		);
 	}
@@ -282,7 +281,7 @@ function parseTimelineFilters(url: URL): TimelineFilters {
 		!base.topic &&
 		!base.channel
 	) {
-		throw new QueryValidationError(
+		throw new ContextQueryValidationError(
 			"timeline requires one anchor filter: conversation_key, issue_id, run_id, session_id, topic, or channel",
 		);
 	}
@@ -1332,80 +1331,91 @@ function buildSourceStats(items: ContextItem[]): Array<{
 	return out;
 }
 
-export async function contextRoutes(
-	request: Request,
-	url: URL,
-	deps: { context: ServerContext; describeError: (error: unknown) => string },
-	headers: Headers,
-): Promise<Response> {
-	if (request.method !== "GET") {
-		return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
-	}
+export type ContextSearchResult = {
+	mode: "search";
+	repo_root: string;
+	query: string | null;
+	count: number;
+	total: number;
+	items: Array<ContextItem & { score: number }>;
+};
 
-	const path = url.pathname.replace("/api/context", "") || "/";
+export type ContextTimelineResult = {
+	mode: "timeline";
+	repo_root: string;
+	order: "asc" | "desc";
+	count: number;
+	total: number;
+	items: ContextItem[];
+};
 
-	try {
-		if (path === "/" || path === "/search") {
-			const filters = parseSearchFilters(url);
-			const items = await collectContextItems(deps.context.repoRoot, filters.sources);
-			const ranked = searchContext(items, filters);
-			const sliced = ranked.slice(0, filters.limit);
-			return Response.json(
-				{
-					mode: "search",
-					repo_root: deps.context.repoRoot,
-					query: filters.query,
-					count: sliced.length,
-					total: ranked.length,
-					items: sliced,
-				},
-				{ headers },
-			);
-		}
+export type ContextStatsResult = {
+	mode: "stats";
+	repo_root: string;
+	total_count: number;
+	total_text_bytes: number;
+	sources: Array<{
+		source_kind: ContextSourceKind;
+		count: number;
+		text_bytes: number;
+		last_ts_ms: number;
+	}>;
+};
 
-		if (path === "/timeline") {
-			const filters = parseTimelineFilters(url);
-			const items = await collectContextItems(deps.context.repoRoot, filters.sources);
-			const timeline = timelineContext(items, filters);
-			const sliced = timeline.slice(0, filters.limit);
-			return Response.json(
-				{
-					mode: "timeline",
-					repo_root: deps.context.repoRoot,
-					order: filters.order,
-					count: sliced.length,
-					total: timeline.length,
-					items: sliced,
-				},
-				{ headers },
-			);
-		}
+function contextUrlFromSearch(search: URLSearchParams): URL {
+	const query = search.toString();
+	return new URL(`http://mu.local/context${query.length > 0 ? `?${query}` : ""}`);
+}
 
-		if (path === "/stats") {
-			const filters = parseSearchFilters(url);
-			const items = await collectContextItems(deps.context.repoRoot, filters.sources);
-			const filtered = items.filter((item) => matchSearchFilters(item, { ...filters, query: null }));
-			const sources = buildSourceStats(filtered);
-			return Response.json(
-				{
-					mode: "stats",
-					repo_root: deps.context.repoRoot,
-					total_count: filtered.length,
-					total_text_bytes: filtered.reduce((sum, item) => sum + item.text.length, 0),
-					sources,
-				},
-				{ headers },
-			);
-		}
+export async function runContextSearch(opts: {
+	repoRoot: string;
+	search: URLSearchParams;
+}): Promise<ContextSearchResult> {
+	const filters = parseSearchFilters(contextUrlFromSearch(opts.search));
+	const items = await collectContextItems(opts.repoRoot, filters.sources);
+	const ranked = searchContext(items, filters);
+	const sliced = ranked.slice(0, filters.limit);
+	return {
+		mode: "search",
+		repo_root: opts.repoRoot,
+		query: filters.query,
+		count: sliced.length,
+		total: ranked.length,
+		items: sliced,
+	};
+}
 
-		return Response.json({ error: "Not Found" }, { status: 404, headers });
-	} catch (err) {
-		if (err instanceof QueryValidationError) {
-			return Response.json({ error: err.message }, { status: err.status, headers });
-		}
-		return Response.json(
-			{ error: `context query failed: ${deps.describeError(err)}` },
-			{ status: 500, headers },
-		);
-	}
+export async function runContextTimeline(opts: {
+	repoRoot: string;
+	search: URLSearchParams;
+}): Promise<ContextTimelineResult> {
+	const filters = parseTimelineFilters(contextUrlFromSearch(opts.search));
+	const items = await collectContextItems(opts.repoRoot, filters.sources);
+	const timeline = timelineContext(items, filters);
+	const sliced = timeline.slice(0, filters.limit);
+	return {
+		mode: "timeline",
+		repo_root: opts.repoRoot,
+		order: filters.order,
+		count: sliced.length,
+		total: timeline.length,
+		items: sliced,
+	};
+}
+
+export async function runContextStats(opts: {
+	repoRoot: string;
+	search: URLSearchParams;
+}): Promise<ContextStatsResult> {
+	const filters = parseSearchFilters(contextUrlFromSearch(opts.search));
+	const items = await collectContextItems(opts.repoRoot, filters.sources);
+	const filtered = items.filter((item) => matchSearchFilters(item, { ...filters, query: null }));
+	const sources = buildSourceStats(filtered);
+	return {
+		mode: "stats",
+		repo_root: opts.repoRoot,
+		total_count: filtered.length,
+		total_text_bytes: filtered.reduce((sum, item) => sum + item.text.length, 0),
+		sources,
+	};
 }

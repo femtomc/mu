@@ -10,6 +10,12 @@ import type { ForumTopicSummary } from "@femtomc/mu-forum";
 import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
 import type { ModelOverrides } from "@femtomc/mu-orchestrator";
+import {
+	ContextQueryValidationError,
+	runContextSearch,
+	runContextStats,
+	runContextTimeline,
+} from "./context_runtime.js";
 
 export type RunResult = {
 	stdout: string;
@@ -431,6 +437,14 @@ function mainHelp(): string {
 		`  ${cmd("store")} ${dim("<subcmd>")}                        Inspect .mu store files and logs`,
 		`  ${cmd("issues")} ${dim("<subcmd>")}                       Work item commands`,
 		`  ${cmd("forum")} ${dim("<subcmd>")}                        Coordination message commands`,
+		`  ${cmd("events")} ${dim("<subcmd>")}                       Event-log query commands`,
+		`  ${cmd("runs")} ${dim("<subcmd>")}                         Run queue + trace commands`,
+		`  ${cmd("activities")} ${dim("<subcmd>")}                   Activity status + trace commands`,
+		`  ${cmd("heartbeats")} ${dim("<subcmd>")}                   Heartbeat program lifecycle`,
+		`  ${cmd("cron")} ${dim("<subcmd>")}                         Cron program lifecycle`,
+		`  ${cmd("context")} ${dim("<subcmd>")}                      Cross-store context search/timeline/stats`,
+		`  ${cmd("session-flash")} ${dim("<subcmd>")}                Session flash inbox lifecycle`,
+		`  ${cmd("turn")} ${dim("[opts]")}                            Inject a prompt into an existing session`,
 		`  ${cmd("run")} ${dim("<prompt...>")}                       Queue a run and attach operator session`,
 		`  ${cmd("resume")} ${dim("<root-id>")}                      Resume a run`,
 		`  ${cmd("login")} ${dim("[<provider>] [--list]")}           Authenticate with an AI provider`,
@@ -503,6 +517,22 @@ export async function run(
 			return await cmdIssues(rest, ctx);
 		case "forum":
 			return await cmdForum(rest, ctx);
+		case "events":
+			return await cmdEvents(rest, ctx);
+		case "runs":
+			return await cmdRuns(rest, ctx);
+		case "activities":
+			return await cmdActivities(rest, ctx);
+		case "heartbeats":
+			return await cmdHeartbeats(rest, ctx);
+		case "cron":
+			return await cmdCron(rest, ctx);
+		case "context":
+			return await cmdContext(rest, ctx);
+		case "session-flash":
+			return await cmdSessionFlash(rest, ctx);
+		case "turn":
+			return await cmdTurn(rest, ctx);
 		case "run":
 			return await cmdRun(rest, ctx);
 		case "_run-direct":
@@ -1137,6 +1167,7 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"  --body, -b <TEXT>                   Optional issue body",
 				"  --parent <id-or-prefix>             Add <new-issue> parent <parent> edge",
 				"  --tag, -t <TAG>                     Repeatable custom tags",
+				"  --tags <CSV>                        Comma-separated custom tags",
 				"  --role, -r <orchestrator|worker>    Adds role:<role> tag",
 				"  --priority, -p <1..5>               Priority (1 highest urgency, default 3)",
 				"  --pretty                            Pretty-print JSON result",
@@ -1163,9 +1194,10 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 
 	const { value: parentRaw, rest: argv2 } = getFlagValue(argv1, "--parent");
 	const { values: tags0, rest: argv3 } = getRepeatFlagValues(argv2, ["--tag", "-t"]);
-	const { value: role, rest: argv4 } = getFlagValue(argv3, "--role");
-	const { value: roleShort, rest: argv5 } = getFlagValue(argv4, "-r");
-	const { value: priorityRaw, rest } = getFlagValue(argv5, "--priority");
+	const { value: tagsCsvRaw, rest: argv4 } = getFlagValue(argv3, "--tags");
+	const { value: role, rest: argv5 } = getFlagValue(argv4, "--role");
+	const { value: roleShort, rest: argv6 } = getFlagValue(argv5, "-r");
+	const { value: priorityRaw, rest } = getFlagValue(argv6, "--priority");
 
 	const { value: priorityShortRaw, rest: rest2 } = getFlagValue(rest, "-p");
 	const restFinal = rest2;
@@ -1182,7 +1214,11 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 		});
 	}
 
-	const tags = [...new Set(tags0)];
+	const csvTags = (tagsCsvRaw ?? "")
+		.split(",")
+		.map((part) => part.trim())
+		.filter((part) => part.length > 0);
+	const tags = [...new Set([...tags0, ...csvTags])];
 	if (!tags.includes("node:agent")) {
 		tags.push("node:agent");
 	}
@@ -1230,7 +1266,7 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"mu issues update - patch issue fields and routing metadata",
 				"",
 				"Usage:",
-				"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--add-tag TAG] [--remove-tag TAG] [--role ROLE] [--pretty]",
+				"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--tags CSV] [--add-tag TAG] [--remove-tag TAG] [--role ROLE] [--pretty]",
 				"",
 				"Options:",
 				"  --title <TEXT>                       Replace title",
@@ -1238,6 +1274,7 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"  --status <open|in_progress|closed>   Set status",
 				"  --outcome <OUTCOME>                  Set close outcome",
 				"  --priority <1..5>                    Set priority",
+				"  --tags <CSV>                         Replace tags from comma-separated list",
 				"  --add-tag <TAG>                      Repeatable",
 				"  --remove-tag <TAG>                   Repeatable",
 				"  --role <orchestrator|worker>         Rewrites role:* tag",
@@ -1271,10 +1308,11 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	const { value: status, rest: argv2 } = getFlagValue(argv1, "--status");
 	const { value: outcome, rest: argv3 } = getFlagValue(argv2, "--outcome");
 	const { value: priorityRaw, rest: argv4 } = getFlagValue(argv3, "--priority");
-	const { values: addTags, rest: argv5 } = getRepeatFlagValues(argv4, ["--add-tag"]);
-	const { values: removeTags, rest: argv6 } = getRepeatFlagValues(argv5, ["--remove-tag"]);
+	const { value: tagsRaw, rest: argv5 } = getFlagValue(argv4, "--tags");
+	const { values: addTags, rest: argv6 } = getRepeatFlagValues(argv5, ["--add-tag"]);
+	const { values: removeTags, rest: argv7 } = getRepeatFlagValues(argv6, ["--remove-tag"]);
 
-	const { value: role, rest } = getFlagValue(argv6, "--role");
+	const { value: role, rest } = getFlagValue(argv7, "--role");
 
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues update --help"] });
@@ -1297,8 +1335,15 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	if (outcome != null) fields.outcome = outcome;
 	if (priorityRaw != null) fields.priority = Number.parseInt(priorityRaw, 10);
 
+	if (tagsRaw != null) {
+		fields.tags = tagsRaw
+			.split(",")
+			.map((part) => part.trim())
+			.filter((part) => part.length > 0);
+	}
+
 	if (addTags.length > 0 || removeTags.length > 0) {
-		let tags = [...(issue.tags ?? [])];
+		let tags = (fields.tags as string[] | undefined) ?? [...(issue.tags ?? [])];
 		for (const tag of addTags) {
 			if (!tags.includes(tag)) {
 				tags.push(tag);
@@ -1574,17 +1619,19 @@ async function issuesReady(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 				"mu issues ready - list open, unblocked, leaf issues tagged node:agent",
 				"",
 				"Usage:",
-				"  mu issues ready [--root ID] [--tag TAG] [--pretty]",
+				"  mu issues ready [--root ID] [--tag TAG] [--contains TEXT] [--limit N] [--pretty]",
 				"",
 				"Filters:",
 				"  --root <id-or-prefix>   Restrict to one root subtree",
 				"  --tag <TAG>             Repeatable extra tags (node:agent is always required)",
+				"  --contains <TEXT>       Case-insensitive title/body substring",
+				"  --limit <N>             Max rows (default: no explicit cap)",
 				"",
 				"Examples:",
 				"  mu issues ready",
 				"  mu issues ready --root <root-id>",
 				"  mu issues ready --root <root-id> --tag role:worker",
-				"  mu issues ready --tag role:orchestrator",
+				"  mu issues ready --contains parser --limit 20",
 				"",
 				"Ready means:",
 				"  status=open + all blockers closed + no open children + tags match.",
@@ -1593,9 +1640,19 @@ async function issuesReady(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 	}
 
 	const { value: rootRaw, rest: argv0 } = getFlagValue(argv, "--root");
-	const { values: extraTags, rest } = getRepeatFlagValues(argv0, ["--tag"]);
+	const { values: extraTags, rest: argv1 } = getRepeatFlagValues(argv0, ["--tag"]);
+	const { value: contains, rest: argv2 } = getFlagValue(argv1, "--contains");
+	const { value: limitRaw, rest } = getFlagValue(argv2, "--limit");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues ready --help"] });
+	}
+
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 200 }) : null;
+	if (limitRaw && limit == null) {
+		return jsonError("--limit must be an integer between 1 and 200", {
+			pretty,
+			recovery: ["mu issues ready --limit 20"],
+		});
 	}
 
 	let rootId: string | null = null;
@@ -1608,7 +1665,11 @@ async function issuesReady(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 	}
 
 	const tags = ["node:agent", ...extraTags];
-	const issues = await ctx.store.ready(rootId, { tags });
+	const issues = await ctx.store.ready(rootId, {
+		tags,
+		contains: contains ?? null,
+		limit,
+	});
 	return ok(jsonText(issues.map(issueJson), pretty));
 }
 
@@ -1700,7 +1761,7 @@ async function forumPost(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 				"",
 				"Options:",
 				"  -m, --message <TEXT>   Required message body",
-				"  --author <NAME>        Author label (default: system)",
+				"  --author <NAME>        Author label (default: operator)",
 				"",
 				"Examples:",
 				'  mu forum post issue:<id> -m "claimed and starting" --author worker',
@@ -1726,7 +1787,7 @@ async function forumPost(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu forum post --help"] });
 	}
 
-	const msg = await ctx.forum.post(topic, msgBody, author ?? "system");
+	const msg = await ctx.forum.post(topic, msgBody, author ?? "operator");
 	return ok(jsonText(msg, pretty));
 }
 
@@ -1802,6 +1863,1420 @@ async function forumTopics(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 		topics = topics.slice(0, limit);
 	}
 	return ok(jsonText(topics, pretty));
+}
+
+function parseOptionalBoolean(value: string | null | undefined): boolean | null {
+	if (value == null) {
+		return null;
+	}
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "true") {
+		return true;
+	}
+	if (normalized === "false") {
+		return false;
+	}
+	return null;
+}
+
+function setSearchParamIfPresent(search: URLSearchParams, key: string, value: string | null | undefined): void {
+	if (value == null) {
+		return;
+	}
+	const trimmed = value.trim();
+	if (trimmed.length === 0) {
+		return;
+	}
+	search.set(key, trimmed);
+}
+
+async function cmdEvents(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		return ok(
+			[
+				"mu events - query event log entries",
+				"",
+				"Usage:",
+				"  mu events <list|trace> [filters...] [--pretty]",
+				"",
+				"Filters:",
+				"  --type <TYPE>",
+				"  --source <SOURCE>",
+				"  --issue-id <ID>",
+				"  --run-id <ID>",
+				"  --contains <TEXT>",
+				"  --since <EPOCH_MS>",
+				"  --limit <N> (default: list=20, trace=40)",
+			].join("\n") + "\n",
+		);
+	}
+
+	const sub = argv0[0]!;
+	const rest = argv0.slice(1);
+	if (sub !== "list" && sub !== "trace") {
+		return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu events --help"] });
+	}
+
+	const { value: type, rest: argv1 } = getFlagValue(rest, "--type");
+	const { value: source, rest: argv2 } = getFlagValue(argv1, "--source");
+	const { value: issueId, rest: argv3 } = getFlagValue(argv2, "--issue-id");
+	const { value: runId, rest: argv4 } = getFlagValue(argv3, "--run-id");
+	const { value: contains, rest: argv5 } = getFlagValue(argv4, "--contains");
+	const { value: sinceRaw, rest: argv6 } = getFlagValue(argv5, "--since");
+	const { value: limitRaw, rest: unknown } = getFlagValue(argv6, "--limit");
+	if (unknown.length > 0) {
+		return jsonError(`unknown args: ${unknown.join(" ")}`, { pretty, recovery: ["mu events --help"] });
+	}
+
+	const sinceMs = sinceRaw ? ensureInt(sinceRaw, { name: "--since", min: 0 }) : null;
+	if (sinceRaw && sinceMs == null) {
+		return jsonError("--since must be an integer >= 0", { pretty, recovery: ["mu events list --since 0"] });
+	}
+	const defaultLimit = sub === "trace" ? 40 : 20;
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : defaultLimit;
+	if (limit == null) {
+		return jsonError("--limit must be an integer between 1 and 500", {
+			pretty,
+			recovery: ["mu events list --limit 20"],
+		});
+	}
+
+	const { readJsonl } = await import("@femtomc/mu-core/node");
+	const rows = (await readJsonl(ctx.paths.eventsPath)) as Array<Record<string, unknown>>;
+	const filtered = rows
+		.filter((row) => (type ? row.type === type : true))
+		.filter((row) => (source ? row.source === source : true))
+		.filter((row) => (issueId ? row.issue_id === issueId : true))
+		.filter((row) => (runId ? row.run_id === runId : true))
+		.filter((row) => {
+			if (sinceMs == null) return true;
+			const ts = typeof row.ts_ms === "number" ? Math.trunc(row.ts_ms) : null;
+			return ts != null && ts >= sinceMs;
+		})
+		.filter((row) => {
+			if (!contains) {
+				return true;
+			}
+			const needle = contains.toLowerCase();
+			const haystack = [
+				typeof row.type === "string" ? row.type : "",
+				typeof row.source === "string" ? row.source : "",
+				typeof row.issue_id === "string" ? row.issue_id : "",
+				typeof row.run_id === "string" ? row.run_id : "",
+				JSON.stringify(row.payload ?? null),
+			]
+				.join("\n")
+				.toLowerCase();
+			return haystack.includes(needle);
+		});
+
+	const events = filtered.slice(-limit);
+	return ok(jsonText({ count: events.length, events }, pretty));
+}
+
+async function cmdRuns(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		return ok(
+			[
+				"mu runs - run queue + trace operations",
+				"",
+				"Usage:",
+				"  mu runs <list|get|trace|start|resume|interrupt> [args...] [--pretty]",
+				"",
+				"Examples:",
+				"  mu runs list --status running --limit 20",
+				"  mu runs get <run-id-or-root-id>",
+				"  mu runs trace <run-id-or-root-id> --limit 80",
+				"  mu runs start \"Ship release\" --max-steps 25",
+				"  mu runs resume <root-id> --max-steps 25",
+				"  mu runs interrupt <root-id>",
+			].join("\n") + "\n",
+		);
+	}
+
+	const sub = argv0[0]!;
+	const rest = argv0.slice(1);
+
+	switch (sub) {
+		case "list":
+			return await runsList(rest, ctx, pretty);
+		case "get":
+			return await runsGet(rest, ctx, pretty);
+		case "trace":
+			return await runsTrace(rest, ctx, pretty);
+		case "start":
+			return await runsStart(rest, ctx, pretty);
+		case "resume":
+			return await runsResume(rest, ctx, pretty);
+		case "interrupt":
+			return await runsInterrupt(rest, ctx, pretty);
+		default:
+			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu runs --help"] });
+	}
+}
+
+async function runsList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const { value: status, rest: argv0 } = getFlagValue(argv, "--status");
+	const { value: limitRaw, rest } = getFlagValue(argv0, "--limit");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu runs --help"] });
+	}
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
+	if (limit == null) {
+		return jsonError("--limit must be an integer between 1 and 500", { pretty, recovery: ["mu runs list --limit 20"] });
+	}
+
+	const search = new URLSearchParams();
+	setSearchParamIfPresent(search, "status", status ?? null);
+	search.set("limit", String(limit));
+	const suffix = search.size > 0 ? `?${search.toString()}` : "";
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/runs${suffix}`,
+		recoveryCommand: "mu runs list",
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function runsGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (argv.length === 0) {
+		return jsonError("missing run id", { pretty, recovery: ["mu runs get <run-id-or-root-id>"] });
+	}
+	const id = argv[0]!;
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/runs/${encodeURIComponent(id)}`,
+		recoveryCommand: `mu runs get ${id}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function runsTrace(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (argv.length === 0) {
+		return jsonError("missing run id", { pretty, recovery: ["mu runs trace <run-id-or-root-id>"] });
+	}
+	const id = argv[0]!;
+	const { value: limitRaw, rest } = getFlagValue(argv.slice(1), "--limit");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu runs trace --help"] });
+	}
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 2000 }) : 40;
+	if (limit == null) {
+		return jsonError("--limit must be an integer between 1 and 2000", {
+			pretty,
+			recovery: [`mu runs trace ${id} --limit 80`],
+		});
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/runs/${encodeURIComponent(id)}/trace?limit=${limit}`,
+		recoveryCommand: `mu runs trace ${id}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function runsStart(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const { value: maxStepsRaw, rest } = getFlagValue(argv, "--max-steps");
+	const promptParts = rest;
+	const prompt = promptParts.join(" ").trim();
+	if (!prompt) {
+		return jsonError("missing prompt", { pretty, recovery: ['mu runs start "Break down and execute this goal"'] });
+	}
+	const maxSteps = maxStepsRaw ? ensureInt(maxStepsRaw, { name: "--max-steps", min: 1, max: 500 }) : 20;
+	if (maxSteps == null) {
+		return jsonError("--max-steps must be an integer between 1 and 500", {
+			pretty,
+			recovery: ["mu runs start \"Ship release\" --max-steps 25"],
+		});
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/runs/start",
+		body: {
+			prompt,
+			max_steps: maxSteps,
+		},
+		recoveryCommand: `mu runs start ${JSON.stringify(prompt)}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function runsResume(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (argv.length === 0) {
+		return jsonError("missing root issue id", { pretty, recovery: ["mu runs resume <root-id>"] });
+	}
+	const rootIssueId = argv[0]!;
+	const { value: maxStepsRaw, rest } = getFlagValue(argv.slice(1), "--max-steps");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu runs resume --help"] });
+	}
+	const maxSteps = maxStepsRaw ? ensureInt(maxStepsRaw, { name: "--max-steps", min: 1, max: 500 }) : 20;
+	if (maxSteps == null) {
+		return jsonError("--max-steps must be an integer between 1 and 500", {
+			pretty,
+			recovery: [`mu runs resume ${rootIssueId} --max-steps 25`],
+		});
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/runs/resume",
+		body: {
+			root_issue_id: rootIssueId,
+			max_steps: maxSteps,
+		},
+		recoveryCommand: `mu runs resume ${rootIssueId}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function runsInterrupt(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	let positionalRoot: string | null = null;
+	let args = argv;
+	if (args[0] && !args[0].startsWith("-")) {
+		positionalRoot = args[0];
+		args = args.slice(1);
+	}
+	const { value: rootIssueIdFlag, rest: argv0 } = getFlagValue(args, "--root-issue-id");
+	const { value: jobId, rest } = getFlagValue(argv0, "--job-id");
+	const rootIssueId = rootIssueIdFlag ?? positionalRoot;
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu runs interrupt --help"] });
+	}
+	if (!rootIssueId && !jobId) {
+		return jsonError("missing target: pass <root-id> or --job-id", {
+			pretty,
+			recovery: ["mu runs interrupt <root-id>", "mu runs interrupt --job-id <job-id>"],
+		});
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/runs/interrupt",
+		body: {
+			root_issue_id: rootIssueId,
+			job_id: jobId ?? null,
+		},
+		recoveryCommand: rootIssueId ? `mu runs interrupt ${rootIssueId}` : "mu runs interrupt --job-id <job-id>",
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cmdActivities(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		return ok(
+			[
+				"mu activities - inspect control-plane activity state",
+				"",
+				"Usage:",
+				"  mu activities <list|get|trace> [args...] [--pretty]",
+				"",
+				"Examples:",
+				"  mu activities list --status running --kind run --limit 20",
+				"  mu activities get <activity-id>",
+				"  mu activities trace <activity-id> --limit 80",
+			].join("\n") + "\n",
+		);
+	}
+
+	const sub = argv0[0]!;
+	const rest = argv0.slice(1);
+	switch (sub) {
+		case "list":
+			return await activitiesList(rest, ctx, pretty);
+		case "get":
+			return await activitiesGet(rest, ctx, pretty);
+		case "trace":
+			return await activitiesTrace(rest, ctx, pretty);
+		default:
+			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu activities --help"] });
+	}
+}
+
+async function activitiesList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const { value: status, rest: argv0 } = getFlagValue(argv, "--status");
+	const { value: kind, rest: argv1 } = getFlagValue(argv0, "--kind");
+	const { value: limitRaw, rest } = getFlagValue(argv1, "--limit");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu activities --help"] });
+	}
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
+	if (limit == null) {
+		return jsonError("--limit must be an integer between 1 and 500", {
+			pretty,
+			recovery: ["mu activities list --limit 20"],
+		});
+	}
+	const search = new URLSearchParams();
+	setSearchParamIfPresent(search, "status", status ?? null);
+	setSearchParamIfPresent(search, "kind", kind ?? null);
+	search.set("limit", String(limit));
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/activities?${search.toString()}`,
+		recoveryCommand: "mu activities list",
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function activitiesGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (argv.length === 0) {
+		return jsonError("missing activity id", { pretty, recovery: ["mu activities get <activity-id>"] });
+	}
+	const id = argv[0]!;
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/activities/${encodeURIComponent(id)}`,
+		recoveryCommand: `mu activities get ${id}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function activitiesTrace(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (argv.length === 0) {
+		return jsonError("missing activity id", { pretty, recovery: ["mu activities trace <activity-id>"] });
+	}
+	const id = argv[0]!;
+	const { value: limitRaw, rest } = getFlagValue(argv.slice(1), "--limit");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu activities trace --help"] });
+	}
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 2000 }) : 40;
+	if (limit == null) {
+		return jsonError("--limit must be an integer between 1 and 2000", {
+			pretty,
+			recovery: [`mu activities trace ${id} --limit 80`],
+		});
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/activities/${encodeURIComponent(id)}/events?limit=${limit}`,
+		recoveryCommand: `mu activities trace ${id}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cmdHeartbeats(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		return ok(
+			[
+				"mu heartbeats - heartbeat program lifecycle",
+				"",
+				"Usage:",
+				"  mu heartbeats <list|get|create|update|delete|trigger|enable|disable> [args...] [--pretty]",
+			].join("\n") + "\n",
+		);
+	}
+
+	const sub = argv0[0]!;
+	const rest = argv0.slice(1);
+	switch (sub) {
+		case "list":
+			return await heartbeatsList(rest, ctx, pretty);
+		case "get":
+			return await heartbeatsGet(rest, ctx, pretty);
+		case "create":
+			return await heartbeatsCreate(rest, ctx, pretty);
+		case "update":
+			return await heartbeatsUpdate(rest, ctx, pretty);
+		case "delete":
+			return await heartbeatsDelete(rest, ctx, pretty);
+		case "trigger":
+			return await heartbeatsTrigger(rest, ctx, pretty);
+		case "enable":
+			return await heartbeatsEnableDisable(rest, ctx, pretty, true);
+		case "disable":
+			return await heartbeatsEnableDisable(rest, ctx, pretty, false);
+		default:
+			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu heartbeats --help"] });
+	}
+}
+
+function parseProgramTarget(argv: string[], opts: { pretty: boolean; kindName: "heartbeat" | "cron" }): {
+	target: Record<string, unknown> | null;
+	rest: string[];
+	error: RunResult | null;
+} {
+	const { value: targetKind, rest: argv0 } = getFlagValue(argv, "--target-kind");
+	if (!targetKind) {
+		return { target: null, rest: argv0, error: null };
+	}
+	if (targetKind !== "run" && targetKind !== "activity") {
+		return {
+			target: null,
+			rest: argv0,
+			error: jsonError("--target-kind must be run or activity", {
+				pretty: opts.pretty,
+				recovery: [`mu ${opts.kindName}s create --target-kind run --run-root-issue-id <root-id>`],
+			}),
+		};
+	}
+	const { value: runJobId, rest: argv1 } = getFlagValue(argv0, "--run-job-id");
+	const { value: runRootIssueId, rest: argv2 } = getFlagValue(argv1, "--run-root-issue-id");
+	const { value: activityId, rest: argv3 } = getFlagValue(argv2, "--activity-id");
+	if (targetKind === "run") {
+		if (!runJobId && !runRootIssueId) {
+			return {
+				target: null,
+				rest: argv3,
+				error: jsonError("run target requires --run-job-id or --run-root-issue-id", {
+					pretty: opts.pretty,
+					recovery: [`mu ${opts.kindName}s create --target-kind run --run-root-issue-id <root-id>`],
+				}),
+			};
+		}
+		return {
+			target: {
+				target_kind: "run",
+				run_job_id: runJobId ?? null,
+				run_root_issue_id: runRootIssueId ?? null,
+			},
+			rest: argv3,
+			error: null,
+		};
+	}
+	if (!activityId) {
+		return {
+			target: null,
+			rest: argv3,
+			error: jsonError("activity target requires --activity-id", {
+				pretty: opts.pretty,
+				recovery: [`mu ${opts.kindName}s create --target-kind activity --activity-id <activity-id>`],
+			}),
+		};
+	}
+	return {
+		target: {
+			target_kind: "activity",
+			activity_id: activityId,
+		},
+		rest: argv3,
+		error: null,
+	};
+}
+
+async function heartbeatsList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const { value: enabledRaw, rest: argv0 } = getFlagValue(argv, "--enabled");
+	const { value: targetKind, rest: argv1 } = getFlagValue(argv0, "--target-kind");
+	const { value: limitRaw, rest } = getFlagValue(argv1, "--limit");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats --help"] });
+	}
+	const enabled = parseOptionalBoolean(enabledRaw);
+	if (enabledRaw && enabled == null) {
+		return jsonError("--enabled must be true or false", {
+			pretty,
+			recovery: ["mu heartbeats list --enabled true"],
+		});
+	}
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
+	if (limit == null) {
+		return jsonError("--limit must be an integer between 1 and 500", {
+			pretty,
+			recovery: ["mu heartbeats list --limit 20"],
+		});
+	}
+	const search = new URLSearchParams();
+	if (enabled != null) {
+		search.set("enabled", String(enabled));
+	}
+	setSearchParamIfPresent(search, "target_kind", targetKind ?? null);
+	search.set("limit", String(limit));
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/heartbeats?${search.toString()}`,
+		recoveryCommand: "mu heartbeats list",
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function heartbeatsGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (argv.length === 0) {
+		return jsonError("missing program id", { pretty, recovery: ["mu heartbeats get <program-id>"] });
+	}
+	const id = argv[0]!;
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/heartbeats/${encodeURIComponent(id)}`,
+		recoveryCommand: `mu heartbeats get ${id}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function heartbeatsCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	let positionalTitle: string | null = null;
+	let args = argv;
+	if (args[0] && !args[0].startsWith("-")) {
+		positionalTitle = args[0];
+		args = args.slice(1);
+	}
+	const { value: titleFlag, rest: argv0 } = getFlagValue(args, "--title");
+	const title = titleFlag ?? positionalTitle;
+	if (!title) {
+		return jsonError("missing title", {
+			pretty,
+			recovery: ['mu heartbeats create --title "Run heartbeat" --target-kind run --run-root-issue-id <root-id>'],
+		});
+	}
+	const targetParsed = parseProgramTarget(argv0, { pretty, kindName: "heartbeat" });
+	if (targetParsed.error) {
+		return targetParsed.error;
+	}
+	if (!targetParsed.target) {
+		return jsonError("missing target (--target-kind run|activity ...)", {
+			pretty,
+			recovery: ["mu heartbeats create --target-kind run --run-root-issue-id <root-id>"],
+		});
+	}
+	const { value: everyMsRaw, rest: argv1 } = getFlagValue(targetParsed.rest, "--every-ms");
+	const { value: reason, rest: argv2 } = getFlagValue(argv1, "--reason");
+	const { value: wakeMode, rest: argv3 } = getFlagValue(argv2, "--wake-mode");
+	const { value: enabledRaw, rest } = getFlagValue(argv3, "--enabled");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats create --help"] });
+	}
+	const everyMs = everyMsRaw ? ensureInt(everyMsRaw, { name: "--every-ms", min: 0 }) : null;
+	if (everyMsRaw && everyMs == null) {
+		return jsonError("--every-ms must be an integer >= 0", {
+			pretty,
+			recovery: ["mu heartbeats create --every-ms 15000"],
+		});
+	}
+	const enabled = parseOptionalBoolean(enabledRaw);
+	if (enabledRaw && enabled == null) {
+		return jsonError("--enabled must be true or false", { pretty, recovery: ["mu heartbeats create --enabled true"] });
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/heartbeats/create",
+		body: {
+			title,
+			...targetParsed.target,
+			every_ms: everyMs,
+			reason: reason ?? null,
+			wake_mode: wakeMode ?? null,
+			enabled,
+		},
+		recoveryCommand: "mu heartbeats create --title <title> --target-kind run --run-root-issue-id <root-id>",
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function heartbeatsUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	let positionalProgramId: string | null = null;
+	let args = argv;
+	if (args[0] && !args[0].startsWith("-")) {
+		positionalProgramId = args[0];
+		args = args.slice(1);
+	}
+	const { value: programIdFlag, rest: argv0 } = getFlagValue(args, "--program-id");
+	const programId = programIdFlag ?? positionalProgramId;
+	if (!programId) {
+		return jsonError("missing program id", { pretty, recovery: ["mu heartbeats update --program-id <id>"] });
+	}
+	const { value: title, rest: argv1 } = getFlagValue(argv0, "--title");
+	const targetParsed = parseProgramTarget(argv1, { pretty, kindName: "heartbeat" });
+	if (targetParsed.error) {
+		return targetParsed.error;
+	}
+	const { value: everyMsRaw, rest: argv2 } = getFlagValue(targetParsed.rest, "--every-ms");
+	const { value: reason, rest: argv3 } = getFlagValue(argv2, "--reason");
+	const { value: wakeMode, rest: argv4 } = getFlagValue(argv3, "--wake-mode");
+	const { value: enabledRaw, rest } = getFlagValue(argv4, "--enabled");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats update --help"] });
+	}
+	const everyMs = everyMsRaw ? ensureInt(everyMsRaw, { name: "--every-ms", min: 0 }) : null;
+	if (everyMsRaw && everyMs == null) {
+		return jsonError("--every-ms must be an integer >= 0", { pretty, recovery: ["mu heartbeats update --every-ms 15000"] });
+	}
+	const enabled = parseOptionalBoolean(enabledRaw);
+	if (enabledRaw && enabled == null) {
+		return jsonError("--enabled must be true or false", { pretty, recovery: ["mu heartbeats update --enabled false"] });
+	}
+	const body: Record<string, unknown> = {
+		program_id: programId,
+	};
+	if (title != null) body.title = title;
+	if (targetParsed.target != null) Object.assign(body, targetParsed.target);
+	if (everyMs != null) body.every_ms = everyMs;
+	if (reason != null) body.reason = reason;
+	if (wakeMode != null) body.wake_mode = wakeMode;
+	if (enabled != null) body.enabled = enabled;
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/heartbeats/update",
+		body,
+		recoveryCommand: `mu heartbeats update --program-id ${programId}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function heartbeatsDelete(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const programId = argv[0];
+	if (!programId) {
+		return jsonError("missing program id", { pretty, recovery: ["mu heartbeats delete <program-id>"] });
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/heartbeats/delete",
+		body: { program_id: programId },
+		recoveryCommand: `mu heartbeats delete ${programId}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function heartbeatsTrigger(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const programId = argv[0];
+	if (!programId) {
+		return jsonError("missing program id", { pretty, recovery: ["mu heartbeats trigger <program-id>"] });
+	}
+	const { value: reason, rest } = getFlagValue(argv.slice(1), "--reason");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats trigger --help"] });
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/heartbeats/trigger",
+		body: { program_id: programId, reason: reason ?? null },
+		recoveryCommand: `mu heartbeats trigger ${programId}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function heartbeatsEnableDisable(
+	argv: string[],
+	ctx: CliCtx,
+	pretty: boolean,
+	enabled: boolean,
+): Promise<RunResult> {
+	const programId = argv[0];
+	if (!programId) {
+		return jsonError("missing program id", {
+			pretty,
+			recovery: [enabled ? "mu heartbeats enable <program-id>" : "mu heartbeats disable <program-id>"],
+		});
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/heartbeats/update",
+		body: { program_id: programId, enabled },
+		recoveryCommand: enabled ? `mu heartbeats enable ${programId}` : `mu heartbeats disable ${programId}`,
+	});
+	if (!req.ok) {
+		return req.result;
+	}
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cmdCron(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		return ok(
+			[
+				"mu cron - cron program lifecycle",
+				"",
+				"Usage:",
+				"  mu cron <stats|list|get|create|update|delete|trigger|enable|disable> [args...] [--pretty]",
+			].join("\n") + "\n",
+		);
+	}
+	const sub = argv0[0]!;
+	const rest = argv0.slice(1);
+	switch (sub) {
+		case "stats":
+			return await cronStats(rest, ctx, pretty);
+		case "list":
+			return await cronList(rest, ctx, pretty);
+		case "get":
+			return await cronGet(rest, ctx, pretty);
+		case "create":
+			return await cronCreate(rest, ctx, pretty);
+		case "update":
+			return await cronUpdate(rest, ctx, pretty);
+		case "delete":
+			return await cronDelete(rest, ctx, pretty);
+		case "trigger":
+			return await cronTrigger(rest, ctx, pretty);
+		case "enable":
+			return await cronEnableDisable(rest, ctx, pretty, true);
+		case "disable":
+			return await cronEnableDisable(rest, ctx, pretty, false);
+		default:
+			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu cron --help"] });
+	}
+}
+
+async function cronStats(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (argv.length > 0) {
+		return jsonError(`unknown args: ${argv.join(" ")}`, { pretty, recovery: ["mu cron stats"] });
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: "/api/cron/status",
+		recoveryCommand: "mu cron stats",
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cronList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const { value: enabledRaw, rest: argv0 } = getFlagValue(argv, "--enabled");
+	const { value: targetKind, rest: argv1 } = getFlagValue(argv0, "--target-kind");
+	const { value: scheduleKind, rest: argv2 } = getFlagValue(argv1, "--schedule-kind");
+	const { value: limitRaw, rest } = getFlagValue(argv2, "--limit");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron --help"] });
+	}
+	const enabled = parseOptionalBoolean(enabledRaw);
+	if (enabledRaw && enabled == null) {
+		return jsonError("--enabled must be true or false", { pretty, recovery: ["mu cron list --enabled true"] });
+	}
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
+	if (limit == null) {
+		return jsonError("--limit must be an integer between 1 and 500", {
+			pretty,
+			recovery: ["mu cron list --limit 20"],
+		});
+	}
+	const search = new URLSearchParams();
+	if (enabled != null) search.set("enabled", String(enabled));
+	setSearchParamIfPresent(search, "target_kind", targetKind ?? null);
+	setSearchParamIfPresent(search, "schedule_kind", scheduleKind ?? null);
+	search.set("limit", String(limit));
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/cron?${search.toString()}`,
+		recoveryCommand: "mu cron list",
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cronGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const programId = argv[0];
+	if (!programId) {
+		return jsonError("missing program id", { pretty, recovery: ["mu cron get <program-id>"] });
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/cron/${encodeURIComponent(programId)}`,
+		recoveryCommand: `mu cron get ${programId}`,
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+function parseCronScheduleFlags(argv: string[], pretty: boolean): {
+	schedule: Record<string, unknown> | null;
+	rest: string[];
+	error: RunResult | null;
+} {
+	const { value: scheduleKind, rest: argv0 } = getFlagValue(argv, "--schedule-kind");
+	const { value: atMsRaw, rest: argv1 } = getFlagValue(argv0, "--at-ms");
+	const { value: at, rest: argv2 } = getFlagValue(argv1, "--at");
+	const { value: everyMsRaw, rest: argv3 } = getFlagValue(argv2, "--every-ms");
+	const { value: anchorMsRaw, rest: argv4 } = getFlagValue(argv3, "--anchor-ms");
+	const { value: expr, rest: argv5 } = getFlagValue(argv4, "--expr");
+	const { value: tz, rest } = getFlagValue(argv5, "--tz");
+
+	if (!scheduleKind && !atMsRaw && !at && !everyMsRaw && !anchorMsRaw && !expr && !tz) {
+		return { schedule: null, rest, error: null };
+	}
+
+	const atMs = atMsRaw ? ensureInt(atMsRaw, { name: "--at-ms", min: 0 }) : null;
+	if (atMsRaw && atMs == null) {
+		return {
+			schedule: null,
+			rest,
+			error: jsonError("--at-ms must be an integer >= 0", { pretty, recovery: ["mu cron create --at-ms <epoch-ms>"] }),
+		};
+	}
+	const everyMs = everyMsRaw ? ensureInt(everyMsRaw, { name: "--every-ms", min: 1 }) : null;
+	if (everyMsRaw && everyMs == null) {
+		return {
+			schedule: null,
+			rest,
+			error: jsonError("--every-ms must be an integer >= 1", {
+				pretty,
+				recovery: ["mu cron create --schedule-kind every --every-ms 60000"],
+			}),
+		};
+	}
+	const anchorMs = anchorMsRaw ? ensureInt(anchorMsRaw, { name: "--anchor-ms", min: 0 }) : null;
+	if (anchorMsRaw && anchorMs == null) {
+		return {
+			schedule: null,
+			rest,
+			error: jsonError("--anchor-ms must be an integer >= 0", {
+				pretty,
+				recovery: ["mu cron create --anchor-ms <epoch-ms>"],
+			}),
+		};
+	}
+
+	return {
+		schedule: {
+			kind: scheduleKind ?? null,
+			at_ms: atMs,
+			at: at ?? null,
+			every_ms: everyMs,
+			anchor_ms: anchorMs,
+			expr: expr ?? null,
+			tz: tz ?? null,
+		},
+		rest,
+		error: null,
+	};
+}
+
+async function cronCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	let positionalTitle: string | null = null;
+	let args = argv;
+	if (args[0] && !args[0].startsWith("-")) {
+		positionalTitle = args[0];
+		args = args.slice(1);
+	}
+	const { value: titleFlag, rest: argv0 } = getFlagValue(args, "--title");
+	const title = titleFlag ?? positionalTitle;
+	if (!title) {
+		return jsonError("missing title", {
+			pretty,
+			recovery: ['mu cron create --title "Nightly run" --target-kind run --run-root-issue-id <root-id> --schedule-kind cron --expr "0 2 * * *" --tz UTC'],
+		});
+	}
+	const targetParsed = parseProgramTarget(argv0, { pretty, kindName: "cron" });
+	if (targetParsed.error) return targetParsed.error;
+	if (!targetParsed.target) {
+		return jsonError("missing target (--target-kind run|activity ...)", {
+			pretty,
+			recovery: ["mu cron create --target-kind run --run-root-issue-id <root-id>"],
+		});
+	}
+	const scheduleParsed = parseCronScheduleFlags(targetParsed.rest, pretty);
+	if (scheduleParsed.error) return scheduleParsed.error;
+	if (!scheduleParsed.schedule) {
+		return jsonError("missing schedule (--schedule-kind/--expr/--at/--every-ms)", {
+			pretty,
+			recovery: ["mu cron create --schedule-kind cron --expr '0 2 * * *' --tz UTC"],
+		});
+	}
+	const { value: reason, rest: argv1 } = getFlagValue(scheduleParsed.rest, "--reason");
+	const { value: wakeMode, rest: argv2 } = getFlagValue(argv1, "--wake-mode");
+	const { value: enabledRaw, rest } = getFlagValue(argv2, "--enabled");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron create --help"] });
+	}
+	const enabled = parseOptionalBoolean(enabledRaw);
+	if (enabledRaw && enabled == null) {
+		return jsonError("--enabled must be true or false", { pretty, recovery: ["mu cron create --enabled true"] });
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/cron/create",
+		body: {
+			title,
+			...targetParsed.target,
+			...scheduleParsed.schedule,
+			reason: reason ?? null,
+			wake_mode: wakeMode ?? null,
+			enabled,
+		},
+		recoveryCommand: "mu cron create --title <title> --target-kind run --run-root-issue-id <root-id> --schedule-kind cron --expr '0 2 * * *'",
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cronUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	let positionalProgramId: string | null = null;
+	let args = argv;
+	if (args[0] && !args[0].startsWith("-")) {
+		positionalProgramId = args[0];
+		args = args.slice(1);
+	}
+	const { value: programIdFlag, rest: argv0 } = getFlagValue(args, "--program-id");
+	const programId = programIdFlag ?? positionalProgramId;
+	if (!programId) {
+		return jsonError("missing program id", { pretty, recovery: ["mu cron update --program-id <id>"] });
+	}
+	const { value: title, rest: argv1 } = getFlagValue(argv0, "--title");
+	const targetParsed = parseProgramTarget(argv1, { pretty, kindName: "cron" });
+	if (targetParsed.error) return targetParsed.error;
+	const scheduleParsed = parseCronScheduleFlags(targetParsed.rest, pretty);
+	if (scheduleParsed.error) return scheduleParsed.error;
+	const { value: reason, rest: argv2 } = getFlagValue(scheduleParsed.rest, "--reason");
+	const { value: wakeMode, rest: argv3 } = getFlagValue(argv2, "--wake-mode");
+	const { value: enabledRaw, rest } = getFlagValue(argv3, "--enabled");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron update --help"] });
+	}
+	const enabled = parseOptionalBoolean(enabledRaw);
+	if (enabledRaw && enabled == null) {
+		return jsonError("--enabled must be true or false", { pretty, recovery: ["mu cron update --enabled false"] });
+	}
+	const body: Record<string, unknown> = { program_id: programId };
+	if (title != null) body.title = title;
+	if (targetParsed.target != null) Object.assign(body, targetParsed.target);
+	if (scheduleParsed.schedule != null) Object.assign(body, scheduleParsed.schedule);
+	if (reason != null) body.reason = reason;
+	if (wakeMode != null) body.wake_mode = wakeMode;
+	if (enabled != null) body.enabled = enabled;
+
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/cron/update",
+		body,
+		recoveryCommand: `mu cron update --program-id ${programId}`,
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cronDelete(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const programId = argv[0];
+	if (!programId) {
+		return jsonError("missing program id", { pretty, recovery: ["mu cron delete <program-id>"] });
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/cron/delete",
+		body: { program_id: programId },
+		recoveryCommand: `mu cron delete ${programId}`,
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cronTrigger(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const programId = argv[0];
+	if (!programId) {
+		return jsonError("missing program id", { pretty, recovery: ["mu cron trigger <program-id>"] });
+	}
+	const { value: reason, rest } = getFlagValue(argv.slice(1), "--reason");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron trigger --help"] });
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/cron/trigger",
+		body: { program_id: programId, reason: reason ?? null },
+		recoveryCommand: `mu cron trigger ${programId}`,
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cronEnableDisable(argv: string[], ctx: CliCtx, pretty: boolean, enabled: boolean): Promise<RunResult> {
+	const programId = argv[0];
+	if (!programId) {
+		return jsonError("missing program id", {
+			pretty,
+			recovery: [enabled ? "mu cron enable <program-id>" : "mu cron disable <program-id>"],
+		});
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/cron/update",
+		body: { program_id: programId, enabled },
+		recoveryCommand: enabled ? `mu cron enable ${programId}` : `mu cron disable ${programId}`,
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		return ok(
+			[
+				"mu context - cross-store context search/timeline/stats",
+				"",
+				"Usage:",
+				"  mu context <search|timeline|stats> [filters...] [--pretty]",
+			].join("\n") + "\n",
+		);
+	}
+	const sub = argv0[0]!;
+	const rest = argv0.slice(1);
+	if (sub !== "search" && sub !== "timeline" && sub !== "stats") {
+		return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu context --help"] });
+	}
+
+	const { value: query, rest: argv1 } = getFlagValue(rest, "--query");
+	const { value: queryAlias, rest: argv2 } = getFlagValue(argv1, "-q");
+	const { value: sources, rest: argv3 } = getFlagValue(argv2, "--sources");
+	const { value: source, rest: argv4 } = getFlagValue(argv3, "--source");
+	const { value: issueId, rest: argv5 } = getFlagValue(argv4, "--issue-id");
+	const { value: runId, rest: argv6 } = getFlagValue(argv5, "--run-id");
+	const { value: sessionId, rest: argv7 } = getFlagValue(argv6, "--session-id");
+	const { value: conversationKey, rest: argv8 } = getFlagValue(argv7, "--conversation-key");
+	const { value: channel, rest: argv9 } = getFlagValue(argv8, "--channel");
+	const { value: channelTenantId, rest: argv10 } = getFlagValue(argv9, "--channel-tenant-id");
+	const { value: channelConversationId, rest: argv11 } = getFlagValue(argv10, "--channel-conversation-id");
+	const { value: actorBindingId, rest: argv12 } = getFlagValue(argv11, "--actor-binding-id");
+	const { value: topic, rest: argv13 } = getFlagValue(argv12, "--topic");
+	const { value: author, rest: argv14 } = getFlagValue(argv13, "--author");
+	const { value: role, rest: argv15 } = getFlagValue(argv14, "--role");
+	const { value: sinceRaw, rest: argv16 } = getFlagValue(argv15, "--since");
+	const { value: untilRaw, rest: argv17 } = getFlagValue(argv16, "--until");
+	const { value: order, rest: argv18 } = getFlagValue(argv17, "--order");
+	const { value: limitRaw, rest: unknown } = getFlagValue(argv18, "--limit");
+	if (unknown.length > 0) {
+		return jsonError(`unknown args: ${unknown.join(" ")}`, { pretty, recovery: ["mu context --help"] });
+	}
+	const since = sinceRaw ? ensureInt(sinceRaw, { name: "--since", min: 0 }) : null;
+	if (sinceRaw && since == null) {
+		return jsonError("--since must be an integer >= 0", { pretty, recovery: ["mu context search --since 0"] });
+	}
+	const until = untilRaw ? ensureInt(untilRaw, { name: "--until", min: 0 }) : null;
+	if (untilRaw && until == null) {
+		return jsonError("--until must be an integer >= 0", { pretty, recovery: ["mu context search --until 0"] });
+	}
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
+	if (limit == null) {
+		return jsonError("--limit must be an integer between 1 and 500", { pretty, recovery: ["mu context search --limit 20"] });
+	}
+
+	const search = new URLSearchParams();
+	setSearchParamIfPresent(search, "query", query ?? queryAlias ?? null);
+	setSearchParamIfPresent(search, "sources", sources ?? null);
+	setSearchParamIfPresent(search, "source", source ?? null);
+	setSearchParamIfPresent(search, "issue_id", issueId ?? null);
+	setSearchParamIfPresent(search, "run_id", runId ?? null);
+	setSearchParamIfPresent(search, "session_id", sessionId ?? null);
+	setSearchParamIfPresent(search, "conversation_key", conversationKey ?? null);
+	setSearchParamIfPresent(search, "channel", channel ?? null);
+	setSearchParamIfPresent(search, "channel_tenant_id", channelTenantId ?? null);
+	setSearchParamIfPresent(search, "channel_conversation_id", channelConversationId ?? null);
+	setSearchParamIfPresent(search, "actor_binding_id", actorBindingId ?? null);
+	setSearchParamIfPresent(search, "topic", topic ?? null);
+	setSearchParamIfPresent(search, "author", author ?? null);
+	setSearchParamIfPresent(search, "role", role ?? null);
+	if (since != null) search.set("since", String(since));
+	if (until != null) search.set("until", String(until));
+	setSearchParamIfPresent(search, "order", order ?? null);
+	search.set("limit", String(limit));
+
+	try {
+		if (sub === "search") {
+			return ok(jsonText(await runContextSearch({ repoRoot: ctx.repoRoot, search }), pretty));
+		}
+		if (sub === "timeline") {
+			return ok(jsonText(await runContextTimeline({ repoRoot: ctx.repoRoot, search }), pretty));
+		}
+		return ok(jsonText(await runContextStats({ repoRoot: ctx.repoRoot, search }), pretty));
+	} catch (err) {
+		if (err instanceof ContextQueryValidationError) {
+			return jsonError(err.message, { pretty, recovery: [`mu context ${sub}`] });
+		}
+		return jsonError(`context query failed: ${describeError(err)}`, {
+			pretty,
+			recovery: [`mu context ${sub}`],
+		});
+	}
+}
+
+async function cmdSessionFlash(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		return ok(
+			[
+				"mu session-flash - session-targeted flash inbox lifecycle",
+				"",
+				"Usage:",
+				"  mu session-flash <list|get|create|ack> [args...] [--pretty]",
+			].join("\n") + "\n",
+		);
+	}
+	const sub = argv0[0]!;
+	const rest = argv0.slice(1);
+	switch (sub) {
+		case "list":
+			return await sessionFlashList(rest, ctx, pretty);
+		case "get":
+			return await sessionFlashGet(rest, ctx, pretty);
+		case "create":
+			return await sessionFlashCreate(rest, ctx, pretty);
+		case "ack":
+			return await sessionFlashAck(rest, ctx, pretty);
+		default:
+			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu session-flash --help"] });
+	}
+}
+
+async function sessionFlashList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const { value: sessionId, rest: argv0 } = getFlagValue(argv, "--session-id");
+	const { value: sessionKind, rest: argv1 } = getFlagValue(argv0, "--session-kind");
+	const { value: status, rest: argv2 } = getFlagValue(argv1, "--status");
+	const { value: contains, rest: argv3 } = getFlagValue(argv2, "--contains");
+	const { value: limitRaw, rest } = getFlagValue(argv3, "--limit");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu session-flash --help"] });
+	}
+	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
+	if (limit == null) {
+		return jsonError("--limit must be an integer between 1 and 500", {
+			pretty,
+			recovery: ["mu session-flash list --limit 20"],
+		});
+	}
+	const search = new URLSearchParams();
+	setSearchParamIfPresent(search, "session_id", sessionId ?? null);
+	setSearchParamIfPresent(search, "session_kind", sessionKind ?? null);
+	setSearchParamIfPresent(search, "status", status ?? null);
+	setSearchParamIfPresent(search, "contains", contains ?? null);
+	search.set("limit", String(limit));
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/session-flash?${search.toString()}`,
+		recoveryCommand: "mu session-flash list",
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function sessionFlashGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const flashId = argv[0];
+	if (!flashId) {
+		return jsonError("missing flash id", { pretty, recovery: ["mu session-flash get <flash-id>"] });
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		path: `/api/session-flash/${encodeURIComponent(flashId)}`,
+		recoveryCommand: `mu session-flash get ${flashId}`,
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function sessionFlashCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	const { value: sessionId, rest: argv0 } = getFlagValue(argv, "--session-id");
+	const { value: sessionKind, rest: argv1 } = getFlagValue(argv0, "--session-kind");
+	const { value: body, rest: argv2 } = getFlagValue(argv1, "--body");
+	const { value: source, rest: argv3 } = getFlagValue(argv2, "--source");
+	const { value: contextIdsRaw, rest } = getFlagValue(argv3, "--context-ids");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu session-flash create --help"] });
+	}
+	if (!sessionId) {
+		return jsonError("missing --session-id", {
+			pretty,
+			recovery: ["mu session-flash create --session-id <id> --body <text>"],
+		});
+	}
+	if (!body) {
+		return jsonError("missing --body", {
+			pretty,
+			recovery: ["mu session-flash create --session-id <id> --body <text>"],
+		});
+	}
+	const contextIds = (contextIdsRaw ?? "")
+		.split(",")
+		.map((p) => p.trim())
+		.filter((p) => p.length > 0);
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/session-flash",
+		body: {
+			session_id: sessionId,
+			session_kind: sessionKind ?? null,
+			body,
+			source: source ?? null,
+			context_ids: contextIds,
+		},
+		recoveryCommand: "mu session-flash create --session-id <id> --body <text>",
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function sessionFlashAck(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	let positionalFlashId: string | null = null;
+	let args = argv;
+	if (args[0] && !args[0].startsWith("-")) {
+		positionalFlashId = args[0];
+		args = args.slice(1);
+	}
+	const { value: flashIdFlag, rest: argv0 } = getFlagValue(args, "--flash-id");
+	const flashId = flashIdFlag ?? positionalFlashId;
+	const { value: sessionId, rest: argv1 } = getFlagValue(argv0, "--session-id");
+	const { value: deliveredBy, rest: argv2 } = getFlagValue(argv1, "--delivered-by");
+	const { value: note, rest } = getFlagValue(argv2, "--note");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu session-flash ack --help"] });
+	}
+	if (!flashId) {
+		return jsonError("missing flash id", {
+			pretty,
+			recovery: ["mu session-flash ack --flash-id <flash-id>"],
+		});
+	}
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/session-flash/ack",
+		body: {
+			flash_id: flashId,
+			session_id: sessionId ?? null,
+			delivered_by: deliveredBy ?? null,
+			note: note ?? null,
+		},
+		recoveryCommand: `mu session-flash ack --flash-id ${flashId}`,
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
+}
+
+async function cmdTurn(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (hasHelpFlag(argv0)) {
+		return ok(
+			[
+				"mu turn - inject one prompt turn into an existing session transcript",
+				"",
+				"Usage:",
+				"  mu turn --session-id <id> --body <text> [--session-kind KIND] [--source SRC] [--provider ID] [--model ID] [--thinking LVL]",
+			].join("\n") + "\n",
+		);
+	}
+
+	const { value: sessionId, rest: argv1 } = getFlagValue(argv0, "--session-id");
+	const { value: sessionKind, rest: argv2 } = getFlagValue(argv1, "--session-kind");
+	const { value: body, rest: argv3 } = getFlagValue(argv2, "--body");
+	const { value: source, rest: argv4 } = getFlagValue(argv3, "--source");
+	const { value: provider, rest: argv5 } = getFlagValue(argv4, "--provider");
+	const { value: model, rest: argv6 } = getFlagValue(argv5, "--model");
+	const { value: thinking, rest: argv7 } = getFlagValue(argv6, "--thinking");
+	const { value: sessionFile, rest: argv8 } = getFlagValue(argv7, "--session-file");
+	const { value: sessionDir, rest: argv9 } = getFlagValue(argv8, "--session-dir");
+	const { value: extensionProfile, rest } = getFlagValue(argv9, "--extension-profile");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu turn --help"] });
+	}
+	if (!sessionId) {
+		return jsonError("missing --session-id", {
+			pretty,
+			recovery: ["mu turn --session-id <id> --body <text>"],
+		});
+	}
+	if (!body) {
+		return jsonError("missing --body", {
+			pretty,
+			recovery: ["mu turn --session-id <id> --body <text>"],
+		});
+	}
+
+	const req = await requestServerJson<Record<string, unknown>>({
+		ctx,
+		pretty,
+		method: "POST",
+		path: "/api/session-turn",
+		body: {
+			session_id: sessionId,
+			session_kind: sessionKind ?? null,
+			body,
+			source: source ?? null,
+			provider: provider ?? null,
+			model: model ?? null,
+			thinking: thinking ?? null,
+			session_file: sessionFile ?? null,
+			session_dir: sessionDir ?? null,
+			extension_profile: extensionProfile ?? null,
+		},
+		recoveryCommand: "mu turn --session-id <id> --body <text>",
+	});
+	if (!req.ok) return req.result;
+	return ok(jsonText(req.payload, pretty));
 }
 
 function oneLine(text: string): string {
@@ -3351,6 +4826,75 @@ async function detectRunningServer(repoRoot: string): Promise<{ url: string; por
 	}
 }
 
+async function requireRunningServer(
+	ctx: CliCtx,
+	opts: { pretty: boolean; recoveryCommand: string },
+): Promise<{ url: string } | RunResult> {
+	const running = await detectRunningServer(ctx.repoRoot);
+	if (running) {
+		return { url: running.url };
+	}
+	return jsonError("no running server found", {
+		pretty: opts.pretty,
+		recovery: [opts.recoveryCommand, "mu serve"],
+	});
+}
+
+async function requestServerJson<T>(opts: {
+	ctx: CliCtx;
+	pretty: boolean;
+	method?: "GET" | "POST";
+	path: string;
+	body?: Record<string, unknown>;
+	recoveryCommand: string;
+}): Promise<{ ok: true; payload: T } | { ok: false; result: RunResult }> {
+	const resolved = await requireRunningServer(opts.ctx, {
+		pretty: opts.pretty,
+		recoveryCommand: opts.recoveryCommand,
+	});
+	if ("exitCode" in resolved) {
+		return { ok: false, result: resolved };
+	}
+	const url = `${resolved.url}${opts.path}`;
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			method: opts.method ?? "GET",
+			headers: opts.body ? { "Content-Type": "application/json" } : undefined,
+			body: opts.body ? JSON.stringify(opts.body) : undefined,
+			signal: AbortSignal.timeout(10_000),
+		});
+	} catch (err) {
+		return {
+			ok: false,
+			result: jsonError(`server request failed: ${describeError(err)}`, {
+				pretty: opts.pretty,
+				recovery: [opts.recoveryCommand, "mu serve"],
+			}),
+		};
+	}
+
+	let payload: unknown = null;
+	try {
+		payload = await response.json();
+	} catch {
+		payload = null;
+	}
+
+	if (!response.ok) {
+		const detail = await readApiError(response, payload);
+		return {
+			ok: false,
+			result: jsonError(`request failed: ${detail}`, {
+				pretty: opts.pretty,
+				recovery: [opts.recoveryCommand],
+			}),
+		};
+	}
+
+	return { ok: true, payload: payload as T };
+}
+
 function cleanupStaleServerFiles(repoRoot: string): void {
 	try {
 		rmSync(join(repoRoot, ".mu", "control-plane", "server.json"), { force: true });
@@ -3760,7 +5304,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"Control plane configuration:",
 				"  .mu/config.json is the source of truth for adapter + assistant settings",
 				"  Attached terminal operator session inherits control_plane.operator.provider/model when set",
-				"  Use `query(action=\"describe\")` in the operator session for capability discovery",
+				"  Use direct CLI commands in the operator session for capability discovery (for example: `mu --help`)",
 				"  Use `mu control status` to inspect current config",
 				"",
 				"See also: `mu session --help`, `mu stop --help`, `mu guide`",
@@ -3880,10 +5424,12 @@ async function cmdControl(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  mu control <command> [args...] [--pretty]",
 				"",
 				"Commands:",
-				"  link          Link a channel identity",
-				"  unlink        Unlink a binding (self-unlink or admin revoke)",
-				"  identities    List identity bindings",
-				"  status        Show control-plane status",
+				"  link               Link a channel identity",
+				"  unlink             Unlink a binding (self-unlink or admin revoke)",
+				"  identities         List identity bindings",
+				"  status             Show control-plane status",
+				"  reload             Schedule session reload (process restart)",
+				"  update             Run update command then schedule reload",
 				"  diagnose-operator  Diagnose operator turn parsing/execution health",
 				"",
 				"See also: `mu guide`",
@@ -3903,6 +5449,10 @@ async function cmdControl(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			return await controlIdentities(rest, ctx, pretty);
 		case "status":
 			return await controlStatus(rest, ctx, pretty);
+		case "reload":
+			return await controlReload(rest, ctx, pretty);
+		case "update":
+			return await controlUpdate(rest, ctx, pretty);
 		case "diagnose-operator":
 			return await controlDiagnoseOperator(rest, ctx, pretty);
 		default:
@@ -4502,4 +6052,46 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	out += "  Use `mu serve` for direct terminal operator access.\n";
 
 	return ok(out);
+}
+
+async function controlReload(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (hasHelpFlag(argv)) {
+		return ok([
+			"mu control reload - schedule process reload",
+			"",
+			"Usage:",
+			"  mu control reload [--pretty]",
+		].join("\n") + "\n");
+	}
+	if (argv.length > 0) {
+		return jsonError(`unknown args: ${argv.join(" ")}`, { pretty, recovery: ["mu control reload --help"] });
+	}
+	const { createProcessSessionLifecycle } = await import("@femtomc/mu-server");
+	const lifecycle = createProcessSessionLifecycle({ repoRoot: ctx.repoRoot });
+	const result = await lifecycle.reload();
+	if (!result.ok) {
+		return jsonError(`reload failed: ${result.message}`, { pretty, recovery: ["mu control status"] });
+	}
+	return ok(jsonText(result, pretty));
+}
+
+async function controlUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (hasHelpFlag(argv)) {
+		return ok([
+			"mu control update - run update command then schedule process reload",
+			"",
+			"Usage:",
+			"  mu control update [--pretty]",
+		].join("\n") + "\n");
+	}
+	if (argv.length > 0) {
+		return jsonError(`unknown args: ${argv.join(" ")}`, { pretty, recovery: ["mu control update --help"] });
+	}
+	const { createProcessSessionLifecycle } = await import("@femtomc/mu-server");
+	const lifecycle = createProcessSessionLifecycle({ repoRoot: ctx.repoRoot });
+	const result = await lifecycle.update();
+	if (!result.ok) {
+		return jsonError(`update failed: ${result.message}`, { pretty, recovery: ["mu control status"] });
+	}
+	return ok(jsonText(result, pretty));
 }

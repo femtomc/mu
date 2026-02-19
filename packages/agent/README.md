@@ -6,7 +6,7 @@ This package provides reusable runtime pieces for chat, orchestration, and serve
 
 - Messaging operator runtime + backend
 - Command context resolution for operator command proposals
-- Role prompt loading/defaults for orchestrator + worker agents
+- Role prompt loading/defaults for operator/orchestrator/worker/reviewer
 - pi CLI/SDK orchestration backends and resource loader helpers
 - Prompt/template helpers used by orchestration roles
 
@@ -17,6 +17,7 @@ Bundled defaults now live as markdown files under `packages/agent/prompts/`:
 - `operator.md`
 - `orchestrator.md`
 - `worker.md`
+- `reviewer.md`
 - `soul.md` (shared tail appended to all role prompts)
 
 These are loaded by runtime code and are the single source of truth for default system prompts.
@@ -34,7 +35,7 @@ From repo root (`mu/`):
 
 ```bash
 bun run build
-bun test packages/orchestrator packages/control-plane
+bun test packages/agent/test
 ```
 
 ## Serve-mode extensions (`mu serve`)
@@ -46,11 +47,7 @@ not anonymous inline factories).
 Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
-- `queryExtension` — read-only retrieval (`query` tool)
-- `operatorCommandExtension` — approved mutation pathway (`command` tool)
 - `eventLogExtension` — event tail + watch widget
-
-`mu serve` sets `MU_SERVER_URL` automatically for these extensions.
 
 Default operator UI theme is `mu-gruvbox-dark`.
 
@@ -61,38 +58,30 @@ Default operator UI theme is `mu-gruvbox-dark`.
 - `/mu brand on|off|toggle` — enable/disable UI branding
 - `/mu help` — dispatcher catalog of registered `/mu` subcommands
 
-## Tools (agent/operator-facing)
+## Tooling model (CLI-first)
 
-- `query({ action, resource?, ... })`
-  - Read-only pathway.
-  - `action`: `describe | get | list | search | timeline | stats | trace`
-  - Use `action="describe"` for machine-readable capability discovery.
-- `command({ kind, ... })`
-  - Approved mutation pathway through `/api/commands/submit`.
-  - `kind` includes run lifecycle (`run_start|run_resume|run_interrupt`),
-    control-plane lifecycle (`reload|update`), issue lifecycle/dependency edits
-    (`issue_create|issue_update|issue_claim|issue_open|issue_close|issue_dep|issue_undep`),
-    forum posting (`forum_post`), heartbeat program lifecycle
-    (`heartbeat_create|heartbeat_update|heartbeat_delete|heartbeat_trigger|heartbeat_enable|heartbeat_disable`),
-    and cron program lifecycle
-    (`cron_create|cron_update|cron_delete|cron_trigger|cron_enable|cron_disable`).
+mu agent sessions rely on generic built-in tools from pi:
 
-### Query contract (context-safe by default)
+- `bash`
+- `read`
+- `write`
+- `edit`
 
-The `query` tool is designed to be programmable + narrow-by-default:
+State inspection and mutation are performed by invoking `mu` CLI commands
+directly through `bash`, for example:
 
-- `limit` bounds result size (default typically `20`).
-- `fields` (comma-separated paths) enables selective projection.
-- domain filters (`status`, `tag`, `source`, `issue_id`, `run_id`, `conversation_key`, etc.) avoid broad scans.
+```bash
+mu status --pretty
+mu issues get <id> --pretty
+mu forum read issue:<id> --limit 20 --pretty
+mu issues close <id> --outcome success --pretty
+mu control reload --pretty
+```
 
-Recommended flow:
-
-1. `query(action="describe")` to discover capabilities.
-2. bounded `list`/`search` with focused filters.
-3. targeted `get`/`trace` with `fields` as needed.
+There is no dedicated `query(...)` vs `command(...)` wrapper boundary in this package.
 
 ## Control-plane config notes
 
 - Runtime config source of truth is `.mu/config.json`.
-- Inspect runtime state via `query(action="get", resource="status")` and related `query` reads.
-- Apply control-plane lifecycle mutations via `command(kind="reload")` / `command(kind="update")`.
+- Inspect runtime state via CLI (`mu control status`, `mu status`).
+- Apply control-plane lifecycle mutations via CLI (`mu control reload`, `mu control update`).

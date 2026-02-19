@@ -109,7 +109,7 @@ test("mu guide", async () => {
 	expect(result.stdout.includes(".mu/")).toBe(true);
 	expect(result.stdout.includes("mu store <subcmd>")).toBe(true);
 	expect(result.stdout.includes("mu control diagnose-operator")).toBe(true);
-	expect(result.stdout).toContain("Use query(...) in chat and mu control status for configuration visibility");
+	expect(result.stdout).toContain("Use direct CLI commands in chat (for example: mu control status, mu session list)");
 	expect(result.stdout).not.toContain("/mu-setup");
 });
 
@@ -247,7 +247,7 @@ test("mu serve help text", async () => {
 	expect(serveHelp.exitCode).toBe(0);
 	expect(serveHelp.stdout).toContain("start background server + attach terminal operator session + web UI");
 	expect(serveHelp.stdout).toContain("--port");
-	expect(serveHelp.stdout).toContain("Use `query(action=\"describe\")` in the operator session for capability discovery");
+	expect(serveHelp.stdout).toContain("Use direct CLI commands in the operator session for capability discovery");
 	expect(serveHelp.stdout).toContain("Use `mu session` to reconnect");
 	expect(serveHelp.stdout).not.toContain("/mu-setup");
 	expect(serveHelp.stdout.includes("--api-port")).toBe(false);

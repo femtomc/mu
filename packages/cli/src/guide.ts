@@ -83,7 +83,7 @@ export function guideText(): string {
 		"    mu session <session-id>      Reconnect to a specific session",
 		"",
 		"    Operator behavior is configured in .mu/config.json",
-		"    Use query(...) in chat and mu control status for configuration visibility",
+		"    Use direct CLI commands in chat (for example: mu control status, mu session list)",
 		"",
 		"  Replay",
 		"    mu replay <root-id>/<issue-id>",

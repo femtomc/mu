@@ -55,6 +55,25 @@ unresolved blockers or open children), dispatches them to the agent backend, and
 manages the lifecycle — claim, execute, close/expand, repeat — until the
 root issue is terminal.
 
+## Architecture note (post-refactor)
+
+mu uses an explicit **trusted-as-root** model for all agent roles (`operator`,
+`orchestrator`, `worker`, `reviewer`). Role prompts are workflow contracts,
+not security boundaries.
+
+- Agent sessions use generic tools (`bash`, `read`, `write`, `edit`) and invoke
+  `mu` CLI directly for reads and mutations.
+- There is no dedicated `query(...)` vs `command(...)` tool boundary.
+- `mu-server` is control-plane runtime infrastructure (transport/session/realtime
+  plus run/activity scheduling for heartbeats and cron), not a privileged
+  business-logic gateway.
+
+Legacy gateway routes (`/api/commands/submit`, `/api/query`, `/api/issues*`,
+`/api/forum*`, `/api/context*`) are removed.
+
+For the concise removed-vs-added module summary and follow-up risk list, see
+[`docs/architecture-trust-model-cli-first.md`](docs/architecture-trust-model-cli-first.md).
+
 ## mu builds on pi
 
 mu uses [`pi`](https://github.com/badlogic/pi-mono) directly -- `pi` is a great agent framework, 
@@ -111,14 +130,13 @@ Type `/exit` in the chat prompt (or press Ctrl+C) to stop both chat and server.
 
 ### `mu serve` operator quickstart
 
-`mu serve` now exposes two primary agent tools:
-
-- `query(...)` for read-only discovery and retrieval
-- `command(...)` for approved mutation actions (run/control-plane, issue/forum lifecycle, heartbeat/cron management)
+The attached terminal operator session uses generic tools (`bash`, `read`, `write`, `edit`) and
+invokes `mu` CLI directly for state reads and mutations.
 
 In the attached terminal chat, ask naturally (for example: “show status”,
-“search context for reload failures”, “start a run for this prompt”).
-The operator will route retrieval through `query` and mutations through `command`.
+“list ready issues”, “start a run for this prompt”).
+The operator executes the corresponding CLI commands directly (for example: `mu status`,
+`mu issues ready`, `mu runs start ...`).
 
 Useful slash commands still available in-chat:
 
@@ -130,16 +148,15 @@ Useful slash commands still available in-chat:
 By default, `mu serve` uses a compact, information-dense chrome with a built-in
 `mu-gruvbox-dark` theme.
 
-Operator query discipline (context-safe by default):
+Operator CLI discipline (context-safe by default):
 
-- Start with bounded discovery (`limit` + filters like `contains`, `status`, `tag`, `source`).
-- Then inspect specific entities via ID (`get` / `trace`) and request only needed fields (`fields`).
-- Prefer targeted lookups over repeated broad scans of issues/forum/events.
+- Start with bounded discovery (`--limit` + scoped filters).
+- Then inspect specific entities via targeted commands (`mu issues get <id>`, `mu runs trace <id>`).
+- Prefer focused commands over repeated broad scans of issues/forum/events.
 
 ### Terminal Operator Chat
 
 `mu serve` attaches an interactive terminal operator session in the same shell as the server.
-The operator routes commands through the control plane pipeline via `/api/commands/submit`.
 
 Operator sessions are persisted by default (`.mu/operator/sessions`). Use `mu session`
 to reconnect to the latest session, `mu session list` to browse persisted sessions,
@@ -178,7 +195,7 @@ Slack example:
 }
 ```
 
-Use `mu control status` plus `.mu/config.json` edits to configure adapters, then reload control-plane (`POST /api/control-plane/reload` or `/mu reload`).
+Use `mu control status` plus `.mu/config.json` edits to configure adapters, then reload control-plane (`POST /api/control-plane/reload` or `mu control reload`).
 
 When adapters are active, `mu serve` prints mounted routes:
 
@@ -194,11 +211,7 @@ Operator terminal: connected
 
 `/api/status` includes `control_plane` runtime state (active adapters/routes, generation supervisor snapshot, and reload observability counters).
 
-`mu-server` also exposes historical context retrieval endpoints for agents:
-
-- `GET /api/context/search`
-- `GET /api/context/timeline`
-- `GET /api/context/stats`
+Business state reads/mutations are CLI-first (`mu issues ...`, `mu forum ...`, `mu context ...`).
 
 ## Packages
 
@@ -211,8 +224,8 @@ Operator terminal: connected
 | [`@femtomc/mu-forum`](packages/forum/README.md) | Forum store — topic-keyed messages with read filtering and event emission. |
 | [`@femtomc/mu-orchestrator`](packages/orchestrator/README.md) | DAG runner — walks the issue tree, dispatches to LLM backends, manages run lifecycle. |
 | [`@femtomc/mu`](packages/cli/README.md) | Bun CLI wrapping the above into `mu` commands. |
-| [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — REST endpoints for issue and forum operations. |
-| [`@femtomc/mu-web`](packages/web/README.md) | Web UI — browser frontend for managing issues and forum through the API. |
+| [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — control-plane transport/session/realtime plus run/activity/heartbeat/cron coordination for `mu serve` and channel adapters. |
+| [`@femtomc/mu-web`](packages/web/README.md) | Web UI frontend bundled with `mu serve`. |
 | [`mu.nvim`](packages/neovim/README.md) | First-party Neovim frontend channel (`:Mu`, optional `:mu` alias) for control-plane ingress. |
 
 ## Development

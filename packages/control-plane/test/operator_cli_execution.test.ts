@@ -190,7 +190,7 @@ describe("operator + allowlisted mu CLI execution", () => {
 		expect(confirm.command.operator_session_id).toBe("operator-session-1");
 		expect(confirm.command.operator_turn_id).toBe("operator-turn-1");
 		expect(harness.cli.plans.length).toBe(1);
-		expect(harness.cli.plans[0]?.argv).toEqual(["mu", "resume", "mu-root9999", "--max-steps", "20", "--json"]);
+		expect(harness.cli.plans[0]?.argv).toEqual(["mu", "runs", "resume", "mu-root9999", "--max-steps", "20"]);
 
 		const mutating = harness.runtime.journal.mutatingEvents(confirm.command.command_id);
 		expect(mutating.some((entry) => entry.event_type === "cli.invocation.started")).toBe(true);
@@ -243,7 +243,7 @@ describe("operator + allowlisted mu CLI execution", () => {
 		expect(confirm.command.cli_command_kind).toBe("run_start");
 		expect(confirm.command.run_root_id).toBe("mu-new-root");
 		expect(harness.cli.plans.length).toBe(1);
-		expect(harness.cli.plans[0]?.argv).toEqual(["mu", "run", "ship release", "--max-steps", "20", "--json"]);
+		expect(harness.cli.plans[0]?.argv).toEqual(["mu", "runs", "start", "ship release", "--max-steps", "20"]);
 	});
 
 	test("operator readonly status queries execute through allowlisted mu CLI", async () => {
@@ -300,7 +300,7 @@ describe("operator + allowlisted mu CLI execution", () => {
 			throw new Error(`expected completed, got ${listResult.kind}`);
 		}
 		expect(listResult.command.cli_command_kind).toBe("run_list");
-		expect(listHarness.cli.plans[0]?.argv).toEqual(["mu", "issues", "list", "--tag", "node:root"]);
+		expect(listHarness.cli.plans[0]?.argv).toEqual(["mu", "runs", "list", "--limit", "100"]);
 
 		const statusHarness = await createPipeline({
 			scopes: ["cp.read"],
@@ -322,7 +322,7 @@ describe("operator + allowlisted mu CLI execution", () => {
 			throw new Error(`expected completed, got ${statusResult.kind}`);
 		}
 		expect(statusResult.command.cli_command_kind).toBe("run_status");
-		expect(statusHarness.cli.plans[0]?.argv).toEqual(["mu", "issues", "get", "mu-root9999"]);
+		expect(statusHarness.cli.plans[0]?.argv).toEqual(["mu", "runs", "get", "mu-root9999"]);
 	});
 
 	test("operator readonly CLI failures surface deterministic error reasons", async () => {

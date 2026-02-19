@@ -8,14 +8,10 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { brandingExtension } from "./branding.js";
 import { eventLogExtension } from "./event-log.js";
-import { operatorCommandExtension } from "./operator-command.js";
-import { queryExtension } from "./query.js";
 
 export function muOperatorExtension(pi: ExtensionAPI) {
 	brandingExtension(pi);
-	queryExtension(pi);
 	eventLogExtension(pi);
-	operatorCommandExtension(pi);
 }
 
 export default muOperatorExtension;

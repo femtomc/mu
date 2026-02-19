@@ -1,10 +1,7 @@
 export { brandingExtension } from "./branding.js";
 export { eventLogExtension } from "./event-log.js";
-export { muToolsExtension } from "./mu-tools.js";
 export { muOperatorExtension } from "./mu-operator.js";
 export { muServeExtension } from "./mu-serve.js";
-export { operatorCommandExtension } from "./operator-command.js";
-export { queryExtension } from "./query.js";
 
 const RUNTIME_EXTENSION = import.meta.url.endsWith(".ts") ? "ts" : "js";
 
@@ -18,17 +15,13 @@ function resolveBundledExtensionPath(moduleBasename: string): string {
 export const serveExtensionPaths = [resolveBundledExtensionPath("mu-serve")];
 
 /**
- * Operator-mode extension — single facade that bundles operator UI +
- * query/command tool pathways.
+ * Operator-mode extension — single facade that bundles operator UI helpers.
  */
 export const operatorExtensionPaths = [resolveBundledExtensionPath("mu-operator")];
 
 /**
- * Tool-only extension bundle for orchestrator sessions.
+ * Orchestrator and worker sessions run with the generic built-in tools
+ * (bash/read/write/edit) and invoke `mu` CLI directly.
  */
-export const orchestratorToolExtensionPaths = [resolveBundledExtensionPath("mu-tools")];
-
-/**
- * Tool-only extension bundle for worker sessions.
- */
-export const workerToolExtensionPaths = [resolveBundledExtensionPath("mu-tools")];
+export const orchestratorToolExtensionPaths: string[] = [];
+export const workerToolExtensionPaths: string[] = [];

@@ -67,8 +67,8 @@ In headless environments, it provides SSH port forwarding instructions.
 ### Operator session defaults
 
 `mu serve`'s attached terminal operator session inherits `.mu/config.json` defaults
-from `control_plane.operator.provider/model` when present. Commands issued in the
-terminal session route through the control plane pipeline via `/api/commands/submit`.
+from `control_plane.operator.provider/model` when present. The session uses generic
+tools and invokes `mu` CLI commands directly for reads and mutations.
 
 By default, operator sessions are persisted under `.mu/operator/sessions`, and
 `mu session` reconnects to the latest persisted session.

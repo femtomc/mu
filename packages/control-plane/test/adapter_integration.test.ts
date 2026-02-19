@@ -925,7 +925,7 @@ describe("channel adapters integrated with control-plane", () => {
 
 		expect(harness.cliPlans.length).toBe(1);
 		expect(harness.cliPlans[0]?.commandKind).toBe("run_start");
-		expect(harness.cliPlans[0]?.argv).toEqual(["mu", "run", "ship release", "--max-steps", "20", "--json"]);
+		expect(harness.cliPlans[0]?.argv).toEqual(["mu", "runs", "start", "ship release", "--max-steps", "20"]);
 	});
 
 	test("scripted Slack chat journey validates status introspection + run kickoff + run follow-up management", async () => {
@@ -1078,8 +1078,8 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(backend.turns.every((turn) => turn.sessionId === backend.turns[0]?.sessionId)).toBe(true);
 		expect(harness.cliPlans.map((plan) => plan.commandKind)).toEqual(["status", "run_start", "run_resume"]);
 		expect(harness.cliPlans[0]?.argv).toEqual(["mu", "status", "--json"]);
-		expect(harness.cliPlans[1]?.argv).toEqual(["mu", "run", "ship release", "--max-steps", "20", "--json"]);
-		expect(harness.cliPlans[2]?.argv).toEqual(["mu", "resume", "mu-root-flow", "--max-steps", "20", "--json"]);
+		expect(harness.cliPlans[1]?.argv).toEqual(["mu", "runs", "start", "ship release", "--max-steps", "20"]);
+		expect(harness.cliPlans[2]?.argv).toEqual(["mu", "runs", "resume", "mu-root-flow", "--max-steps", "20"]);
 	});
 
 	test("compact + detailed interaction formatting is consistent across Slack/Discord/Telegram surfaces", async () => {

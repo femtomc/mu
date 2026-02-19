@@ -896,7 +896,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		this.#sessionDirForRepoRoot =
 			opts.sessionDirForRepoRoot ?? ((repoRoot) => join(repoRoot, ".mu", "control-plane", "operator-sessions"));
 
-		// Command execution routes through the server command pipeline via command.
+		// Operator turns can emit structured command proposals captured from tool events.
 	}
 
 	#disposeSession(sessionId: string): void {

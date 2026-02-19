@@ -203,7 +203,7 @@ describe("PiMessagingOperatorBackend", () => {
 			"Use public base URL https://example.tail4cdecd.ts.net (Tailscale Funnel -> localhost:3000).",
 			"Bot token: 123456:ABCDEF.",
 			"Generate a strong random webhook_secret, update .mu/config.json,",
-			'run command(kind="reload") after writing config, call Telegram setWebhook, then verify.',
+			"run a reload after writing config, call Telegram setWebhook, then verify.",
 		].join("\n");
 
 		const backend = new PiMessagingOperatorBackend({
@@ -372,8 +372,8 @@ describe("PiMessagingOperatorBackend", () => {
 					responses: ["The repo has 5 open issues."],
 					toolCalls: [
 						{
-							toolName: "query",
-							args: { action: "get", resource: "status" },
+							toolName: "bash",
+							args: { command: "mu status --pretty" },
 						},
 					],
 				}),

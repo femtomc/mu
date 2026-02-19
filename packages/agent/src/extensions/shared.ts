@@ -47,9 +47,9 @@ export type MuControlPlaneStatus = {
 
 export type MuStatusResponse = {
 	repo_root: string;
-	open_count: number;
-	ready_count: number;
 	control_plane: MuControlPlaneStatus;
+	open_count?: number;
+	ready_count?: number;
 };
 
 export function muServerUrl(): string | null {
@@ -131,111 +131,4 @@ function ensureGenerationScopedStatus(status: MuStatusResponse): MuStatusRespons
 export async function fetchMuStatus(timeoutMs?: number): Promise<MuStatusResponse> {
 	const status = await fetchMuJson<MuStatusResponse>("/api/status", { timeoutMs });
 	return ensureGenerationScopedStatus(status);
-}
-
-export function asRecord(value: unknown): Record<string, unknown> | null {
-	if (typeof value !== "object" || value == null || Array.isArray(value)) {
-		return null;
-	}
-	return value as Record<string, unknown>;
-}
-
-export function asArray(value: unknown): unknown[] {
-	return Array.isArray(value) ? value : [];
-}
-
-export function asString(value: unknown): string | null {
-	return typeof value === "string" ? value : null;
-}
-
-export function asNumber(value: unknown): number | null {
-	return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-export function previewText(value: unknown, maxChars: number = 220): string {
-	const raw =
-		typeof value === "string"
-			? value
-			: value == null
-				? ""
-				: (() => {
-						try {
-							return JSON.stringify(value);
-						} catch {
-							return String(value);
-						}
-					})();
-	const compact = raw.replace(/\s+/g, " ").trim();
-	if (compact.length <= maxChars) {
-		return compact;
-	}
-	const keep = Math.max(1, maxChars - 1);
-	return `${compact.slice(0, keep)}…`;
-}
-
-export function previewLines(
-	value: unknown,
-	opts: {
-		maxLines?: number;
-		maxCharsPerLine?: number;
-	} = {},
-): string[] {
-	const maxLines = clampInt(opts.maxLines, 12, 1, 200);
-	const maxCharsPerLine = clampInt(opts.maxCharsPerLine, 220, 20, 5_000);
-	const lines = asArray(value);
-	const tail = lines.slice(-maxLines);
-	return tail.map((line) => previewText(line, maxCharsPerLine));
-}
-
-export function parseFieldPaths(value: string | undefined): string[] {
-	if (!value) {
-		return [];
-	}
-	return value
-		.split(",")
-		.map((segment) => segment.trim())
-		.filter((segment) => segment.length > 0)
-		.slice(0, 32);
-}
-
-function readPath(source: unknown, path: string): unknown {
-	if (path.length === 0) {
-		return source;
-	}
-	const segments = path.split(".").filter((segment) => segment.length > 0);
-	let cursor: unknown = source;
-	for (const segment of segments) {
-		if (Array.isArray(cursor)) {
-			const index = Number.parseInt(segment, 10);
-			if (!Number.isFinite(index) || index < 0 || index >= cursor.length) {
-				return undefined;
-			}
-			cursor = cursor[index];
-			continue;
-		}
-		if (typeof cursor !== "object" || cursor == null) {
-			return undefined;
-		}
-		cursor = (cursor as Record<string, unknown>)[segment];
-	}
-	return cursor;
-}
-
-export function selectFields(source: unknown, paths: string[]): Record<string, unknown> {
-	const out: Record<string, unknown> = {};
-	for (const path of paths) {
-		out[path] = readPath(source, path);
-	}
-	return out;
-}
-
-export function textResult(text: string, details: Record<string, unknown> = {}) {
-	return {
-		content: [{ type: "text" as const, text }],
-		details,
-	};
-}
-
-export function toJsonText(value: unknown): string {
-	return JSON.stringify(value, null, 2);
 }

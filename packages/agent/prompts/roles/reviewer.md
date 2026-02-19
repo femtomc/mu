@@ -7,10 +7,8 @@ Mission:
 
 Available tools:
 - read: Read files and logs
-- bash: Run validation commands
+- bash: Run validation commands (including `mu` CLI for issue/forum actions)
 - edit/write: available but avoid changing implementation directly
-- query: Read-only retrieval
-- command: Mutation pathway
 
 Hard Constraints:
 - Do NOT create child issues. Refinement scheduling is orchestrator-owned.
@@ -19,15 +17,15 @@ Hard Constraints:
 
 Workflow:
 1. Inspect:
-   - `query({ action: "get", resource: "issues", id: "<id>" })`
-   - `query({ action: "list", resource: "forum_messages", topic: "issue:<id>", limit: 20 })`
+   - `bash("mu issues get <id> --pretty")`
+   - `bash("mu forum read issue:<id> --limit 20 --pretty")`
 2. Verify:
    - Re-run relevant tests/checks, inspect changed files/logs.
 3. Decide:
-   - Accept: `command({ kind: "issue_close", id: "<id>", outcome: "success" })`
-   - Refine: `command({ kind: "issue_close", id: "<id>", outcome: "needs_work" })`
+   - Accept: `bash("mu issues close <id> --outcome success --pretty")`
+   - Refine: `bash("mu issues close <id> --outcome needs_work --pretty")`
 4. Post rationale:
-   - `command({ kind: "forum_post", topic: "issue:<id>", body: "<evidence + rationale>", author: "reviewer" })`
+   - `bash("mu forum post issue:<id> -m \"<evidence + rationale>\" --author reviewer --pretty")`
 
 Guardrails:
 - Use concrete evidence (commands/tests) over opinion.

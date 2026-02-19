@@ -196,8 +196,8 @@ export function brandingExtension(pi: ExtensionAPI) {
 				routes: [] as MuControlPlaneRoute[],
 			};
 			snapshot = {
-				openCount: status.open_count,
-				readyCount: status.ready_count,
+				openCount: typeof status.open_count === "number" ? status.open_count : 0,
+				readyCount: typeof status.ready_count === "number" ? status.ready_count : 0,
 				controlPlaneActive: cp.active,
 				adapters: routesFromStatus(cp.adapters, cp.routes).map((entry) => entry.name),
 				error: null,

@@ -86,7 +86,7 @@ mu control reload
 - `:Mu channels` — inspect channel capability payload
 - `:Mu link` — link Neovim actor identity
 - `:Mu panel [show|hide|clear]` — manage persistent panel window
-- `:Mu tail [on|off|once|status]` — background poll control (`/api/context/timeline`)
+- `:Mu tail [on|off|once|status]` — background poll control
 - `:Mu turn <session_id> <message>` — run a real turn in target session (`POST /api/session-turn`)
 - `:Mu flash <session_id> <message>` — legacy alias of `:Mu turn`
 - `:Mu help` — help text
@@ -105,10 +105,10 @@ If not configured explicitly:
 Requests include editor context (`client_context`) with cwd, repo root, current
 buffer path/filetype, cursor location, and mode.
 
-Session turn targeting expects a `session_id` (for example from `query(action="timeline", resource="context", session_id=...)` / operator-provided IDs).
+Session turn targeting expects a `session_id` (for example from `mu session list --pretty` or operator-provided IDs).
 
 ## Notes
 
 - Requires Neovim with `vim.system` support (Neovim 0.10+).
-- Background updates currently use timeline polling (`/api/context/timeline`) scoped by `channel=neovim`, `channel_tenant_id`, and `channel_conversation_id`.
+- Background updates currently use channel-scoped timeline polling (`channel=neovim`, `channel_tenant_id`, `channel_conversation_id`).
 - A dedicated frontend inbox/SSE transport can still be added later for lower-latency delivery.

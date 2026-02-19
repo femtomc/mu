@@ -1,8 +1,6 @@
 import { GenerationTelemetryRecorder } from "@femtomc/mu-control-plane";
-import type { EventEnvelope, ForumMessage, Issue, JsonlStore } from "@femtomc/mu-core";
+import type { EventEnvelope, JsonlStore } from "@femtomc/mu-core";
 import { currentRunId, EventLog, FsJsonlStore, getStorePaths, JsonlEventSink } from "@femtomc/mu-core/node";
-import { ForumStore } from "@femtomc/mu-forum";
-import { IssueStore } from "@femtomc/mu-issue";
 import { ControlPlaneActivitySupervisor } from "./activity_supervisor.js";
 import {
 	DEFAULT_MU_CONFIG,
@@ -70,8 +68,6 @@ export type ServerInstanceOptions = Omit<
 
 export type ServerContext = {
 	repoRoot: string;
-	issueStore: IssueStore;
-	forumStore: ForumStore;
 	eventLog: EventLog;
 	eventsStore: JsonlStore<EventEnvelope>;
 };
@@ -187,11 +183,7 @@ export function createContext(repoRoot: string): ServerContext {
 		runIdProvider: currentRunId,
 	});
 
-	const issueStore = new IssueStore(new FsJsonlStore<Issue>(paths.issuesPath), { events: eventLog });
-
-	const forumStore = new ForumStore(new FsJsonlStore<ForumMessage>(paths.forumPath), { events: eventLog });
-
-	return { repoRoot, issueStore, forumStore, eventLog, eventsStore };
+	return { repoRoot, eventLog, eventsStore };
 }
 
 function createServer(options: ServerOptions = {}) {

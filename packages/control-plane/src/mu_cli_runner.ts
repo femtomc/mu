@@ -13,6 +13,7 @@ export const MuCliCommandKindSchema = z.enum([
 	"run_status",
 	"run_start",
 	"run_resume",
+	"run_interrupt",
 ]);
 export type MuCliCommandKind = z.infer<typeof MuCliCommandKindSchema>;
 
@@ -244,7 +245,7 @@ export class MuCliCommandSurface {
 					plan: {
 						invocationId,
 						commandKind: "run_list",
-						argv: [this.#muBinary, "issues", "list", "--tag", "node:root"],
+						argv: [this.#muBinary, "runs", "list", "--limit", "100"],
 						timeoutMs: this.#readTimeoutMs,
 						runRootId: null,
 						mutating: false,
@@ -264,7 +265,7 @@ export class MuCliCommandSurface {
 					plan: {
 						invocationId,
 						commandKind: "run_status",
-						argv: [this.#muBinary, "issues", "get", rootId],
+						argv: [this.#muBinary, "runs", "get", rootId],
 						timeoutMs: this.#readTimeoutMs,
 						runRootId: rootId,
 						mutating: false,
@@ -272,7 +273,24 @@ export class MuCliCommandSurface {
 				};
 			}
 			case "run interrupt": {
-				return reject("operator_action_disallowed", "run interrupt requires control-plane async run supervisor");
+				if (args.length !== 1) {
+					return reject("cli_validation_failed", "run interrupt expects <root-id>");
+				}
+				const rootId = resolveIssueId(args[0]);
+				if (!rootId) {
+					return reject("cli_validation_failed", "invalid run root id");
+				}
+				return {
+					kind: "ok",
+					plan: {
+						invocationId,
+						commandKind: "run_interrupt",
+						argv: [this.#muBinary, "runs", "interrupt", rootId],
+						timeoutMs: this.#runTimeoutMs,
+						runRootId: rootId,
+						mutating: true,
+					},
+				};
 			}
 			case "run start": {
 				if (args.length === 0) {
@@ -293,7 +311,7 @@ export class MuCliCommandSurface {
 					plan: {
 						invocationId,
 						commandKind: "run_start",
-						argv: [this.#muBinary, "run", prompt, "--max-steps", "20", "--json"],
+						argv: [this.#muBinary, "runs", "start", prompt, "--max-steps", "20"],
 						timeoutMs: this.#runTimeoutMs,
 						runRootId: null,
 						mutating: true,
@@ -317,7 +335,7 @@ export class MuCliCommandSurface {
 					plan: {
 						invocationId,
 						commandKind: "run_resume",
-						argv: [this.#muBinary, "resume", rootId, "--max-steps", String(maxSteps), "--json"],
+						argv: [this.#muBinary, "runs", "resume", rootId, "--max-steps", String(maxSteps)],
 						timeoutMs: this.#runTimeoutMs,
 						runRootId: rootId,
 						mutating: true,
