@@ -24,7 +24,7 @@ Built-in specs are exported for each first-platform adapter:
 - `DiscordControlPlaneAdapterSpec`
 - `TelegramControlPlaneAdapterSpec`
 
-This keeps adapter behavior consistent and makes it easier to add new surfaces (for example, Gmail) without changing core pipeline semantics.
+This keeps adapter behavior consistent and makes it easier to add new surfaces without changing core pipeline semantics.
 
 ## Interaction contract + visual presentation (v1)
 

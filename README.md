@@ -120,7 +120,7 @@ Once `mu serve` is up, use these commands in the attached terminal chat:
 - `/mu setup plan slack` — concrete wiring plan for one adapter
 - `/mu setup apply slack` — guided config apply + control-plane reload
 - `/mu setup verify slack` — verify runtime adapter mount + route
-- `/mu setup slack` / `discord` / `telegram` / `gmail` — send adapter setup brief to the active mu agent
+- `/mu setup slack` / `discord` / `telegram` — send adapter setup brief to the active mu agent
 - `/mu events tail 20` — quick event log snapshot
 - `/mu events watch on` — live event watch widget
 - `/mu brand on|off|toggle` — toggle UI branding

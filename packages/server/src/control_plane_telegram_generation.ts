@@ -37,7 +37,6 @@ function controlPlaneNonTelegramFingerprint(config: ControlPlaneConfig): string 
 		adapters: {
 			slack: config.adapters.slack,
 			discord: config.adapters.discord,
-			gmail: config.adapters.gmail,
 		},
 		operator: config.operator,
 	});

@@ -81,7 +81,7 @@ Default operator UI theme is `mu-gruvbox-dark`.
   - `action`: `tail | query`
 - `mu_messaging_setup({ action, adapter?, public_base_url? })`
   - `action`: `check | preflight | guide | plan | apply | verify`
-  - `adapter`: `slack | discord | telegram | gmail`
+  - `adapter`: `slack | discord | telegram`
 
 ### Query contract (context-safe by default)
 
@@ -104,6 +104,5 @@ kept compact to reduce context pollution.
 
 - Runtime setup state comes from `GET /api/config` and `.mu/config.json`.
 - `slack`, `discord`, `telegram` are currently modeled as available adapters.
-- `gmail` is modeled as planned guidance (not mounted by runtime yet).
 - `mu_messaging_setup(action=preflight)` is the quickest health check during
   onboarding.

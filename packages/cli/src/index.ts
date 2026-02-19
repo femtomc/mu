@@ -3926,7 +3926,6 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	const slackCfg = (adaptersCfg.slack as Record<string, unknown> | undefined) ?? {};
 	const discordCfg = (adaptersCfg.discord as Record<string, unknown> | undefined) ?? {};
 	const telegramCfg = (adaptersCfg.telegram as Record<string, unknown> | undefined) ?? {};
-	const gmailCfg = (adaptersCfg.gmail as Record<string, unknown> | undefined) ?? {};
 	const operatorCfg = (controlPlane.operator as Record<string, unknown> | undefined) ?? {};
 
 	const present = (value: unknown): boolean => typeof value === "string" && value.trim().length > 0;
@@ -3938,7 +3937,6 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 		{ channel: "slack", configured: present(slackCfg.signing_secret) },
 		{ channel: "discord", configured: present(discordCfg.signing_secret) },
 		{ channel: "telegram", configured: present(telegramCfg.webhook_secret) },
-		{ channel: "gmail", configured: boolOr(gmailCfg.enabled, false) },
 	];
 
 	const operator = {

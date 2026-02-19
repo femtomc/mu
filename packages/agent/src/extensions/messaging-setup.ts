@@ -21,7 +21,7 @@ function interpolateTemplate(template: string, vars: Record<string, string>): st
 }
 
 type AdapterSupport = "available" | "planned";
-type AdapterId = "slack" | "discord" | "telegram" | "gmail";
+type AdapterId = "slack" | "discord" | "telegram";
 type SetupAction = "check" | "preflight" | "guide" | "plan" | "apply" | "verify";
 
 type AdapterField = {
@@ -112,13 +112,6 @@ type ConfigPresence = {
 				webhook_secret: boolean;
 				bot_token: boolean;
 				bot_username: boolean;
-			};
-			gmail: {
-				enabled: boolean;
-				webhook_secret: boolean;
-				client_id: boolean;
-				client_secret: boolean;
-				refresh_token: boolean;
 			};
 		};
 		operator: {
@@ -256,27 +249,6 @@ const ADAPTERS: AdapterConfig[] = [
 			"Send /mu in Telegram chat, then /mu setup verify telegram.",
 		],
 	},
-	{
-		id: "gmail",
-		name: "Gmail",
-		support: "planned",
-		fields: [
-			{ key: "enabled", required: true, description: "Enable planned Gmail adapter once implemented." },
-			{ key: "webhook_secret", required: true, description: "Webhook/shared secret for ingress verification." },
-			{ key: "client_id", required: true, description: "Google OAuth client id." },
-			{ key: "client_secret", required: true, description: "Google OAuth client secret." },
-			{ key: "refresh_token", required: true, description: "Offline refresh token for mailbox access." },
-		],
-		providerSetupSteps: [
-			"Create Google OAuth credentials and obtain refresh token for Gmail scopes.",
-			"Populate control_plane.adapters.gmail fields in .mu/config.json.",
-			"Track control-plane implementation progress before expecting runtime activation.",
-		],
-		notes: [
-			"Gmail adapter is planned but not mounted by current runtime.",
-			"Use this guidance for planning and future rollout prep.",
-		],
-	},
 ];
 
 const SETUP_ACTIONS: readonly SetupAction[] = ["check", "preflight", "guide", "plan", "apply", "verify"] as const;
@@ -291,7 +263,6 @@ function normalizeAdapterId(input: string): AdapterId | null {
 		case "slack":
 		case "discord":
 		case "telegram":
-		case "gmail":
 			return normalized;
 		default:
 			return null;
@@ -336,13 +307,6 @@ function fieldPresent(presence: ConfigPresence, adapterId: AdapterId, key: strin
 			if (key === "webhook_secret") return presence.control_plane.adapters.telegram.webhook_secret;
 			if (key === "bot_token") return presence.control_plane.adapters.telegram.bot_token;
 			if (key === "bot_username") return presence.control_plane.adapters.telegram.bot_username;
-			return false;
-		case "gmail":
-			if (key === "enabled") return presence.control_plane.adapters.gmail.enabled;
-			if (key === "webhook_secret") return presence.control_plane.adapters.gmail.webhook_secret;
-			if (key === "client_id") return presence.control_plane.adapters.gmail.client_id;
-			if (key === "client_secret") return presence.control_plane.adapters.gmail.client_secret;
-			if (key === "refresh_token") return presence.control_plane.adapters.gmail.refresh_token;
 			return false;
 	}
 }
@@ -812,20 +776,6 @@ function patchForAdapterValues(adapterId: AdapterId, values: Record<string, stri
 					},
 				},
 			};
-		case "gmail":
-			return {
-				control_plane: {
-					adapters: {
-						gmail: {
-							enabled: values.enabled === "true",
-							webhook_secret: values.webhook_secret ?? null,
-							client_id: values.client_id ?? null,
-							client_secret: values.client_secret ?? null,
-							refresh_token: values.refresh_token ?? null,
-						},
-					},
-				},
-			};
 	}
 }
 
@@ -1227,7 +1177,7 @@ export function messagingSetupExtension(pi: ExtensionAPI, opts: MessagingSetupEx
 		: (["check", "preflight", "guide", "plan", "verify"] as const);
 	const SetupParams = Type.Object({
 		action: StringEnum(setupActions),
-		adapter: Type.Optional(Type.String({ description: "Adapter name: slack, discord, telegram, gmail" })),
+		adapter: Type.Optional(Type.String({ description: "Adapter name: slack, discord, telegram" })),
 		public_base_url: Type.Optional(
 			Type.String({
 				description:

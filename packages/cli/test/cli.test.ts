@@ -56,13 +56,6 @@ async function writeConfigWithActiveAdapter(dir: string): Promise<void> {
 						slack: { signing_secret: "slack-secret" },
 						discord: { signing_secret: null },
 						telegram: { webhook_secret: null, bot_token: null, bot_username: null },
-						gmail: {
-							enabled: false,
-							webhook_secret: null,
-							client_id: null,
-							client_secret: null,
-							refresh_token: null,
-						},
 					},
 					operator: {
 						enabled: false,
@@ -92,13 +85,6 @@ async function writeConfigWithOperatorDefaults(dir: string, provider: string, mo
 						slack: { signing_secret: null },
 						discord: { signing_secret: null },
 						telegram: { webhook_secret: null, bot_token: null, bot_username: null },
-						gmail: {
-							enabled: false,
-							webhook_secret: null,
-							client_id: null,
-							client_secret: null,
-							refresh_token: null,
-						},
 					},
 					operator: {
 						enabled: true,
