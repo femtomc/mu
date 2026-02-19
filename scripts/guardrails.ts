@@ -63,14 +63,7 @@ const INTERNAL_PACKAGE_DEPENDENCY_INVARIANTS: Record<string, readonly string[]> 
 	"@femtomc/mu-forum": ["@femtomc/mu-core"],
 	"@femtomc/mu-issue": ["@femtomc/mu-core"],
 	"@femtomc/mu-orchestrator": ["@femtomc/mu-agent", "@femtomc/mu-core", "@femtomc/mu-forum", "@femtomc/mu-issue"],
-	"@femtomc/mu-server": [
-		"@femtomc/mu-agent",
-		"@femtomc/mu-control-plane",
-		"@femtomc/mu-core",
-		"@femtomc/mu-forum",
-		"@femtomc/mu-issue",
-	],
-	"@femtomc/mu-web": ["@femtomc/mu-core", "@femtomc/mu-forum", "@femtomc/mu-issue"],
+	"@femtomc/mu-server": ["@femtomc/mu-agent", "@femtomc/mu-control-plane", "@femtomc/mu-core"],
 	"@femtomc/mu": [
 		"@femtomc/mu-agent",
 		"@femtomc/mu-control-plane",

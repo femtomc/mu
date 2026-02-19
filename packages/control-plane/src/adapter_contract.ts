@@ -58,7 +58,6 @@ export const DEFAULT_CONTROL_PLANE_WEBHOOK_ROUTES = {
 	discord: "/webhooks/discord",
 	telegram: "/webhooks/telegram",
 	neovim: "/webhooks/neovim",
-	vscode: "/webhooks/vscode",
 	terminal: "/api/commands/submit",
 } as const satisfies Record<Channel, string>;
 

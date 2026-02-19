@@ -24,7 +24,6 @@ async function writeConfigWithOperatorDefaults(dir: string, provider: string, mo
 						discord: { signing_secret: null },
 						telegram: { webhook_secret: null, bot_token: null, bot_username: null },
 						neovim: { shared_secret: null },
-						vscode: { shared_secret: null },
 					},
 					operator: {
 						enabled: true,
@@ -245,7 +244,7 @@ test("mu serve help text", async () => {
 	const dir = await mkTempRepo();
 	const serveHelp = await run(["serve", "--help"], { cwd: dir });
 	expect(serveHelp.exitCode).toBe(0);
-	expect(serveHelp.stdout).toContain("start background server + attach terminal operator session + web UI");
+	expect(serveHelp.stdout).toContain("start background server + attach terminal operator session");
 	expect(serveHelp.stdout).toContain("--port");
 	expect(serveHelp.stdout).toContain("Use direct CLI commands in the operator session for capability discovery");
 	expect(serveHelp.stdout).toContain("Use `mu session` to reconnect");

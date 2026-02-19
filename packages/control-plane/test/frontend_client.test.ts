@@ -101,13 +101,13 @@ describe("frontend client bootstrap", () => {
 		const originalFetch = globalThis.fetch;
 		let seenSecret: string | null = null;
 		globalThis.fetch = (async (_input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			seenSecret = (init?.headers as Record<string, string>)?.["x-mu-vscode-secret"] ?? null;
+			seenSecret = (init?.headers as Record<string, string>)?.["x-mu-neovim-secret"] ?? null;
 			return Response.json({
 				ok: true,
 				accepted: true,
-				channel: "vscode",
-				request_id: "vscode-req-1",
-				delivery_id: "vscode-delivery-1",
+				channel: "neovim",
+				request_id: "neovim-req-1",
+				delivery_id: "neovim-delivery-1",
 				ack: "ok",
 				message: "ok",
 				interaction: { v: 1 },
@@ -118,8 +118,8 @@ describe("frontend client bootstrap", () => {
 		try {
 			const result = await submitFrontendIngress({
 				serverUrl: "http://localhost:3000",
-				channel: "vscode",
-				sharedSecret: "vscode-secret",
+				channel: "neovim",
+				sharedSecret: "neovim-secret",
 				request: {
 					tenant_id: "workspace-1",
 					conversation_id: "workspace:main",
@@ -127,8 +127,8 @@ describe("frontend client bootstrap", () => {
 					text: "status",
 				},
 			});
-			expect(seenSecret ?? "").toBe("vscode-secret");
-			expect(result.channel).toBe("vscode");
+			expect(seenSecret ?? "").toBe("neovim-secret");
+			expect(result.channel).toBe("neovim");
 			expect(result.accepted).toBe(true);
 		} finally {
 			globalThis.fetch = originalFetch;

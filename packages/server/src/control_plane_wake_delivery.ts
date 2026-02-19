@@ -20,7 +20,6 @@ function normalizeChannel(value: unknown): Channel | null {
 		case "discord":
 		case "telegram":
 		case "neovim":
-		case "vscode":
 		case "terminal":
 			return value;
 		default:

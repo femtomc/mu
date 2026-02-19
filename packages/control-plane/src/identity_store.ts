@@ -2,7 +2,7 @@ import { appendJsonl, readJsonl } from "@femtomc/mu-core/node";
 import { z } from "zod";
 import { type AssuranceTier, AssuranceTierSchema } from "./models.js";
 
-export const ChannelSchema = z.enum(["slack", "discord", "telegram", "neovim", "vscode", "terminal"]);
+export const ChannelSchema = z.enum(["slack", "discord", "telegram", "neovim", "terminal"]);
 export type Channel = z.infer<typeof ChannelSchema>;
 
 export const CHANNEL_ASSURANCE_TIERS = {
@@ -10,7 +10,6 @@ export const CHANNEL_ASSURANCE_TIERS = {
 	discord: "tier_a",
 	telegram: "tier_b",
 	neovim: "tier_a",
-	vscode: "tier_a",
 	terminal: "tier_a",
 } as const satisfies Record<Channel, AssuranceTier>;
 

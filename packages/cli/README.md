@@ -27,7 +27,7 @@ packages/cli/dist/cli.js --help
 ### CLI Commands
 
 ```bash
-mu serve                   # Start server + terminal operator session + web UI (auto-inits .mu)
+mu serve                   # Start server + terminal operator session (auto-inits .mu)
 mu session                 # Reconnect to latest persisted operator session
 mu session list            # List persisted operator sessions for this repo
 mu status                  # Show repository status
@@ -49,14 +49,14 @@ if (r.exitCode !== 0) throw new Error(r.stdout);
 console.log(r.stdout);
 ```
 
-### Web UI
+### Serve + terminal operator
 
-The `mu serve` command starts the server with the bundled web UI and immediately
+The `mu serve` command starts the server and immediately
 attaches an interactive terminal operator session in the same shell:
 
 ```bash
-mu serve              # Default port: 3000 (operator session + web UI)
-mu serve --no-open    # Don't open browser
+mu serve              # Default port: 3000 (operator session)
+mu serve --no-open    # Headless mode
 mu serve --port 8080  # Custom port
 ```
 

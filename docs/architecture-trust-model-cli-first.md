@@ -83,18 +83,14 @@ Additional architecture-coverage additions:
 
 ## 5) Follow-up risks (deferred)
 
-1. **Web frontend endpoint drift**
-   - `packages/web/src/api.ts` still references removed `/api/issues*` and `/api/forum*` routes.
-   - Risk: web UI issue/forum features can regress against control-plane-only server scope.
-
-2. **Neovim tail endpoint drift**
+1. **Neovim tail endpoint drift**
    - `packages/neovim/lua/mu/init.lua` still targets `/api/context/timeline` for tail polling.
    - Risk: `:Mu tail ...` behavior can regress because control-plane-only server scope removes `/api/context*` routes.
 
-3. **High blast radius under trusted-as-root**
+2. **High blast radius under trusted-as-root**
    - By design, role separation is not a security boundary.
    - Risk: prompt/operator mistakes can execute destructive commands unless disciplined by workflow and review.
 
-4. **Command-surface documentation drift**
+3. **Command-surface documentation drift**
    - CLI grows quickly (`events/runs/activities/heartbeats/cron/context/session-flash/turn`).
    - Risk: static docs become stale unless kept in lockstep with command help output/tests.

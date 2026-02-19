@@ -451,7 +451,7 @@ function mainHelp(): string {
 		`  ${cmd("replay")} ${dim("<id|path>")}                      Replay a previous run log`,
 		`  ${cmd("control")} ${dim("<subcmd>")}                      Messaging integrations and identity`,
 		`  ${cmd("session")} ${dim("[list|<id>] [opts]")}               Reconnect/list terminal operator sessions`,
-		`  ${cmd("serve")} ${dim("[--port N] [--no-open]")}          Start API + web UI + operator session`,
+		`  ${cmd("serve")} ${dim("[--port N] [--no-open]")}          Start API + operator session`,
 		`  ${cmd("stop")} ${dim("[--force]")}                        Stop the background server`,
 		"",
 		`${dim("Running")} ${cmd("mu")} ${dim("with no arguments starts")} ${cmd("mu serve")}${dim(".")}`,
@@ -3311,7 +3311,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"",
 				"Serve passthrough:",
 				"  --port <N>         Server port (default: 3000)",
-				"  --no-open          Don't open browser automatically",
+				"  --no-open          Headless mode (compatibility flag)",
 				"",
 				"Legacy note:",
 				"  --json and --raw-stream are no longer supported on mu run.",
@@ -4445,7 +4445,7 @@ async function cmdOperatorSession(
 	if (hasHelpFlag(argv)) {
 		return ok(
 			[
-				"mu serve - operator session (server + terminal + web UI)",
+				"mu serve - operator session (server + terminal)",
 				"",
 				"Usage:",
 				"  mu serve [--port N] [--no-open]",
@@ -4453,7 +4453,7 @@ async function cmdOperatorSession(
 				"",
 				"Options:",
 				"  --port N               Server port (default: 3000)",
-				"  --no-open              Skip opening browser",
+				"  --no-open              Headless mode (no browser open)",
 				"  --provider ID          LLM provider for operator session",
 				"  --model ID             Model ID (default: gpt-5.3-codex)",
 				"  --thinking LEVEL       Thinking level (minimal|low|medium|high)",
@@ -5189,7 +5189,7 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 	Bun.env.MU_SERVER_URL = serverUrl;
 
 	const isHeadless = deps.isHeadless();
-	const shouldOpen = !opts.noOpen && !isHeadless;
+	const shouldOpen = false;
 	if (!isHeadless && shouldOpen) {
 		try {
 			deps.openBrowser(serverUrl);
@@ -5285,14 +5285,14 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
 			[
-				"mu serve - start background server + attach terminal operator session + web UI",
+				"mu serve - start background server + attach terminal operator session",
 				"",
 				"Usage:",
 				"  mu serve [--port N] [--no-open]",
 				"",
 				"Options:",
 				"  --port N       Server port (default: 3000)",
-				"  --no-open      Don't open browser automatically",
+				"  --no-open      Headless mode (no browser open)",
 				"",
 				"Spawns the server as a background process (if not already running),",
 				"then attaches an interactive terminal operator session. Ctrl+D exits",
@@ -5993,7 +5993,6 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	const discordCfg = (adaptersCfg.discord as Record<string, unknown> | undefined) ?? {};
 	const telegramCfg = (adaptersCfg.telegram as Record<string, unknown> | undefined) ?? {};
 	const neovimCfg = (adaptersCfg.neovim as Record<string, unknown> | undefined) ?? {};
-	const vscodeCfg = (adaptersCfg.vscode as Record<string, unknown> | undefined) ?? {};
 	const operatorCfg = (controlPlane.operator as Record<string, unknown> | undefined) ?? {};
 
 	const present = (value: unknown): boolean => typeof value === "string" && value.trim().length > 0;
@@ -6006,7 +6005,6 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 		{ channel: "discord", configured: present(discordCfg.signing_secret) },
 		{ channel: "telegram", configured: present(telegramCfg.webhook_secret) },
 		{ channel: "neovim", configured: present(neovimCfg.shared_secret) },
-		{ channel: "vscode", configured: present(vscodeCfg.shared_secret) },
 	];
 
 	const operator = {

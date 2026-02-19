@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const FrontendChannelSchema = z.enum(["neovim", "vscode"]);
+export const FrontendChannelSchema = z.enum(["neovim"]);
 export type FrontendChannel = z.infer<typeof FrontendChannelSchema>;
 
 export const FrontendIngressRequestSchema = z.object({
@@ -161,7 +161,6 @@ export type SessionTurnCreateResponse = z.infer<typeof SessionTurnCreateResponse
 
 export const FRONTEND_SHARED_SECRET_HEADER_BY_CHANNEL = {
 	neovim: "x-mu-neovim-secret",
-	vscode: "x-mu-vscode-secret",
 } as const satisfies Record<FrontendChannel, string>;
 
 export function frontendSharedSecretHeaderForChannel(channel: FrontendChannel): string {

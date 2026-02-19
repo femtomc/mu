@@ -31,8 +31,6 @@ function configuredForChannel(config: MuConfig, channel: string): boolean {
 			return typeof config.control_plane.adapters.telegram.webhook_secret === "string";
 		case "neovim":
 			return typeof config.control_plane.adapters.neovim.shared_secret === "string";
-		case "vscode":
-			return typeof config.control_plane.adapters.vscode.shared_secret === "string";
 		default:
 			return false;
 	}
@@ -89,7 +87,7 @@ export async function controlPlaneRoutes(
 			deferred_delivery: spec.deferred_delivery,
 			configured: configuredForChannel(config, spec.channel),
 			active: activeChannels.has(spec.channel),
-			frontend: spec.channel === "neovim" || spec.channel === "vscode",
+			frontend: spec.channel === "neovim",
 		}));
 
 		return Response.json(

@@ -156,15 +156,15 @@ Bun.serve(server);
 
 ## Running the Server
 
-### With Web UI (Recommended)
+### With terminal operator session (recommended)
 
-The easiest way to run the server with the bundled web interface (and default terminal operator session):
+The easiest way to run the server with the default terminal operator session:
 
 ```bash
 # From any mu repository
-mu serve              # API + web UI + terminal operator session
-mu serve --no-open    # Skip browser auto-open (headless/SSH)
-mu serve --port 8080  # Custom shared API/web UI port
+mu serve              # API + terminal operator session
+mu serve --no-open    # Headless mode (SSH)
+mu serve --port 8080  # Custom API/operator port
 ```
 
 Type `/exit` (or press Ctrl+C) to stop both the operator session and server.

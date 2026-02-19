@@ -1,4 +1,3 @@
-import { extname, join, resolve } from "node:path";
 import type { ControlPlaneActivitySupervisor } from "./activity_supervisor.js";
 import { activityRoutes } from "./api/activities.js";
 import { configRoutes } from "./api/config.js";
@@ -17,21 +16,6 @@ import type { HeartbeatProgramRegistry } from "./heartbeat_programs.js";
 import type { AutoHeartbeatRunSnapshot } from "./server_program_orchestration.js";
 import type { ServerContext } from "./server.js";
 
-const DEFAULT_MIME_TYPES: Record<string, string> = {
-	".html": "text/html; charset=utf-8",
-	".js": "text/javascript; charset=utf-8",
-	".css": "text/css; charset=utf-8",
-	".json": "application/json",
-	".png": "image/png",
-	".jpg": "image/jpeg",
-	".svg": "image/svg+xml",
-	".ico": "image/x-icon",
-	".woff": "font/woff",
-	".woff2": "font/woff2",
-};
-
-const DEFAULT_PUBLIC_DIR = join(new URL(".", import.meta.url).pathname, "..", "public");
-
 export type ServerRoutingDependencies = {
 	context: ServerContext;
 	controlPlaneProxy: ControlPlaneHandle;
@@ -46,13 +30,9 @@ export type ServerRoutingDependencies = {
 	disableAutoRunHeartbeatProgram: (opts: { jobId: string; status: string; reason: string }) => Promise<void>;
 	describeError: (error: unknown) => string;
 	initiateShutdown?: () => Promise<void>;
-	publicDir?: string;
-	mimeTypes?: Record<string, string>;
 };
 
 export function createServerRequestHandler(deps: ServerRoutingDependencies) {
-	const publicDir = deps.publicDir ?? DEFAULT_PUBLIC_DIR;
-	const mimeTypes = deps.mimeTypes ?? DEFAULT_MIME_TYPES;
 	return async (request: Request): Promise<Response> => {
 		const url = new URL(request.url);
 		const path = url.pathname;
@@ -160,26 +140,6 @@ export function createServerRequestHandler(deps: ServerRoutingDependencies) {
 
 		if (path.startsWith("/api/")) {
 			return Response.json({ error: "Not Found" }, { status: 404, headers });
-		}
-
-		const filePath = resolve(publicDir, `.${path === "/" ? "/index.html" : path}`);
-		if (!filePath.startsWith(publicDir)) {
-			return new Response("Forbidden", { status: 403, headers });
-		}
-
-		const file = Bun.file(filePath);
-		if (await file.exists()) {
-			const ext = extname(filePath);
-			const mime = mimeTypes[ext] ?? "application/octet-stream";
-			headers.set("Content-Type", mime);
-			return new Response(await file.arrayBuffer(), { status: 200, headers });
-		}
-
-		const indexPath = join(publicDir, "index.html");
-		const indexFile = Bun.file(indexPath);
-		if (await indexFile.exists()) {
-			headers.set("Content-Type", "text/html; charset=utf-8");
-			return new Response(await indexFile.arrayBuffer(), { status: 200, headers });
 		}
 
 		return new Response("Not Found", { status: 404, headers });

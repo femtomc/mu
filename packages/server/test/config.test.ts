@@ -53,7 +53,6 @@ describe("mu config", () => {
 					adapters: {
 						discord: { signing_secret: "discord-secret" },
 						neovim: { shared_secret: "nvim-secret" },
-						vscode: { shared_secret: "vscode-secret" },
 					},
 				},
 			});
@@ -61,7 +60,6 @@ describe("mu config", () => {
 			expect(patched.control_plane.operator.wake_turn_mode).toBe("active");
 			expect(patched.control_plane.adapters.discord.signing_secret).toBe("discord-secret");
 			expect(patched.control_plane.adapters.neovim.shared_secret).toBe("nvim-secret");
-			expect(patched.control_plane.adapters.vscode.shared_secret).toBe("vscode-secret");
 
 			const configPath = await writeMuConfigFile(repoRoot, patched);
 			expect(configPath).toBe(getMuConfigPath(repoRoot));
@@ -80,7 +78,6 @@ describe("mu config", () => {
 					slack: { signing_secret: "slack-secret" },
 					telegram: { webhook_secret: "tg-secret", bot_token: "tg-token", bot_username: "mybot" },
 					neovim: { shared_secret: "nvim-secret" },
-					vscode: { shared_secret: "vscode-secret" },
 				},
 				operator: {
 					enabled: true,
@@ -96,7 +93,6 @@ describe("mu config", () => {
 		expect(presence.control_plane.adapters.slack.signing_secret).toBe(true);
 		expect(presence.control_plane.adapters.telegram.bot_username).toBe(true);
 		expect(presence.control_plane.adapters.neovim.shared_secret).toBe(true);
-		expect(presence.control_plane.adapters.vscode.shared_secret).toBe(true);
 		expect(presence.control_plane.operator.run_triggers_enabled).toBe(false);
 		expect(presence.control_plane.operator.wake_turn_mode).toBe("shadow");
 
@@ -104,7 +100,6 @@ describe("mu config", () => {
 		expect(redacted.control_plane.adapters.slack.signing_secret).toBe("***");
 		expect(redacted.control_plane.adapters.telegram.bot_token).toBe("***");
 		expect(redacted.control_plane.adapters.neovim.shared_secret).toBe("***");
-		expect(redacted.control_plane.adapters.vscode.shared_secret).toBe("***");
 		expect(redacted.control_plane.operator.provider).toBe("openai");
 	});
 });

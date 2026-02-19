@@ -6,17 +6,13 @@
     "packages/*"
   ],
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p packages/web/tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf packages/core/dist packages/agent/dist packages/control-plane/dist packages/forum/dist packages/issue/dist packages/orchestrator/dist packages/cli/dist packages/server/dist",
     "build": "bun run clean && bun run build:packages && chmod +x packages/cli/dist/cli.js && chmod +x packages/server/dist/cli.js",
     "build:packages": "tsc -p packages/core/tsconfig.build.json && tsc -p packages/agent/tsconfig.build.json && tsc -p packages/control-plane/tsconfig.build.json && tsc -p packages/forum/tsconfig.build.json && tsc -p packages/issue/tsconfig.build.json && tsc -p packages/orchestrator/tsconfig.build.json && tsc -p packages/server/tsconfig.build.json && tsc -p packages/cli/tsconfig.build.json",
     "pack:smoke": "bun run build && bun run scripts/pack-smoke.ts",
     "fmt": "biome format --write .",
     "lint": "biome lint .",
-    "web:dev": "cd packages/web && bun run dev",
-    "web:build": "cd packages/web && bun run build",
-    "web:bundle": "cd packages/web && VITE_API_URL='' bun run build && rm -rf ../server/public && cp -r dist ../server/public",
-    "web:test": "bun run web:build && cd packages/web && bun run e2e",
     "guardrails": "bun run scripts/guardrails.ts",
     "guardrails:architecture": "bun run scripts/guardrails.ts --architecture-only",
     "guardrails:boundaries": "bun run guardrails:architecture",
@@ -27,7 +23,7 @@
     "build:compile:mac": "bun build packages/cli/src/cli.ts --compile --outfile mu-bin-darwin --target bun-darwin-arm64 --minify",
     "lock:refresh": "rm -f bun.lock && bun install --lockfile-only",
     "verify:packed-internal-deps": "bun run scripts/verify-packed-internal-deps.ts",
-    "publish:all": "bun run lock:refresh && bun run web:bundle && bun run build && bun run verify:packed-internal-deps && bun publish --cwd packages/core --access public && bun publish --cwd packages/agent --access public && bun publish --cwd packages/control-plane --access public && bun publish --cwd packages/forum --access public && bun publish --cwd packages/issue --access public && bun publish --cwd packages/orchestrator --access public && bun publish --cwd packages/server --access public && bun publish --cwd packages/cli --access public"
+    "publish:all": "bun run lock:refresh && bun run build && bun run verify:packed-internal-deps && bun publish --cwd packages/core --access public && bun publish --cwd packages/agent --access public && bun publish --cwd packages/control-plane --access public && bun publish --cwd packages/forum --access public && bun publish --cwd packages/issue --access public && bun publish --cwd packages/orchestrator --access public && bun publish --cwd packages/server --access public && bun publish --cwd packages/cli --access public"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.5",

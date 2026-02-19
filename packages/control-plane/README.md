@@ -8,7 +8,6 @@ Control-plane command pipeline for messaging ingress, policy/confirmation safety
 - Discord
 - Telegram
 - Neovim
-- VSCode
 
 All adapters normalize inbound commands into the same control-plane pipeline and preserve correlation across command journal and outbox delivery.
 
@@ -26,7 +25,6 @@ Built-in specs are exported for each first-platform adapter:
 - `DiscordControlPlaneAdapterSpec`
 - `TelegramControlPlaneAdapterSpec`
 - `NeovimControlPlaneAdapterSpec`
-- `VscodeControlPlaneAdapterSpec`
 
 This keeps adapter behavior consistent and makes it easier to add new surfaces without changing core pipeline semantics.
 
@@ -77,12 +75,12 @@ Unsafe or ambiguous requests are rejected with explicit reasons (`context_missin
 - server discovery (`.mu/control-plane/server.json`)
 - channel capability fetch (`/api/control-plane/channels`)
 - identity link bootstrap (`/api/identities/link`)
-- frontend ingress submission (`/webhooks/neovim`, `/webhooks/vscode`)
+- frontend ingress submission (`/webhooks/neovim`)
 - session flash inbox writes (`/api/session-flash`)
 - session turn injection (`/api/session-turn`) for real in-session turns with reply + context cursor
 
-These helpers are intended to keep Neovim/VSCode integration clients aligned with control-plane channel contracts.
+These helpers are intended to keep Neovim integration clients aligned with control-plane channel contracts.
 
 ## iMessage status
 
-iMessage is not supported by the v1 runtime. Identity rows must use first-platform channels (`slack`, `discord`, `telegram`, `neovim`, `vscode`). Unsupported channels are rejected during replay.
+iMessage is not supported by the v1 runtime. Identity rows must use first-platform channels (`slack`, `discord`, `telegram`, `neovim`). Unsupported channels are rejected during replay.

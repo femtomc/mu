@@ -264,7 +264,6 @@ describe("mu-server", () => {
 						control_plane: {
 							adapters: {
 								neovim: { shared_secret: "nvim-secret" },
-								vscode: { shared_secret: "vscode-secret" },
 							},
 						},
 					},
@@ -298,14 +297,7 @@ describe("mu-server", () => {
 			active: true,
 			frontend: true,
 		});
-		expect(byChannel.get("vscode")).toMatchObject({
-			channel: "vscode",
-			route: "/webhooks/vscode",
-			configured: true,
-			frontend: true,
-		});
 		expect(byChannel.get("neovim")?.verification?.kind).toBe("shared_secret_header");
-		expect(byChannel.get("vscode")?.verification?.kind).toBe("shared_secret_header");
 	});
 
 	test("session flash API supports create/list/get/ack lifecycle", async () => {

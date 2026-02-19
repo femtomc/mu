@@ -102,27 +102,26 @@ npm install -g @femtomc/mu
 cd /path/to/your/repo
 
 mu run "build the thing"  # create .mu/ store + root issue + start orchestration
-mu serve         # start server + terminal operator + web UI
+mu serve         # start server + terminal operator
 mu status        # show DAG state (CLI)
 mu issues create "build the thing" --body "details here" --pretty
 mu issues ready  # show executable leaf issues
 mu forum post research:topic -m "found something" --author worker
 ```
 
-### Web UI
+### Terminal operator session
 
-The easiest way to interact with mu is through the web interface:
+`mu serve` is the primary interactive surface:
 
 ```bash
-mu serve              # Start server, attach terminal chat, and open browser
+mu serve              # Start server + attach terminal operator session
 mu serve --no-open    # Headless mode (shows SSH forwarding instructions)
-mu serve --port 8080  # Custom web UI port
+mu serve --port 8080  # Custom API/operator port
 ```
 
 The `mu serve` command:
-- Starts the API + web UI on a single port (default 3000, configurable with `--port`)
+- Starts the API on a single port (default 3000, configurable with `--port`)
 - Attaches an interactive terminal operator session in the same shell
-- Opens your browser automatically (unless `--no-open` or headless)
 - Shows SSH port forwarding instructions in headless environments
 - Auto-mounts control-plane webhook routes from `.mu/config.json`
 
@@ -225,7 +224,6 @@ Business state reads/mutations are CLI-first (`mu issues ...`, `mu forum ...`, `
 | [`@femtomc/mu-orchestrator`](packages/orchestrator/README.md) | DAG runner — walks the issue tree, dispatches to LLM backends, manages run lifecycle. |
 | [`@femtomc/mu`](packages/cli/README.md) | Bun CLI wrapping the above into `mu` commands. |
 | [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — control-plane transport/session/realtime plus run/activity/heartbeat/cron coordination for `mu serve` and channel adapters. |
-| [`@femtomc/mu-web`](packages/web/README.md) | Web UI frontend bundled with `mu serve`. |
 | [`mu.nvim`](packages/neovim/README.md) | First-party Neovim frontend channel (`:Mu`, optional `:mu` alias) for control-plane ingress. |
 
 ## Development

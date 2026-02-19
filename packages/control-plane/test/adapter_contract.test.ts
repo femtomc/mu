@@ -12,8 +12,6 @@ import {
 	SlackControlPlaneAdapterSpec,
 	TelegramControlPlaneAdapter,
 	TelegramControlPlaneAdapterSpec,
-	VscodeControlPlaneAdapter,
-	VscodeControlPlaneAdapterSpec,
 } from "@femtomc/mu-control-plane";
 
 describe("adapter contract", () => {
@@ -33,7 +31,6 @@ describe("adapter contract", () => {
 		expect(DiscordControlPlaneAdapterSpec.route).toBe(defaultWebhookRouteForChannel("discord"));
 		expect(TelegramControlPlaneAdapterSpec.route).toBe(defaultWebhookRouteForChannel("telegram"));
 		expect(NeovimControlPlaneAdapterSpec.route).toBe(defaultWebhookRouteForChannel("neovim"));
-		expect(VscodeControlPlaneAdapterSpec.route).toBe(defaultWebhookRouteForChannel("vscode"));
 		expect(TelegramControlPlaneAdapterSpec.delivery_semantics).toBe("at_least_once");
 	});
 
@@ -68,10 +65,5 @@ describe("adapter contract", () => {
 		});
 		expect(neovim.spec).toEqual(NeovimControlPlaneAdapterSpec);
 
-		const vscode = new VscodeControlPlaneAdapter({
-			pipeline,
-			sharedSecret: "vscode-secret",
-		});
-		expect(vscode.spec).toEqual(VscodeControlPlaneAdapterSpec);
 	});
 });

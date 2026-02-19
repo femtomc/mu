@@ -63,7 +63,6 @@ describe("control plane adapter registry", () => {
 		config.control_plane.adapters.slack.signing_secret = "slack-secret";
 		config.control_plane.adapters.discord.signing_secret = "discord-secret";
 		config.control_plane.adapters.neovim.shared_secret = "nvim-secret";
-		config.control_plane.adapters.vscode.shared_secret = "vscode-secret";
 		config.control_plane.adapters.telegram.webhook_secret = "tg-secret";
 		config.control_plane.adapters.telegram.bot_token = "tg-token";
 		config.control_plane.adapters.telegram.bot_username = "tg-bot";
@@ -73,7 +72,6 @@ describe("control plane adapter registry", () => {
 			{ name: "slack", secret: "slack-secret" },
 			{ name: "discord", secret: "discord-secret" },
 			{ name: "neovim", secret: "nvim-secret" },
-			{ name: "vscode", secret: "vscode-secret" },
 			{
 				name: "telegram",
 				webhookSecret: "tg-secret",

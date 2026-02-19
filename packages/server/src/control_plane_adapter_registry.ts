@@ -5,12 +5,11 @@ import {
 	DiscordControlPlaneAdapter,
 	NeovimControlPlaneAdapter,
 	SlackControlPlaneAdapter,
-	VscodeControlPlaneAdapter,
 } from "@femtomc/mu-control-plane";
 import type { ControlPlaneConfig } from "./control_plane_contract.js";
 
 export type DetectedStaticAdapter = {
-	name: "slack" | "discord" | "neovim" | "vscode";
+	name: "slack" | "discord" | "neovim";
 	secret: string;
 };
 
@@ -59,15 +58,6 @@ const STATIC_ADAPTER_MODULES: readonly StaticAdapterModule[] = [
 		detectSecret: (config) => config.adapters.neovim.shared_secret,
 		create: (opts) =>
 			new NeovimControlPlaneAdapter({
-				pipeline: opts.pipeline,
-				sharedSecret: opts.secret,
-			}),
-	},
-	{
-		name: "vscode",
-		detectSecret: (config) => config.adapters.vscode.shared_secret,
-		create: (opts) =>
-			new VscodeControlPlaneAdapter({
 				pipeline: opts.pipeline,
 				sharedSecret: opts.secret,
 			}),
