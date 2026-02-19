@@ -6,7 +6,7 @@ import {
 	createWriteTool,
 } from "@mariozechner/pi-coding-agent";
 import { createMuResourceLoader, resolveModel } from "./backend.js";
-import { MU_DEFAULT_THEME_NAME } from "./ui_defaults.js";
+import { MU_DEFAULT_THEME_NAME, MU_DEFAULT_THEME_PATH } from "./ui_defaults.js";
 
 export type CreateMuSessionOpts = {
 	cwd: string;
@@ -45,6 +45,7 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 		systemPrompt: opts.systemPrompt ?? "You are mu, an AI assistant.",
 		settingsManager,
 		additionalExtensionPaths: opts.extensionPaths,
+		additionalThemePaths: [MU_DEFAULT_THEME_PATH],
 	});
 	await resourceLoader.reload();
 
