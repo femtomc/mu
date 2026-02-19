@@ -1,5 +1,6 @@
 import { appendJsonl } from "@femtomc/mu-core/node";
-import { join } from "node:path";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { CommandContextResolver } from "./command_context.js";
 import { createMuSession, type CreateMuSessionOpts, type MuSession } from "./session_factory.js";
@@ -66,7 +67,6 @@ export const OperatorBackendTurnResultSchema = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("command"), command: OperatorApprovedCommandSchema }),
 ]);
 export type OperatorBackendTurnResult = z.infer<typeof OperatorBackendTurnResultSchema>;
-
 
 export type OperatorBackendTurnInput = {
 	sessionId: string;
@@ -261,6 +261,12 @@ export class ApprovedCommandBroker {
 	}
 }
 
+export type MessagingOperatorConversationSessionStore = {
+	getSessionId: (conversationKey: string) => Promise<string | null> | string | null;
+	setSessionId: (conversationKey: string, sessionId: string) => Promise<void> | void;
+	stop?: () => Promise<void> | void;
+};
+
 export type MessagingOperatorRuntimeOpts = {
 	backend: MessagingOperatorBackend;
 	broker?: ApprovedCommandBroker;
@@ -268,6 +274,7 @@ export type MessagingOperatorRuntimeOpts = {
 	enabledChannels?: readonly string[];
 	sessionIdFactory?: () => string;
 	turnIdFactory?: () => string;
+	conversationSessionStore?: MessagingOperatorConversationSessionStore;
 };
 
 function defaultSessionId(): string {
@@ -290,6 +297,92 @@ function conversationKey(inbound: InboundEnvelope, binding: IdentityBinding): st
 	return `${inbound.channel}:${inbound.channel_tenant_id}:${inbound.channel_conversation_id}:${binding.binding_id}`;
 }
 
+type PersistedConversationSessionState = {
+	version: 1;
+	bindings: Record<string, string>;
+};
+
+export class JsonFileConversationSessionStore implements MessagingOperatorConversationSessionStore {
+	readonly #path: string;
+	#loaded = false;
+	readonly #bindings = new Map<string, string>();
+	#persistQueue: Promise<void> = Promise.resolve();
+
+	public constructor(path: string) {
+		this.#path = path;
+	}
+
+	async #load(): Promise<void> {
+		if (this.#loaded) {
+			return;
+		}
+		this.#loaded = true;
+
+		let raw = "";
+		try {
+			raw = await readFile(this.#path, "utf8");
+		} catch {
+			return;
+		}
+		if (!raw.trim()) {
+			return;
+		}
+
+		try {
+			const parsed = JSON.parse(raw) as PersistedConversationSessionState;
+			const bindings = parsed?.bindings;
+			if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) {
+				return;
+			}
+			for (const [key, value] of Object.entries(bindings)) {
+				if (typeof key === "string" && key.length > 0 && typeof value === "string" && value.length > 0) {
+					this.#bindings.set(key, value);
+				}
+			}
+		} catch {
+			// Ignore malformed persistence snapshots.
+		}
+	}
+
+	async #persist(): Promise<void> {
+		const snapshot: PersistedConversationSessionState = {
+			version: 1,
+			bindings: Object.fromEntries([...this.#bindings.entries()].sort(([a], [b]) => a.localeCompare(b))),
+		};
+		await mkdir(dirname(this.#path), { recursive: true });
+		const tempPath = `${this.#path}.tmp-${process.pid}-${crypto.randomUUID()}`;
+		await writeFile(tempPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+		await rename(tempPath, this.#path);
+	}
+
+	async #persistSoon(): Promise<void> {
+		const runPersist = async () => {
+			await this.#persist();
+		};
+		this.#persistQueue = this.#persistQueue.then(runPersist, runPersist);
+		await this.#persistQueue;
+	}
+
+	public async getSessionId(conversationKey: string): Promise<string | null> {
+		await this.#load();
+		return this.#bindings.get(conversationKey) ?? null;
+	}
+
+	public async setSessionId(conversationKey: string, sessionId: string): Promise<void> {
+		await this.#load();
+		const current = this.#bindings.get(conversationKey);
+		if (current === sessionId) {
+			return;
+		}
+		this.#bindings.set(conversationKey, sessionId);
+		await this.#persistSoon();
+	}
+
+	public async stop(): Promise<void> {
+		await this.#persistQueue;
+	}
+}
+
 export class MessagingOperatorRuntime {
 	readonly #backend: MessagingOperatorBackend;
 	readonly #broker: ApprovedCommandBroker;
@@ -297,6 +390,7 @@ export class MessagingOperatorRuntime {
 	readonly #enabledChannels: Set<string> | null;
 	readonly #sessionIdFactory: () => string;
 	readonly #turnIdFactory: () => string;
+	readonly #conversationSessionStore: MessagingOperatorConversationSessionStore | null;
 	readonly #sessionByConversation = new Map<string, string>();
 
 	public constructor(opts: MessagingOperatorRuntimeOpts) {
@@ -306,21 +400,42 @@ export class MessagingOperatorRuntime {
 		this.#enabledChannels = opts.enabledChannels ? new Set(opts.enabledChannels.map((v) => v.toLowerCase())) : null;
 		this.#sessionIdFactory = opts.sessionIdFactory ?? defaultSessionId;
 		this.#turnIdFactory = opts.turnIdFactory ?? defaultTurnId;
+		this.#conversationSessionStore = opts.conversationSessionStore ?? null;
 	}
 
-	#resolveSessionId(inbound: InboundEnvelope, binding: IdentityBinding): string {
+	async #resolveSessionId(inbound: InboundEnvelope, binding: IdentityBinding): Promise<string> {
 		const key = conversationKey(inbound, binding);
 		const existing = this.#sessionByConversation.get(key);
 		if (existing) {
 			return existing;
 		}
+
+		if (this.#conversationSessionStore) {
+			try {
+				const persisted = await this.#conversationSessionStore.getSessionId(key);
+				if (persisted && persisted.length > 0) {
+					this.#sessionByConversation.set(key, persisted);
+					return persisted;
+				}
+			} catch {
+				// Non-fatal persistence lookup failure.
+			}
+		}
+
 		const created = this.#sessionIdFactory();
 		this.#sessionByConversation.set(key, created);
+		if (this.#conversationSessionStore) {
+			try {
+				await this.#conversationSessionStore.setSessionId(key, created);
+			} catch {
+				// Non-fatal persistence write failure.
+			}
+		}
 		return created;
 	}
 
 	public async handleInbound(opts: { inbound: InboundEnvelope; binding: IdentityBinding }): Promise<OperatorDecision> {
-		const sessionId = this.#resolveSessionId(opts.inbound, opts.binding);
+		const sessionId = await this.#resolveSessionId(opts.inbound, opts.binding);
 		const turnId = this.#turnIdFactory();
 
 		if (!this.#enabled) {
@@ -402,6 +517,7 @@ export class MessagingOperatorRuntime {
 	public async stop(): Promise<void> {
 		this.#sessionByConversation.clear();
 		await this.#backend.dispose?.();
+		await this.#conversationSessionStore?.stop?.();
 	}
 }
 
@@ -417,11 +533,13 @@ export type PiMessagingOperatorBackendOpts = {
 	sessionIdleTtlMs?: number;
 	maxSessions?: number;
 	auditTurns?: boolean;
+	persistSessions?: boolean;
+	sessionDirForRepoRoot?: (repoRoot: string) => string;
 };
 
 export { DEFAULT_OPERATOR_SYSTEM_PROMPT };
 
-const MU_COMMAND_TOOL_NAME = "mu_command";
+const COMMAND_TOOL_NAME = "command";
 
 function buildOperatorPrompt(input: OperatorBackendTurnInput): string {
 	return [
@@ -432,6 +550,12 @@ function buildOperatorPrompt(input: OperatorBackendTurnInput): string {
 		``,
 		`User message: ${input.inbound.command_text}`,
 	].join("\n");
+}
+
+function sessionFileStem(sessionId: string): string {
+	const normalized = sessionId.trim().replace(/[^a-zA-Z0-9._-]+/g, "-");
+	const compact = normalized.replace(/-+/g, "-").replace(/^-+/, "").replace(/-+$/, "");
+	return compact.length > 0 ? compact : `operator-${crypto.randomUUID()}`;
 }
 
 type PiOperatorSessionRecord = {
@@ -467,6 +591,8 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 	readonly #sessionIdleTtlMs: number;
 	readonly #maxSessions: number;
 	readonly #auditTurns: boolean;
+	readonly #persistSessions: boolean;
+	readonly #sessionDirForRepoRoot: (repoRoot: string) => string;
 	readonly #sessions = new Map<string, PiOperatorSessionRecord>();
 
 	public constructor(opts: PiMessagingOperatorBackendOpts = {}) {
@@ -481,8 +607,11 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		this.#sessionIdleTtlMs = Math.max(60_000, Math.trunc(opts.sessionIdleTtlMs ?? 30 * 60 * 1_000));
 		this.#maxSessions = Math.max(1, Math.trunc(opts.maxSessions ?? 32));
 		this.#auditTurns = opts.auditTurns ?? true;
+		this.#persistSessions = opts.persistSessions ?? true;
+		this.#sessionDirForRepoRoot =
+			opts.sessionDirForRepoRoot ?? ((repoRoot) => join(repoRoot, ".mu", "control-plane", "operator-sessions"));
 
-		// Command execution routes through the server command pipeline via mu_command.
+		// Command execution routes through the server command pipeline via command.
 	}
 
 	#disposeSession(sessionId: string): void {
@@ -516,7 +645,20 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		}
 	}
 
-	async #createSession(repoRoot: string, nowMs: number): Promise<PiOperatorSessionRecord> {
+	#sessionPersistence(repoRoot: string, sessionId: string): CreateMuSessionOpts["session"] | undefined {
+		if (!this.#persistSessions) {
+			return undefined;
+		}
+		const sessionDir = this.#sessionDirForRepoRoot(repoRoot);
+		const sessionFile = join(sessionDir, `${sessionFileStem(sessionId)}.jsonl`);
+		return {
+			mode: "open",
+			sessionDir,
+			sessionFile,
+		};
+	}
+
+	async #createSession(repoRoot: string, sessionId: string, nowMs: number): Promise<PiOperatorSessionRecord> {
 		const session = await this.#sessionFactory({
 			cwd: repoRoot,
 			systemPrompt: this.#systemPrompt,
@@ -524,6 +666,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			model: this.#model,
 			thinking: this.#thinking,
 			extensionPaths: this.#extensionPaths,
+			session: this.#sessionPersistence(repoRoot, sessionId),
 		});
 
 		await session.bindExtensions({
@@ -559,18 +702,21 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			this.#disposeSession(sessionId);
 		}
 
-		const created = await this.#createSession(repoRoot, nowMs);
+		const created = await this.#createSession(repoRoot, sessionId, nowMs);
 		this.#sessions.set(sessionId, created);
 		this.#pruneSessions(nowMs);
 		return created;
 	}
 
-	async #auditTurn(input: OperatorBackendTurnInput, opts: {
-		outcome: OperatorTurnAuditEntry["outcome"];
-		reason?: string | null;
-		messagePreview?: string | null;
-		command?: OperatorApprovedCommand | null;
-	}): Promise<void> {
+	async #auditTurn(
+		input: OperatorBackendTurnInput,
+		opts: {
+			outcome: OperatorTurnAuditEntry["outcome"];
+			reason?: string | null;
+			messagePreview?: string | null;
+			command?: OperatorApprovedCommand | null;
+		},
+	): Promise<void> {
 		if (!this.#auditTurns) {
 			return;
 		}
@@ -620,8 +766,8 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 				}
 			}
 
-			// Capture mu_command tool calls — structured command proposals.
-			if (event?.type === "tool_execution_start" && event?.toolName === MU_COMMAND_TOOL_NAME) {
+			// Capture command tool calls — structured command proposals.
+			if (event?.type === "tool_execution_start" && event?.toolName === COMMAND_TOOL_NAME) {
 				const parsed = OperatorApprovedCommandSchema.safeParse(event.args);
 				if (parsed.success) {
 					capturedCommand = parsed.data;
@@ -650,7 +796,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			sessionRecord.lastUsedAtMs = Math.trunc(this.#nowMs());
 		}
 
-		// If the operator called mu_command, use the captured structured command.
+		// If the operator called command, use the captured structured command.
 		if (capturedCommand) {
 			await this.#auditTurn(input, {
 				outcome: "command",

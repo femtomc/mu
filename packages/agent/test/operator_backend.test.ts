@@ -137,14 +137,34 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(disposed).toBe(2);
 	});
 
-	test("mu_command tool call produces approved command payload", async () => {
+	test("persists backend sessions to repo-scoped files by default", async () => {
+		const seenSessionOpts: Array<Record<string, unknown>> = [];
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async (opts) => {
+				seenSessionOpts.push(opts as unknown as Record<string, unknown>);
+				return makeStubSession({ responses: ["persisted"] });
+			},
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-persist", turnId: "turn-1", commandText: "hello" }),
+		);
+		expect(result).toEqual({ kind: "respond", message: "persisted" });
+		expect(seenSessionOpts.length).toBe(1);
+		const session = seenSessionOpts[0]?.session as Record<string, unknown> | undefined;
+		expect(session?.mode).toBe("open");
+		expect(session?.sessionDir).toBe("/repo/.mu/control-plane/operator-sessions");
+		expect(session?.sessionFile).toBe("/repo/.mu/control-plane/operator-sessions/session-persist.jsonl");
+	});
+
+	test("command tool call produces approved command payload", async () => {
 		const backend = new PiMessagingOperatorBackend({
 			sessionFactory: async () =>
 				makeStubSession({
 					responses: ["I'll start that run for you."],
 					toolCalls: [
 						{
-							toolName: "mu_command",
+							toolName: "command",
 							args: { kind: "run_start", prompt: "ship release" },
 						},
 					],
@@ -163,13 +183,13 @@ describe("PiMessagingOperatorBackend", () => {
 		});
 	});
 
-	test("mu_command tool call works with multi-line prompts", async () => {
+	test("command tool call works with multi-line prompts", async () => {
 		const longPrompt = [
 			"Set up Telegram messaging integration for mu control-plane in /home/user/Dev/workshop.",
 			"Use public base URL https://example.tail4cdecd.ts.net (Tailscale Funnel -> localhost:3000).",
 			"Bot token: 123456:ABCDEF.",
 			"Generate a strong random webhook_secret, update .mu/config.json,",
-			"run /mu setup apply telegram, call Telegram setWebhook, then verify.",
+			"run command(kind=\"reload\") after writing config, call Telegram setWebhook, then verify.",
 		].join("\n");
 
 		const backend = new PiMessagingOperatorBackend({
@@ -178,7 +198,7 @@ describe("PiMessagingOperatorBackend", () => {
 					responses: ["Setting up Telegram integration now."],
 					toolCalls: [
 						{
-							toolName: "mu_command",
+							toolName: "command",
 							args: { kind: "run_start", prompt: longPrompt },
 						},
 					],
@@ -197,14 +217,14 @@ describe("PiMessagingOperatorBackend", () => {
 		});
 	});
 
-	test("mu_command with invalid args falls back to text response", async () => {
+	test("command with invalid args falls back to text response", async () => {
 		const backend = new PiMessagingOperatorBackend({
 			sessionFactory: async () =>
 				makeStubSession({
 					responses: ["I tried to run a command but something went wrong."],
 					toolCalls: [
 						{
-							toolName: "mu_command",
+							toolName: "command",
 							args: { kind: "invalid_kind_that_does_not_exist" },
 						},
 					],
@@ -233,15 +253,15 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(result).toEqual({ kind: "respond", message: "Here is some information for you." });
 	});
 
-	test("non-mu_command tool calls are ignored", async () => {
+	test("non-command tool calls are ignored", async () => {
 		const backend = new PiMessagingOperatorBackend({
 			sessionFactory: async () =>
 				makeStubSession({
 					responses: ["The repo has 5 open issues."],
 					toolCalls: [
 						{
-							toolName: "mu_status",
-							args: {},
+							toolName: "query",
+							args: { action: "get", resource: "status" },
 						},
 					],
 				}),

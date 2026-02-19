@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { InMemoryJsonlStore } from "@femtomc/mu-core";
 import { DurableRunQueue, runSnapshotFromQueueSnapshot } from "../src/run_queue.js";
+import type { ControlPlaneRunSnapshot } from "../src/run_supervisor.js";
 
 describe("DurableRunQueue", () => {
 	test("enforces valid transitions and rejects invalid transitions", async () => {
@@ -139,16 +140,19 @@ describe("DurableRunQueue", () => {
 		expect(replayed.revision).toBe(loaded.revision);
 	});
 
-	test("legacy run snapshots are migrated/readable through queue adapter", async () => {
+	test("can bootstrap queue row from runtime snapshot when createIfMissing=true", async () => {
 		const now = Date.now();
-		const legacyRunSnapshot = {
-			job_id: "run-job-legacy",
+		const store = new InMemoryJsonlStore<unknown>([]);
+		const queue = new DurableRunQueue({ repoRoot: "/repo", store, nowMs: () => now + 1 });
+
+		const runtimeRunSnapshot: ControlPlaneRunSnapshot = {
+			job_id: "run-job-runtime",
 			mode: "run_resume",
 			status: "completed",
 			prompt: null,
-			root_issue_id: "mu-root-legacy",
+			root_issue_id: "mu-root-runtime",
 			max_steps: 17,
-			command_id: "cmd-legacy",
+			command_id: "cmd-runtime",
 			source: "api",
 			started_at_ms: now - 50,
 			updated_at_ms: now,
@@ -157,29 +161,31 @@ describe("DurableRunQueue", () => {
 			pid: 123,
 			last_progress: "Done 1/1",
 		};
-		const store = new InMemoryJsonlStore<unknown>([legacyRunSnapshot]);
-		const queue = new DurableRunQueue({ repoRoot: "/repo", store, nowMs: () => now + 1 });
 
-		const migrated = await queue.get("run-job-legacy");
-		expect(migrated).not.toBeNull();
-		if (!migrated) {
-			throw new Error("expected migrated legacy run");
+		const synced = await queue.applyRunSnapshot({
+			run: runtimeRunSnapshot,
+			createIfMissing: true,
+			operationId: "runtime-sync-1",
+		});
+		expect(synced).not.toBeNull();
+		if (!synced) {
+			throw new Error("expected synced run queue row");
 		}
-		expect(migrated.queue_id).toBe("legacy-run-job-legacy");
-		expect(migrated.state).toBe("done");
+		expect(synced.queue_id).toBe("rq-sync-run-job-runtime");
+		expect(synced.state).toBe("done");
 
-		const mappedRun = runSnapshotFromQueueSnapshot(migrated);
-		expect(mappedRun.job_id).toBe("run-job-legacy");
+		const mappedRun = runSnapshotFromQueueSnapshot(synced);
+		expect(mappedRun.job_id).toBe("run-job-runtime");
 		expect(mappedRun.status).toBe("completed");
-		expect(mappedRun.root_issue_id).toBe("mu-root-legacy");
+		expect(mappedRun.root_issue_id).toBe("mu-root-runtime");
 
-		const byRoot = await queue.get("mu-root-legacy");
-		expect(byRoot?.queue_id).toBe(migrated.queue_id);
+		const byRoot = await queue.get("mu-root-runtime");
+		expect(byRoot?.queue_id).toBe(synced.queue_id);
 
 		const persistedRows = await store.read();
+		expect(persistedRows).toHaveLength(1);
 		const persisted = persistedRows[0] as Record<string, unknown>;
-		expect(typeof persisted.queue_id).toBe("string");
+		expect(persisted.queue_id).toBe("rq-sync-run-job-runtime");
 		expect(persisted.state).toBe("done");
-		expect(persisted.status).toBeUndefined();
 	});
 });

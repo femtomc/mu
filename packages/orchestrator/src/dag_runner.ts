@@ -17,10 +17,10 @@ import type { ModelOverrides, ResolvedModelConfig } from "./model_resolution.js"
 import { resolveModelConfig } from "./model_resolution.js";
 
 /**
- * Default-on orchestration reconcile contract for `DagRunner`.
+ * Orchestration reconcile contract for `DagRunner`.
  *
- * The orchestration redesign is the default behavior (no feature-flag fork). Compatibility adapters
- * are allowed only if they preserve the same durable state transitions and emitted events.
+ * Reconcile behavior is always on (no feature-flag fork) and must preserve
+ * the durable state transitions and emitted events defined below.
  */
 export type DagRunnerReconcilePhase =
 	| "turn_start"
@@ -47,7 +47,7 @@ export const DAG_RUNNER_CONTRACT_INVARIANTS = [
 	"ORCH-RECON-005: Root finality check (`validate(root).is_final`) runs before dispatch each step.",
 	"ORCH-RECON-006: Review loop semantics are plan -> execute -> review -> (accept | refine).",
 	"ORCH-RECON-007: Refine loops are budgeted (default max_refine_rounds_per_root=3); exhaustion is terminal.",
-	"ORCH-RECON-008: Compatibility adapters may exist in-place, but must preserve this state machine and events.",
+	"ORCH-RECON-008: Integrations must preserve this state machine and emitted events.",
 ] as const;
 
 /** Default refine-loop budget for upcoming reviewer integration modules. */
@@ -56,7 +56,7 @@ export const DEFAULT_MAX_REFINE_ROUNDS_PER_ROOT = 3;
 /**
  * Reviewer semantics contract:
  * - accept => review step closes with `success`; root can move to terminal validation
- * - refine => review step closes with `refine` (or legacy `needs_work`), then orchestrator schedules follow-up work
+ * - refine => review step closes with `needs_work` or `refine`, then orchestrator schedules follow-up work
  */
 export const REVIEW_DECISION_TO_OUTCOME = {
 	accept: "success",

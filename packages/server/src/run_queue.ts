@@ -327,11 +327,18 @@ function snapshotClone(value: DurableRunQueueSnapshot): DurableRunQueueSnapshot 
 	};
 }
 
-function normalizeQueueRecordRow(
-	row: unknown,
-	nowMs: number,
-	maxOperationIds: number,
-): { snapshot: DurableRunQueueSnapshot; migrated: boolean } | null {
+function normalizeRunStatus(value: unknown): ControlPlaneRunStatus | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "running" || normalized === "completed" || normalized === "failed" || normalized === "cancelled") {
+		return normalized as ControlPlaneRunStatus;
+	}
+	return null;
+}
+
+function normalizeQueueRecordRow(row: unknown, nowMs: number, maxOperationIds: number): DurableRunQueueSnapshot | null {
 	if (!row || typeof row !== "object" || Array.isArray(row)) {
 		return null;
 	}
@@ -341,83 +348,78 @@ function normalizeQueueRecordRow(
 	const mode = normalizeRunMode(record.mode);
 	const state = normalizeQueueState(record.state);
 
-	if (queueId && mode && state) {
-		const createdAt = normalizeTimestamp(record.created_at_ms, nowMs);
-		const updatedAt = normalizeTimestamp(record.updated_at_ms, createdAt);
-		const revision = Math.max(1, normalizeMaxSteps(record.revision, 1));
-		const dedupeKey = normalizeString(record.dedupe_key) ?? `queue:${queueId}`;
-		const prompt = normalizePrompt(record.prompt);
-		const rootIssueId = normalizeIssueId(record.root_issue_id);
-		return {
-			snapshot: {
-				v: 1,
-				queue_id: queueId,
-				dedupe_key: dedupeKey,
-				mode,
-				state,
-				prompt,
-				root_issue_id: rootIssueId,
-				max_steps: normalizeMaxSteps(record.max_steps, DEFAULT_MAX_STEPS),
-				command_id: normalizeString(record.command_id),
-				source: normalizeRunSource(record.source),
-				job_id: normalizeString(record.job_id),
-				started_at_ms: normalizeNullableTimestamp(record.started_at_ms),
-				updated_at_ms: updatedAt,
-				finished_at_ms: normalizeNullableTimestamp(record.finished_at_ms),
-				exit_code: normalizeNullableInt(record.exit_code),
-				pid: normalizeNullableInt(record.pid),
-				last_progress: normalizeString(record.last_progress),
-				created_at_ms: createdAt,
-				revision,
-				applied_operation_ids: normalizeAppliedOperationIds(record.applied_operation_ids, maxOperationIds),
-			},
-			migrated: false,
-		};
+	if (!queueId || !mode || !state) {
+		return null;
 	}
 
-	const legacyMode = normalizeRunMode(record.mode);
-	const legacyStatusRaw = typeof record.status === "string" ? record.status.trim().toLowerCase() : "";
-	const legacyStatus: ControlPlaneRunStatus | null =
-		legacyStatusRaw === "running" ||
-		legacyStatusRaw === "completed" ||
-		legacyStatusRaw === "failed" ||
-		legacyStatusRaw === "cancelled"
-			? (legacyStatusRaw as ControlPlaneRunStatus)
-			: null;
-	const legacyJobId = normalizeString(record.job_id);
+	const createdAt = normalizeTimestamp(record.created_at_ms, nowMs);
+	const updatedAt = normalizeTimestamp(record.updated_at_ms, createdAt);
+	const revision = Math.max(1, normalizeMaxSteps(record.revision, 1));
+	const dedupeKey = normalizeString(record.dedupe_key) ?? `queue:${queueId}`;
+	const prompt = normalizePrompt(record.prompt);
+	const rootIssueId = normalizeIssueId(record.root_issue_id);
 
-	if (!legacyMode || !legacyStatus || !legacyJobId) {
+	return {
+		v: 1,
+		queue_id: queueId,
+		dedupe_key: dedupeKey,
+		mode,
+		state,
+		prompt,
+		root_issue_id: rootIssueId,
+		max_steps: normalizeMaxSteps(record.max_steps, DEFAULT_MAX_STEPS),
+		command_id: normalizeString(record.command_id),
+		source: normalizeRunSource(record.source),
+		job_id: normalizeString(record.job_id),
+		started_at_ms: normalizeNullableTimestamp(record.started_at_ms),
+		updated_at_ms: updatedAt,
+		finished_at_ms: normalizeNullableTimestamp(record.finished_at_ms),
+		exit_code: normalizeNullableInt(record.exit_code),
+		pid: normalizeNullableInt(record.pid),
+		last_progress: normalizeString(record.last_progress),
+		created_at_ms: createdAt,
+		revision,
+		applied_operation_ids: normalizeAppliedOperationIds(record.applied_operation_ids, maxOperationIds),
+	};
+}
+
+function queueSnapshotFromRunSnapshotRecord(row: unknown, nowMs: number): DurableRunQueueSnapshot | null {
+	if (!row || typeof row !== "object" || Array.isArray(row)) {
+		return null;
+	}
+	const record = row as Record<string, unknown>;
+	const mode = normalizeRunMode(record.mode);
+	const status = normalizeRunStatus(record.status);
+	const jobId = normalizeString(record.job_id);
+	if (!mode || !status || !jobId) {
 		return null;
 	}
 
 	const createdAt = normalizeTimestamp(record.started_at_ms, nowMs);
 	const updatedAt = normalizeTimestamp(record.updated_at_ms, createdAt);
-	const queueIdFromLegacy = `legacy-${legacyJobId}`;
+	const queueId = normalizeString(record.queue_id) ?? `rq-sync-${jobId}`;
 
 	return {
-		snapshot: {
-			v: 1,
-			queue_id: queueIdFromLegacy,
-			dedupe_key: `legacy:${legacyJobId}`,
-			mode: legacyMode,
-			state: queueStateFromRunStatus(legacyStatus),
-			prompt: normalizePrompt(record.prompt),
-			root_issue_id: normalizeIssueId(record.root_issue_id),
-			max_steps: normalizeMaxSteps(record.max_steps, DEFAULT_MAX_STEPS),
-			command_id: normalizeString(record.command_id),
-			source: normalizeRunSource(record.source),
-			job_id: legacyJobId,
-			started_at_ms: normalizeNullableTimestamp(record.started_at_ms),
-			updated_at_ms: updatedAt,
-			finished_at_ms: normalizeNullableTimestamp(record.finished_at_ms),
-			exit_code: normalizeNullableInt(record.exit_code),
-			pid: normalizeNullableInt(record.pid),
-			last_progress: normalizeString(record.last_progress),
-			created_at_ms: createdAt,
-			revision: 1,
-			applied_operation_ids: [],
-		},
-		migrated: true,
+		v: 1,
+		queue_id: queueId,
+		dedupe_key: `runtime:${jobId}`,
+		mode,
+		state: queueStateFromRunStatus(status),
+		prompt: normalizePrompt(record.prompt),
+		root_issue_id: normalizeIssueId(record.root_issue_id),
+		max_steps: normalizeMaxSteps(record.max_steps, DEFAULT_MAX_STEPS),
+		command_id: normalizeString(record.command_id),
+		source: normalizeRunSource(record.source),
+		job_id: jobId,
+		started_at_ms: normalizeNullableTimestamp(record.started_at_ms),
+		updated_at_ms: updatedAt,
+		finished_at_ms: normalizeNullableTimestamp(record.finished_at_ms),
+		exit_code: normalizeNullableInt(record.exit_code),
+		pid: normalizeNullableInt(record.pid),
+		last_progress: normalizeString(record.last_progress),
+		created_at_ms: createdAt,
+		revision: 1,
+		applied_operation_ids: [],
 	};
 }
 
@@ -577,7 +579,6 @@ export class DurableRunQueue {
 
 	async #load(): Promise<void> {
 		const rows = await this.#store.read();
-		let migrated = false;
 		const byId = new Map<string, DurableRunQueueSnapshot>();
 		const nowMs = Math.trunc(this.#nowMs());
 		for (const row of rows) {
@@ -585,13 +586,12 @@ export class DurableRunQueue {
 			if (!normalized) {
 				continue;
 			}
-			migrated = migrated || normalized.migrated;
-			const existing = byId.get(normalized.snapshot.queue_id);
+			const existing = byId.get(normalized.queue_id);
 			if (!existing) {
-				byId.set(normalized.snapshot.queue_id, normalized.snapshot);
+				byId.set(normalized.queue_id, normalized);
 				continue;
 			}
-			byId.set(normalized.snapshot.queue_id, chooseLatest(existing, normalized.snapshot));
+			byId.set(normalized.queue_id, chooseLatest(existing, normalized));
 		}
 
 		this.#rowsById.clear();
@@ -599,10 +599,6 @@ export class DurableRunQueue {
 			this.#rowsById.set(row.queue_id, row);
 		}
 		this.#rebuildIndexes();
-
-		if (migrated) {
-			await this.#persist();
-		}
 	}
 
 	async #persist(): Promise<void> {
@@ -946,11 +942,10 @@ export class DurableRunQueue {
 			}
 
 			if (!row && opts.createIfMissing) {
-				const migrated = normalizeQueueRecordRow(opts.run as unknown, nowMs, this.#maxOperationIds);
-				if (!migrated) {
+				const next = queueSnapshotFromRunSnapshotRecord(opts.run as unknown, nowMs);
+				if (!next) {
 					return null;
 				}
-				const next = migrated.snapshot;
 				if (operationId) {
 					this.#rememberOperation(next, operationId);
 					next.revision += 1;

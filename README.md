@@ -6,8 +6,7 @@
 
 There's thousands of agents slopped into existence every day: the main distinguishing feature of this one is that it is
 designed _to be long running_ (allowing you to prompt, and then leave it running for many hours). 
-It bundles tools (within the `mu` CLI! all you need is bash and `mu` installed) designed to make the implementation of 
-this capability as simple and minimal as possible (and not an ounce more). 
+It bundles tools (within the `mu` CLI! all you need is bash and `mu` installed) designed to make this capability straightforward and practical. 
 
 You can think of the main UX model as a sort of "fire and forget" style: compared to interactive chat, 
 **the idea is that you spend a good amount of time thinking upfront about your prompt and context, 
@@ -112,40 +111,39 @@ Type `/exit` in the chat prompt (or press Ctrl+C) to stop both chat and server.
 
 ### `mu serve` operator quickstart
 
-Once `mu serve` is up, use these commands in the attached terminal chat:
+`mu serve` now exposes two primary agent tools:
 
-- `/mu status` — repo/open/ready/control-plane summary
-- `/mu control` — active adapters + webhook routes
-- `/mu setup` — messaging preflight across adapters
-- `/mu setup plan slack` — concrete wiring plan for one adapter
-- `/mu setup apply slack` — guided config apply + control-plane reload
-- `/mu setup verify slack` — verify runtime adapter mount + route
-- `/mu setup slack` / `discord` / `telegram` — send adapter setup brief to the active mu agent
+- `query(...)` for read-only discovery and retrieval
+- `command(...)` for approved mutation actions (run/control-plane, issue/forum lifecycle, heartbeat/cron management)
+
+In the attached terminal chat, ask naturally (for example: “show status”,
+“search context for reload failures”, “start a run for this prompt”).
+The operator will route retrieval through `query` and mutations through `command`.
+
+Useful slash commands still available in-chat:
+
 - `/mu events tail 20` — quick event log snapshot
 - `/mu events watch on` — live event watch widget
 - `/mu brand on|off|toggle` — toggle UI branding
+- `/mu help` — list registered slash subcommands
 
 By default, `mu serve` uses a compact, information-dense chrome with a built-in
 `mu-gruvbox-dark` theme.
 
-Recommended setup flow:
-
-1. Run `/mu status`
-2. Run `/mu control`
-3. Run `/mu setup plan <adapter>` and `/mu setup apply <adapter>`
-4. Link your channel identity (`mu control link --channel <adapter> --actor-id <id> --tenant-id <tenant> --role <viewer|contributor|operator>`)
-5. Run `/mu setup verify <adapter>`
-
 Operator query discipline (context-safe by default):
 
 - Start with bounded discovery (`limit` + filters like `contains`, `status`, `tag`, `source`).
-- Then inspect specific entities via ID (`get` / `status`) and request only needed fields (`fields`).
+- Then inspect specific entities via ID (`get` / `trace`) and request only needed fields (`fields`).
 - Prefer targeted lookups over repeated broad scans of issues/forum/events.
 
 ### Terminal Operator Chat
 
 `mu serve` attaches an interactive terminal operator session in the same shell as the server.
 The operator routes commands through the control plane pipeline via `/api/commands/submit`.
+
+Operator sessions are persisted by default (`.mu/operator/sessions`). Use `mu session`
+to reconnect to the latest session, `mu session list` to browse persisted sessions,
+or `mu session <session-id>` to reopen a specific one.
 
 ### Control Plane
 
@@ -156,7 +154,7 @@ Control-plane runtime configuration is file-based:
 - Runtime remount: `POST /api/control-plane/reload`
 - Explicit rollback trigger: `POST /api/control-plane/rollback`
 
-Minimal Slack example:
+Slack example:
 
 ```json
 {
@@ -177,7 +175,7 @@ Minimal Slack example:
 }
 ```
 
-Use `/mu setup <adapter>` in `mu serve` chat for guided setup, apply, and verify.
+Use `mu control status` plus `.mu/config.json` edits to configure adapters, then reload control-plane (`POST /api/control-plane/reload` or `/mu reload`).
 
 When adapters are active, `mu serve` prints mounted routes:
 
@@ -192,6 +190,12 @@ Operator terminal: connected
 ```
 
 `/api/status` includes `control_plane` runtime state (active adapters/routes, generation supervisor snapshot, and reload observability counters).
+
+`mu-server` also exposes historical context retrieval endpoints for agents:
+
+- `GET /api/context/search`
+- `GET /api/context/timeline`
+- `GET /api/context/stats`
 
 ## Packages
 

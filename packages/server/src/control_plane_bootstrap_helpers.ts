@@ -1,11 +1,13 @@
 import {
 	ApprovedCommandBroker,
 	CommandContextResolver,
+	JsonFileConversationSessionStore,
 	type MessagingOperatorBackend,
 	MessagingOperatorRuntime,
 	operatorExtensionPaths,
 	PiMessagingOperatorBackend,
 } from "@femtomc/mu-agent";
+import { join } from "node:path";
 import {
 	ControlPlaneOutbox,
 	ControlPlaneOutboxDispatcher,
@@ -33,6 +35,9 @@ export function buildMessagingOperatorRuntime(opts: {
 			model: opts.config.operator.model ?? undefined,
 			extensionPaths: operatorExtensionPaths,
 		});
+	const conversationSessionStore = new JsonFileConversationSessionStore(
+		join(opts.repoRoot, ".mu", "control-plane", "operator_conversations.json"),
+	);
 
 	return new MessagingOperatorRuntime({
 		backend,
@@ -41,6 +46,7 @@ export function buildMessagingOperatorRuntime(opts: {
 			contextResolver: new CommandContextResolver({ allowedRepoRoots: [opts.repoRoot] }),
 		}),
 		enabled: true,
+		conversationSessionStore,
 	});
 }
 

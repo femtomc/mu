@@ -28,6 +28,8 @@ packages/cli/dist/cli.js --help
 
 ```bash
 mu serve                   # Start server + terminal operator session + web UI (auto-inits .mu)
+mu session                 # Reconnect to latest persisted operator session
+mu session list            # List persisted operator sessions for this repo
 mu status                  # Show repository status
 mu issues list             # List all issues
 mu issues create "title"   # Create new issue
@@ -67,6 +69,9 @@ In headless environments, it provides SSH port forwarding instructions.
 `mu serve`'s attached terminal operator session inherits `.mu/config.json` defaults
 from `control_plane.operator.provider/model` when present. Commands issued in the
 terminal session route through the control plane pipeline via `/api/commands/submit`.
+
+By default, operator sessions are persisted under `.mu/operator/sessions`, and
+`mu session` reconnects to the latest persisted session.
 
 Use `mu control status` to inspect current config-driven control-plane/operator state.
 

@@ -46,9 +46,9 @@ not anonymous inline factories).
 Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
-- `serverToolsExtension` — status + issues/forum/events/control-plane tools
+- `queryExtension` — read-only retrieval (`query` tool)
+- `operatorCommandExtension` — approved mutation pathway (`command` tool)
 - `eventLogExtension` — event tail + watch widget
-- `messagingSetupExtension` — adapter diagnostics and setup guidance
 
 `mu serve` sets `MU_SERVER_URL` automatically for these extensions.
 
@@ -56,53 +56,43 @@ Default operator UI theme is `mu-gruvbox-dark`.
 
 ## Slash commands (operator-facing)
 
-- `/mu status` — concise server status
-- `/mu control` — active control-plane adapters and webhook routes
-- `/mu setup` — adapter preflight
-- `/mu setup plan <adapter>` — actionable wiring plan
-- `/mu setup apply <adapter>` — guided config apply + control-plane reload
-- `/mu setup verify [adapter]` — runtime verification for mounted routes
-- `/mu setup <adapter>` — sends adapter setup brief to mu agent (`--no-agent` prints local guide)
 - `/mu events [n]` / `/mu events tail [n]` — event log tail
 - `/mu events watch on|off` — toggle event watch widget
 - `/mu brand on|off|toggle` — enable/disable UI branding
+- `/mu help` — dispatcher catalog of registered `/mu` subcommands
 
 ## Tools (agent/operator-facing)
 
-- `mu_status()`
-  - High-level server status.
-- `mu_control_plane({ action })`
-  - `action`: `status | adapters | routes`
-- `mu_issues({ action, ... })`
-  - `action`: `list | get | ready`
-- `mu_forum({ action, ... })`
-  - `action`: `read | post | topics`
-- `mu_events({ action, ... })`
-  - `action`: `tail | query`
-- `mu_messaging_setup({ action, adapter?, public_base_url? })`
-  - `action`: `check | preflight | guide | plan | apply | verify`
-  - `adapter`: `slack | discord | telegram`
+- `query({ action, resource?, ... })`
+  - Read-only pathway.
+  - `action`: `describe | get | list | search | timeline | stats | trace`
+  - Use `action="describe"` for machine-readable capability discovery.
+- `command({ kind, ... })`
+  - Approved mutation pathway through `/api/commands/submit`.
+  - `kind` includes run lifecycle (`run_start|run_resume|run_interrupt`),
+    control-plane lifecycle (`reload|update`), issue lifecycle/dependency edits
+    (`issue_create|issue_update|issue_claim|issue_open|issue_close|issue_dep|issue_undep`),
+    forum posting (`forum_post`), heartbeat program lifecycle
+    (`heartbeat_create|heartbeat_update|heartbeat_delete|heartbeat_trigger|heartbeat_enable|heartbeat_disable`),
+    and cron program lifecycle
+    (`cron_create|cron_update|cron_delete|cron_trigger|cron_enable|cron_disable`).
 
 ### Query contract (context-safe by default)
 
-Read-heavy `mu_*` tools are designed to be summary-first, with explicit narrowing:
+The `query` tool is designed to be programmable + narrow-by-default:
 
-- `limit` controls result size (default is usually `20` for list/query/read actions).
-- `contains` performs case-insensitive content filtering where relevant.
-- `fields` (comma-separated paths) supports precise retrieval on targeted actions (`get`, `status`, `trace`, etc.).
+- `limit` bounds result size (default typically `20`).
+- `fields` (comma-separated paths) enables selective projection.
+- domain filters (`status`, `tag`, `source`, `issue_id`, `run_id`, `conversation_key`, etc.) avoid broad scans.
 
 Recommended flow:
 
-1. Discover with bounded list/query (`limit` + filters).
-2. Select a concrete ID.
-3. Retrieve only required fields via `fields`.
+1. `query(action="describe")` to discover capabilities.
+2. bounded `list`/`search` with focused filters.
+3. targeted `get`/`trace` with `fields` as needed.
 
-Tool `details` may still include richer payloads for diagnostics, but `content` is
-kept compact to reduce context pollution.
+## Control-plane config notes
 
-## Messaging setup notes
-
-- Runtime setup state comes from `GET /api/config` and `.mu/config.json`.
-- `slack`, `discord`, `telegram` are currently modeled as available adapters.
-- `mu_messaging_setup(action=preflight)` is the quickest health check during
-  onboarding.
+- Runtime config source of truth is `.mu/config.json`.
+- Inspect runtime state via `query(action="get", resource="status")` and related `query` reads.
+- Apply control-plane lifecycle mutations via `command(kind="reload")` / `command(kind="update")`.

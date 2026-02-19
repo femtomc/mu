@@ -1,7 +1,7 @@
 /**
  * mu-branding — Custom serve-mode TUI chrome for mu.
  *
- * Defaults to a minimal, information-dense layout:
+ * Defaults to a compact, information-dense layout:
  * - Compact header + footer
  * - Terminal title and working message branding
  * - Lightweight periodic status refresh (open/ready/control-plane)

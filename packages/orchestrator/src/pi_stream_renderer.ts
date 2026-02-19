@@ -12,7 +12,7 @@ export type PiStreamRendererOpts = {
 };
 
 /**
- * Minimal renderer for pi JSONL event streams (pi CLI `--mode json` and pi SDK AgentEvent JSON).
+ * Compact renderer for pi JSONL event streams (pi CLI `--mode json` and pi SDK AgentEvent JSON).
  *
  * Intended usage:
  *

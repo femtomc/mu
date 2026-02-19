@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { MU_COMMAND_TOOL_NAME, operatorCommandExtension } from "../src/extensions/operator-command.js";
+import { COMMAND_TOOL_NAME, operatorCommandExtension } from "../src/extensions/operator-command.js";
 
 type RegisteredTool = {
 	name: string;
@@ -59,7 +59,7 @@ describe("operatorCommandExtension", () => {
 
 		const pi = createPiMock();
 		operatorCommandExtension(pi.api as any);
-		const tool = pi.tool(MU_COMMAND_TOOL_NAME);
+		const tool = pi.tool(COMMAND_TOOL_NAME);
 		const response = await tool.execute("tool-1", {
 			kind: "run_start",
 			prompt: "hello",
@@ -92,7 +92,7 @@ describe("operatorCommandExtension", () => {
 
 		const pi = createPiMock();
 		operatorCommandExtension(pi.api as any);
-		const tool = pi.tool(MU_COMMAND_TOOL_NAME);
+		const tool = pi.tool(COMMAND_TOOL_NAME);
 		const response = await tool.execute("tool-2", { kind: "reload" });
 
 		expect(response.content?.[0]?.text).toContain("Command completed: reload");
@@ -113,9 +113,90 @@ describe("operatorCommandExtension", () => {
 
 		const pi = createPiMock();
 		operatorCommandExtension(pi.api as any);
-		const tool = pi.tool(MU_COMMAND_TOOL_NAME);
-		await tool.execute("tool-3", { kind: "status" });
+		const tool = pi.tool(COMMAND_TOOL_NAME);
+		await tool.execute("tool-3", { kind: "reload" });
 
 		expect(called).toBe(true);
+	});
+
+	test("supports issue lifecycle mutation kinds", async () => {
+		let requestBody: any = null;
+		globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+			requestBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+			return new Response(
+				JSON.stringify({
+					ok: true,
+					result: {
+						kind: "completed",
+						command: {
+							target_type: "issue close",
+							result: { issue: { id: "mu-123", status: "closed", outcome: "success" } },
+						},
+					},
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as typeof fetch;
+
+		const pi = createPiMock();
+		operatorCommandExtension(pi.api as any);
+		const tool = pi.tool(COMMAND_TOOL_NAME);
+		const response = await tool.execute("tool-4", {
+			kind: "issue_close",
+			id: "mu-123",
+			outcome: "success",
+		});
+
+		expect(requestBody).toEqual({ kind: "issue_close", id: "mu-123", outcome: "success" });
+		expect(response.content?.[0]?.text).toContain("Command completed: issue_close");
+	});
+
+	test("supports scheduler mutation kinds", async () => {
+		let requestBody: any = null;
+		globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+			requestBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+			return new Response(
+				JSON.stringify({
+					ok: true,
+					result: {
+						kind: "completed",
+						command: {
+							target_type: "cron create",
+							result: {
+								program: {
+									program_id: "cron-123",
+									schedule: { kind: "every", every_ms: 60000 },
+								},
+							},
+						},
+					},
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as typeof fetch;
+
+		const pi = createPiMock();
+		operatorCommandExtension(pi.api as any);
+		const tool = pi.tool(COMMAND_TOOL_NAME);
+		const response = await tool.execute("tool-5", {
+			kind: "cron_create",
+			title: "Minute pulse",
+			target_kind: "activity",
+			activity_id: "act-123",
+			schedule_kind: "every",
+			every_ms: 60_000,
+			reason: "cron-scheduled",
+		});
+
+		expect(requestBody).toEqual({
+			kind: "cron_create",
+			title: "Minute pulse",
+			target_kind: "activity",
+			activity_id: "act-123",
+			schedule_kind: "every",
+			every_ms: 60_000,
+			reason: "cron-scheduled",
+		});
+		expect(response.content?.[0]?.text).toContain("Command completed: cron_create");
 	});
 });

@@ -2,8 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { brandingExtension } from "../src/extensions/branding.js";
 import { eventLogExtension } from "../src/extensions/event-log.js";
 import { registerMuSubcommand, resetMuCommandDispatcher } from "../src/extensions/mu-command-dispatcher.js";
-import { messagingSetupExtension } from "../src/extensions/messaging-setup.js";
-import { serverToolsExtension } from "../src/extensions/server-tools.js";
 
 type RegisteredCommand = {
 	description: string;
@@ -103,15 +101,10 @@ describe("mu command dispatcher", () => {
 	test("serve extensions expose only /mu command entrypoint", async () => {
 		const pi = createPiMock();
 
-		serverToolsExtension(pi.api as any);
 		eventLogExtension(pi.api as any);
-		messagingSetupExtension(pi.api as any);
 		brandingExtension(pi.api as any);
 
 		expect([...pi.commands.keys()]).toEqual(["mu"]);
-		expect(pi.commands.has("mu-status")).toBe(false);
-		expect(pi.commands.has("mu-control")).toBe(false);
-		expect(pi.commands.has("mu-setup")).toBe(false);
 		expect(pi.commands.has("mu-events")).toBe(false);
 		expect(pi.commands.has("mu-brand")).toBe(false);
 
@@ -123,9 +116,6 @@ describe("mu command dispatcher", () => {
 		const { ctx, notifications } = createCommandContext();
 		await command.handler("help", ctx);
 		const helpText = notifications.at(-1)?.text ?? "";
-		expect(helpText).toContain("/mu status");
-		expect(helpText).toContain("/mu control");
-		expect(helpText).toContain("/mu setup");
 		expect(helpText).toContain("/mu events");
 		expect(helpText).toContain("/mu brand");
 	});

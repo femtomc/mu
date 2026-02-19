@@ -79,5 +79,5 @@ parsing logs.
 
 Generation-scoped control-plane metadata is now part of the required contract
 for both `/api/control-plane/reload` and `/api/status`. Operator/agent clients
-must treat missing generation fields as a protocol error rather than silently
-continuing with compatibility fallbacks.
+must treat missing generation fields as a protocol error instead of silently
+continuing with incomplete status payloads.

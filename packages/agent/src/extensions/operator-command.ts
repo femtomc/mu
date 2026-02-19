@@ -1,117 +1,54 @@
 /**
- * mu_command — Operator mutation tool.
+ * command — Approved mutation tool.
  *
  * Single execution path:
  * - Requires MU_SERVER_URL.
  * - Always POSTs to /api/commands/submit.
- *
- * All command validation/execution must route through the server command pipeline.
+ * - Supports mutation-capable command kinds only.
  */
 
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
-export const MU_COMMAND_TOOL_NAME = "mu_command";
+export const COMMAND_TOOL_NAME = "command";
 
 type CommandParams = {
 	kind: string;
 	prompt?: string;
-	issue_id?: string;
-	topic?: string;
-	limit?: number;
 	root_issue_id?: string;
 	max_steps?: number;
+	id?: string;
+	title?: string;
+	body?: string;
+	topic?: string;
+	author?: string;
+	tags?: string;
+	add_tags?: string;
+	remove_tags?: string;
+	priority?: number;
+	status?: string;
+	outcome?: string;
+	parent_id?: string;
+	src_id?: string;
+	dst_id?: string;
+	dep_type?: string;
+	program_id?: string;
+	target_kind?: string;
+	run_job_id?: string;
+	run_root_issue_id?: string;
+	activity_id?: string;
+	every_ms?: number;
+	reason?: string;
+	wake_mode?: string;
+	enabled?: boolean;
+	schedule_kind?: string;
+	at_ms?: number;
+	at?: string;
+	anchor_ms?: number;
+	expr?: string;
+	tz?: string;
 };
-
-const READONLY_COMMAND_KINDS = new Set([
-	"status",
-	"ready",
-	"issue_list",
-	"issue_get",
-	"forum_read",
-	"run_list",
-	"run_status",
-]);
-
-function trimOrNull(value: string | undefined): string | null {
-	if (value == null) return null;
-	const trimmed = value.trim();
-	return trimmed.length > 0 ? trimmed : null;
-}
-
-function normalizedLimit(value: number | undefined, fallback: number, min: number, max: number): number {
-	if (value == null || !Number.isFinite(value)) {
-		return fallback;
-	}
-	return Math.max(min, Math.min(max, Math.trunc(value)));
-}
-
-async function fetchReadOnlyMirror(serverUrl: string, params: CommandParams): Promise<unknown | null> {
-	if (!READONLY_COMMAND_KINDS.has(params.kind)) {
-		return null;
-	}
-
-	const base = serverUrl.replace(/\/+$/, "");
-	const limit = normalizedLimit(params.limit, 20, 1, 200);
-	let path: string | null = null;
-
-	switch (params.kind) {
-		case "status":
-			path = "/api/status";
-			break;
-		case "ready":
-			path = `/api/issues/ready?limit=${limit}`;
-			break;
-		case "issue_list":
-			path = `/api/issues?status=open&limit=${limit}`;
-			break;
-		case "issue_get": {
-			const issueId = trimOrNull(params.issue_id);
-			if (!issueId) return { error: "issue_id is required for issue_get mirror fetch" };
-			path = `/api/issues/${encodeURIComponent(issueId)}`;
-			break;
-		}
-		case "forum_read": {
-			const topic = trimOrNull(params.topic);
-			if (!topic) return { error: "topic is required for forum_read mirror fetch" };
-			path = `/api/forum/read?topic=${encodeURIComponent(topic)}&limit=${limit}`;
-			break;
-		}
-		case "run_list":
-			path = `/api/runs?limit=${limit}`;
-			break;
-		case "run_status": {
-			const rootIssueId = trimOrNull(params.root_issue_id);
-			if (!rootIssueId) return { error: "root_issue_id is required for run_status mirror fetch" };
-			path = `/api/runs/${encodeURIComponent(rootIssueId)}`;
-			break;
-		}
-		default:
-			return null;
-	}
-
-	if (!path) {
-		return null;
-	}
-
-	try {
-		const response = await fetch(`${base}${path}`);
-		const raw = await response.text();
-		let payload: unknown;
-		try {
-			payload = JSON.parse(raw);
-		} catch {
-			payload = raw;
-		}
-		if (!response.ok) {
-			return { error: `mirror fetch failed (${response.status})`, path, payload };
-		}
-		return payload;
-	} catch (err) {
-		return { error: err instanceof Error ? err.message : String(err), path };
-	}
-}
 
 async function executeViaServer(
 	serverUrl: string,
@@ -175,7 +112,6 @@ async function executeViaServer(
 	const resultKind = typeof result?.kind === "string" ? result.kind : "unknown";
 
 	let summary: string;
-	let readResult: unknown = null;
 	if (resultKind === "completed" || resultKind === "awaiting_confirmation") {
 		const command = result?.command as Record<string, unknown> | undefined;
 		summary = `Command ${resultKind}: ${params.kind}`;
@@ -184,12 +120,6 @@ async function executeViaServer(
 		}
 		if (resultKind === "completed" && command?.result) {
 			summary += `\n${JSON.stringify(command.result, null, 2)}`;
-		}
-		if (resultKind === "completed" && READONLY_COMMAND_KINDS.has(params.kind)) {
-			readResult = await fetchReadOnlyMirror(serverUrl, params);
-			if (readResult != null) {
-				summary += `\n${JSON.stringify({ query_result: readResult }, null, 2)}`;
-			}
 		}
 	} else if (resultKind === "denied" || resultKind === "invalid" || resultKind === "failed") {
 		const reason = result?.reason ?? "unknown";
@@ -200,44 +130,84 @@ async function executeViaServer(
 
 	return {
 		content: [{ type: "text" as const, text: summary }],
-		details: { kind: params.kind, pipeline_result: result, query_result: readResult },
+		details: { kind: params.kind, pipeline_result: result },
 	};
 }
 
 export function operatorCommandExtension(pi: ExtensionAPI) {
 	const CommandParams = Type.Object({
-		kind: StringEnum([
-			"status",
-			"ready",
-			"issue_list",
-			"issue_get",
-			"forum_read",
-			"run_list",
-			"run_status",
-			"run_start",
-			"run_resume",
-			"run_interrupt",
-			"reload",
-			"update",
-		] as const),
-		prompt: Type.Optional(Type.String({ description: "Prompt for run_start" })),
-		issue_id: Type.Optional(Type.String({ description: "Issue ID for issue_get" })),
-		topic: Type.Optional(Type.String({ description: "Topic for forum_read" })),
-		limit: Type.Optional(Type.Number({ description: "Limit for forum_read / run_resume" })),
-		root_issue_id: Type.Optional(
-			Type.String({ description: "Root issue ID for run_status / run_resume / run_interrupt" }),
+		kind: StringEnum(
+			[
+				"run_start",
+				"run_resume",
+				"run_interrupt",
+				"reload",
+				"update",
+				"issue_create",
+				"issue_update",
+				"issue_claim",
+				"issue_open",
+				"issue_close",
+				"issue_dep",
+				"issue_undep",
+				"forum_post",
+				"heartbeat_create",
+				"heartbeat_update",
+				"heartbeat_delete",
+				"heartbeat_trigger",
+				"heartbeat_enable",
+				"heartbeat_disable",
+				"cron_create",
+				"cron_update",
+				"cron_delete",
+				"cron_trigger",
+				"cron_enable",
+				"cron_disable",
+			] as const,
 		),
+		prompt: Type.Optional(Type.String({ description: "Prompt for run_start" })),
+		root_issue_id: Type.Optional(Type.String({ description: "Root issue ID for run_resume / run_interrupt" })),
 		max_steps: Type.Optional(Type.Number({ description: "Max steps for run_start / run_resume" })),
+		id: Type.Optional(Type.String({ description: "Issue ID for issue_update/issue_claim/issue_open/issue_close" })),
+		title: Type.Optional(Type.String({ description: "Issue title for issue_create" })),
+		body: Type.Optional(Type.String({ description: "Issue/forum body text (issue_create, issue_update, forum_post)" })),
+		topic: Type.Optional(Type.String({ description: "Forum topic for forum_post" })),
+		author: Type.Optional(Type.String({ description: "Forum author for forum_post (default: operator)" })),
+		tags: Type.Optional(Type.String({ description: "Comma-separated tags for issue_create/issue_update" })),
+		add_tags: Type.Optional(Type.String({ description: "Comma-separated tags to add for issue_update" })),
+		remove_tags: Type.Optional(Type.String({ description: "Comma-separated tags to remove for issue_update" })),
+		priority: Type.Optional(Type.Number({ description: "Issue priority for issue_create/issue_update" })),
+		status: Type.Optional(Type.String({ description: "Issue status for issue_update" })),
+		outcome: Type.Optional(Type.String({ description: "Outcome for issue_update/issue_close" })),
+		parent_id: Type.Optional(Type.String({ description: "Optional parent issue id for issue_create" })),
+		src_id: Type.Optional(Type.String({ description: "Source issue id for issue_dep/issue_undep" })),
+		dst_id: Type.Optional(Type.String({ description: "Destination issue id for issue_dep/issue_undep" })),
+		dep_type: Type.Optional(Type.String({ description: "Dependency type: blocks|parent" })),
+		program_id: Type.Optional(Type.String({ description: "Program ID for heartbeat/cron update|delete|trigger|enable|disable" })),
+		target_kind: Type.Optional(Type.String({ description: "Program target kind: run|activity" })),
+		run_job_id: Type.Optional(Type.String({ description: "Run target job ID for heartbeat/cron program mutations" })),
+		run_root_issue_id: Type.Optional(
+			Type.String({ description: "Run target root issue ID for heartbeat/cron program mutations" }),
+		),
+		activity_id: Type.Optional(Type.String({ description: "Activity target ID for heartbeat/cron program mutations" })),
+		every_ms: Type.Optional(Type.Number({ description: "Heartbeat interval ms, or cron every schedule interval ms" })),
+		reason: Type.Optional(Type.String({ description: "Heartbeat/cron execution reason" })),
+		wake_mode: Type.Optional(Type.String({ description: "Wake mode for run targets: immediate|next_heartbeat" })),
+		enabled: Type.Optional(Type.Boolean({ description: "Program enabled state" })),
+		schedule_kind: Type.Optional(Type.String({ description: "Cron schedule kind: at|every|cron" })),
+		at_ms: Type.Optional(Type.Number({ description: "Cron one-shot timestamp epoch ms" })),
+		at: Type.Optional(Type.String({ description: "Cron one-shot timestamp ISO-8601" })),
+		anchor_ms: Type.Optional(Type.Number({ description: "Cron every schedule anchor epoch ms" })),
+		expr: Type.Optional(Type.String({ description: "Cron expression (5-field)" })),
+		tz: Type.Optional(Type.String({ description: "Cron expression timezone (IANA)" })),
 	});
 
 	pi.registerTool({
-		name: MU_COMMAND_TOOL_NAME,
+		name: COMMAND_TOOL_NAME,
 		label: "Command",
 		description: [
-			"Propose an approved mu command for execution.",
-			"This is the ONLY way to trigger mutations (starting runs, resuming runs, interrupting runs).",
-			"Read-only queries (status, issue_list, etc.) can also be proposed here.",
-			"The command will be validated and executed through the control-plane pipeline.",
+			"Execute approved mutation commands through the command API.",
+			"Supports run lifecycle, control-plane lifecycle, issue/forum mutations, and heartbeat/cron program management.",
 		].join(" "),
 		parameters: CommandParams,
 		async execute(_toolCallId, params) {

@@ -109,7 +109,7 @@ function summarizeToolArgs(toolName: string, args: unknown, maxLen: number): str
 }
 
 function toolColor(toolName: string): number {
-	// Basic categories (kept minimal; avoid dependency on external theming).
+	// Basic categories (kept small; avoid dependency on external theming).
 	if (toolName === "bash") return 33; // yellow
 	if (
 		toolName === "read" ||

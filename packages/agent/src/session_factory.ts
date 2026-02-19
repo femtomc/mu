@@ -1,12 +1,15 @@
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import {
-	createBashTool,
-	createEditTool,
-	createReadTool,
-	createWriteTool,
-} from "@mariozechner/pi-coding-agent";
+import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@mariozechner/pi-coding-agent";
 import { createMuResourceLoader, resolveModel } from "./backend.js";
 import { MU_DEFAULT_THEME_NAME, MU_DEFAULT_THEME_PATH } from "./ui_defaults.js";
+
+export type MuSessionPersistenceMode = "in-memory" | "continue-recent" | "new" | "open";
+
+export type MuSessionPersistenceOpts = {
+	mode?: MuSessionPersistenceMode;
+	sessionDir?: string;
+	sessionFile?: string;
+};
 
 export type CreateMuSessionOpts = {
 	cwd: string;
@@ -15,6 +18,7 @@ export type CreateMuSessionOpts = {
 	model?: string;
 	thinking?: string;
 	extensionPaths?: string[];
+	session?: MuSessionPersistenceOpts;
 };
 
 export type MuSession = {
@@ -24,6 +28,38 @@ export type MuSession = {
 	bindExtensions: (bindings: any) => Promise<void>;
 	agent: { waitForIdle: () => Promise<void> };
 };
+
+type SessionManagerFactory = {
+	inMemory: (cwd: string) => any;
+	continueRecent: (cwd: string, sessionDir?: string) => any;
+	create: (cwd: string, sessionDir?: string) => any;
+	open: (sessionFile: string, sessionDir?: string) => any;
+};
+
+function createSessionManager(
+	SessionManager: SessionManagerFactory,
+	cwd: string,
+	sessionOpts: MuSessionPersistenceOpts | undefined,
+): any {
+	const mode: MuSessionPersistenceMode = sessionOpts?.mode ?? (sessionOpts?.sessionFile ? "open" : "continue-recent");
+	const sessionDir = sessionOpts?.sessionDir;
+
+	switch (mode) {
+		case "continue-recent":
+			return SessionManager.continueRecent(cwd, sessionDir);
+		case "new":
+			return SessionManager.create(cwd, sessionDir);
+		case "open": {
+			const sessionFile = sessionOpts?.sessionFile?.trim();
+			if (!sessionFile) {
+				throw new Error("session.mode=open requires session.sessionFile");
+			}
+			return SessionManager.open(sessionFile, sessionDir);
+		}
+		default:
+			return SessionManager.inMemory(cwd);
+	}
+}
 
 export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSession> {
 	const { AuthStorage, createAgentSession, SessionManager, SettingsManager } = await import(
@@ -61,7 +97,7 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 		model,
 		tools,
 		thinkingLevel: (opts.thinking ?? "minimal") as ThinkingLevel,
-		sessionManager: SessionManager.inMemory(opts.cwd),
+		sessionManager: createSessionManager(SessionManager as SessionManagerFactory, opts.cwd, opts.session),
 		settingsManager,
 		resourceLoader,
 		authStorage,

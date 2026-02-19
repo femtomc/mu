@@ -277,7 +277,7 @@ describe("DagRunner", () => {
 		expect(run.systemPrompt).toContain("No code changes, no file edits, no git commits");
 		expect(run.systemPrompt).toContain("MUST decompose the assigned issue into worker child issues");
 		expect(run.systemPrompt).toContain("--outcome expanded");
-		expect(run.systemPrompt).toContain("deterministic and minimal");
+		expect(run.systemPrompt).toContain("deterministic and scoped");
 		expect(run.systemPrompt).toContain("blocks");
 		expect(run.systemPrompt).not.toContain("You are mu's worker");
 		expect(run.systemPrompt).not.toContain("Implement: edit files");

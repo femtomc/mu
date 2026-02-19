@@ -1,6 +1,6 @@
 import { existsSync, openSync, rmSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import chalk from "chalk";
 import type { BackendRunner } from "@femtomc/mu-agent";
@@ -50,6 +50,14 @@ type RunHeartbeatRegistration = {
 	created: boolean;
 };
 
+type OperatorSessionStartMode = "in-memory" | "continue-recent" | "new" | "open";
+
+type OperatorSessionStartOpts = {
+	mode: OperatorSessionStartMode;
+	sessionDir?: string;
+	sessionFile?: string;
+};
+
 type ServeDeps = {
 	startServer: (opts: { repoRoot: string; port: number }) => Promise<ServeServerHandle>;
 	spawnBackgroundServer: (opts: { repoRoot: string; port: number }) => Promise<{ pid: number; url: string }>;
@@ -59,6 +67,9 @@ type ServeDeps = {
 		provider?: string;
 		model?: string;
 		thinking?: string;
+		sessionMode?: OperatorSessionStartMode;
+		sessionDir?: string;
+		sessionFile?: string;
 	}) => Promise<RunResult>;
 	queueRun: (opts: {
 		serverUrl: string;
@@ -68,10 +79,7 @@ type ServeDeps = {
 		model?: string;
 		reasoning?: string;
 	}) => Promise<QueuedRunSnapshot>;
-	registerRunHeartbeat: (opts: {
-		serverUrl: string;
-		run: QueuedRunSnapshot;
-	}) => Promise<RunHeartbeatRegistration>;
+	registerRunHeartbeat: (opts: { serverUrl: string; run: QueuedRunSnapshot }) => Promise<RunHeartbeatRegistration>;
 	registerSignalHandler: (signal: NodeJS.Signals, handler: () => void) => () => void;
 	registerProcessExitHandler: (handler: () => void) => () => void;
 	openBrowser: (url: string) => void;
@@ -108,20 +116,18 @@ type CliCtx = {
 
 type OperatorSessionCommandOptions = {
 	onInteractiveReady?: () => void;
+	session?: OperatorSessionStartOpts;
 };
 
 type ServeLifecycleOptions = {
-	commandName: "serve" | "run";
+	commandName: "serve" | "run" | "session";
 	port: number;
 	noOpen: boolean;
 	operatorProvider?: string;
 	operatorModel?: string;
 	operatorThinking?: string;
-	beforeOperatorSession?: (opts: {
-		serverUrl: string;
-		deps: ServeDeps;
-		io: CliIO | undefined;
-	}) => Promise<void>;
+	operatorSession?: OperatorSessionStartOpts;
+	beforeOperatorSession?: (opts: { serverUrl: string; deps: ServeDeps; io: CliIO | undefined }) => Promise<void>;
 };
 
 function ok(stdout: string = "", exitCode: number = 0): RunResult {
@@ -292,6 +298,17 @@ async function readServeOperatorDefaults(repoRoot: string): Promise<{ provider?:
 	}
 }
 
+function operatorSessionDir(repoRoot: string): string {
+	return join(repoRoot, ".mu", "operator", "sessions");
+}
+
+function defaultOperatorSessionStart(repoRoot: string): OperatorSessionStartOpts {
+	return {
+		mode: "continue-recent",
+		sessionDir: operatorSessionDir(repoRoot),
+	};
+}
+
 async function ensureCtx(cwd: string): Promise<CliCtx> {
 	const { FsJsonlStore, fsEventLog, getStorePaths } = await import("@femtomc/mu-core/node");
 	const { IssueStore } = await import("@femtomc/mu-issue");
@@ -331,7 +348,6 @@ async function ensureStoreInitialized(ctx: Pick<CliCtx, "paths">): Promise<void>
 			"",
 		].join("\n"),
 	);
-
 }
 
 async function findRepoRoot(start: string): Promise<string> {
@@ -420,6 +436,7 @@ function mainHelp(): string {
 		`  ${cmd("login")} ${dim("[<provider>] [--list]")}           Authenticate with an AI provider`,
 		`  ${cmd("replay")} ${dim("<id|path>")}                      Replay a previous run log`,
 		`  ${cmd("control")} ${dim("<subcmd>")}                      Messaging integrations and identity`,
+		`  ${cmd("session")} ${dim("[list|<id>] [opts]")}               Reconnect/list terminal operator sessions`,
 		`  ${cmd("serve")} ${dim("[--port N] [--no-open]")}          Start API + web UI + operator session`,
 		`  ${cmd("stop")} ${dim("[--force]")}                        Stop the background server`,
 		"",
@@ -498,6 +515,8 @@ export async function run(
 			return await cmdReplay(rest, ctx);
 		case "control":
 			return await cmdControl(rest, ctx);
+		case "session":
+			return await cmdSession(rest, ctx);
 		case "serve":
 			return await cmdServe(rest, ctx);
 		case "stop":
@@ -614,8 +633,31 @@ async function listStoreTargets(ctx: CliCtx): Promise<StoreTargetInfo[]> {
 		{ key: "cp_outbox", path: cp.outboxPath, description: "Outbound delivery queue" },
 		{ key: "cp_policy", path: cp.policyPath, description: "Control-plane policy" },
 		{ key: "cp_adapter_audit", path: cp.adapterAuditPath, description: "Adapter ingress audit" },
-		{ key: "cp_operator_turns", path: join(cp.controlPlaneDir, "operator_turns.jsonl"), description: "Operator turn audit" },
-		{ key: "cp_telegram_ingress", path: join(cp.controlPlaneDir, "telegram_ingress.jsonl"), description: "Deferred Telegram ingress queue" },
+		{
+			key: "cp_operator_turns",
+			path: join(cp.controlPlaneDir, "operator_turns.jsonl"),
+			description: "Operator turn audit",
+		},
+		{
+			key: "cp_operator_conversations",
+			path: join(cp.controlPlaneDir, "operator_conversations.json"),
+			description: "Operator conversation/session bindings",
+		},
+		{
+			key: "cp_operator_sessions",
+			path: join(cp.controlPlaneDir, "operator-sessions"),
+			description: "Messaging operator session transcripts",
+		},
+		{
+			key: "operator_sessions",
+			path: operatorSessionDir(ctx.repoRoot),
+			description: "Terminal operator session transcripts",
+		},
+		{
+			key: "cp_telegram_ingress",
+			path: join(cp.controlPlaneDir, "telegram_ingress.jsonl"),
+			description: "Deferred Telegram ingress queue",
+		},
 	];
 }
 
@@ -665,7 +707,7 @@ async function cmdStore(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  mu store tail cp_operator_turns --limit 30 --json --pretty",
 				"",
 				"Targets (for tail): issues, forum, events, cp_commands, cp_outbox, cp_identities,",
-				"cp_operator_turns, cp_telegram_ingress, or explicit paths under .mu/",
+				"cp_operator_turns, cp_operator_conversations, cp_telegram_ingress, or explicit paths under .mu/",
 			].join("\n") + "\n",
 		);
 	}
@@ -687,12 +729,9 @@ async function cmdStore(argv: string[], ctx: CliCtx): Promise<RunResult> {
 async function storePaths(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
-			[
-				"mu store paths - list canonical .mu paths",
-				"",
-				"Usage:",
-				"  mu store paths [--json] [--pretty]",
-			].join("\n") + "\n",
+			["mu store paths - list canonical .mu paths", "", "Usage:", "  mu store paths [--json] [--pretty]"].join(
+				"\n",
+			) + "\n",
 		);
 	}
 
@@ -1826,11 +1865,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			return jsonError(
 				"`mu run --json` has been removed. Use `mu serve` + /api/runs/* for machine integration, or `mu resume <root-id> --json` for direct run output.",
 				{
-					recovery: [
-						"mu run \"Break down and execute this goal\"",
-						"mu serve --help",
-						"mu resume <root-id> --json",
-					],
+					recovery: ['mu run "Break down and execute this goal"', "mu serve --help", "mu resume <root-id> --json"],
 				},
 			);
 		}
@@ -1839,7 +1874,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"`mu run --raw-stream` has been removed. Use `mu serve` + /api/runs/* for queued runs, or `mu resume <root-id> --raw-stream` for direct runner streaming.",
 				{
 					recovery: [
-						"mu run \"Break down and execute this goal\"",
+						'mu run "Break down and execute this goal"',
 						"mu serve --help",
 						"mu resume <root-id> --raw-stream",
 					],
@@ -1874,11 +1909,11 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		if (a === "--port") {
 			const next = argv[i + 1];
 			if (!next) {
-				return jsonError("missing value for --port", { recovery: ["mu run --port 3000 \"...\""] });
+				return jsonError("missing value for --port", { recovery: ['mu run --port 3000 "..."'] });
 			}
 			const p = ensureInt(next, { name: "--port", min: 1, max: 65535 });
 			if (p == null) {
-				return jsonError("port must be 1-65535", { recovery: ["mu run --port 3000 \"...\""] });
+				return jsonError("port must be 1-65535", { recovery: ['mu run --port 3000 "..."'] });
 			}
 			port = p;
 			i += 1;
@@ -1887,7 +1922,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		if (a.startsWith("--port=")) {
 			const p = ensureInt(a.slice("--port=".length), { name: "--port", min: 1, max: 65535 });
 			if (p == null) {
-				return jsonError("port must be 1-65535", { recovery: ["mu run --port 3000 \"...\""] });
+				return jsonError("port must be 1-65535", { recovery: ['mu run --port 3000 "..."'] });
 			}
 			port = p;
 			continue;
@@ -2571,6 +2606,362 @@ async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return ok(text.length > 0 && !text.endsWith("\n") ? `${text}\n` : text);
 }
 
+type PersistedOperatorSessionRow = {
+	id: string;
+	path: string;
+	created: Date;
+	modified: Date;
+	messageCount: number;
+	firstMessage: string;
+	name?: string;
+};
+
+function toDate(value: unknown): Date {
+	if (value instanceof Date) {
+		return value;
+	}
+	if (typeof value === "string" || typeof value === "number") {
+		const parsed = new Date(value);
+		if (!Number.isNaN(parsed.getTime())) {
+			return parsed;
+		}
+	}
+	return new Date(0);
+}
+
+function resolveCliPath(cwd: string, rawPath: string): string {
+	if (rawPath.startsWith("~/")) {
+		const home = Bun.env.HOME ?? process.env.HOME;
+		if (home) {
+			return join(home, rawPath.slice(2));
+		}
+	}
+	return resolve(cwd, rawPath);
+}
+
+function isLikelySessionPath(selector: string): boolean {
+	return (
+		selector.includes("/") ||
+		selector.includes("\\") ||
+		selector.endsWith(".jsonl") ||
+		selector.startsWith(".") ||
+		selector.startsWith("~")
+	);
+}
+
+async function loadPersistedOperatorSessions(repoRoot: string): Promise<PersistedOperatorSessionRow[]> {
+	const { SessionManager } = await import("@mariozechner/pi-coding-agent");
+	const rows = (await SessionManager.list(repoRoot, operatorSessionDir(repoRoot))) as Array<{
+		id: unknown;
+		path: unknown;
+		created: unknown;
+		modified: unknown;
+		messageCount: unknown;
+		firstMessage: unknown;
+		name?: unknown;
+	}>;
+	const sessions = rows
+		.map((row): PersistedOperatorSessionRow | null => {
+			const id = typeof row.id === "string" ? row.id : "";
+			const path = typeof row.path === "string" ? row.path : "";
+			if (!id || !path) {
+				return null;
+			}
+			return {
+				id,
+				path,
+				created: toDate(row.created),
+				modified: toDate(row.modified),
+				messageCount: typeof row.messageCount === "number" ? row.messageCount : 0,
+				firstMessage: typeof row.firstMessage === "string" ? row.firstMessage : "",
+				name: typeof row.name === "string" && row.name.trim().length > 0 ? row.name.trim() : undefined,
+			};
+		})
+		.filter((row): row is PersistedOperatorSessionRow => row != null);
+	sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+	return sessions;
+}
+
+async function resolvePersistedOperatorSessionPath(opts: {
+	cwd: string;
+	repoRoot: string;
+	selector: string;
+}): Promise<{ path: string | null; error?: string; recovery?: string[] }> {
+	const selector = opts.selector.trim();
+	if (!selector) {
+		return {
+			path: null,
+			error: "session selector must not be empty",
+			recovery: ["mu session list"],
+		};
+	}
+
+	if (isLikelySessionPath(selector)) {
+		const candidate = resolveCliPath(opts.cwd, selector);
+		if (await fileExists(candidate)) {
+			return { path: candidate };
+		}
+		return {
+			path: null,
+			error: `session file not found: ${selector}`,
+			recovery: ["mu session list", "mu session --new"],
+		};
+	}
+
+	const sessions = await loadPersistedOperatorSessions(opts.repoRoot);
+	const exact = sessions.filter((session) => session.id === selector);
+	if (exact.length === 1) {
+		return { path: exact[0]!.path };
+	}
+
+	const prefix = sessions.filter((session) => session.id.startsWith(selector));
+	if (prefix.length === 1) {
+		return { path: prefix[0]!.path };
+	}
+	if (prefix.length > 1) {
+		return {
+			path: null,
+			error: `ambiguous session selector: ${selector}`,
+			recovery: prefix.slice(0, 10).map((session) => `mu session ${session.id}`),
+		};
+	}
+
+	const filePrefix = sessions.filter((session) => basename(session.path).startsWith(selector));
+	if (filePrefix.length === 1) {
+		return { path: filePrefix[0]!.path };
+	}
+	if (filePrefix.length > 1) {
+		return {
+			path: null,
+			error: `ambiguous session selector: ${selector}`,
+			recovery: filePrefix.slice(0, 10).map((session) => `mu session ${session.id}`),
+		};
+	}
+
+	return {
+		path: null,
+		error: `session not found: ${selector}`,
+		recovery: ["mu session list", "mu session --new"],
+	};
+}
+
+async function cmdSession(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	if (hasHelpFlag(argv)) {
+		return ok(
+			[
+				"mu session - reconnect/list terminal operator sessions",
+				"",
+				"Usage:",
+				"  mu session [--new] [--resume <session-id|path>] [--port N] [--no-open]",
+				"             [--provider ID] [--model ID] [--thinking LEVEL]",
+				"  mu session <session-id|path>",
+				"  mu session list [--limit N] [--json] [--pretty]",
+				"",
+				"Behavior:",
+				"  - Default: reconnect to the most recent persisted operator session for this repo.",
+				"  - --new: start a fresh operator session.",
+				"  - --resume / positional selector: open a specific persisted session.",
+				"",
+				"Examples:",
+				"  mu session",
+				"  mu session list",
+				"  mu session --new",
+				"  mu session 8b7f1a2c",
+				"  mu session --resume .mu/operator/sessions/session.jsonl",
+				"",
+				"See also: `mu serve --help`, `mu stop --help`",
+			].join("\n") + "\n",
+		);
+	}
+
+	const { value: portRaw, rest: argv0 } = getFlagValue(argv, "--port");
+	const { present: noOpen, rest: argv1 } = popFlag(argv0, "--no-open");
+	const { present: listFlag, rest: argv2 } = popFlag(argv1, "--list");
+	const { present: newFlag, rest: argv3 } = popFlag(argv2, "--new");
+	const { value: resumeRaw, rest: argv4 } = getFlagValue(argv3, "--resume");
+	const { value: limitRaw, rest: argv5 } = getFlagValue(argv4, "--limit");
+	const { value: providerRaw, rest: argv6 } = getFlagValue(argv5, "--provider");
+	const { value: modelRaw, rest: argv7 } = getFlagValue(argv6, "--model");
+	const { value: thinkingRaw, rest: argv8 } = getFlagValue(argv7, "--thinking");
+	const { present: jsonMode, rest: argv9 } = popFlag(argv8, "--json");
+	const { present: pretty, rest: positionalRaw } = popFlag(argv9, "--pretty");
+
+	for (const [flagName, rawValue] of [
+		["--port", portRaw],
+		["--resume", resumeRaw],
+		["--limit", limitRaw],
+		["--provider", providerRaw],
+		["--model", modelRaw],
+		["--thinking", thinkingRaw],
+	] as const) {
+		if (rawValue === "") {
+			return jsonError(`missing value for ${flagName}`, {
+				recovery: ["mu session --help"],
+			});
+		}
+	}
+
+	let positional = [...positionalRaw];
+	let listMode = listFlag;
+	let newMode = newFlag;
+	let selectorFromPositional: string | null = null;
+
+	if (positional[0] === "list" || positional[0] === "ls") {
+		listMode = true;
+		positional = positional.slice(1);
+	} else if (positional[0] === "new") {
+		newMode = true;
+		positional = positional.slice(1);
+	} else if (positional[0] === "open") {
+		if (!positional[1]) {
+			return jsonError("mu session open requires <session-id|path>", {
+				recovery: ["mu session list", "mu session open <session-id>"],
+			});
+		}
+		selectorFromPositional = positional[1];
+		positional = positional.slice(2);
+	}
+
+	if (listMode) {
+		if (newMode || resumeRaw != null || selectorFromPositional != null) {
+			return jsonError("cannot combine list mode with session selection flags", {
+				recovery: ["mu session list", "mu session --help"],
+			});
+		}
+		if (portRaw != null || noOpen || providerRaw != null || modelRaw != null || thinkingRaw != null) {
+			return jsonError("list mode only supports --limit/--json/--pretty", {
+				recovery: ["mu session list --help"],
+			});
+		}
+		if (positional.length > 0) {
+			return jsonError(`unknown args: ${positional.join(" ")}`, {
+				recovery: ["mu session list --help"],
+			});
+		}
+		const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
+		if (limit == null) {
+			return jsonError("limit must be 1-500", { recovery: ["mu session list --limit 20"] });
+		}
+
+		const sessionDir = operatorSessionDir(ctx.repoRoot);
+		const sessions = await loadPersistedOperatorSessions(ctx.repoRoot);
+		const rows = sessions.slice(0, limit).map((session) => ({
+			id: session.id,
+			path: session.path,
+			rel_path: relative(ctx.repoRoot, session.path).replaceAll("\\", "/"),
+			created_at: session.created.toISOString(),
+			modified_at: session.modified.toISOString(),
+			message_count: session.messageCount,
+			name: session.name ?? null,
+			first_message: session.firstMessage,
+		}));
+
+		if (jsonMode) {
+			return ok(
+				jsonText(
+					{
+						repo_root: ctx.repoRoot,
+						session_dir: sessionDir,
+						count: rows.length,
+						total: sessions.length,
+						sessions: rows,
+					},
+					pretty,
+				),
+			);
+		}
+
+		let out = `Operator sessions (${rows.length}/${sessions.length})\n`;
+		out += `Store: ${relative(ctx.repoRoot, sessionDir).replaceAll("\\", "/")}\n`;
+		if (rows.length === 0) {
+			out += "\nNo persisted operator sessions yet. Start one with `mu session --new`.\n";
+			return ok(out);
+		}
+
+		out += "\n";
+		for (const row of rows) {
+			const preview = trimForHeader((row.name ?? row.first_message ?? "(no messages)").trim(), 88);
+			out += `  ${chalk.cyan(row.id.slice(0, 12))}  msgs=${row.message_count}  ${chalk.dim(row.modified_at)}\n`;
+			out += `    ${preview}\n`;
+			out += `    ${chalk.dim(String(row.rel_path))}\n`;
+		}
+		return ok(out);
+	}
+
+	if (jsonMode || pretty) {
+		return jsonError("--json/--pretty are only supported with `mu session list`", {
+			recovery: ["mu session list --json --pretty", "mu session --help"],
+		});
+	}
+	if (limitRaw != null) {
+		return jsonError("--limit is only supported with `mu session list`", {
+			recovery: ["mu session list --limit 20"],
+		});
+	}
+
+	if (!selectorFromPositional && positional.length > 0) {
+		selectorFromPositional = positional[0]!;
+		positional = positional.slice(1);
+	}
+	if (positional.length > 0) {
+		return jsonError(`unknown args: ${positional.join(" ")}`, {
+			recovery: ["mu session --help"],
+		});
+	}
+
+	const selectorFromFlag = resumeRaw?.trim() || null;
+	if (selectorFromFlag && selectorFromPositional) {
+		return jsonError("provide either --resume or positional session selector, not both", {
+			recovery: ["mu session --resume <session-id>", "mu session <session-id>"],
+		});
+	}
+	const selector = selectorFromFlag ?? selectorFromPositional;
+	if (newMode && selector) {
+		return jsonError("cannot combine --new with a session selector", {
+			recovery: ["mu session --new", "mu session <session-id>"],
+		});
+	}
+
+	const provider = providerRaw?.trim() || undefined;
+	const model = modelRaw?.trim() || undefined;
+	const thinking = thinkingRaw?.trim() || undefined;
+
+	const port = portRaw ? ensureInt(portRaw, { name: "--port", min: 1, max: 65535 }) : 3000;
+	if (port == null) {
+		return jsonError("port must be 1-65535", { recovery: ["mu session --port 3000"] });
+	}
+
+	let operatorSession: OperatorSessionStartOpts = defaultOperatorSessionStart(ctx.repoRoot);
+	if (newMode) {
+		operatorSession = {
+			mode: "new",
+			sessionDir: operatorSessionDir(ctx.repoRoot),
+		};
+	} else if (selector) {
+		const resolved = await resolvePersistedOperatorSessionPath({ cwd: ctx.cwd, repoRoot: ctx.repoRoot, selector });
+		if (!resolved.path) {
+			return jsonError(resolved.error ?? "unable to resolve session", {
+				recovery: resolved.recovery ?? ["mu session list"],
+			});
+		}
+		operatorSession = {
+			mode: "open",
+			sessionDir: operatorSessionDir(ctx.repoRoot),
+			sessionFile: resolved.path,
+		};
+	}
+
+	return await runServeLifecycle(ctx, {
+		commandName: "session",
+		port,
+		noOpen,
+		operatorProvider: provider,
+		operatorModel: model,
+		operatorThinking: thinking,
+		operatorSession,
+	});
+}
+
 async function cmdOperatorSession(
 	argv: string[],
 	ctx: CliCtx,
@@ -2666,6 +3057,7 @@ async function cmdOperatorSession(
 		}
 
 		const { createMuSession } = await import("@femtomc/mu-agent");
+		const requestedSession = options.session ?? defaultOperatorSessionStart(ctx.repoRoot);
 		const session = await createMuSession({
 			cwd: ctx.repoRoot,
 			systemPrompt,
@@ -2673,6 +3065,11 @@ async function cmdOperatorSession(
 			model,
 			thinking,
 			extensionPaths: ctx.serveExtensionPaths,
+			session: {
+				mode: requestedSession.mode,
+				sessionDir: requestedSession.sessionDir,
+				sessionFile: requestedSession.sessionFile,
+			},
 		});
 
 		return session;
@@ -2889,9 +3286,7 @@ function normalizeQueuedRun(value: unknown): QueuedRunSnapshot | null {
 	const rootRaw = typeof rec.root_issue_id === "string" ? rec.root_issue_id.trim() : "";
 	const rootIssueId = rootRaw.length > 0 ? rootRaw : null;
 	const maxSteps =
-		typeof rec.max_steps === "number" && Number.isFinite(rec.max_steps)
-			? Math.max(1, Math.trunc(rec.max_steps))
-			: 20;
+		typeof rec.max_steps === "number" && Number.isFinite(rec.max_steps) ? Math.max(1, Math.trunc(rec.max_steps)) : 20;
 	return {
 		job_id: jobId,
 		root_issue_id: rootIssueId,
@@ -2914,7 +3309,11 @@ function heartbeatProgramMatchesRun(program: Record<string, unknown>, run: Queue
 	if (typeof target.job_id === "string" && target.job_id.trim() === run.job_id) {
 		return true;
 	}
-	if (run.root_issue_id && typeof target.root_issue_id === "string" && target.root_issue_id.trim() === run.root_issue_id) {
+	if (
+		run.root_issue_id &&
+		typeof target.root_issue_id === "string" &&
+		target.root_issue_id.trim() === run.root_issue_id
+	) {
 		return true;
 	}
 	return false;
@@ -2985,7 +3384,9 @@ async function pollUntilHealthy(url: string, timeoutMs: number, intervalMs: numb
 		}
 		await delayMs(intervalMs);
 	}
-	throw new Error(`server at ${url} did not become healthy within ${timeoutMs}ms — check .mu/control-plane/server.log`);
+	throw new Error(
+		`server at ${url} did not become healthy within ${timeoutMs}ms — check .mu/control-plane/server.log`,
+	);
 }
 
 function buildServeDeps(ctx: CliCtx): ServeDeps {
@@ -3059,7 +3460,7 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 				return { ok: false };
 			}
 		},
-		runOperatorSession: async ({ onReady, provider, model, thinking }) => {
+		runOperatorSession: async ({ onReady, provider, model, thinking, sessionMode, sessionDir, sessionFile }) => {
 			const { operatorExtensionPaths } = await import("@femtomc/mu-agent");
 			const operatorArgv: string[] = [];
 			if (provider) {
@@ -3071,11 +3472,19 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 			if (thinking) {
 				operatorArgv.push("--thinking", thinking);
 			}
+			const requestedSession: OperatorSessionStartOpts = sessionMode
+				? {
+						mode: sessionMode,
+						sessionDir,
+						sessionFile,
+				  }
+				: defaultOperatorSessionStart(ctx.repoRoot);
 			return await cmdOperatorSession(
 				operatorArgv,
 				{ ...ctx, serveExtensionPaths: ctx.serveExtensionPaths ?? operatorExtensionPaths },
 				{
 					onInteractiveReady: onReady,
+					session: requestedSession,
 				},
 			);
 		},
@@ -3205,6 +3614,7 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 	const operatorModel =
 		opts.operatorModel ??
 		(opts.operatorProvider != null && opts.operatorProvider.length > 0 ? undefined : operatorDefaults.model);
+	const operatorSession = opts.operatorSession ?? defaultOperatorSessionStart(ctx.repoRoot);
 
 	const io = ctx.io;
 	const deps = buildServeDeps(ctx);
@@ -3223,7 +3633,11 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 			io?.stderr?.write(`mu: started background server at ${serverUrl} (pid ${spawned.pid})\n`);
 		} catch (err) {
 			return jsonError(`failed to start server: ${describeError(err)}`, {
-				recovery: [`mu ${opts.commandName} --port 3000`, `mu ${opts.commandName} --help`, "check .mu/control-plane/server.log"],
+				recovery: [
+					`mu ${opts.commandName} --port 3000`,
+					`mu ${opts.commandName} --help`,
+					"check .mu/control-plane/server.log",
+				],
 			});
 		}
 	}
@@ -3246,7 +3660,7 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 			await opts.beforeOperatorSession({ serverUrl, deps, io });
 		} catch (err) {
 			return jsonError(`failed to prepare run lifecycle: ${describeError(err)}`, {
-				recovery: ["mu serve --help", "mu run --help"],
+				recovery: [`mu ${opts.commandName} --help`, "mu serve --help", "mu run --help"],
 			});
 		}
 	}
@@ -3274,7 +3688,11 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 	];
 	const unregisterSignals = () => {
 		for (const remove of removeSignalHandlers) {
-			try { remove(); } catch { /* no-op */ }
+			try {
+				remove();
+			} catch {
+				/* no-op */
+			}
 		}
 	};
 
@@ -3286,10 +3704,13 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 				provider: operatorProvider,
 				model: operatorModel,
 				thinking: opts.operatorThinking,
+				sessionMode: operatorSession.mode,
+				sessionDir: operatorSession.sessionDir,
+				sessionFile: operatorSession.sessionFile,
 			})
 			.catch((err) =>
 				jsonError(`operator session crashed: ${describeError(err)}`, {
-					recovery: ["mu serve --help"],
+					recovery: [`mu ${opts.commandName} --help`, "mu serve --help"],
 				}),
 			);
 
@@ -3334,14 +3755,15 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"the TUI only — the server keeps running.",
 				"",
 				"Use `mu stop` to shut down the background server.",
+				"Use `mu session` to reconnect to a persisted terminal operator session.",
 				"",
 				"Control plane configuration:",
 				"  .mu/config.json is the source of truth for adapter + assistant settings",
 				"  Attached terminal operator session inherits control_plane.operator.provider/model when set",
-				"  Use `/mu setup <adapter>` in mu serve operator session for guided setup",
+				"  Use `query(action=\"describe\")` in the operator session for capability discovery",
 				"  Use `mu control status` to inspect current config",
 				"",
-				"See also: `mu stop --help`, `mu guide`",
+				"See also: `mu session --help`, `mu stop --help`, `mu guide`",
 			].join("\n") + "\n",
 		);
 	}
@@ -3594,15 +4016,18 @@ async function controlDiagnoseOperator(argv: string[], ctx: CliCtx, pretty: bool
 		outcomeCounts[t.outcome] = (outcomeCounts[t.outcome] ?? 0) + 1;
 	}
 
-	const recentTurns = turns.slice(-limit).reverse().map((t) => ({
-		ts_ms: t.ts_ms,
-		ts_iso: formatTs(t.ts_ms),
-		request_id: t.request_id,
-		outcome: t.outcome,
-		reason: t.reason,
-		command_kind: t.command_kind,
-		message_preview: t.message_preview,
-	}));
+	const recentTurns = turns
+		.slice(-limit)
+		.reverse()
+		.map((t) => ({
+			ts_ms: t.ts_ms,
+			ts_iso: formatTs(t.ts_ms),
+			request_id: t.request_id,
+			outcome: t.outcome,
+			reason: t.reason,
+			command_kind: t.command_kind,
+			message_preview: t.message_preview,
+		}));
 
 	const problematicTurns = turns
 		.filter((t) => t.outcome === "invalid_directive" || t.outcome === "error")
@@ -3673,7 +4098,10 @@ async function controlDiagnoseOperator(argv: string[], ctx: CliCtx, pretty: bool
 
 	operatorLifecycleRows.sort((a, b) => a.ts_ms - b.ts_ms);
 	const operatorRunMutations = operatorLifecycleRows
-		.filter((row) => row.target_type === "run start" || row.target_type === "run resume" || row.target_type === "run interrupt")
+		.filter(
+			(row) =>
+				row.target_type === "run start" || row.target_type === "run resume" || row.target_type === "run interrupt",
+		)
 		.slice(-limit)
 		.reverse()
 		.map((row) => ({
@@ -3708,7 +4136,7 @@ async function controlDiagnoseOperator(argv: string[], ctx: CliCtx, pretty: bool
 				? "operator_turns.jsonl is missing. This usually means your running mu build predates operator turn auditing; upgrade and restart `mu serve`."
 				: null,
 			problematicTurns.length > 0
-				? "Recent invalid_directive/error outcomes detected. Inspect operator_turns.jsonl for failed mu_command tool calls."
+				? "Recent invalid_directive/error outcomes detected. Inspect operator_turns.jsonl for failed command tool calls."
 				: null,
 			operatorRunMutations.length === 0
 				? "No operator-attributed run mutations found in command journal. In current architecture, operator-triggered runs should appear as brokered command lifecycle events."

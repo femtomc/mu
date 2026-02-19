@@ -39,6 +39,39 @@ async function writeConfigWithOperatorDefaults(dir: string, provider: string, mo
 	);
 }
 
+async function writeOperatorSessionFile(
+	dir: string,
+	opts: { id: string; timestamp: string; message?: string },
+): Promise<{ id: string; path: string }> {
+	const sessionDir = join(dir, ".mu", "operator", "sessions");
+	await mkdir(sessionDir, { recursive: true });
+	const filename = `${opts.timestamp.replace(/[:.]/g, "-")}_${opts.id}.jsonl`;
+	const path = join(sessionDir, filename);
+	const entries: Record<string, unknown>[] = [
+		{
+			type: "session",
+			version: 3,
+			id: opts.id,
+			timestamp: opts.timestamp,
+			cwd: dir,
+		},
+	];
+	if (opts.message) {
+		entries.push({
+			type: "message",
+			id: "msg-1",
+			parentId: null,
+			timestamp: opts.timestamp,
+			message: {
+				role: "user",
+				content: opts.message,
+			},
+		});
+	}
+	await writeFile(path, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+	return { id: opts.id, path };
+}
+
 async function expectStoreBootstrapped(dir: string): Promise<void> {
 	for (const relPath of ["issues.jsonl", "forum.jsonl", "events.jsonl"] as const) {
 		await readFile(join(dir, ".mu", relPath), "utf8");
@@ -60,6 +93,7 @@ test("mu --help", async () => {
 	expect(result.stdout.includes("mu guide")).toBe(true);
 	expect(result.stdout.includes("store <subcmd>")).toBe(true);
 	expect(result.stdout.includes("serve")).toBe(true);
+	expect(result.stdout.includes("session")).toBe(true);
 	expect(result.stdout.includes("Getting started")).toBe(true);
 });
 
@@ -73,7 +107,7 @@ test("mu guide", async () => {
 	expect(result.stdout.includes(".mu/")).toBe(true);
 	expect(result.stdout.includes("mu store <subcmd>")).toBe(true);
 	expect(result.stdout.includes("mu control diagnose-operator")).toBe(true);
-	expect(result.stdout).toContain("Use /mu setup and mu control status for guided configuration");
+	expect(result.stdout).toContain("Use query(...) in chat and mu control status for configuration visibility");
 	expect(result.stdout).not.toContain("/mu-setup");
 });
 
@@ -123,7 +157,6 @@ test("mu store paths/ls/tail provide .mu navigation tools", async () => {
 	expect(tailPayload.entries[0]?.kind).toBe("operator.turn");
 	expect(tailPayload.entries[0]?.outcome).toBe("invalid_directive");
 });
-
 
 test("mu control diagnose-operator reports missing audit with actionable hints", async () => {
 	const dir = await mkTempRepo();
@@ -212,13 +245,104 @@ test("mu serve help text", async () => {
 	expect(serveHelp.exitCode).toBe(0);
 	expect(serveHelp.stdout).toContain("start background server + attach terminal operator session + web UI");
 	expect(serveHelp.stdout).toContain("--port");
-	expect(serveHelp.stdout).toContain("Use `/mu setup <adapter>` in mu serve operator session for guided setup");
+	expect(serveHelp.stdout).toContain("Use `query(action=\"describe\")` in the operator session for capability discovery");
+	expect(serveHelp.stdout).toContain("Use `mu session` to reconnect");
 	expect(serveHelp.stdout).not.toContain("/mu-setup");
 	expect(serveHelp.stdout.includes("--api-port")).toBe(false);
 });
 
+test("mu session list reports persisted operator sessions", async () => {
+	const dir = await mkTempRepo();
+	await writeOperatorSessionFile(dir, {
+		id: "sess-alpha-11111111",
+		timestamp: "2026-02-19T12:00:00.000Z",
+		message: "first",
+	});
+	await writeOperatorSessionFile(dir, {
+		id: "sess-beta-22222222",
+		timestamp: "2026-02-19T13:00:00.000Z",
+		message: "second",
+	});
+
+	const result = await run(["session", "list", "--json", "--pretty"], { cwd: dir });
+	expect(result.exitCode).toBe(0);
+	const payload = JSON.parse(result.stdout) as {
+		session_dir: string;
+		total: number;
+		sessions: Array<{ id: string; rel_path: string }>;
+	};
+	expect(payload.session_dir).toContain(".mu/operator/sessions");
+	expect(payload.total).toBe(2);
+	expect(payload.sessions.length).toBe(2);
+	expect(payload.sessions.some((session) => session.id === "sess-alpha-11111111")).toBe(true);
+	expect(payload.sessions.some((session) => session.id === "sess-beta-22222222")).toBe(true);
+	expect(payload.sessions[0]?.rel_path).toContain(".mu/operator/sessions/");
+});
+
+test("mu session defaults to reconnecting most recent persisted operator session", async () => {
+	const dir = await mkTempRepo();
+	let seenSessionMode: string | undefined;
+	let seenSessionDir: string | undefined;
+	let seenSessionFile: string | undefined;
+	const result = await run(["session", "--port", "3310", "--no-open"], {
+		cwd: dir,
+		serveDeps: {
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
+			runOperatorSession: async ({ onReady, sessionMode, sessionDir, sessionFile }) => {
+				seenSessionMode = sessionMode;
+				seenSessionDir = sessionDir;
+				seenSessionFile = sessionFile;
+				onReady();
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+			registerSignalHandler: () => () => {},
+			isHeadless: () => true,
+			openBrowser: () => {},
+		},
+	});
+
+	expect(result.exitCode).toBe(0);
+	expect(seenSessionMode).toBe("continue-recent");
+	expect(seenSessionDir).toContain(".mu/operator/sessions");
+	expect(seenSessionFile).toBeUndefined();
+});
+
+test("mu session <id-prefix> resolves and opens a specific persisted operator session", async () => {
+	const dir = await mkTempRepo();
+	const persisted = await writeOperatorSessionFile(dir, {
+		id: "sess-open-33333333",
+		timestamp: "2026-02-19T14:00:00.000Z",
+		message: "resume me",
+	});
+
+	let seenSessionMode: string | undefined;
+	let seenSessionFile: string | undefined;
+	const result = await run(["session", "sess-open-333", "--port", "3311", "--no-open"], {
+		cwd: dir,
+		serveDeps: {
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
+			runOperatorSession: async ({ onReady, sessionMode, sessionFile }) => {
+				seenSessionMode = sessionMode;
+				seenSessionFile = sessionFile;
+				onReady();
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+			registerSignalHandler: () => () => {},
+			isHeadless: () => true,
+			openBrowser: () => {},
+		},
+	});
+
+	expect(result.exitCode).toBe(0);
+	expect(seenSessionMode).toBe("open");
+	expect(seenSessionFile).toBe(persisted.path);
+});
+
 test("mu run auto-initializes store layout", async () => {
 	const dir = await mkTempRepo();
+	let seenSessionMode: string | undefined;
+	let seenSessionDir: string | undefined;
+	let seenSessionFile: string | undefined;
 	const result = await run(["run", "hello", "--max-steps", "1", "--no-open"], {
 		cwd: dir,
 		serveDeps: {
@@ -232,7 +356,10 @@ test("mu run auto-initializes store layout", async () => {
 				source: "api",
 			}),
 			registerRunHeartbeat: async () => ({ program_id: "hb-init", created: true }),
-			runOperatorSession: async ({ onReady }) => {
+			runOperatorSession: async ({ onReady, sessionMode, sessionDir, sessionFile }) => {
+				seenSessionMode = sessionMode;
+				seenSessionDir = sessionDir;
+				seenSessionFile = sessionFile;
 				onReady();
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
@@ -242,6 +369,9 @@ test("mu run auto-initializes store layout", async () => {
 		},
 	});
 	expect(result.exitCode).toBe(0);
+	expect(seenSessionMode).toBe("continue-recent");
+	expect(seenSessionDir).toContain(".mu/operator/sessions");
+	expect(seenSessionFile).toBeUndefined();
 	await expectStoreBootstrapped(dir);
 });
 
@@ -320,13 +450,7 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 
 	expect(result.exitCode).toBe(0);
 	// Server is NOT stopped — it runs in the background
-	expect(events).toEqual([
-		"server:spawn:3311",
-		"run:queue",
-		"run:heartbeat",
-		"operator:start",
-		"operator:end",
-	]);
+	expect(events).toEqual(["server:spawn:3311", "run:queue", "run:heartbeat", "operator:start", "operator:end"]);
 	expect(queuedArgs).toMatchObject({
 		serverUrl: "http://localhost:3311",
 		prompt: "Ship release",
@@ -441,7 +565,6 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
 });
 
-
 function mkSignalHarness(): {
 	register: (signal: NodeJS.Signals, handler: () => void) => () => void;
 	emit: (signal: NodeJS.Signals) => void;
@@ -509,6 +632,9 @@ function mkCaptureIo(): {
 test("mu serve spawns background server, attaches TUI, and leaves server running on TUI exit", async () => {
 	const dir = await mkTempRepo();
 	const events: string[] = [];
+	let seenSessionMode: string | undefined;
+	let seenSessionDir: string | undefined;
+	let seenSessionFile: string | undefined;
 	const { io, chunks } = mkCaptureIo();
 	const result = await run(["serve", "--port", "3300", "--no-open"], {
 		cwd: dir,
@@ -518,8 +644,11 @@ test("mu serve spawns background server, attaches TUI, and leaves server running
 				events.push(`server:spawn:${port}`);
 				return { pid: 99999, url: `http://localhost:${port}` };
 			},
-			runOperatorSession: async ({ onReady }) => {
+			runOperatorSession: async ({ onReady, sessionMode, sessionDir, sessionFile }) => {
 				events.push("operator:start");
+				seenSessionMode = sessionMode;
+				seenSessionDir = sessionDir;
+				seenSessionFile = sessionFile;
 				onReady();
 				events.push("operator:end");
 				return { stdout: "", stderr: "", exitCode: 0 };
@@ -535,6 +664,9 @@ test("mu serve spawns background server, attaches TUI, and leaves server running
 	expect(result.exitCode).toBe(0);
 	// Server is NOT stopped when TUI exits — it's a background process
 	expect(events).toEqual(["server:spawn:3300", "operator:start", "operator:end"]);
+	expect(seenSessionMode).toBe("continue-recent");
+	expect(seenSessionDir).toContain(".mu/operator/sessions");
+	expect(seenSessionFile).toBeUndefined();
 	expect(chunks.stderr).toContain("started background server");
 });
 

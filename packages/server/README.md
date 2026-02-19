@@ -144,6 +144,23 @@ Bun.serve(server);
   }
   ```
 
+### Context Retrieval (Cross-store historical memory)
+
+- `GET /api/context/search` - Search across `.mu` history stores
+  - Query params: `query`/`q`, `limit`, `source`/`sources`, `issue_id`, `run_id`, `session_id`,
+    `conversation_key`, `channel`, `channel_tenant_id`, `channel_conversation_id`, `actor_binding_id`,
+    `topic`, `author`, `role`, `since`, `until`.
+- `GET /api/context/timeline` - Ordered timeline view anchored to a scope
+  - Requires at least one anchor filter: `conversation_key`, `issue_id`, `run_id`, `session_id`, `topic`, or `channel`.
+  - Supports `order=asc|desc` and same filters as search.
+- `GET /api/context/stats` - Source-level cardinality/text-size stats for indexed context items.
+
+Context source kinds:
+
+- `issues`, `forum`, `events`
+- `cp_commands`, `cp_outbox`, `cp_adapter_audit`, `cp_operator_turns`, `cp_telegram_ingress`
+- `operator_sessions`, `cp_operator_sessions`
+
 ## Running the Server
 
 ### With Web UI (Recommended)

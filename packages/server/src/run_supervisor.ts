@@ -208,7 +208,7 @@ function describeRun(snapshot: ControlPlaneRunSnapshot): string {
  * Contract with the durable queue/reconcile layer:
  * - this supervisor executes already-selected work; it does not decide inter-root scheduling policy
  * - sequential/parallel root policy is enforced by queue leasing before launch
- * - compatibility adapters may call launch directly during migration, but the default path is queue-first
+ * - queue-first launch is the supported execution path
  */
 export class ControlPlaneRunSupervisor {
 	readonly #repoRoot: string;

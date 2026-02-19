@@ -97,6 +97,283 @@ describe("mu-server", () => {
 		});
 	});
 
+	test("context search aggregates historical records across mu state surfaces", async () => {
+		const issuesPath = join(tempDir, ".mu", "issues.jsonl");
+		const forumPath = join(tempDir, ".mu", "forum.jsonl");
+		const eventsPath = join(tempDir, ".mu", "events.jsonl");
+		const cpDir = join(tempDir, ".mu", "control-plane");
+		const commandsPath = join(cpDir, "commands.jsonl");
+		const turnsPath = join(cpDir, "operator_turns.jsonl");
+		const conversationsPath = join(cpDir, "operator_conversations.json");
+		const cpSessionsDir = join(cpDir, "operator-sessions");
+		const cpSessionPath = join(cpSessionsDir, "op-sess-1.jsonl");
+
+		await Bun.write(
+			issuesPath,
+			`${JSON.stringify({
+				id: "mu-issue-1",
+				title: "Plan historical memory retrieval",
+				body: "Need searchable history of user interactions",
+				status: "open",
+				outcome: null,
+				tags: ["memory", "search"],
+				deps: [],
+				priority: 2,
+				created_at: 1_705_000_000_000,
+				updated_at: 1_705_000_010_000,
+			})}\n`,
+		);
+		await Bun.write(
+			forumPath,
+			`${JSON.stringify({
+				topic: "user:context:session-a",
+				body: "history is useful context for future turns",
+				author: "operator",
+				created_at: 1_705_000_020_000,
+			})}\n`,
+		);
+		await Bun.write(
+			eventsPath,
+			`${JSON.stringify({
+				v: 1,
+				ts_ms: 1_705_000_030_000,
+				type: "operator.wake.delivery",
+				source: "mu-server.operator-wake",
+				issue_id: "mu-issue-1",
+				payload: { message: "history wake" },
+			})}\n`,
+		);
+		await Bun.write(
+			commandsPath,
+			`${JSON.stringify({
+				kind: "command.lifecycle",
+				ts_ms: 1_705_000_040_000,
+				event_type: "command.accepted",
+				command: {
+					command_id: "cmd-1",
+					command_text: "/mu status history",
+					state: "accepted",
+					target_type: "status",
+					target_id: "status",
+					channel: "telegram",
+					channel_tenant_id: "tenant-1",
+					channel_conversation_id: "chat-1",
+					actor_binding_id: "binding-1",
+					run_root_id: null,
+					operator_session_id: "op-sess-1",
+					updated_at_ms: 1_705_000_040_000,
+				},
+			})}\n`,
+		);
+		await Bun.write(
+			turnsPath,
+			`${JSON.stringify({
+				kind: "operator.turn",
+				ts_ms: 1_705_000_045_000,
+				repo_root: tempDir,
+				channel: "telegram",
+				request_id: "req-1",
+				session_id: "op-sess-1",
+				turn_id: "turn-1",
+				outcome: "respond",
+				reason: null,
+				message_preview: "History found",
+				command: null,
+			})}\n`,
+		);
+		await Bun.write(
+			conversationsPath,
+			`${JSON.stringify({
+				version: 1,
+				bindings: {
+					"telegram:tenant-1:chat-1:binding-1": "op-sess-1",
+				},
+			})}\n`,
+		);
+		await Bun.write(
+			cpSessionPath,
+			[
+				JSON.stringify({
+					type: "session",
+					version: 3,
+					id: "op-sess-1",
+					timestamp: "2026-02-20T10:00:00.000Z",
+					cwd: tempDir,
+				}),
+				JSON.stringify({
+					type: "message",
+					id: "msg-1",
+					parentId: null,
+					timestamp: "2026-02-20T10:00:01.000Z",
+					message: {
+						role: "user",
+						content: "Please search interaction history",
+					},
+				}),
+				JSON.stringify({
+					type: "message",
+					id: "msg-2",
+					parentId: "msg-1",
+					timestamp: "2026-02-20T10:00:02.000Z",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "I can retrieve historical context." }],
+					},
+				}),
+			].join("\n") + "\n",
+		);
+
+		const response = await server.fetch(new Request("http://localhost/api/context/search?query=history&limit=50"));
+		expect(response.status).toBe(200);
+		const payload = (await response.json()) as {
+			total: number;
+			items: Array<{ source_kind: string; text: string }>;
+		};
+		expect(payload.total).toBeGreaterThan(0);
+		const sourceKinds = new Set(payload.items.map((item) => item.source_kind));
+		expect(sourceKinds.has("issues")).toBe(true);
+		expect(sourceKinds.has("forum")).toBe(true);
+		expect(sourceKinds.has("cp_commands")).toBe(true);
+		expect(sourceKinds.has("cp_operator_sessions")).toBe(true);
+		expect(payload.items.some((item) => item.text.toLowerCase().includes("history"))).toBe(true);
+	});
+
+	test("context timeline resolves conversation_key across command + outbox + session history", async () => {
+		const cpDir = join(tempDir, ".mu", "control-plane");
+		const commandsPath = join(cpDir, "commands.jsonl");
+		const outboxPath = join(cpDir, "outbox.jsonl");
+		const conversationsPath = join(cpDir, "operator_conversations.json");
+		const cpSessionsDir = join(cpDir, "operator-sessions");
+		const cpSessionPath = join(cpSessionsDir, "op-sess-2.jsonl");
+		const conversationKey = "telegram:tenant-2:chat-9:binding-9";
+
+		await Bun.write(
+			commandsPath,
+			`${JSON.stringify({
+				kind: "command.lifecycle",
+				ts_ms: 1_706_000_000_000,
+				event_type: "command.accepted",
+				command: {
+					command_id: "cmd-conv",
+					command_text: "/mu run list",
+					state: "accepted",
+					target_type: "run_list",
+					target_id: "run_list",
+					channel: "telegram",
+					channel_tenant_id: "tenant-2",
+					channel_conversation_id: "chat-9",
+					actor_binding_id: "binding-9",
+					run_root_id: "mu-root-conv",
+					operator_session_id: "op-sess-2",
+					updated_at_ms: 1_706_000_000_000,
+				},
+			})}\n`,
+		);
+		await Bun.write(
+			outboxPath,
+			`${JSON.stringify({
+				kind: "outbox.state",
+				ts_ms: 1_706_000_010_000,
+				record: {
+					outbox_id: "out-9",
+					dedupe_key: "dedupe-9",
+					state: "pending",
+					envelope: {
+						v: 1,
+						ts_ms: 1_706_000_010_000,
+						channel: "telegram",
+						channel_tenant_id: "tenant-2",
+						channel_conversation_id: "chat-9",
+						request_id: "req-9",
+						response_id: "resp-9",
+						kind: "result",
+						body: "Timeline entry via outbox",
+						correlation: {
+							command_id: "cmd-conv",
+							idempotency_key: "idemp-9",
+							request_id: "req-9",
+							channel: "telegram",
+							channel_tenant_id: "tenant-2",
+							channel_conversation_id: "chat-9",
+							actor_id: "actor-9",
+							actor_binding_id: "binding-9",
+							assurance_tier: "tier_b",
+							repo_root: tempDir,
+							scope_required: "operator.read",
+							scope_effective: "operator",
+							target_type: "run_list",
+							target_id: "run_list",
+							attempt: 0,
+							state: "accepted",
+							error_code: null,
+							operator_session_id: "op-sess-2",
+							operator_turn_id: "turn-9",
+							cli_invocation_id: null,
+							cli_command_kind: "run_list",
+							run_root_id: "mu-root-conv",
+						},
+						metadata: {},
+					},
+					created_at_ms: 1_706_000_010_000,
+					updated_at_ms: 1_706_000_010_000,
+					next_attempt_at_ms: 1_706_000_010_000,
+					attempt_count: 0,
+					max_attempts: 3,
+					last_error: null,
+					dead_letter_reason: null,
+					replay_of_outbox_id: null,
+					replay_requested_by_command_id: null,
+				},
+			})}\n`,
+		);
+		await Bun.write(
+			conversationsPath,
+			`${JSON.stringify({
+				version: 1,
+				bindings: {
+					[conversationKey]: "op-sess-2",
+				},
+			})}\n`,
+		);
+		await Bun.write(
+			cpSessionPath,
+			[
+				JSON.stringify({
+					type: "session",
+					version: 3,
+					id: "op-sess-2",
+					timestamp: "2026-02-21T09:00:00.000Z",
+					cwd: tempDir,
+				}),
+				JSON.stringify({
+					type: "message",
+					id: "msg-a",
+					parentId: null,
+					timestamp: "2026-02-21T09:00:01.000Z",
+					message: {
+						role: "user",
+						content: "Need timeline from this chat",
+					},
+				}),
+			].join("\n") + "\n",
+		);
+
+		const response = await server.fetch(
+			new Request(`http://localhost/api/context/timeline?conversation_key=${encodeURIComponent(conversationKey)}&limit=50`),
+		);
+		expect(response.status).toBe(200);
+		const payload = (await response.json()) as {
+			items: Array<{ source_kind: string; ts_ms: number; conversation_key: string | null }>;
+		};
+		expect(payload.items.some((item) => item.source_kind === "cp_commands")).toBe(true);
+		expect(payload.items.some((item) => item.source_kind === "cp_outbox")).toBe(true);
+		expect(payload.items.some((item) => item.source_kind === "cp_operator_sessions")).toBe(true);
+
+		const timestamps = payload.items.map((item) => item.ts_ms);
+		const sorted = [...timestamps].sort((a, b) => a - b);
+		expect(timestamps).toEqual(sorted);
+	});
+
 	test("composeServerRuntime wires session lifecycle into initial control-plane generation", async () => {
 		const calls: string[] = [];
 		const runtime = await composeServerRuntime({
@@ -440,7 +717,241 @@ describe("mu-server", () => {
 			}),
 		);
 		expect(updateRes.status).toBe(200);
+
+		const readKindRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "status" }),
+			}),
+		);
+		expect(readKindRes.status).toBe(400);
+
 		expect(submitted).toEqual(["/mu reload", "/mu update"]);
+	});
+
+	test("/api/commands/submit supports issue/forum mutation kinds without terminal command dispatch", async () => {
+		const submitted: string[] = [];
+		const controlPlane: ControlPlaneHandle = {
+			activeAdapters: [{ name: "telegram", route: "/webhooks/telegram" }],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async (opts) => {
+				submitted.push(opts.commandText);
+				return { kind: "invalid", reason: "stubbed" } as any;
+			},
+			stop: async () => {},
+		};
+		const serverWithCommands = await createServerForTest({ repoRoot: tempDir, controlPlane });
+
+		const createRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					kind: "issue_create",
+					title: "Add query-command cleanup",
+					body: "Close out operator tooling cleanup",
+					tags: "node:agent,role:worker",
+					priority: 2,
+				}),
+			}),
+		);
+		expect(createRes.status).toBe(200);
+		const createPayload = (await createRes.json()) as {
+			result: {
+				kind: string;
+				command: {
+					target_type: string;
+					result: { issue: { id: string; status: string } };
+				};
+			};
+		};
+		expect(createPayload.result.kind).toBe("completed");
+		expect(createPayload.result.command.target_type).toBe("issue create");
+		const createdIssueId = createPayload.result.command.result.issue.id;
+		expect(createdIssueId.startsWith("mu-")).toBe(true);
+
+		const closeRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "issue_close", id: createdIssueId, outcome: "success" }),
+			}),
+		);
+		expect(closeRes.status).toBe(200);
+		const closePayload = (await closeRes.json()) as {
+			result: { command: { result: { issue: { status: string; outcome: string } } } };
+		};
+		expect(closePayload.result.command.result.issue.status).toBe("closed");
+		expect(closePayload.result.command.result.issue.outcome).toBe("success");
+
+		const forumRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					kind: "forum_post",
+					topic: `issue:${createdIssueId}`,
+					body: "Closed with success after verification",
+					author: "worker",
+				}),
+			}),
+		);
+		expect(forumRes.status).toBe(200);
+
+		expect(submitted).toEqual([]);
+	});
+
+	test("/api/commands/submit supports heartbeat/cron mutation kinds without terminal command dispatch", async () => {
+		const submitted: string[] = [];
+		const controlPlane: ControlPlaneHandle = {
+			activeAdapters: [{ name: "telegram", route: "/webhooks/telegram" }],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async (opts) => {
+				submitted.push(opts.commandText);
+				return { kind: "invalid", reason: "stubbed" } as any;
+			},
+			stop: async () => {},
+		};
+		const serverWithCommands = await createServerForTest({ repoRoot: tempDir, controlPlane });
+
+		const activityStartRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/activities/start", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Scheduler command target",
+					kind: "scheduler-command-test",
+					heartbeat_every_ms: 0,
+				}),
+			}),
+		);
+		expect(activityStartRes.status).toBe(201);
+		const activityStartPayload = (await activityStartRes.json()) as {
+			activity: { activity_id: string };
+		};
+		const activityId = activityStartPayload.activity.activity_id;
+
+		const heartbeatCreateRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					kind: "heartbeat_create",
+					title: "Manual heartbeat",
+					target_kind: "activity",
+					activity_id: activityId,
+					every_ms: 0,
+					reason: "manual",
+				}),
+			}),
+		);
+		expect(heartbeatCreateRes.status).toBe(200);
+		const heartbeatCreatePayload = (await heartbeatCreateRes.json()) as {
+			result: { command: { result: { program: { program_id: string } } } };
+		};
+		const heartbeatProgramId = heartbeatCreatePayload.result.command.result.program.program_id;
+		expect(heartbeatProgramId.startsWith("hb-")).toBe(true);
+
+		const heartbeatTriggerRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					kind: "heartbeat_trigger",
+					program_id: heartbeatProgramId,
+					reason: "manual",
+				}),
+			}),
+		);
+		expect(heartbeatTriggerRes.status).toBe(200);
+
+		const heartbeatDisableRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "heartbeat_disable", program_id: heartbeatProgramId }),
+			}),
+		);
+		expect(heartbeatDisableRes.status).toBe(200);
+
+		const heartbeatEnableRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "heartbeat_enable", program_id: heartbeatProgramId }),
+			}),
+		);
+		expect(heartbeatEnableRes.status).toBe(200);
+
+		const heartbeatDeleteRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "heartbeat_delete", program_id: heartbeatProgramId }),
+			}),
+		);
+		expect(heartbeatDeleteRes.status).toBe(200);
+
+		const cronCreateRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					kind: "cron_create",
+					title: "Manual cron",
+					target_kind: "activity",
+					activity_id: activityId,
+					schedule_kind: "every",
+					every_ms: 60_000,
+					reason: "cron-manual",
+				}),
+			}),
+		);
+		expect(cronCreateRes.status).toBe(200);
+		const cronCreatePayload = (await cronCreateRes.json()) as {
+			result: { command: { result: { program: { program_id: string } } } };
+		};
+		const cronProgramId = cronCreatePayload.result.command.result.program.program_id;
+		expect(cronProgramId.startsWith("cron-")).toBe(true);
+
+		const cronTriggerRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "cron_trigger", program_id: cronProgramId, reason: "manual" }),
+			}),
+		);
+		expect(cronTriggerRes.status).toBe(200);
+
+		const cronDisableRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "cron_disable", program_id: cronProgramId }),
+			}),
+		);
+		expect(cronDisableRes.status).toBe(200);
+
+		const cronEnableRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "cron_enable", program_id: cronProgramId }),
+			}),
+		);
+		expect(cronEnableRes.status).toBe(200);
+
+		const cronDeleteRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "cron_delete", program_id: cronProgramId }),
+			}),
+		);
+		expect(cronDeleteRes.status).toBe(200);
+
+		expect(submitted).toEqual([]);
 	});
 
 	test("run management APIs proxy through control-plane handle", async () => {
