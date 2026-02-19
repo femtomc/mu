@@ -37,9 +37,11 @@ export function appendSharedSoul(basePrompt: string, soulPrompt: string): string
 export const DEFAULT_SOUL_PROMPT = loadBundledPrompt("roles/soul.md");
 
 const BASE_ORCHESTRATOR_PROMPT = loadBundledPrompt("roles/orchestrator.md");
+const BASE_REVIEWER_PROMPT = loadBundledPrompt("roles/reviewer.md");
 const BASE_WORKER_PROMPT = loadBundledPrompt("roles/worker.md");
 const BASE_OPERATOR_SYSTEM_PROMPT = loadBundledPrompt("roles/operator.md");
 
 export const DEFAULT_ORCHESTRATOR_PROMPT = appendSharedSoul(BASE_ORCHESTRATOR_PROMPT, DEFAULT_SOUL_PROMPT);
+export const DEFAULT_REVIEWER_PROMPT = appendSharedSoul(BASE_REVIEWER_PROMPT, DEFAULT_SOUL_PROMPT);
 export const DEFAULT_WORKER_PROMPT = appendSharedSoul(BASE_WORKER_PROMPT, DEFAULT_SOUL_PROMPT);
 export const DEFAULT_OPERATOR_SYSTEM_PROMPT = appendSharedSoul(BASE_OPERATOR_SYSTEM_PROMPT, DEFAULT_SOUL_PROMPT);

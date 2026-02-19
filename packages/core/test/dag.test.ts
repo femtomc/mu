@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { collapsible, type Issue, IssueSchema, readyLeaves, subtreeIds, validateDag } from "@femtomc/mu-core";
+import {
+	collapsible,
+	type Issue,
+	IssueSchema,
+	readyLeaves,
+	retryableDagCandidates,
+	subtreeIds,
+	validateDag,
+} from "@femtomc/mu-core";
 
 function mkIssue(overrides: Partial<Issue> & Pick<Issue, "id" | "title">): Issue {
 	const base: Issue = {
@@ -199,6 +207,72 @@ describe("validateDag", () => {
 	});
 });
 
+describe("retryableDagCandidates", () => {
+	test("returns deterministic retry candidates and excludes blocked descendants", () => {
+		const root = mkIssue({ id: "root", title: "root", tags: ["node:agent", "node:root"] });
+		const a = mkIssue({
+			id: "a",
+			title: "a",
+			deps: [{ type: "parent", target: root.id }],
+			status: "closed",
+			outcome: "needs_work",
+			priority: 1,
+		});
+		const b = mkIssue({
+			id: "b",
+			title: "b",
+			deps: [{ type: "parent", target: root.id }],
+			status: "closed",
+			outcome: "expanded",
+			priority: 1,
+		});
+		const c = mkIssue({
+			id: "c",
+			title: "c",
+			deps: [{ type: "parent", target: root.id }],
+			status: "closed",
+			outcome: "failure",
+			priority: 2,
+		});
+		const d = mkIssue({
+			id: "d",
+			title: "d",
+			deps: [{ type: "parent", target: root.id }],
+			status: "closed",
+			outcome: "failure",
+			priority: 3,
+		});
+		const dChild = mkIssue({ id: "d-child", title: "d-child", deps: [{ type: "parent", target: d.id }] });
+
+		const out = retryableDagCandidates([root, a, b, c, d, dChild], { root_id: root.id });
+		expect(out.map((entry) => entry.issue.id)).toEqual(["a", "b", "c"]);
+		expect(out.map((entry) => entry.reason)).toEqual([
+			"outcome=needs_work",
+			"outcome=expanded_without_children",
+			"outcome=failure",
+		]);
+	});
+
+	test("respects per-issue attempt budget", () => {
+		const root = mkIssue({ id: "root", title: "root", tags: ["node:agent", "node:root"] });
+		const retriable = mkIssue({
+			id: "retry",
+			title: "retry",
+			deps: [{ type: "parent", target: root.id }],
+			status: "closed",
+			outcome: "failure",
+		});
+
+		const attempts = new Map<string, number>([[retriable.id, 3]]);
+		const out = retryableDagCandidates([root, retriable], {
+			root_id: root.id,
+			attempts_by_issue_id: attempts,
+			max_attempts: 3,
+		});
+		expect(out).toEqual([]);
+	});
+});
+
 describe("collapsible", () => {
 	test("expanded root with all children success returns root", () => {
 		const root = mkIssue({
@@ -224,6 +298,34 @@ describe("collapsible", () => {
 		});
 
 		const out = collapsible([root, c1, c2], root.id);
+		expect(out.map((i) => i.id)).toEqual([root.id]);
+	});
+
+	test("review refine outcomes are treated as terminal for collapse", () => {
+		const root = mkIssue({
+			id: "root",
+			title: "root",
+			status: "closed",
+			outcome: "expanded",
+			tags: ["node:agent", "node:root"],
+		});
+		const execution = mkIssue({
+			id: "exec",
+			title: "exec",
+			deps: [{ type: "parent", target: root.id }],
+			status: "closed",
+			outcome: "success",
+		});
+		const review = mkIssue({
+			id: "review",
+			title: "review",
+			deps: [{ type: "parent", target: root.id }],
+			status: "closed",
+			outcome: "refine",
+			tags: ["node:agent", "role:reviewer"],
+		});
+
+		const out = collapsible([root, execution, review], root.id);
 		expect(out.map((i) => i.id)).toEqual([root.id]);
 	});
 

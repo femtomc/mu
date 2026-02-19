@@ -18,32 +18,33 @@ import {
 	TelegramControlPlaneAdapterSpec,
 } from "@femtomc/mu-control-plane";
 import { DEFAULT_MU_CONFIG } from "./config.js";
-import type {
-	ActiveAdapter,
-	ControlPlaneConfig,
-	ControlPlaneGenerationContext,
-	ControlPlaneHandle,
-	ControlPlaneSessionLifecycle,
-	NotifyOperatorsOpts,
-	NotifyOperatorsResult,
-	TelegramGenerationReloadResult,
-	TelegramGenerationSwapHooks,
-	WakeDeliveryObserver,
+import {
+	DEFAULT_INTER_ROOT_QUEUE_POLICY,
+	normalizeInterRootQueuePolicy,
+	type ActiveAdapter,
+	type ControlPlaneConfig,
+	type ControlPlaneGenerationContext,
+	type ControlPlaneHandle,
+	type ControlPlaneSessionLifecycle,
+	type InterRootQueuePolicy,
+	type NotifyOperatorsOpts,
+	type NotifyOperatorsResult,
+	type TelegramGenerationReloadResult,
+	type TelegramGenerationSwapHooks,
+	type WakeDeliveryObserver,
 } from "./control_plane_contract.js";
 import type { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 import {
 	type ControlPlaneRunHeartbeatResult,
 	type ControlPlaneRunInterruptResult,
 	type ControlPlaneRunSnapshot,
-	type ControlPlaneRunStatus,
 	ControlPlaneRunSupervisor,
 	type ControlPlaneRunSupervisorOpts,
 	type ControlPlaneRunTrace,
 } from "./run_supervisor.js";
-import {
-	buildMessagingOperatorRuntime,
-	createOutboxDrainLoop,
-} from "./control_plane_bootstrap_helpers.js";
+import { DurableRunQueue, queueStatesForRunStatusFilter, runSnapshotFromQueueSnapshot } from "./run_queue.js";
+import { buildMessagingOperatorRuntime, createOutboxDrainLoop } from "./control_plane_bootstrap_helpers.js";
+import { ControlPlaneRunQueueCoordinator } from "./control_plane_run_queue_coordinator.js";
 import { enqueueRunEventOutbox } from "./control_plane_run_outbox.js";
 import {
 	buildWakeOutboundEnvelope,
@@ -99,6 +100,17 @@ function emptyNotifyOperatorsResult(): NotifyOperatorsResult {
 		skipped: 0,
 		decisions: [],
 	};
+}
+
+function normalizeIssueId(value: string | null | undefined): string | null {
+	if (!value) {
+		return null;
+	}
+	const trimmed = value.trim();
+	if (!/^mu-[a-z0-9][a-z0-9-]*$/i.test(trimmed)) {
+		return null;
+	}
+	return trimmed.toLowerCase();
 }
 
 type DetectedAdapter =
@@ -233,6 +245,7 @@ export type BootstrapControlPlaneOpts = {
 	telegramGenerationHooks?: TelegramGenerationSwapHooks;
 	wakeDeliveryObserver?: WakeDeliveryObserver | null;
 	terminalEnabled?: boolean;
+	interRootQueuePolicy?: InterRootQueuePolicy;
 };
 
 export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Promise<ControlPlaneHandle | null> {
@@ -293,12 +306,23 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		await outbox.load();
 
 		let scheduleOutboxDrainRef: (() => void) | null = null;
+		const runQueue = new DurableRunQueue({ repoRoot: opts.repoRoot });
+		const interRootQueuePolicy = normalizeInterRootQueuePolicy(
+			opts.interRootQueuePolicy ?? DEFAULT_INTER_ROOT_QUEUE_POLICY,
+		);
+		const runQueueCoordinator = new ControlPlaneRunQueueCoordinator({
+			runQueue,
+			interRootQueuePolicy,
+			getRunSupervisor: () => runSupervisor,
+		});
+
 		runSupervisor = new ControlPlaneRunSupervisor({
 			repoRoot: opts.repoRoot,
 			heartbeatScheduler: opts.heartbeatScheduler,
 			heartbeatIntervalMs: opts.runSupervisorHeartbeatIntervalMs,
 			spawnProcess: opts.runSupervisorSpawnProcess,
 			onEvent: async (event) => {
+				await runQueueCoordinator.onRunEvent(event);
 				const outboxRecord = await enqueueRunEventOutbox({
 					outbox,
 					event,
@@ -309,6 +333,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 				}
 			},
 		});
+		await runQueueCoordinator.scheduleReconcile("bootstrap");
 
 		pipeline = new ControlPlaneCommandPipeline({
 			runtime,
@@ -408,10 +433,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 
 				if (record.target_type === "run start" || record.target_type === "run resume") {
 					try {
-						const launched = await runSupervisor?.startFromCommand(record);
-						if (!launched) {
-							return null;
-						}
+						const launched = await runQueueCoordinator.launchQueuedRunFromCommand(record);
 						return {
 							terminalState: "completed",
 							result: {
@@ -435,6 +457,8 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 										run_mode: launched.mode,
 										run_root_id: launched.root_issue_id,
 										run_source: launched.source,
+										queue_id: launched.queue_id ?? null,
+										queue_state: launched.queue_state ?? null,
 									},
 								},
 							],
@@ -442,7 +466,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 					} catch (err) {
 						return {
 							terminalState: "failed",
-							errorCode: err instanceof Error && err.message ? err.message : "run_supervisor_start_failed",
+							errorCode: err instanceof Error && err.message ? err.message : "run_queue_start_failed",
 							trace: {
 								cliCommandKind: record.target_type.replaceAll(" ", "_"),
 								runRootId: record.target_id,
@@ -452,9 +476,9 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 				}
 
 				if (record.target_type === "run interrupt") {
-					const result = runSupervisor?.interrupt({
+					const result = await runQueueCoordinator.interruptQueuedRun({
 						rootIssueId: record.target_id,
-					}) ?? { ok: false, reason: "not_found", run: null };
+					});
 
 					if (!result.ok) {
 						return {
@@ -605,10 +629,10 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 				typeof notifyOpts.wake?.wakeId === "string" && notifyOpts.wake.wakeId.trim().length > 0
 					? notifyOpts.wake.wakeId.trim()
 					: `wake-${(() => {
-						const hasher = new Bun.CryptoHasher("sha256");
-						hasher.update(`${dedupeKey}:${message}`);
-						return hasher.digest("hex").slice(0, 16);
-					})()}`;
+							const hasher = new Bun.CryptoHasher("sha256");
+							hasher.update(`${dedupeKey}:${message}`);
+							return hasher.digest("hex").slice(0, 16);
+						})()}`;
 
 			const context = {
 				wakeId,
@@ -752,11 +776,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 					return;
 				}
 				const state =
-					outcome.kind === "delivered"
-						? "delivered"
-						: outcome.kind === "retried"
-							? "retried"
-							: "dead_letter";
+					outcome.kind === "delivered" ? "delivered" : outcome.kind === "retried" ? "retried" : "dead_letter";
 				await wakeDeliveryObserver({
 					state,
 					reason_code: wakeDispatchReasonCode({
@@ -816,48 +836,80 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			},
 
 			async listRuns(opts = {}): Promise<ControlPlaneRunSnapshot[]> {
-				return (
-					runSupervisor?.list({
-						status: opts.status as ControlPlaneRunStatus | undefined,
-						limit: opts.limit,
-					}) ?? []
-				);
+				const limit = Math.max(1, Math.min(500, Math.trunc(opts.limit ?? 100)));
+				const fallbackStatusFilter = queueStatesForRunStatusFilter(opts.status);
+				if (Array.isArray(fallbackStatusFilter) && fallbackStatusFilter.length === 0) {
+					return [];
+				}
+				const queued = await runQueue.listRunSnapshots({
+					status: opts.status,
+					limit,
+					runtimeByJobId: runQueueCoordinator.runtimeSnapshotsByJobId(),
+				});
+				const seen = new Set(queued.map((run) => run.job_id));
+				const fallbackRuns = runSupervisor?.list({ limit: 500 }) ?? [];
+				for (const run of fallbackRuns) {
+					if (seen.has(run.job_id)) {
+						continue;
+					}
+					if (fallbackStatusFilter && fallbackStatusFilter.length > 0) {
+						const mapped =
+							run.status === "completed"
+								? "done"
+								: run.status === "failed"
+									? "failed"
+									: run.status === "cancelled"
+										? "cancelled"
+										: "active";
+						if (!fallbackStatusFilter.includes(mapped)) {
+							continue;
+						}
+					}
+					queued.push(run);
+					seen.add(run.job_id);
+				}
+				return queued.slice(0, limit);
 			},
 
 			async getRun(idOrRoot: string): Promise<ControlPlaneRunSnapshot | null> {
+				const queued = await runQueue.get(idOrRoot);
+				if (queued) {
+					const runtime = queued.job_id ? (runSupervisor?.get(queued.job_id) ?? null) : null;
+					return runSnapshotFromQueueSnapshot(queued, runtime);
+				}
 				return runSupervisor?.get(idOrRoot) ?? null;
 			},
 
 			async startRun(startOpts: { prompt: string; maxSteps?: number }): Promise<ControlPlaneRunSnapshot> {
-				const run = await runSupervisor?.launchStart({
+				return await runQueueCoordinator.launchQueuedRun({
+					mode: "run_start",
 					prompt: startOpts.prompt,
 					maxSteps: startOpts.maxSteps,
 					source: "api",
+					dedupeKey: `api:run_start:${crypto.randomUUID()}`,
 				});
-				if (!run) {
-					throw new Error("run_supervisor_unavailable");
-				}
-				return run;
 			},
 
 			async resumeRun(resumeOpts: { rootIssueId: string; maxSteps?: number }): Promise<ControlPlaneRunSnapshot> {
-				const run = await runSupervisor?.launchResume({
-					rootIssueId: resumeOpts.rootIssueId,
+				const rootIssueId = normalizeIssueId(resumeOpts.rootIssueId);
+				if (!rootIssueId) {
+					throw new Error("run_resume_invalid_root_issue_id");
+				}
+				return await runQueueCoordinator.launchQueuedRun({
+					mode: "run_resume",
+					rootIssueId,
 					maxSteps: resumeOpts.maxSteps,
 					source: "api",
+					dedupeKey: `api:run_resume:${rootIssueId}:${crypto.randomUUID()}`,
 				});
-				if (!run) {
-					throw new Error("run_supervisor_unavailable");
-				}
-				return run;
 			},
 
 			async interruptRun(interruptOpts): Promise<ControlPlaneRunInterruptResult> {
-				return runSupervisor?.interrupt(interruptOpts) ?? { ok: false, reason: "not_found", run: null };
+				return await runQueueCoordinator.interruptQueuedRun(interruptOpts);
 			},
 
 			async heartbeatRun(heartbeatOpts): Promise<ControlPlaneRunHeartbeatResult> {
-				return runSupervisor?.heartbeat(heartbeatOpts) ?? { ok: false, reason: "not_found", run: null };
+				return await runQueueCoordinator.heartbeatQueuedRun(heartbeatOpts);
 			},
 
 			async traceRun(traceOpts: { idOrRoot: string; limit?: number }): Promise<ControlPlaneRunTrace | null> {
@@ -877,6 +929,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 
 			async stop(): Promise<void> {
 				wakeDeliveryObserver = null;
+				runQueueCoordinator.stop();
 				if (outboxDrainLoop) {
 					outboxDrainLoop.stop();
 					outboxDrainLoop = null;

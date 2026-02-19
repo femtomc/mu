@@ -125,7 +125,8 @@ export class SdkBackend implements BackendRunner {
 		}
 
 		const settingsManager = SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME, quietStartup: true });
-		const roleExtensionPaths = opts.role === "worker" ? workerToolExtensionPaths : orchestratorToolExtensionPaths;
+		const roleExtensionPaths =
+			opts.role === "orchestrator" ? orchestratorToolExtensionPaths : workerToolExtensionPaths;
 		const resourceLoader = createMuResourceLoader({
 			cwd: opts.cwd,
 			systemPrompt: opts.systemPrompt,

@@ -25,12 +25,38 @@ export type {
 	ControlPlaneSessionLifecycle,
 	ControlPlaneSessionMutationAction,
 	ControlPlaneSessionMutationResult,
+	InterRootQueuePolicy,
 	NotifyOperatorsOpts,
 	NotifyOperatorsResult,
+	OrchestrationQueueState,
 	WakeDeliveryEvent,
 	WakeNotifyContext,
 	WakeNotifyDecision,
 } from "./control_plane_contract.js";
+export {
+	DEFAULT_INTER_ROOT_QUEUE_POLICY,
+	normalizeInterRootQueuePolicy,
+	ORCHESTRATION_QUEUE_ALLOWED_TRANSITIONS,
+	ORCHESTRATION_QUEUE_INVARIANTS,
+} from "./control_plane_contract.js";
+export type {
+	DurableRunQueueClaimOpts,
+	DurableRunQueueEnqueueOpts,
+	DurableRunQueueOpts,
+	DurableRunQueueSnapshot,
+	DurableRunQueueState,
+	DurableRunQueueTransitionOpts,
+	RunQueueReconcilePlan,
+} from "./run_queue.js";
+export {
+	DurableRunQueue,
+	queueStatesForRunStatusFilter,
+	reconcileRunQueue,
+	RUN_QUEUE_RECONCILE_INVARIANTS,
+	runQueuePath,
+	runSnapshotFromQueueSnapshot,
+	runStatusFromQueueState,
+} from "./run_queue.js";
 export { bootstrapControlPlane, detectAdapters } from "./control_plane.js";
 export type {
 	CronProgramLifecycleAction,

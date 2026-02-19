@@ -35,6 +35,7 @@
     "@femtomc/mu-control-plane": "workspace:*",
     "@femtomc/mu-core": "workspace:*",
     "@femtomc/mu-forum": "workspace:*",
-    "@femtomc/mu-issue": "workspace:*"
+    "@femtomc/mu-issue": "workspace:*",
+    "@femtomc/mu-orchestrator": "workspace:*"
   }
 }

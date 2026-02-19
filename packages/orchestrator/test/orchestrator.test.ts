@@ -6,6 +6,7 @@ import type { BackendRunner, BackendRunOpts } from "@femtomc/mu-agent";
 import {
 	createMuResourceLoader,
 	DEFAULT_ORCHESTRATOR_PROMPT,
+	DEFAULT_REVIEWER_PROMPT,
 	DEFAULT_WORKER_PROMPT,
 	streamHasError,
 	systemPromptForRole,
@@ -50,14 +51,19 @@ async function mkTempRepo(): Promise<{ repoRoot: string; store: IssueStore; foru
 class StubBackend implements BackendRunner {
 	public readonly runs: BackendRunOpts[] = [];
 	#handlers = new Map<string, (opts: BackendRunOpts) => Promise<number>>();
+	#fallbackHandler: ((opts: BackendRunOpts) => Promise<number>) | null = null;
 
 	public on(issueId: string, handler: (opts: BackendRunOpts) => Promise<number>): void {
 		this.#handlers.set(issueId, handler);
 	}
 
+	public onAny(handler: (opts: BackendRunOpts) => Promise<number>): void {
+		this.#fallbackHandler = handler;
+	}
+
 	public async run(opts: BackendRunOpts): Promise<number> {
 		this.runs.push(opts);
-		const handler = this.#handlers.get(opts.issueId);
+		const handler = this.#handlers.get(opts.issueId) ?? this.#fallbackHandler;
 		if (!handler) {
 			return 0;
 		}
@@ -313,6 +319,12 @@ describe("DagRunner", () => {
 			await store.close(parent.id, "success");
 			return 0;
 		});
+		backend.onAny(async (opts) => {
+			if (opts.role === "reviewer") {
+				await store.close(opts.issueId, "success");
+			}
+			return 0;
+		});
 
 		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: TEST_MODEL_OVERRIDES });
 		const result = await runner.run(root.id, 10);
@@ -320,6 +332,105 @@ describe("DagRunner", () => {
 
 		// Ensure the orchestrator repair pass happened.
 		expect(backend.runs.some((r) => r.issueId === root.id && r.logSuffix === "unstick")).toBe(true);
+	});
+
+	test("runs one full refine cycle and returns to review before terminal accept", async () => {
+		const { repoRoot, store, forum } = await mkTempRepo();
+
+		const root = await store.create("root", { tags: [] });
+		await store.update(root.id, { status: "closed", outcome: "expanded" });
+
+		const leaf = await store.create("leaf", { tags: ["node:agent", "role:worker"] });
+		await store.add_dep(leaf.id, "parent", root.id);
+
+		const backend = new StubBackend();
+		backend.on(leaf.id, async () => {
+			await store.close(leaf.id, "success");
+			return 0;
+		});
+
+		let rootRefinePasses = 0;
+		backend.on(root.id, async () => {
+			rootRefinePasses += 1;
+			if (rootRefinePasses === 1) {
+				const refineLeaf = await store.create("refine leaf", { tags: ["node:agent", "role:worker"] });
+				await store.add_dep(refineLeaf.id, "parent", root.id);
+				backend.on(refineLeaf.id, async () => {
+					await store.close(refineLeaf.id, "success");
+					return 0;
+				});
+				await store.close(root.id, "expanded");
+			}
+			return 0;
+		});
+
+		let reviewRounds = 0;
+		backend.onAny(async (opts) => {
+			if (opts.role === "reviewer") {
+				reviewRounds += 1;
+				await store.close(opts.issueId, reviewRounds === 1 ? "needs_work" : "success");
+			}
+			return 0;
+		});
+
+		const runner = new DagRunner(store, forum, repoRoot, { backend, modelOverrides: TEST_MODEL_OVERRIDES });
+		const result = await runner.run(root.id, 20);
+		expect(result.status).toBe("root_final");
+		expect(reviewRounds).toBe(2);
+		expect(rootRefinePasses).toBe(1);
+
+		const roleTrace = backend.runs.map((run) => run.role);
+		expect(roleTrace).toEqual(expect.arrayContaining(["worker", "reviewer", "orchestrator"]));
+	});
+
+	test("terminates when reviewer refine budget is exhausted", async () => {
+		const { repoRoot, store, forum } = await mkTempRepo();
+
+		const root = await store.create("root", { tags: [] });
+		await store.update(root.id, { status: "closed", outcome: "expanded" });
+
+		const leaf = await store.create("leaf", { tags: ["node:agent", "role:worker"] });
+		await store.add_dep(leaf.id, "parent", root.id);
+
+		const backend = new StubBackend();
+		backend.on(leaf.id, async () => {
+			await store.close(leaf.id, "success");
+			return 0;
+		});
+
+		let refineSpawned = false;
+		backend.on(root.id, async () => {
+			if (!refineSpawned) {
+				refineSpawned = true;
+				const refineLeaf = await store.create("refine leaf", { tags: ["node:agent", "role:worker"] });
+				await store.add_dep(refineLeaf.id, "parent", root.id);
+				backend.on(refineLeaf.id, async () => {
+					await store.close(refineLeaf.id, "success");
+					return 0;
+				});
+				await store.close(root.id, "expanded");
+			}
+			return 0;
+		});
+
+		backend.onAny(async (opts) => {
+			if (opts.role === "reviewer") {
+				await store.close(opts.issueId, "needs_work");
+			}
+			return 0;
+		});
+
+		const runner = new DagRunner(store, forum, repoRoot, {
+			backend,
+			modelOverrides: TEST_MODEL_OVERRIDES,
+			maxRefineRoundsPerRoot: 1,
+		});
+		const result = await runner.run(root.id, 30);
+		expect(result.status).toBe("error");
+		expect(result.error).toContain("review_budget_exhausted");
+
+		const updatedRoot = await store.get(root.id);
+		expect(updatedRoot?.outcome).toBe("budget_exhausted");
 	});
 
 	test("invokes step hooks and wires backend onLine", async () => {
@@ -364,6 +475,8 @@ describe("systemPromptForRole", () => {
 	test("returns bundled defaults when no repoRoot is provided", async () => {
 		const orch = await systemPromptForRole("orchestrator");
 		expect(orch).toBe(DEFAULT_ORCHESTRATOR_PROMPT);
+		const reviewer = await systemPromptForRole("reviewer");
+		expect(reviewer).toBe(DEFAULT_REVIEWER_PROMPT);
 		const worker = await systemPromptForRole("worker");
 		expect(worker).toBe(DEFAULT_WORKER_PROMPT);
 	});
@@ -378,9 +491,11 @@ describe("systemPromptForRole", () => {
 		const tmp = await mkdtemp(join(tmpdir(), "mu-roles-"));
 		await mkdir(join(tmp, ".mu", "roles"), { recursive: true });
 		await writeFile(join(tmp, ".mu", "roles", "orchestrator.md"), "Custom orchestrator prompt", "utf8");
+		await writeFile(join(tmp, ".mu", "roles", "reviewer.md"), "Custom reviewer prompt", "utf8");
 		await writeFile(join(tmp, ".mu", "roles", "worker.md"), "Custom worker prompt", "utf8");
 
 		expect(await systemPromptForRole("orchestrator", tmp)).toBe(DEFAULT_ORCHESTRATOR_PROMPT);
+		expect(await systemPromptForRole("reviewer", tmp)).toBe(DEFAULT_REVIEWER_PROMPT);
 		expect(await systemPromptForRole("worker", tmp)).toBe(DEFAULT_WORKER_PROMPT);
 	});
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	DEFAULT_OPERATOR_SYSTEM_PROMPT,
 	DEFAULT_ORCHESTRATOR_PROMPT,
+	DEFAULT_REVIEWER_PROMPT,
 	DEFAULT_SOUL_PROMPT,
 	DEFAULT_WORKER_PROMPT,
 	appendSharedSoul,
@@ -22,6 +23,12 @@ describe("bundled default prompts", () => {
 	test("orchestrator default is role prompt + shared soul", async () => {
 		expect(DEFAULT_ORCHESTRATOR_PROMPT).toBe(
 			appendSharedSoul(await bundledPromptBody("roles/orchestrator.md"), await bundledPromptBody("roles/soul.md")),
+		);
+	});
+
+	test("reviewer default is role prompt + shared soul", async () => {
+		expect(DEFAULT_REVIEWER_PROMPT).toBe(
+			appendSharedSoul(await bundledPromptBody("roles/reviewer.md"), await bundledPromptBody("roles/soul.md")),
 		);
 	});
 

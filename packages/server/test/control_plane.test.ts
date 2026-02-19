@@ -20,6 +20,7 @@ import {
 	containsTelegramMathNotation,
 	renderTelegramMarkdown,
 } from "../src/control_plane.js";
+import { DurableRunQueue } from "../src/run_queue.js";
 import type { ControlPlaneRunProcess } from "../src/run_supervisor.js";
 
 const handlesToCleanup = new Set<ControlPlaneHandle>();
@@ -464,7 +465,9 @@ describe("bootstrapControlPlane operator wiring", () => {
 			await outbox.load();
 			const wakeRecords = outbox
 				.records()
-				.filter((record) => record.envelope.metadata.wake_delivery === true && record.envelope.channel === "telegram");
+				.filter(
+					(record) => record.envelope.metadata.wake_delivery === true && record.envelope.channel === "telegram",
+				);
 			expect(wakeRecords).toHaveLength(1);
 			expect(wakeRecords[0]?.dedupe_key).toBe(firstTelegram.dedupe_key);
 		} finally {
@@ -916,6 +919,332 @@ describe("bootstrapControlPlane operator wiring", () => {
 		);
 		expect(runEventKinds.has("run_started")).toBe(true);
 		expect(runEventKinds.has("run_heartbeat")).toBe(true);
+	});
+
+	test("run queue snapshots persist across control-plane restarts", async () => {
+		const repoRoot = await mkRepoRoot();
+
+		const firstHandle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({}),
+			terminalEnabled: true,
+			runSupervisorSpawnProcess: () => {
+				const process: ControlPlaneRunProcess = {
+					pid: 555,
+					stdout: streamFromLines([]),
+					stderr: streamFromLines([]),
+					exited: Promise.resolve(0),
+					kill() {},
+				};
+				return process;
+			},
+		});
+		expect(firstHandle).not.toBeNull();
+		if (!firstHandle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(firstHandle);
+
+		const run = await firstHandle.startRun?.({ prompt: "persist queue state", maxSteps: 3 });
+		expect(run).not.toBeNull();
+		if (!run) {
+			throw new Error("expected started run");
+		}
+
+		await waitFor(async () => {
+			const latest = await firstHandle.getRun?.(run.job_id);
+			return latest?.status === "completed" ? latest : null;
+		});
+
+		handlesToCleanup.delete(firstHandle);
+		await firstHandle.stop();
+
+		const secondHandle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({}),
+			terminalEnabled: true,
+		});
+		expect(secondHandle).not.toBeNull();
+		if (!secondHandle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(secondHandle);
+
+		const restored = await secondHandle.getRun?.(run.job_id);
+		expect(restored).not.toBeNull();
+		expect(restored?.status).toBe("completed");
+		expect(restored?.queue_state).toBe("done");
+		expect(typeof restored?.queue_id).toBe("string");
+
+		const listed = await secondHandle.listRuns?.({ limit: 20 });
+		expect(listed?.some((entry) => entry.job_id === run.job_id)).toBe(true);
+	});
+
+	test("run start/resume flow is queue-driven and obeys sequential inter-root policy", async () => {
+		const repoRoot = await mkRepoRoot();
+		const spawned: number[] = [];
+		const exitResolvers: Array<(code: number) => void> = [];
+		let nextPid = 800;
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({}),
+			terminalEnabled: true,
+			interRootQueuePolicy: { mode: "sequential", max_active_roots: 1 },
+			runSupervisorSpawnProcess: () => {
+				const pid = nextPid;
+				nextPid += 1;
+				spawned.push(pid);
+				let resolveExit: (code: number) => void = () => {};
+				const exited = new Promise<number>((resolve) => {
+					resolveExit = resolve;
+				});
+				exitResolvers.push(resolveExit);
+				const process: ControlPlaneRunProcess = {
+					pid,
+					stdout: streamFromLines([]),
+					stderr: streamFromLines([]),
+					exited,
+					kill() {
+						resolveExit(0);
+					},
+				};
+				return process;
+			},
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const first = await handle.resumeRun?.({ rootIssueId: "mu-rootseqa", maxSteps: 2 });
+		const second = await handle.resumeRun?.({ rootIssueId: "mu-rootseqb", maxSteps: 2 });
+		expect(first).not.toBeNull();
+		expect(second).not.toBeNull();
+		if (!first || !second) {
+			throw new Error("expected queued runs");
+		}
+
+		expect(first.queue_state).toBe("active");
+		expect(second.queue_state).toBe("queued");
+		expect(spawned.length).toBe(1);
+
+		exitResolvers[0]?.(0);
+		await waitFor(async () => {
+			const latestSecond = await handle.getRun?.(second.queue_id ?? second.job_id);
+			return latestSecond?.queue_state === "active" ? latestSecond : null;
+		});
+		expect(spawned.length).toBe(2);
+
+		exitResolvers[1]?.(0);
+		await waitFor(async () => {
+			const latestSecond = await handle.getRun?.(second.queue_id ?? second.job_id);
+			return latestSecond?.status === "completed" ? true : null;
+		});
+	});
+
+	test("terminal event wake re-enters queue reconcile and repeated wakes keep terminal rows stable", async () => {
+		const repoRoot = await mkRepoRoot();
+		const spawned: number[] = [];
+		const exitResolvers: Array<(code: number) => void> = [];
+		let nextPid = 950;
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({}),
+			terminalEnabled: true,
+			interRootQueuePolicy: { mode: "sequential", max_active_roots: 1 },
+			runSupervisorSpawnProcess: () => {
+				const pid = nextPid;
+				nextPid += 1;
+				spawned.push(pid);
+				let resolveExit: (code: number) => void = () => {};
+				const exited = new Promise<number>((resolve) => {
+					resolveExit = resolve;
+				});
+				exitResolvers.push(resolveExit);
+				const process: ControlPlaneRunProcess = {
+					pid,
+					stdout: streamFromLines([]),
+					stderr: streamFromLines([]),
+					exited,
+					kill() {
+						resolveExit(0);
+					},
+				};
+				return process;
+			},
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const first = await handle.resumeRun?.({ rootIssueId: "mu-rootwakea", maxSteps: 2 });
+		const second = await handle.resumeRun?.({ rootIssueId: "mu-rootwakeb", maxSteps: 2 });
+		expect(first).not.toBeNull();
+		expect(second).not.toBeNull();
+		if (!first || !second) {
+			throw new Error("expected queued runs");
+		}
+		expect(first.queue_state).toBe("active");
+		expect(second.queue_state).toBe("queued");
+		expect(spawned.length).toBe(1);
+
+		exitResolvers[0]?.(0);
+		await waitFor(async () => {
+			const latestSecond = await handle.getRun?.(second.queue_id ?? second.job_id);
+			return latestSecond?.queue_state === "active" ? latestSecond : null;
+		});
+		expect(spawned.length).toBe(2);
+
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			const heartbeat = await handle.heartbeatRun?.({
+				rootIssueId: "mu-rootwakea",
+				reason: `repeat-${attempt}`,
+				wakeMode: "immediate",
+			});
+			expect(heartbeat?.ok).toBe(false);
+			expect(heartbeat?.reason).toBe("not_running");
+		}
+
+		const firstAfterRepeatedWake = await handle.getRun?.(first.queue_id ?? first.job_id);
+		expect(firstAfterRepeatedWake?.status).toBe("completed");
+		expect(firstAfterRepeatedWake?.queue_state).toBe("done");
+		expect(spawned.length).toBe(2);
+
+		exitResolvers[1]?.(0);
+		await waitFor(async () => {
+			const latestSecond = await handle.getRun?.(second.queue_id ?? second.job_id);
+			return latestSecond?.status === "completed" ? true : null;
+		});
+	});
+
+	test("heartbeat fallback wakes reconcile when stale active rows miss runtime terminal events", async () => {
+		const repoRoot = await mkRepoRoot();
+		const now = Date.now();
+		const queue = new DurableRunQueue({ repoRoot, nowMs: () => now });
+
+		const staleActive = await queue.enqueue({
+			mode: "run_resume",
+			prompt: null,
+			rootIssueId: "mu-rootfallbacka",
+			maxSteps: 4,
+			source: "api",
+			dedupeKey: "fallback:stale-active",
+			operationId: "fallback:enqueue-stale",
+		});
+		await queue.claim({
+			queueId: staleActive.queue_id,
+			operationId: "fallback:claim-stale",
+		});
+		await queue.bindRunSnapshot({
+			queueId: staleActive.queue_id,
+			run: {
+				job_id: "run-stale-fallback",
+				mode: "run_resume",
+				status: "running",
+				prompt: null,
+				root_issue_id: "mu-rootfallbacka",
+				max_steps: 4,
+				command_id: null,
+				source: "api",
+				started_at_ms: now - 10_000,
+				updated_at_ms: now - 9_000,
+				finished_at_ms: null,
+				exit_code: null,
+				pid: 777,
+				last_progress: "Step 1/4",
+			},
+			operationId: "fallback:bind-stale",
+		});
+
+		await queue.enqueue({
+			mode: "run_resume",
+			prompt: null,
+			rootIssueId: "mu-rootfallbackb",
+			maxSteps: 4,
+			source: "api",
+			dedupeKey: "fallback:queued-next",
+			operationId: "fallback:enqueue-next",
+		});
+
+		const spawned: number[] = [];
+		let nextPid = 1_050;
+		let resolveExit: (code: number) => void = () => {};
+		const exited = new Promise<number>((resolve) => {
+			resolveExit = resolve;
+		});
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({}),
+			terminalEnabled: true,
+			interRootQueuePolicy: { mode: "sequential", max_active_roots: 1 },
+			runSupervisorSpawnProcess: () => {
+				const pid = nextPid;
+				nextPid += 1;
+				spawned.push(pid);
+				const process: ControlPlaneRunProcess = {
+					pid,
+					stdout: streamFromLines([]),
+					stderr: streamFromLines([]),
+					exited,
+					kill() {
+						resolveExit(0);
+					},
+				};
+				return process;
+			},
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		expect(spawned.length).toBe(0);
+		const queuedBeforeFallback = await handle.getRun?.("mu-rootfallbackb");
+		expect(queuedBeforeFallback?.queue_state).toBe("queued");
+
+		const heartbeatFallback = await handle.heartbeatRun?.({
+			rootIssueId: "mu-rootfallbacka",
+			reason: "manual-fallback",
+			wakeMode: "immediate",
+		});
+		expect(heartbeatFallback?.ok).toBe(false);
+		expect(heartbeatFallback?.reason).toBe("not_running");
+
+		await waitFor(async () => {
+			const latestNext = await handle.getRun?.("mu-rootfallbackb");
+			return latestNext?.queue_state === "active" ? latestNext : null;
+		});
+		expect(spawned.length).toBe(1);
+
+		const staleAfterFallback = await handle.getRun?.("mu-rootfallbacka");
+		expect(staleAfterFallback?.queue_state).toBe("failed");
+		expect(staleAfterFallback?.status).toBe("failed");
+
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			const repeated = await handle.heartbeatRun?.({
+				rootIssueId: "mu-rootfallbacka",
+				reason: `repeat-${attempt}`,
+				wakeMode: "immediate",
+			});
+			expect(repeated?.ok).toBe(false);
+			expect(repeated?.reason).toBe("not_running");
+		}
+		expect(spawned.length).toBe(1);
+		const staleAfterRepeated = await handle.getRun?.("mu-rootfallbacka");
+		expect(staleAfterRepeated?.queue_state).toBe("failed");
+
+		resolveExit(0);
+		await waitFor(async () => {
+			const latestNext = await handle.getRun?.("mu-rootfallbackb");
+			return latestNext?.status === "completed" ? true : null;
+		});
 	});
 
 	test("bootstrap cleanup releases writer lock when startup fails", async () => {

@@ -22,6 +22,8 @@ export type ControlPlaneRunSnapshot = {
 	exit_code: number | null;
 	pid: number | null;
 	last_progress: string | null;
+	queue_id?: string;
+	queue_state?: "queued" | "active" | "waiting_review" | "refining" | "done" | "failed" | "cancelled";
 };
 
 export type ControlPlaneRunTrace = {
@@ -200,6 +202,14 @@ function describeRun(snapshot: ControlPlaneRunSnapshot): string {
 	return `${snapshot.mode} ${root}`;
 }
 
+/**
+ * Process execution boundary for orchestration runs.
+ *
+ * Contract with the durable queue/reconcile layer:
+ * - this supervisor executes already-selected work; it does not decide inter-root scheduling policy
+ * - sequential/parallel root policy is enforced by queue leasing before launch
+ * - compatibility adapters may call launch directly during migration, but the default path is queue-first
+ */
 export class ControlPlaneRunSupervisor {
 	readonly #repoRoot: string;
 	readonly #nowMs: () => number;
@@ -327,6 +337,12 @@ export class ControlPlaneRunSupervisor {
 		}
 	}
 
+	/**
+	 * Executes one queue-activated run job.
+	 *
+	 * Queue contract expectation: caller has already persisted/activated the queue item and associated
+	 * this launch with exactly one root slot under the active inter-root policy.
+	 */
 	async #launch(opts: {
 		mode: ControlPlaneRunMode;
 		prompt: string | null;
@@ -334,6 +350,7 @@ export class ControlPlaneRunSupervisor {
 		maxSteps: number;
 		argv: string[];
 		command: CommandRecord | null;
+		commandId?: string | null;
 		source: "command" | "api";
 	}): Promise<ControlPlaneRunSnapshot> {
 		const nowMs = Math.trunc(this.#nowMs());
@@ -345,7 +362,7 @@ export class ControlPlaneRunSupervisor {
 			prompt: opts.prompt,
 			root_issue_id: opts.rootIssueId,
 			max_steps: opts.maxSteps,
-			command_id: opts.command?.command_id ?? null,
+			command_id: opts.command?.command_id ?? opts.commandId ?? null,
 			source: opts.source,
 			started_at_ms: nowMs,
 			updated_at_ms: nowMs,
@@ -435,10 +452,15 @@ export class ControlPlaneRunSupervisor {
 		return this.#snapshot(job);
 	}
 
+	/**
+	 * Compatibility adapter entrypoint for run-start intent.
+	 * Default architecture should enqueue first, then call this after lease acquisition.
+	 */
 	public async launchStart(opts: {
 		prompt: string;
 		maxSteps?: number;
 		command?: CommandRecord | null;
+		commandId?: string | null;
 		source?: "command" | "api";
 	}): Promise<ControlPlaneRunSnapshot> {
 		const prompt = opts.prompt.trim();
@@ -454,14 +476,20 @@ export class ControlPlaneRunSupervisor {
 			maxSteps,
 			argv,
 			command: opts.command ?? null,
+			commandId: opts.commandId ?? null,
 			source: opts.source ?? "api",
 		});
 	}
 
+	/**
+	 * Compatibility adapter entrypoint for run-resume intent.
+	 * No feature-flag branch: queue-first reconcile remains the canonical path.
+	 */
 	public async launchResume(opts: {
 		rootIssueId: string;
 		maxSteps?: number;
 		command?: CommandRecord | null;
+		commandId?: string | null;
 		source?: "command" | "api";
 	}): Promise<ControlPlaneRunSnapshot> {
 		const rootIssueId = normalizeIssueId(opts.rootIssueId);
@@ -477,6 +505,7 @@ export class ControlPlaneRunSupervisor {
 			maxSteps,
 			argv,
 			command: opts.command ?? null,
+			commandId: opts.commandId ?? null,
 			source: opts.source ?? "api",
 		});
 	}

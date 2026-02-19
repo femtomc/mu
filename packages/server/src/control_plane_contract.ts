@@ -18,6 +18,20 @@ import type { MuConfig } from "./config.js";
 // Domain seam: immutable runtime configuration shape consumed by control-plane bootstrap/reload.
 export type ControlPlaneConfig = MuConfig["control_plane"];
 
+/**
+ * Durable orchestration queue contract (default-on path).
+ *
+ * Scheduler policy/state-machine primitives are owned by `@femtomc/mu-orchestrator` and
+ * re-exported here so existing server/control-plane callers keep a stable import surface.
+ */
+export type { InterRootQueuePolicy, OrchestrationQueueState } from "@femtomc/mu-orchestrator";
+export {
+	DEFAULT_INTER_ROOT_QUEUE_POLICY,
+	normalizeInterRootQueuePolicy,
+	ORCHESTRATION_QUEUE_ALLOWED_TRANSITIONS,
+	ORCHESTRATION_QUEUE_INVARIANTS,
+} from "@femtomc/mu-orchestrator";
+
 // Application seam: server-visible adapter/routing surface.
 export type ActiveAdapter = {
 	name: Channel;
@@ -99,13 +113,7 @@ export type ControlPlaneSessionLifecycle = {
 	update: () => Promise<ControlPlaneSessionMutationResult>;
 };
 
-export type WakeDeliveryState =
-	| "queued"
-	| "duplicate"
-	| "skipped"
-	| "delivered"
-	| "retried"
-	| "dead_letter";
+export type WakeDeliveryState = "queued" | "duplicate" | "skipped" | "delivered" | "retried" | "dead_letter";
 
 export type WakeNotifyDecision = {
 	state: "queued" | "duplicate" | "skipped";
@@ -162,7 +170,15 @@ export type ControlPlaneHandle = {
 	}): Promise<TelegramGenerationReloadResult>;
 	listRuns?(opts?: { status?: string; limit?: number }): Promise<ControlPlaneRunSnapshot[]>;
 	getRun?(idOrRoot: string): Promise<ControlPlaneRunSnapshot | null>;
+	/**
+	 * Run lifecycle boundary: accepts start intent into the default queue/reconcile path.
+	 * Compatibility adapters may dispatch immediately after enqueue, but must preserve queue invariants.
+	 */
 	startRun?(opts: { prompt: string; maxSteps?: number }): Promise<ControlPlaneRunSnapshot>;
+	/**
+	 * Run lifecycle boundary: accepts resume intent into the default queue/reconcile path.
+	 * No flag-based alternate path is allowed.
+	 */
 	resumeRun?(opts: { rootIssueId: string; maxSteps?: number }): Promise<ControlPlaneRunSnapshot>;
 	interruptRun?(opts: { jobId?: string | null; rootIssueId?: string | null }): Promise<ControlPlaneRunInterruptResult>;
 	heartbeatRun?(opts: {

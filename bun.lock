@@ -99,6 +99,7 @@
         "@femtomc/mu-core": "workspace:*",
         "@femtomc/mu-forum": "workspace:*",
         "@femtomc/mu-issue": "workspace:*",
+        "@femtomc/mu-orchestrator": "workspace:*",
       },
     },
     "packages/web": {
