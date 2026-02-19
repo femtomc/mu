@@ -20,17 +20,14 @@ export type ControlPlaneConfig = MuConfig["control_plane"];
 
 /**
  * Durable orchestration queue contract (default-on path).
- *
- * Scheduler policy/state-machine primitives are owned by `@femtomc/mu-orchestrator` and
- * re-exported here so existing server/control-plane callers keep a stable import surface.
  */
-export type { InterRootQueuePolicy, OrchestrationQueueState } from "@femtomc/mu-orchestrator";
+export type { InterRootQueuePolicy, OrchestrationQueueState } from "./orchestration_queue.js";
 export {
 	DEFAULT_INTER_ROOT_QUEUE_POLICY,
 	normalizeInterRootQueuePolicy,
 	ORCHESTRATION_QUEUE_ALLOWED_TRANSITIONS,
 	ORCHESTRATION_QUEUE_INVARIANTS,
-} from "@femtomc/mu-orchestrator";
+} from "./orchestration_queue.js";
 
 // Application seam: server-visible adapter/routing surface.
 export type ActiveAdapter = {

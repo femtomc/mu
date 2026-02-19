@@ -8,7 +8,7 @@ import {
 	type InterRootQueuePolicy,
 	type InterRootQueueReconcilePlan,
 	type OrchestrationQueueState,
-} from "@femtomc/mu-orchestrator";
+} from "./orchestration_queue.js";
 import type { ControlPlaneRunMode, ControlPlaneRunSnapshot, ControlPlaneRunStatus } from "./run_supervisor.js";
 
 const RUN_QUEUE_FILENAME = "run_queue.jsonl";
