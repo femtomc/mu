@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { brandingExtension } from "../src/extensions/branding.js";
 import { eventLogExtension } from "../src/extensions/event-log.js";
 import { registerMuSubcommand, resetMuCommandDispatcher } from "../src/extensions/mu-command-dispatcher.js";
@@ -44,6 +44,10 @@ function createCommandContext() {
 }
 
 describe("mu command dispatcher", () => {
+	beforeEach(() => {
+		resetMuCommandDispatcher();
+	});
+
 	afterEach(() => {
 		resetMuCommandDispatcher();
 	});
