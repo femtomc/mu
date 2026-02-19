@@ -10,6 +10,7 @@ import {
 	ControlPlaneOutbox,
 	ControlPlaneOutboxDispatcher,
 	type OutboxDeliveryHandlerResult,
+	type OutboxDispatchOutcome,
 	type OutboxRecord,
 } from "@femtomc/mu-control-plane";
 import type { ControlPlaneConfig } from "./control_plane_contract.js";
@@ -46,6 +47,7 @@ export function buildMessagingOperatorRuntime(opts: {
 export function createOutboxDrainLoop(opts: {
 	outbox: ControlPlaneOutbox;
 	deliver: (record: OutboxRecord) => Promise<undefined | OutboxDeliveryHandlerResult>;
+	onOutcome?: (outcome: OutboxDispatchOutcome) => void | Promise<void>;
 }): {
 	scheduleOutboxDrain: () => void;
 	stop: () => void;
@@ -71,7 +73,16 @@ export function createOutboxDrainLoop(opts: {
 		try {
 			do {
 				drainRequested = false;
-				await dispatcher.drainDue();
+				const outcomes = await dispatcher.drainDue();
+				if (opts.onOutcome) {
+					for (const outcome of outcomes) {
+						try {
+							await opts.onOutcome(outcome);
+						} catch {
+							// Keep telemetry callbacks non-fatal.
+						}
+					}
+				}
 			} while (drainRequested && !stopped);
 		} catch {
 			// Swallow errors — dispatcher handles retry progression internally.

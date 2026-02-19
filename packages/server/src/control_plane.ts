@@ -3,6 +3,7 @@ import {
 	type AdapterIngressResult,
 	type CommandPipelineResult,
 	type ControlPlaneAdapter,
+	type Channel,
 	ControlPlaneCommandPipeline,
 	ControlPlaneOutbox,
 	ControlPlaneRuntime,
@@ -23,8 +24,11 @@ import type {
 	ControlPlaneGenerationContext,
 	ControlPlaneHandle,
 	ControlPlaneSessionLifecycle,
+	NotifyOperatorsOpts,
+	NotifyOperatorsResult,
 	TelegramGenerationReloadResult,
 	TelegramGenerationSwapHooks,
+	WakeDeliveryObserver,
 } from "./control_plane_contract.js";
 import type { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 import {
@@ -41,6 +45,13 @@ import {
 	createOutboxDrainLoop,
 } from "./control_plane_bootstrap_helpers.js";
 import { enqueueRunEventOutbox } from "./control_plane_run_outbox.js";
+import {
+	buildWakeOutboundEnvelope,
+	resolveWakeFanoutCapability,
+	wakeDeliveryMetadataFromOutboxRecord,
+	wakeDispatchReasonCode,
+	wakeFanoutDedupeKey,
+} from "./control_plane_wake_delivery.js";
 import { TelegramAdapterGenerationManager } from "./control_plane_telegram_generation.js";
 
 export type {
@@ -51,9 +62,15 @@ export type {
 	ControlPlaneSessionLifecycle,
 	ControlPlaneSessionMutationAction,
 	ControlPlaneSessionMutationResult,
+	NotifyOperatorsOpts,
+	NotifyOperatorsResult,
 	TelegramGenerationReloadResult,
 	TelegramGenerationRollbackTrigger,
 	TelegramGenerationSwapHooks,
+	WakeDeliveryEvent,
+	WakeDeliveryObserver,
+	WakeNotifyContext,
+	WakeNotifyDecision,
 } from "./control_plane_contract.js";
 
 function generationTags(
@@ -70,6 +87,17 @@ function generationTags(
 		generation_seq: generation.generation_seq,
 		supervisor: "control_plane",
 		component,
+	};
+}
+
+const WAKE_OUTBOX_MAX_ATTEMPTS = 6;
+
+function emptyNotifyOperatorsResult(): NotifyOperatorsResult {
+	return {
+		queued: 0,
+		duplicate: 0,
+		skipped: 0,
+		decisions: [],
 	};
 }
 
@@ -203,6 +231,7 @@ export type BootstrapControlPlaneOpts = {
 	generation?: ControlPlaneGenerationContext;
 	telemetry?: GenerationTelemetryRecorder | null;
 	telegramGenerationHooks?: TelegramGenerationSwapHooks;
+	wakeDeliveryObserver?: WakeDeliveryObserver | null;
 	terminalEnabled?: boolean;
 };
 
@@ -235,6 +264,8 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 	let pipeline: ControlPlaneCommandPipeline | null = null;
 	let runSupervisor: ControlPlaneRunSupervisor | null = null;
 	let outboxDrainLoop: ReturnType<typeof createOutboxDrainLoop> | null = null;
+	let wakeDeliveryObserver: WakeDeliveryObserver | null = opts.wakeDeliveryObserver ?? null;
+	const outboundDeliveryChannels = new Set<Channel>(["telegram"]);
 	const adapterMap = new Map<
 		string,
 		{
@@ -553,6 +584,112 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			isActive: () => telegramManager.hasActiveGeneration(),
 		});
 
+		const notifyOperators = async (notifyOpts: NotifyOperatorsOpts): Promise<NotifyOperatorsResult> => {
+			if (!pipeline) {
+				return emptyNotifyOperatorsResult();
+			}
+			const message = notifyOpts.message.trim();
+			const dedupeKey = notifyOpts.dedupeKey.trim();
+			if (!message || !dedupeKey) {
+				return emptyNotifyOperatorsResult();
+			}
+
+			const wakeSource = typeof notifyOpts.wake?.wakeSource === "string" ? notifyOpts.wake.wakeSource.trim() : "";
+			const wakeProgramId = typeof notifyOpts.wake?.programId === "string" ? notifyOpts.wake.programId.trim() : "";
+			const wakeSourceTsMsRaw = notifyOpts.wake?.sourceTsMs;
+			const wakeSourceTsMs =
+				typeof wakeSourceTsMsRaw === "number" && Number.isFinite(wakeSourceTsMsRaw)
+					? Math.trunc(wakeSourceTsMsRaw)
+					: null;
+			const wakeId =
+				typeof notifyOpts.wake?.wakeId === "string" && notifyOpts.wake.wakeId.trim().length > 0
+					? notifyOpts.wake.wakeId.trim()
+					: `wake-${(() => {
+						const hasher = new Bun.CryptoHasher("sha256");
+						hasher.update(`${dedupeKey}:${message}`);
+						return hasher.digest("hex").slice(0, 16);
+					})()}`;
+
+			const context = {
+				wakeId,
+				dedupeKey,
+				wakeSource: wakeSource || null,
+				programId: wakeProgramId || null,
+				sourceTsMs: wakeSourceTsMs,
+			};
+
+			const nowMs = Math.trunc(Date.now());
+			const telegramBotToken = telegramManager.activeBotToken();
+			const bindings = pipeline.identities
+				.listBindings({ includeInactive: false })
+				.filter((binding) => binding.scopes.includes("cp.ops.admin"));
+
+			const result = emptyNotifyOperatorsResult();
+			for (const binding of bindings) {
+				const bindingDedupeKey = wakeFanoutDedupeKey({
+					dedupeKey,
+					wakeId,
+					binding,
+				});
+				const capability = resolveWakeFanoutCapability({
+					binding,
+					isChannelDeliverySupported: (channel) => outboundDeliveryChannels.has(channel),
+					telegramBotToken,
+				});
+				if (!capability.ok) {
+					result.skipped += 1;
+					result.decisions.push({
+						state: "skipped",
+						reason_code: capability.reasonCode,
+						binding_id: binding.binding_id,
+						channel: binding.channel,
+						dedupe_key: bindingDedupeKey,
+						outbox_id: null,
+					});
+					continue;
+				}
+
+				const envelope = buildWakeOutboundEnvelope({
+					repoRoot: opts.repoRoot,
+					nowMs,
+					message,
+					binding,
+					context,
+					metadata: notifyOpts.metadata,
+				});
+				const enqueueDecision = await outbox.enqueue({
+					dedupeKey: bindingDedupeKey,
+					envelope,
+					nowMs,
+					maxAttempts: WAKE_OUTBOX_MAX_ATTEMPTS,
+				});
+				if (enqueueDecision.kind === "enqueued") {
+					result.queued += 1;
+					scheduleOutboxDrainRef?.();
+					result.decisions.push({
+						state: "queued",
+						reason_code: "outbox_enqueued",
+						binding_id: binding.binding_id,
+						channel: binding.channel,
+						dedupe_key: bindingDedupeKey,
+						outbox_id: enqueueDecision.record.outbox_id,
+					});
+				} else {
+					result.duplicate += 1;
+					result.decisions.push({
+						state: "duplicate",
+						reason_code: "outbox_duplicate",
+						binding_id: binding.binding_id,
+						channel: binding.channel,
+						dedupe_key: bindingDedupeKey,
+						outbox_id: enqueueDecision.record.outbox_id,
+					});
+				}
+			}
+
+			return result;
+		};
+
 		const deliver = async (record: OutboxRecord): Promise<undefined | OutboxDeliveryHandlerResult> => {
 			const { envelope } = record;
 
@@ -603,7 +740,40 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			return undefined;
 		};
 
-		const outboxDrain = createOutboxDrainLoop({ outbox, deliver });
+		const outboxDrain = createOutboxDrainLoop({
+			outbox,
+			deliver,
+			onOutcome: async (outcome) => {
+				if (!wakeDeliveryObserver) {
+					return;
+				}
+				const metadata = wakeDeliveryMetadataFromOutboxRecord(outcome.record);
+				if (!metadata) {
+					return;
+				}
+				const state =
+					outcome.kind === "delivered"
+						? "delivered"
+						: outcome.kind === "retried"
+							? "retried"
+							: "dead_letter";
+				await wakeDeliveryObserver({
+					state,
+					reason_code: wakeDispatchReasonCode({
+						state,
+						lastError: outcome.record.last_error,
+						deadLetterReason: outcome.record.dead_letter_reason,
+					}),
+					wake_id: metadata.wakeId,
+					dedupe_key: metadata.wakeDedupeKey,
+					binding_id: metadata.bindingId,
+					channel: metadata.channel,
+					outbox_id: metadata.outboxId,
+					outbox_dedupe_key: metadata.outboxDedupeKey,
+					attempt_count: outcome.record.attempt_count,
+				});
+			},
+		});
 		const scheduleOutboxDrain = outboxDrain.scheduleOutboxDrain;
 		scheduleOutboxDrainRef = scheduleOutboxDrain;
 		outboxDrainLoop = outboxDrain;
@@ -621,6 +791,14 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 					scheduleOutboxDrain();
 				}
 				return result.response;
+			},
+
+			async notifyOperators(notifyOpts: NotifyOperatorsOpts): Promise<NotifyOperatorsResult> {
+				return await notifyOperators(notifyOpts);
+			},
+
+			setWakeDeliveryObserver(observer: WakeDeliveryObserver | null): void {
+				wakeDeliveryObserver = observer;
 			},
 
 			async reloadTelegramGeneration(reloadOpts: {
@@ -698,6 +876,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			},
 
 			async stop(): Promise<void> {
+				wakeDeliveryObserver = null;
 				if (outboxDrainLoop) {
 					outboxDrainLoop.stop();
 					outboxDrainLoop = null;
@@ -718,6 +897,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			},
 		};
 	} catch (err) {
+		wakeDeliveryObserver = null;
 		if (outboxDrainLoop) {
 			outboxDrainLoop.stop();
 			outboxDrainLoop = null;

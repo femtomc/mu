@@ -574,9 +574,20 @@ describe("mu-server", () => {
 		expect(tailEvents[0]?.run_id).toBe("run-2");
 	});
 
-	test("cron/heartbeat triggers emit coalesced operator wake artifacts", async () => {
+	test("cron/heartbeat wakes stay coalesced and skip autonomous turns when wake_turn_mode is off", async () => {
+		const wakeTurns: Array<{ commandText: string; requestId?: string }> = [];
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async (turnOpts) => {
+				wakeTurns.push(turnOpts);
+				return { kind: "operator_response", message: "ack" };
+			},
+			stop: async () => {},
+		};
 		const wakeServer = await createServerForTest({
 			repoRoot: tempDir,
+			controlPlane: wakeControlPlane,
 			serverOptions: { operatorWakeCoalesceMs: 1_000 },
 		});
 
@@ -675,6 +686,662 @@ describe("mu-server", () => {
 			(payload) => payload.wake_source === "heartbeat_program" && payload.program_id === heartbeatProgramId,
 		);
 		expect(heartbeatWakeEvents).toHaveLength(1);
+		expect(wakePayloads.every((payload) => payload.decision_outcome === "skipped")).toBe(true);
+		expect(wakePayloads.every((payload) => payload.decision_reason === "feature_disabled")).toBe(true);
+
+		const decisionEvents = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake.decision&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			return events.length >= 2 ? events : null;
+		});
+		if (!decisionEvents) {
+			throw new Error("expected wake decision events");
+		}
+		const decisions = decisionEvents
+			.map((event) => event.payload ?? {})
+			.filter((payload) => payload.program_id === heartbeatProgramId || payload.program_id === cronProgramId);
+		expect(decisions).toHaveLength(2);
+		expect(decisions.every((payload) => payload.outcome === "skipped")).toBe(true);
+		expect(decisions.every((payload) => payload.reason === "feature_disabled")).toBe(true);
+		expect(decisions.every((payload) => payload.wake_turn_mode === "off")).toBe(true);
+		expect(decisions.every((payload) => payload.wake_turn_feature_enabled === false)).toBe(true);
+		expect(wakeTurns).toHaveLength(0);
+	});
+
+	test("operator wake delivery telemetry emits queued/duplicate/skipped/delivered/retried/dead-letter states", async () => {
+		let wakeDeliveryObserver: ((event: any) => void | Promise<void>) | null = null;
+
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			notifyOperators: async (notifyOpts) => {
+				const wakeId = notifyOpts.wake?.wakeId ?? "wake-unknown";
+				const dedupeKey = notifyOpts.dedupeKey;
+				if (wakeDeliveryObserver) {
+					await wakeDeliveryObserver({
+						state: "delivered",
+						reason_code: "outbox_delivered",
+						wake_id: wakeId,
+						dedupe_key: dedupeKey,
+						binding_id: "binding-telegram",
+						channel: "telegram",
+						outbox_id: "out-tele-1",
+						outbox_dedupe_key: `${dedupeKey}:wake:${wakeId}:telegram:binding-telegram`,
+						attempt_count: 0,
+					});
+					await wakeDeliveryObserver({
+						state: "retried",
+						reason_code: "telegram_transient",
+						wake_id: wakeId,
+						dedupe_key: dedupeKey,
+						binding_id: "binding-telegram",
+						channel: "telegram",
+						outbox_id: "out-tele-2",
+						outbox_dedupe_key: `${dedupeKey}:wake:${wakeId}:telegram:binding-telegram:retry`,
+						attempt_count: 1,
+					});
+					await wakeDeliveryObserver({
+						state: "dead_letter",
+						reason_code: "telegram_permanent",
+						wake_id: wakeId,
+						dedupe_key: dedupeKey,
+						binding_id: "binding-telegram",
+						channel: "telegram",
+						outbox_id: "out-tele-3",
+						outbox_dedupe_key: `${dedupeKey}:wake:${wakeId}:telegram:binding-telegram:dead`,
+						attempt_count: 6,
+					});
+				}
+				return {
+					queued: 1,
+					duplicate: 1,
+					skipped: 1,
+					decisions: [
+						{
+							state: "queued",
+							reason_code: "outbox_enqueued",
+							binding_id: "binding-telegram",
+							channel: "telegram",
+							dedupe_key: `${dedupeKey}:wake:${wakeId}:telegram:binding-telegram`,
+							outbox_id: "out-tele-1",
+						},
+						{
+							state: "duplicate",
+							reason_code: "outbox_duplicate",
+							binding_id: "binding-telegram",
+							channel: "telegram",
+							dedupe_key: `${dedupeKey}:wake:${wakeId}:telegram:binding-telegram`,
+							outbox_id: "out-tele-1",
+						},
+						{
+							state: "skipped",
+							reason_code: "channel_delivery_unsupported",
+							binding_id: "binding-slack",
+							channel: "slack",
+							dedupe_key: `${dedupeKey}:wake:${wakeId}:slack:binding-slack`,
+							outbox_id: null,
+						},
+					],
+				};
+			},
+			setWakeDeliveryObserver: (observer) => {
+				wakeDeliveryObserver = observer;
+			},
+			stop: async () => {},
+		};
+
+		const wakeServer = await createServerForTest({
+			repoRoot: tempDir,
+			controlPlane: wakeControlPlane,
+			serverOptions: { operatorWakeCoalesceMs: 1_000 },
+		});
+
+		const activityStart = await wakeServer.fetch(
+			new Request("http://localhost/api/activities/start", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
+			}),
+		);
+		expect(activityStart.status).toBe(201);
+		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
+
+		const heartbeatCreate = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/create", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Wake heartbeat",
+					target_kind: "activity",
+					activity_id: activity.activity.activity_id,
+					every_ms: 0,
+					reason: "heartbeat-wake",
+					wake_mode: "immediate",
+				}),
+			}),
+		);
+		expect(heartbeatCreate.status).toBe(201);
+		const heartbeatPayload = (await heartbeatCreate.json()) as {
+			program: { program_id: string };
+		};
+		const heartbeatProgramId = heartbeatPayload.program.program_id;
+
+		const heartbeatTrigger = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/trigger", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ program_id: heartbeatProgramId, reason: "manual" }),
+			}),
+		);
+		expect(heartbeatTrigger.status).toBe(200);
+
+		const deliveryEvents = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake.delivery&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			return events.length >= 6 ? events : null;
+		});
+		if (!deliveryEvents) {
+			throw new Error("expected wake delivery telemetry events");
+		}
+		const states = new Set(
+			deliveryEvents
+				.map((event) => event.payload ?? {})
+				.filter((payload) => payload.wake_id)
+				.map((payload) => payload.state),
+		);
+		for (const expected of ["queued", "duplicate", "skipped", "delivered", "retried", "dead_letter"] as const) {
+			expect(states.has(expected)).toBe(true);
+		}
+
+		const wakePayload = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const match = events
+				.map((event) => event.payload ?? {})
+				.find((payload) => payload.program_id === heartbeatProgramId);
+			return match ?? null;
+		});
+		if (!wakePayload) {
+			throw new Error("expected wake payload");
+		}
+		expect(wakePayload.delivery).toEqual({ queued: 1, duplicate: 1, skipped: 1 });
+		expect(wakePayload.delivery_summary_v2).toEqual({ queued: 1, duplicate: 1, skipped: 1, total: 3 });
+	});
+
+	test("wake_turn_mode active invokes autonomous wake turn path and emits deterministic decision telemetry", async () => {
+		const wakeTurns: Array<{ commandText: string; requestId?: string }> = [];
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async (turnOpts) => {
+				wakeTurns.push(turnOpts);
+				return { kind: "operator_response", message: "autonomous ack" };
+			},
+			stop: async () => {},
+		};
+		const wakeServer = await createServerForTest({
+			repoRoot: tempDir,
+			controlPlane: wakeControlPlane,
+			serverOptions: { operatorWakeCoalesceMs: 1_000 },
+		});
+
+		const configPatch = await wakeServer.fetch(
+			new Request("http://localhost/api/config", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					patch: {
+						control_plane: {
+							operator: {
+								wake_turn_mode: "active",
+							},
+						},
+					},
+				}),
+			}),
+		);
+		expect(configPatch.status).toBe(200);
+
+		const activityStart = await wakeServer.fetch(
+			new Request("http://localhost/api/activities/start", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
+			}),
+		);
+		expect(activityStart.status).toBe(201);
+		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
+
+		const heartbeatCreate = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/create", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Wake heartbeat",
+					target_kind: "activity",
+					activity_id: activity.activity.activity_id,
+					every_ms: 0,
+					reason: "heartbeat-wake",
+					wake_mode: "immediate",
+				}),
+			}),
+		);
+		expect(heartbeatCreate.status).toBe(201);
+		const heartbeatPayload = (await heartbeatCreate.json()) as {
+			program: { program_id: string };
+		};
+		const heartbeatProgramId = heartbeatPayload.program.program_id;
+
+		const heartbeatTrigger = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/trigger", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ program_id: heartbeatProgramId, reason: "manual" }),
+			}),
+		);
+		expect(heartbeatTrigger.status).toBe(200);
+
+		const decisionPayload = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake.decision&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const match = events
+				.map((event) => event.payload ?? {})
+				.find((payload) => payload.program_id === heartbeatProgramId);
+			return match ?? null;
+		});
+		if (!decisionPayload) {
+			throw new Error("expected wake decision payload");
+		}
+
+		expect(wakeTurns).toHaveLength(1);
+		const wakeTurn = wakeTurns[0];
+		const decisionTurnRequestId =
+			typeof decisionPayload.turn_request_id === "string" ? decisionPayload.turn_request_id : undefined;
+		expect(wakeTurn?.requestId).toBe(decisionTurnRequestId);
+		expect(wakeTurn?.requestId).toBe(`wake-turn-${decisionPayload.wake_id as string}`);
+		expect(wakeTurn?.commandText).toContain("Autonomous wake turn triggered by heartbeat/cron scheduler.");
+		expect(wakeTurn?.commandText).toContain(`wake_id=${decisionPayload.wake_id as string}`);
+		expect(wakeTurn?.commandText).toContain("wake_source=heartbeat_program");
+		expect(wakeTurn?.commandText).toContain(`program_id=${heartbeatProgramId}`);
+
+		expect(decisionPayload.dedupe_key).toBe(`heartbeat-program:${heartbeatProgramId}`);
+		expect(decisionPayload.selected_wake_mode).toBe("immediate");
+		expect(decisionPayload.wake_turn_mode).toBe("active");
+		expect(decisionPayload.wake_turn_feature_enabled).toBe(true);
+		expect(decisionPayload.outcome).toBe("triggered");
+		expect(decisionPayload.reason).toBe("turn_invoked");
+		expect(decisionPayload.turn_result_kind).toBe("operator_response");
+		expect(typeof decisionPayload.wake_id).toBe("string");
+		expect((decisionPayload.wake_id as string).length).toBe(16);
+
+		const wakePayload = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const match = events
+				.map((event) => event.payload ?? {})
+				.find((payload) => payload.program_id === heartbeatProgramId);
+			return match ?? null;
+		});
+		if (!wakePayload) {
+			throw new Error("expected wake payload");
+		}
+		expect(wakePayload.wake_id).toBe(decisionPayload.wake_id);
+		expect(wakePayload.decision_outcome).toBe("triggered");
+		expect(wakePayload.decision_reason).toBe("turn_invoked");
+		expect(wakePayload.turn_request_id).toBe(decisionPayload.turn_request_id);
+		expect(wakePayload.turn_result_kind).toBe("operator_response");
+	});
+
+	test("wake_turn_mode active runs wake→turn→outbound exactly once under repeated wake triggers", async () => {
+		const wakeTurns: Array<{ commandText: string; requestId?: string }> = [];
+		const notifyCalls: Array<{
+			dedupeKey: string;
+			wakeId: string | null;
+			metadata: Record<string, unknown> | null;
+		}> = [];
+		let wakeDeliveryObserver: ((event: any) => void | Promise<void>) | null = null;
+
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async (turnOpts) => {
+				wakeTurns.push(turnOpts);
+				return { kind: "operator_response", message: "autonomous ack" };
+			},
+			notifyOperators: async (notifyOpts) => {
+				const wakeId =
+					typeof notifyOpts.wake?.wakeId === "string" && notifyOpts.wake.wakeId.length > 0
+						? notifyOpts.wake.wakeId
+						: null;
+				notifyCalls.push({
+					dedupeKey: notifyOpts.dedupeKey,
+					wakeId,
+					metadata:
+						notifyOpts.metadata && typeof notifyOpts.metadata === "object"
+							? (notifyOpts.metadata as Record<string, unknown>)
+							: null,
+				});
+				if (wakeDeliveryObserver && wakeId) {
+					await wakeDeliveryObserver({
+						state: "delivered",
+						reason_code: "outbox_delivered",
+						wake_id: wakeId,
+						dedupe_key: notifyOpts.dedupeKey,
+						binding_id: "binding-telegram",
+						channel: "telegram",
+						outbox_id: "out-tele-1",
+						outbox_dedupe_key: `${notifyOpts.dedupeKey}:wake:${wakeId}:telegram:binding-telegram`,
+						attempt_count: 1,
+					});
+				}
+				const safeWakeId = wakeId ?? "wake-unknown";
+				return {
+					queued: 1,
+					duplicate: 0,
+					skipped: 1,
+					decisions: [
+						{
+							state: "queued",
+							reason_code: "outbox_enqueued",
+							binding_id: "binding-telegram",
+							channel: "telegram",
+							dedupe_key: `${notifyOpts.dedupeKey}:wake:${safeWakeId}:telegram:binding-telegram`,
+							outbox_id: "out-tele-1",
+						},
+						{
+							state: "skipped",
+							reason_code: "channel_delivery_unsupported",
+							binding_id: "binding-slack",
+							channel: "slack",
+							dedupe_key: `${notifyOpts.dedupeKey}:wake:${safeWakeId}:slack:binding-slack`,
+							outbox_id: null,
+						},
+					],
+				};
+			},
+			setWakeDeliveryObserver: (observer) => {
+				wakeDeliveryObserver = observer;
+			},
+			stop: async () => {},
+		};
+		const wakeServer = await createServerForTest({
+			repoRoot: tempDir,
+			controlPlane: wakeControlPlane,
+			serverOptions: { operatorWakeCoalesceMs: 60_000 },
+		});
+
+		const configPatch = await wakeServer.fetch(
+			new Request("http://localhost/api/config", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					patch: {
+						control_plane: {
+							operator: {
+								wake_turn_mode: "active",
+							},
+						},
+					},
+				}),
+			}),
+		);
+		expect(configPatch.status).toBe(200);
+
+		const activityStart = await wakeServer.fetch(
+			new Request("http://localhost/api/activities/start", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
+			}),
+		);
+		expect(activityStart.status).toBe(201);
+		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
+
+		const heartbeatCreate = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/create", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Wake heartbeat",
+					target_kind: "activity",
+					activity_id: activity.activity.activity_id,
+					every_ms: 0,
+					reason: "heartbeat-wake",
+					wake_mode: "immediate",
+				}),
+			}),
+		);
+		expect(heartbeatCreate.status).toBe(201);
+		const heartbeatPayload = (await heartbeatCreate.json()) as {
+			program: { program_id: string };
+		};
+		const heartbeatProgramId = heartbeatPayload.program.program_id;
+
+		const heartbeatTriggerBody = JSON.stringify({ program_id: heartbeatProgramId, reason: "manual" });
+		const heartbeatTrigger1 = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/trigger", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: heartbeatTriggerBody,
+			}),
+		);
+		expect(heartbeatTrigger1.status).toBe(200);
+		const heartbeatTrigger2 = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/trigger", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: heartbeatTriggerBody,
+			}),
+		);
+		expect(heartbeatTrigger2.status).toBe(200);
+
+		const decisionPayloads = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake.decision&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const matches = events
+				.map((event) => event.payload ?? {})
+				.filter((payload) => payload.program_id === heartbeatProgramId);
+			return matches.length >= 1 ? matches : null;
+		});
+		if (!decisionPayloads) {
+			throw new Error("expected wake decision payloads");
+		}
+		expect(decisionPayloads).toHaveLength(1);
+		const decisionPayload = decisionPayloads[0] as Record<string, unknown>;
+
+		const wakePayloads = await waitFor(async () => {
+			const response = await wakeServer.fetch(new Request("http://localhost/api/events?type=operator.wake&limit=50"));
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const matches = events
+				.map((event) => event.payload ?? {})
+				.filter((payload) => payload.program_id === heartbeatProgramId);
+			return matches.length >= 1 ? matches : null;
+		});
+		if (!wakePayloads) {
+			throw new Error("expected wake payloads");
+		}
+		expect(wakePayloads).toHaveLength(1);
+		const wakePayload = wakePayloads[0] as Record<string, unknown>;
+
+		const deliveryPayloads = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake.delivery&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const matches = events
+				.map((event) => event.payload ?? {})
+				.filter((payload) => payload.wake_id === decisionPayload.wake_id);
+			return matches.length >= 3 ? matches : null;
+		});
+		if (!deliveryPayloads) {
+			throw new Error("expected wake delivery payloads");
+		}
+		const deliveryStates = new Set(deliveryPayloads.map((payload) => payload.state));
+		expect(deliveryStates.has("queued")).toBe(true);
+		expect(deliveryStates.has("skipped")).toBe(true);
+		expect(deliveryStates.has("delivered")).toBe(true);
+
+		expect(wakeTurns).toHaveLength(1);
+		expect(notifyCalls).toHaveLength(1);
+		expect(notifyCalls[0]?.dedupeKey).toBe(`heartbeat-program:${heartbeatProgramId}`);
+		expect(notifyCalls[0]?.wakeId).toBe(decisionPayload.wake_id as string);
+		expect(notifyCalls[0]?.metadata).toMatchObject({
+			wake_delivery_reason: "heartbeat_cron_wake",
+			wake_turn_outcome: "triggered",
+			wake_turn_reason: "turn_invoked",
+		});
+
+		expect(decisionPayload.outcome).toBe("triggered");
+		expect(decisionPayload.reason).toBe("turn_invoked");
+		expect(decisionPayload.wake_turn_mode).toBe("active");
+		expect(wakePayload.decision_outcome).toBe("triggered");
+		expect(wakePayload.decision_reason).toBe("turn_invoked");
+		expect(wakePayload.delivery_summary_v2).toEqual({ queued: 1, duplicate: 0, skipped: 1, total: 2 });
+		expect(wakePayload.delivery).toEqual({ queued: 1, duplicate: 0, skipped: 1 });
+	});
+
+	test("wake_turn_mode active falls back when control-plane wake turn path is unavailable", async () => {
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			stop: async () => {},
+		};
+		const wakeServer = await createServerForTest({
+			repoRoot: tempDir,
+			controlPlane: wakeControlPlane,
+		});
+
+		const configPatch = await wakeServer.fetch(
+			new Request("http://localhost/api/config", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					patch: {
+						control_plane: {
+							operator: {
+								wake_turn_mode: "active",
+							},
+						},
+					},
+				}),
+			}),
+		);
+		expect(configPatch.status).toBe(200);
+
+		const activityStart = await wakeServer.fetch(
+			new Request("http://localhost/api/activities/start", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
+			}),
+		);
+		expect(activityStart.status).toBe(201);
+		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
+
+		const heartbeatCreate = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/create", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Wake heartbeat",
+					target_kind: "activity",
+					activity_id: activity.activity.activity_id,
+					every_ms: 0,
+					reason: "heartbeat-wake",
+					wake_mode: "immediate",
+				}),
+			}),
+		);
+		expect(heartbeatCreate.status).toBe(201);
+		const heartbeatPayload = (await heartbeatCreate.json()) as {
+			program: { program_id: string };
+		};
+		const heartbeatProgramId = heartbeatPayload.program.program_id;
+
+		const heartbeatTrigger = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/trigger", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ program_id: heartbeatProgramId, reason: "manual" }),
+			}),
+		);
+		expect(heartbeatTrigger.status).toBe(200);
+
+		const decisionPayload = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake.decision&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const match = events
+				.map((event) => event.payload ?? {})
+				.find((payload) => payload.program_id === heartbeatProgramId);
+			return match ?? null;
+		});
+		if (!decisionPayload) {
+			throw new Error("expected fallback wake decision");
+		}
+		expect(decisionPayload.outcome).toBe("fallback");
+		expect(decisionPayload.reason).toBe("control_plane_unavailable");
+		expect(decisionPayload.wake_turn_mode).toBe("active");
+		expect(decisionPayload.wake_turn_feature_enabled).toBe(true);
+
+		const wakePayload = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const match = events
+				.map((event) => event.payload ?? {})
+				.find((payload) => payload.program_id === heartbeatProgramId);
+			return match ?? null;
+		});
+		if (!wakePayload) {
+			throw new Error("expected fallback wake payload");
+		}
+		expect(wakePayload.decision_outcome).toBe("fallback");
+		expect(wakePayload.decision_reason).toBe("control_plane_unavailable");
 	});
 
 	test("api run start/resume auto-register and auto-disable run heartbeat programs", async () => {

@@ -72,6 +72,7 @@ export function createServerProgramOrchestration(opts: {
 				message: event.message,
 				payload: {
 					wake_source: "heartbeat_program",
+					source_ts_ms: event.ts_ms,
 					program_id: event.program_id,
 					status: event.status,
 					reason: event.reason,
@@ -134,6 +135,7 @@ export function createServerProgramOrchestration(opts: {
 				message: event.message,
 				payload: {
 					wake_source: "cron_program",
+					source_ts_ms: event.ts_ms,
 					program_id: event.program_id,
 					status: event.status,
 					reason: event.reason,

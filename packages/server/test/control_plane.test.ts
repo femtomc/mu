@@ -226,6 +226,21 @@ async function linkSlackIdentity(repoRoot: string, scopes: string[]): Promise<vo
 	});
 }
 
+async function linkDiscordIdentity(repoRoot: string, scopes: string[]): Promise<void> {
+	const paths = getControlPlanePaths(repoRoot);
+	const identities = new IdentityStore(paths.identitiesPath);
+	await identities.load();
+	await identities.link({
+		bindingId: "binding-discord",
+		operatorId: "op-discord",
+		channel: "discord",
+		channelTenantId: "guild-1",
+		channelActorId: "discord-actor",
+		scopes,
+		nowMs: 1_000,
+	});
+}
+
 async function linkTelegramIdentity(repoRoot: string, scopes: string[]): Promise<void> {
 	const paths = getControlPlanePaths(repoRoot);
 	const identities = new IdentityStore(paths.identitiesPath);
@@ -314,6 +329,147 @@ describe("bootstrapControlPlane operator wiring", () => {
 			name: "slack",
 			route: SlackControlPlaneAdapterSpec.route,
 		});
+	});
+
+	test("notifyOperators fans out across mixed bindings and skips unsupported/unconfigured channels deterministically", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkSlackIdentity(repoRoot, ["cp.ops.admin"]);
+		await linkDiscordIdentity(repoRoot, ["cp.ops.admin"]);
+		await linkTelegramIdentity(repoRoot, ["cp.ops.admin"]);
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({
+				telegramSecret: "telegram-secret",
+				telegramBotToken: null,
+			}),
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		expect(typeof handle.notifyOperators).toBe("function");
+		if (!handle.notifyOperators) {
+			throw new Error("expected notifyOperators implementation");
+		}
+		const delivery = await handle.notifyOperators({
+			message: "Wake: mixed-channel safety check",
+			dedupeKey: "wake:mixed:1",
+			wake: {
+				wakeId: "wake-mixed-1",
+				wakeSource: "heartbeat_program",
+				programId: "hb-1",
+				sourceTsMs: 11,
+			},
+		});
+
+		expect(delivery.queued).toBe(0);
+		expect(delivery.duplicate).toBe(0);
+		expect(delivery.skipped).toBe(3);
+		expect(delivery.decisions).toHaveLength(3);
+
+		const byBinding = new Map(delivery.decisions.map((entry) => [entry.binding_id, entry]));
+		expect(byBinding.get("binding-slack")?.state).toBe("skipped");
+		expect(byBinding.get("binding-slack")?.reason_code).toBe("channel_delivery_unsupported");
+		expect(byBinding.get("binding-discord")?.state).toBe("skipped");
+		expect(byBinding.get("binding-discord")?.reason_code).toBe("channel_delivery_unsupported");
+		expect(byBinding.get("binding-telegram")?.state).toBe("skipped");
+		expect(byBinding.get("binding-telegram")?.reason_code).toBe("telegram_bot_token_missing");
+	});
+
+	test("notifyOperators preserves wake dedupe/no-spam semantics per binding/channel", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkSlackIdentity(repoRoot, ["cp.ops.admin"]);
+		await linkDiscordIdentity(repoRoot, ["cp.ops.admin"]);
+		await linkTelegramIdentity(repoRoot, ["cp.ops.admin"]);
+
+		const telegramApiCalls: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.startsWith("https://api.telegram.org/bot")) {
+				const parsedBody =
+					typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				telegramApiCalls.push({ url, body: parsedBody });
+				return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return await originalFetch(input as any, init);
+		}) as typeof fetch;
+
+		try {
+			const handle = await bootstrapControlPlaneForTest({
+				repoRoot,
+				config: configWith({
+					telegramSecret: "telegram-secret",
+					telegramBotToken: "telegram-token",
+				}),
+			});
+			expect(handle).not.toBeNull();
+			if (!handle) {
+				throw new Error("expected control plane handle");
+			}
+			handlesToCleanup.add(handle);
+			if (!handle.notifyOperators) {
+				throw new Error("expected notifyOperators implementation");
+			}
+
+			const first = await handle.notifyOperators({
+				message: "Wake: dedupe check",
+				dedupeKey: "wake:dedupe:1",
+				wake: {
+					wakeId: "wake-dedupe-1",
+					wakeSource: "cron_program",
+					programId: "cron-1",
+					sourceTsMs: 22,
+				},
+			});
+			expect(first.queued).toBe(1);
+			expect(first.duplicate).toBe(0);
+			expect(first.skipped).toBe(2);
+			const firstTelegram = first.decisions.find((entry) => entry.binding_id === "binding-telegram");
+			expect(firstTelegram?.state).toBe("queued");
+			expect(firstTelegram?.dedupe_key).toContain(":telegram:binding-telegram");
+			if (!firstTelegram || !firstTelegram.dedupe_key) {
+				throw new Error("expected first telegram dedupe key");
+			}
+
+			const second = await handle.notifyOperators({
+				message: "Wake: dedupe check",
+				dedupeKey: "wake:dedupe:1",
+				wake: {
+					wakeId: "wake-dedupe-1",
+					wakeSource: "cron_program",
+					programId: "cron-1",
+					sourceTsMs: 22,
+				},
+			});
+			expect(second.queued).toBe(0);
+			expect(second.duplicate).toBe(1);
+			expect(second.skipped).toBe(2);
+			const secondTelegram = second.decisions.find((entry) => entry.binding_id === "binding-telegram");
+			expect(secondTelegram?.state).toBe("duplicate");
+			expect(secondTelegram?.outbox_id).toBe(firstTelegram?.outbox_id ?? null);
+
+			for (let attempt = 0; attempt < 50 && telegramApiCalls.length === 0; attempt++) {
+				await Bun.sleep(20);
+			}
+			expect(telegramApiCalls).toHaveLength(1);
+
+			const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
+			await outbox.load();
+			const wakeRecords = outbox
+				.records()
+				.filter((record) => record.envelope.metadata.wake_delivery === true && record.envelope.channel === "telegram");
+			expect(wakeRecords).toHaveLength(1);
+			expect(wakeRecords[0]?.dedupe_key).toBe(firstTelegram.dedupe_key);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 
 	test("Slack webhook chat messages are routed through injected operator backend", async () => {

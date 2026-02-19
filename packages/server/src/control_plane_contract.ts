@@ -99,9 +99,63 @@ export type ControlPlaneSessionLifecycle = {
 	update: () => Promise<ControlPlaneSessionMutationResult>;
 };
 
+export type WakeDeliveryState =
+	| "queued"
+	| "duplicate"
+	| "skipped"
+	| "delivered"
+	| "retried"
+	| "dead_letter";
+
+export type WakeNotifyDecision = {
+	state: "queued" | "duplicate" | "skipped";
+	reason_code: string;
+	binding_id: string;
+	channel: Channel;
+	dedupe_key: string;
+	outbox_id: string | null;
+};
+
+export type WakeNotifyContext = {
+	wakeId: string;
+	wakeSource?: string | null;
+	programId?: string | null;
+	sourceTsMs?: number | null;
+};
+
+export type NotifyOperatorsOpts = {
+	message: string;
+	dedupeKey: string;
+	wake?: WakeNotifyContext | null;
+	metadata?: Record<string, unknown>;
+};
+
+export type NotifyOperatorsResult = {
+	queued: number;
+	duplicate: number;
+	skipped: number;
+	decisions: WakeNotifyDecision[];
+};
+
+export type WakeDeliveryEvent = {
+	state: "delivered" | "retried" | "dead_letter";
+	reason_code: string;
+	wake_id: string;
+	dedupe_key: string;
+	binding_id: string;
+	channel: Channel;
+	outbox_id: string;
+	outbox_dedupe_key: string;
+	attempt_count: number;
+};
+
+export type WakeDeliveryObserver = (event: WakeDeliveryEvent) => void | Promise<void>;
+
 export type ControlPlaneHandle = {
 	activeAdapters: ActiveAdapter[];
 	handleWebhook(path: string, req: Request): Promise<Response | null>;
+	notifyOperators?(opts: NotifyOperatorsOpts): Promise<NotifyOperatorsResult>;
+	setWakeDeliveryObserver?(observer: WakeDeliveryObserver | null): void;
 	reloadTelegramGeneration?(opts: {
 		config: ControlPlaneConfig;
 		reason: string;
