@@ -683,13 +683,15 @@ test("mu serve connects to existing server instead of spawning new one", async (
 
 	// Mock fetch for health check
 	const origFetch = globalThis.fetch;
-	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+	const mockFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
 		const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 		if (url === "http://localhost:23456/healthz") {
 			return new Response("ok", { status: 200 });
 		}
 		return origFetch(input, init);
 	};
+	mockFetch.preconnect = origFetch.preconnect;
+	globalThis.fetch = mockFetch;
 
 	try {
 		const result = await run(["serve", "--port", "3307", "--no-open"], {

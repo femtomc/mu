@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-const channelAdapterPath = join(import.meta.dir, "..", "src", "channel_adapters.ts");
+const adaptersDir = join(import.meta.dir, "..", "src", "adapters");
 const commandPipelinePath = join(import.meta.dir, "..", "src", "command_pipeline.ts");
 const controlPlanePackageJsonPath = join(import.meta.dir, "..", "package.json");
 
 describe("control-plane modular boundaries", () => {
 	test("channel adapters remain thin translators and do not bypass control-plane mutation interfaces", async () => {
-		const source = await readFile(channelAdapterPath, "utf8");
+		const entries = await readdir(adaptersDir);
+		const adapterFiles = entries.filter((f) => f.endsWith(".ts"));
+		const sources = await Promise.all(adapterFiles.map((f) => readFile(join(adaptersDir, f), "utf8")));
+		const source = sources.join("\n");
 
 		const forbiddenSpecifiers = [
 			"@femtomc/mu-issue",

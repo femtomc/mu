@@ -4,15 +4,12 @@ import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import chalk from "chalk";
 import type { BackendRunner } from "@femtomc/mu-agent";
-import { DEFAULT_OPERATOR_SYSTEM_PROMPT } from "@femtomc/mu-agent";
 import type { Issue } from "@femtomc/mu-core";
-import { type EventLog, FsJsonlStore, fsEventLog, getStorePaths, newRunId, readJsonl, runContext } from "@femtomc/mu-core/node";
+import type { EventLog, StorePaths } from "@femtomc/mu-core/node";
 import type { ForumTopicSummary } from "@femtomc/mu-forum";
-import { ForumStore } from "@femtomc/mu-forum";
-import { IssueStore } from "@femtomc/mu-issue";
+import type { ForumStore } from "@femtomc/mu-forum";
+import type { IssueStore } from "@femtomc/mu-issue";
 import type { ModelOverrides } from "@femtomc/mu-orchestrator";
-import { guideText } from "./guide.js";
-import { PiPrettyStreamRenderer } from "./pi_pretty_stream_renderer.js";
 
 export type RunResult = {
 	stdout: string;
@@ -95,7 +92,7 @@ type CliCtx = {
 	store: IssueStore;
 	forum: ForumStore;
 	events: EventLog;
-	paths: ReturnType<typeof getStorePaths>;
+	paths: StorePaths;
 	io?: CliIO;
 	backend?: BackendRunner;
 	operatorSessionFactory?: (opts: {
@@ -296,6 +293,9 @@ async function readServeOperatorDefaults(repoRoot: string): Promise<{ provider?:
 }
 
 async function ensureCtx(cwd: string): Promise<CliCtx> {
+	const { FsJsonlStore, fsEventLog, getStorePaths } = await import("@femtomc/mu-core/node");
+	const { IssueStore } = await import("@femtomc/mu-issue");
+	const { ForumStore } = await import("@femtomc/mu-forum");
 	const repoRoot = await findRepoRoot(cwd);
 	const paths = getStorePaths(repoRoot);
 	const events = fsEventLog(paths.eventsPath);
@@ -513,6 +513,7 @@ async function cmdGuide(argv: string[]): Promise<RunResult> {
 	if (argv.length > 0 && !hasHelpFlag(argv)) {
 		return jsonError(`unknown args: ${argv.join(" ")}`, { recovery: ["mu guide"] });
 	}
+	const { guideText } = await import("./guide.js");
 	return ok(`${guideText()}\n`);
 }
 
@@ -754,6 +755,7 @@ async function storeLs(argv: string[], ctx: CliCtx, pretty: boolean): Promise<Ru
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu store ls --help"] });
 	}
 
+	const { readJsonl } = await import("@femtomc/mu-core/node");
 	const targets = await listStoreTargets(ctx);
 	const rows: Array<Record<string, unknown>> = [];
 	for (const t of targets) {
@@ -856,6 +858,7 @@ async function storeTail(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	}
 
 	if (targetAbs.endsWith(".jsonl")) {
+		const { readJsonl } = await import("@femtomc/mu-core/node");
 		const rows = await readJsonl(targetAbs);
 		const tailRows = rows.slice(-limit);
 		const payload = {
@@ -2087,6 +2090,8 @@ async function cmdRunDirect(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 	await ensureStoreInitialized(ctx);
 
+	const { newRunId, runContext } = await import("@femtomc/mu-core/node");
+	const { PiPrettyStreamRenderer } = await import("./pi_pretty_stream_renderer.js");
 	const runId = newRunId();
 	const io = ctx.io;
 	const streaming = io != null && !jsonMode;
@@ -2340,6 +2345,8 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const rootId = resolved.issueId!;
 
 	const reset = await ctx.store.reset_in_progress(rootId);
+	const { newRunId, runContext } = await import("@femtomc/mu-core/node");
+	const { PiPrettyStreamRenderer } = await import("./pi_pretty_stream_renderer.js");
 	const runId = newRunId();
 	const io = ctx.io;
 	const streaming = io != null && !jsonMode;
@@ -2647,6 +2654,7 @@ async function cmdOperatorSession(
 		});
 	}
 
+	const { DEFAULT_OPERATOR_SYSTEM_PROMPT } = await import("@femtomc/mu-agent");
 	const provider = providerRaw?.trim() || undefined;
 	const model = modelRaw?.trim() || undefined;
 	const thinking = thinkingRaw?.trim() || undefined;
@@ -3528,6 +3536,7 @@ async function controlDiagnoseOperator(argv: string[], ctx: CliCtx, pretty: bool
 		}
 	};
 
+	const { readJsonl } = await import("@femtomc/mu-core/node");
 	const { getControlPlanePaths } = await import("@femtomc/mu-control-plane");
 	const paths = getControlPlanePaths(ctx.repoRoot);
 	const turnsPath = join(paths.controlPlaneDir, "operator_turns.jsonl");

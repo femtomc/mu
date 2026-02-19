@@ -16,7 +16,8 @@ type RegexRule = {
 };
 
 type SourceBoundaryRule = {
-	file: string;
+	/** Single file path or array of file paths (sources are concatenated for multi-file rules). */
+	file: string | string[];
 	description: string;
 	forbiddenTokens?: TokenRule[];
 	requiredTokens?: TokenRule[];
@@ -95,7 +96,12 @@ const PHASE_CRITICAL_TESTS = [
 
 const SOURCE_BOUNDARY_RULES: SourceBoundaryRule[] = [
 	{
-		file: "packages/control-plane/src/channel_adapters.ts",
+		file: [
+			"packages/control-plane/src/adapters/shared.ts",
+			"packages/control-plane/src/adapters/slack.ts",
+			"packages/control-plane/src/adapters/discord.ts",
+			"packages/control-plane/src/adapters/telegram.ts",
+		],
 		description: "channel adapters remain thin translators over command pipeline/runtime boundaries",
 		forbiddenTokens: [
 			{ token: "@femtomc/mu-issue", reason: "do not couple adapters directly to issue persistence" },
@@ -222,7 +228,7 @@ function collectTokenViolations(opts: {
 		}
 		return [
 			{
-				file: opts.rule.file,
+				file: ruleLabel(opts.rule),
 				description: opts.rule.description,
 				message: [
 					`forbidden token \"${opts.tokenRule.token}\" detected`,
@@ -237,7 +243,7 @@ function collectTokenViolations(opts: {
 	}
 	return [
 		{
-			file: opts.rule.file,
+			file: ruleLabel(opts.rule),
 			description: opts.rule.description,
 			message: [`missing required token \"${opts.tokenRule.token}\"`, `why: ${opts.tokenRule.reason}`].join("\n"),
 		},
@@ -254,7 +260,7 @@ function collectRegexViolations(opts: {
 	}
 	return [
 		{
-			file: opts.rule.file,
+			file: ruleLabel(opts.rule),
 			description: opts.rule.description,
 			message: [
 				`forbidden pattern detected: ${opts.regexRule.label}`,
@@ -265,10 +271,18 @@ function collectRegexViolations(opts: {
 	];
 }
 
-function collectSourceBoundaryViolations(sourceByFile: Map<string, string>): BoundaryViolation[] {
+function ruleKey(rule: SourceBoundaryRule): string {
+	return Array.isArray(rule.file) ? rule.file.join(", ") : rule.file;
+}
+
+function ruleLabel(rule: SourceBoundaryRule): string {
+	return Array.isArray(rule.file) ? rule.file[0].replace(/\/[^/]+$/, "/*") : rule.file;
+}
+
+function collectSourceBoundaryViolations(sourceByRule: Map<string, string>): BoundaryViolation[] {
 	const violations: BoundaryViolation[] = [];
 	for (const rule of SOURCE_BOUNDARY_RULES) {
-		const source = sourceByFile.get(rule.file) ?? "";
+		const source = sourceByRule.get(ruleKey(rule)) ?? "";
 		for (const tokenRule of rule.forbiddenTokens ?? []) {
 			violations.push(...collectTokenViolations({ source, rule, tokenRule, mode: "forbidden" }));
 		}
@@ -534,23 +548,28 @@ async function runArchitectureChecks(repoRoot: string): Promise<void> {
 		);
 	}
 
-	const sourceByFile = new Map<string, string>();
+	const sourceByRule = new Map<string, string>();
 	for (const rule of SOURCE_BOUNDARY_RULES) {
-		const absPath = resolve(repoRoot, rule.file);
-		sourceByFile.set(rule.file, await readFile(absPath, "utf8"));
+		const files = Array.isArray(rule.file) ? rule.file : [rule.file];
+		const parts: string[] = [];
+		for (const f of files) {
+			parts.push(await readFile(resolve(repoRoot, f), "utf8"));
+		}
+		const key = Array.isArray(rule.file) ? rule.file.join(", ") : rule.file;
+		sourceByRule.set(key, parts.join("\n"));
 	}
 
 	if (dryRunSourceFail) {
 		const file = "packages/control-plane/src/command_pipeline.ts";
-		const base = sourceByFile.get(file) ?? "";
-		sourceByFile.set(
+		const base = sourceByRule.get(file) ?? "";
+		sourceByRule.set(
 			file,
 			`${base}\nimport type { ApprovedCommandBroker } from "@femtomc/mu-agent"; // dry-run boundary regression`,
 		);
 	}
 
 	const violations: BoundaryViolation[] = [];
-	violations.push(...collectSourceBoundaryViolations(sourceByFile));
+	violations.push(...collectSourceBoundaryViolations(sourceByRule));
 
 	const manifests = await loadWorkspaceManifests(repoRoot);
 	if (dryRunDependencyFail) {
