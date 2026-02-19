@@ -208,7 +208,7 @@ async function refresh(opts: { readTopic?: string } = {}) {
 	try {
 		setError(null);
 
-		const [allIssues, ready, status] = await Promise.all([api.listIssues(), api.getReadyIssues(), api.getStatus()]);
+		const [allIssues, ready, _status] = await Promise.all([api.listIssues(), api.getReadyIssues(), api.getStatus()]);
 
 		const topicsPrefix = q<HTMLInputElement>("topics-prefix").value.trim() || undefined;
 		const topics = await api.listTopics(topicsPrefix);

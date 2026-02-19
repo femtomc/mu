@@ -24,7 +24,6 @@ import type {
 	ControlPlaneHandle,
 	ControlPlaneSessionLifecycle,
 	TelegramGenerationReloadResult,
-	TelegramGenerationRollbackTrigger,
 	TelegramGenerationSwapHooks,
 } from "./control_plane_contract.js";
 import type { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";

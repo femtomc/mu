@@ -1,4 +1,4 @@
-import { existsSync, openSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, openSync, rmSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -2912,44 +2912,6 @@ function heartbeatProgramMatchesRun(program: Record<string, unknown>, run: Queue
 	return false;
 }
 
-function cleanupWriterLockIfOwnedByCurrentProcess(repoRoot: string): boolean {
-	const lockPath = join(repoRoot, ".mu", "control-plane", "writer.lock");
-	let ownerPid: number | null = null;
-
-	try {
-		const raw = readFileSync(lockPath, "utf8").trim();
-		if (raw.length === 0) {
-			return false;
-		}
-		const parsed = asRecord(JSON.parse(raw));
-		if (!parsed) {
-			return false;
-		}
-		ownerPid =
-			typeof parsed.pid === "number" && Number.isFinite(parsed.pid)
-				? Math.trunc(parsed.pid)
-				: null;
-	} catch (err) {
-		const code = err instanceof Error && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
-			return false;
-		}
-		return false;
-	}
-
-	if (ownerPid !== process.pid) {
-		return false;
-	}
-
-	try {
-		rmSync(lockPath, { force: true });
-		rmSync(join(repoRoot, ".mu", "control-plane", "server.json"), { force: true });
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 async function detectRunningServer(repoRoot: string): Promise<{ url: string; port: number; pid: number } | null> {
 	const discoveryPath = join(repoRoot, ".mu", "control-plane", "server.json");
 	try {
@@ -2960,10 +2922,8 @@ async function detectRunningServer(repoRoot: string): Promise<{ url: string; por
 		if (typeof pid !== "number" || typeof port !== "number") return null;
 
 		// Check if PID is alive
-		let pidAlive = false;
 		try {
 			process.kill(pid, 0);
-			pidAlive = true;
 		} catch {
 			// PID dead — clean up stale discovery files
 			cleanupStaleServerFiles(repoRoot);

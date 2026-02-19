@@ -1,5 +1,3 @@
-import type { Issue, ForumMessage } from "@femtomc/mu-core";
-
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
 export class ApiError extends Error {

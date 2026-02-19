@@ -1,6 +1,4 @@
 import {
-	type GenerationSupervisorSnapshot,
-	type GenerationTelemetryCountersSnapshot,
 	GenerationTelemetryRecorder,
 	type ReloadableGenerationIdentity,
 	type ReloadLifecycleReason,
@@ -40,13 +38,6 @@ type ControlPlaneSummary = {
 	active: boolean;
 	adapters: string[];
 	routes: Array<{ name: string; route: string }>;
-};
-
-type ControlPlaneStatus = ControlPlaneSummary & {
-	generation: GenerationSupervisorSnapshot;
-	observability: {
-		counters: GenerationTelemetryCountersSnapshot;
-	};
 };
 
 type ControlPlaneReloadResult = {

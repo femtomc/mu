@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "@femtomc/mu";
@@ -9,67 +8,6 @@ async function mkTempRepo(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "mu-cli-"));
 	await mkdir(join(dir, ".git"), { recursive: true });
 	return dir;
-}
-
-async function occupyPort(): Promise<{ port: number; close: () => Promise<void> }> {
-	const server = createNetServer();
-	await new Promise<void>((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", () => {
-			server.off("error", reject);
-			resolve();
-		});
-	});
-
-	const address = server.address();
-	if (!address || typeof address === "string") {
-		server.close();
-		throw new Error("failed to resolve occupied port");
-	}
-
-	return {
-		port: address.port,
-		close: async () => {
-			await new Promise<void>((resolve, reject) => {
-				server.close((err) => {
-					if (err) {
-						reject(err);
-						return;
-					}
-					resolve();
-				});
-			});
-		},
-	};
-}
-
-async function writeConfigWithActiveAdapter(dir: string): Promise<void> {
-	const configPath = join(dir, ".mu", "config.json");
-	await mkdir(join(dir, ".mu"), { recursive: true });
-	await writeFile(
-		configPath,
-		`${JSON.stringify(
-			{
-				version: 1,
-				control_plane: {
-					adapters: {
-						slack: { signing_secret: "slack-secret" },
-						discord: { signing_secret: null },
-						telegram: { webhook_secret: null, bot_token: null, bot_username: null },
-					},
-					operator: {
-						enabled: false,
-						run_triggers_enabled: false,
-						provider: null,
-						model: null,
-					},
-				},
-			},
-			null,
-			2,
-		)}\n`,
-		"utf8",
-	);
 }
 
 async function writeConfigWithOperatorDefaults(dir: string, provider: string, model: string): Promise<void> {
