@@ -16,6 +16,8 @@
 			"@femtomc/mu-orchestrator/*": ["./packages/orchestrator/src/*"],
 			"@femtomc/mu-agent": ["./packages/agent/src/index.ts"],
 			"@femtomc/mu-agent/*": ["./packages/agent/src/*"],
+			"@femtomc/mu-server": ["./packages/server/src/index.ts"],
+			"@femtomc/mu-server/*": ["./packages/server/src/*"],
 			"@femtomc/mu": ["./packages/cli/src/index.ts"],
 			"@femtomc/mu/*": ["./packages/cli/src/*"]
 		}
