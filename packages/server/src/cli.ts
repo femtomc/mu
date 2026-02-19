@@ -1,23 +1,62 @@
 #!/usr/bin/env bun
 
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { findRepoRoot } from "@femtomc/mu-core/node";
 import { composeServerRuntime, createServerFromRuntime } from "./server.js";
 
-const port = parseInt(Bun.env.PORT || "3000", 10);
+// Parse CLI flags: --port N, --repo-root PATH
+function parseArgs(argv: string[]): { port: number; repoRoot: string | null } {
+	let port = parseInt(Bun.env.PORT || "3000", 10);
+	let repoRoot: string | null = null;
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i]!;
+		if (arg === "--port" && i + 1 < argv.length) {
+			port = parseInt(argv[++i]!, 10);
+		} else if (arg.startsWith("--port=")) {
+			port = parseInt(arg.slice("--port=".length), 10);
+		} else if (arg === "--repo-root" && i + 1 < argv.length) {
+			repoRoot = argv[++i]!;
+		} else if (arg.startsWith("--repo-root=")) {
+			repoRoot = arg.slice("--repo-root=".length);
+		}
+	}
+
+	return { port, repoRoot };
+}
+
+const args = parseArgs(process.argv.slice(2));
 
 let repoRoot: string;
 try {
-	repoRoot = findRepoRoot();
+	repoRoot = args.repoRoot ?? findRepoRoot();
 } catch {
 	console.error("Error: Could not find .mu directory. Run 'mu serve' or 'mu run' once to initialize it.");
 	process.exit(1);
 }
 
+const port = args.port;
+const discoveryPath = join(repoRoot, ".mu", "control-plane", "server.json");
+
 console.log(`Starting mu-server on port ${port}...`);
 console.log(`Repository root: ${repoRoot}`);
 
 const runtime = await composeServerRuntime({ repoRoot });
-const serverConfig = createServerFromRuntime(runtime, { port });
+
+const initiateShutdown = async () => {
+	console.log("Shutdown initiated via API");
+	try {
+		rmSync(discoveryPath, { force: true });
+	} catch {
+		// best-effort
+	}
+	await runtime.controlPlane?.stop();
+	server.stop();
+	process.exit(0);
+};
+
+const serverConfig = createServerFromRuntime(runtime, { port, initiateShutdown });
 
 let server: ReturnType<typeof Bun.serve>;
 try {
@@ -29,6 +68,21 @@ try {
 		// Best effort cleanup. Preserve the startup error.
 	}
 	throw err;
+}
+
+// Write discovery file so clients can find this server
+try {
+	writeFileSync(
+		discoveryPath,
+		JSON.stringify({
+			pid: process.pid,
+			port,
+			url: `http://localhost:${port}`,
+			started_at_ms: Date.now(),
+		}) + "\n",
+	);
+} catch (err) {
+	console.error(`Warning: could not write ${discoveryPath}: ${err}`);
 }
 
 console.log(`Server running at http://localhost:${port}`);
@@ -45,6 +99,11 @@ if (runtime.controlPlane && runtime.controlPlane.activeAdapters.length > 0) {
 }
 
 const cleanup = async () => {
+	try {
+		rmSync(discoveryPath, { force: true });
+	} catch {
+		// best-effort
+	}
 	await runtime.controlPlane?.stop();
 	server.stop();
 	process.exit(0);

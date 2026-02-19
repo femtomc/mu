@@ -90,6 +90,7 @@ export type ServerOptions = {
 	configReader?: ConfigReader;
 	configWriter?: ConfigWriter;
 	sessionLifecycle?: ControlPlaneSessionLifecycle;
+	initiateShutdown?: () => Promise<void>;
 };
 
 export type ServerInstanceOptions = Omit<
@@ -834,6 +835,7 @@ function createServer(options: ServerOptions = {}) {
 		registerAutoRunHeartbeatProgram,
 		disableAutoRunHeartbeatProgram,
 		describeError,
+		initiateShutdown: options.initiateShutdown,
 	});
 
 	const server = {

@@ -272,7 +272,7 @@ test("mu serve help text", async () => {
 	const dir = await mkTempRepo();
 	const serveHelp = await run(["serve", "--help"], { cwd: dir });
 	expect(serveHelp.exitCode).toBe(0);
-	expect(serveHelp.stdout).toContain("start server + terminal operator session + web UI");
+	expect(serveHelp.stdout).toContain("start background server + attach terminal operator session + web UI");
 	expect(serveHelp.stdout).toContain("--port");
 	expect(serveHelp.stdout).toContain("Use `/mu setup <adapter>` in mu serve operator session for guided setup");
 	expect(serveHelp.stdout).not.toContain("/mu-setup");
@@ -284,10 +284,7 @@ test("mu run auto-initializes store layout", async () => {
 	const result = await run(["run", "hello", "--max-steps", "1", "--no-open"], {
 		cwd: dir,
 		serveDeps: {
-			startServer: async () => ({
-				activeAdapters: [],
-				stop: async () => {},
-			}),
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
 			queueRun: async ({ maxSteps }) => ({
 				job_id: "run-job-init",
 				root_issue_id: "mu-root-init",
@@ -346,14 +343,9 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 			cwd: dir,
 			io,
 			serveDeps: {
-				startServer: async ({ port }) => {
-					events.push(`server:start:${port}`);
-					return {
-						activeAdapters: [],
-						stop: async () => {
-							events.push("server:stop");
-						},
-					};
+				spawnBackgroundServer: async ({ port }) => {
+					events.push(`server:spawn:${port}`);
+					return { pid: 99999, url: `http://localhost:${port}` };
 				},
 				queueRun: async (opts) => {
 					events.push("run:queue");
@@ -389,13 +381,13 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 	);
 
 	expect(result.exitCode).toBe(0);
+	// Server is NOT stopped — it runs in the background
 	expect(events).toEqual([
-		"server:start:3311",
+		"server:spawn:3311",
 		"run:queue",
 		"run:heartbeat",
 		"operator:start",
 		"operator:end",
-		"server:stop",
 	]);
 	expect(queuedArgs).toMatchObject({
 		serverUrl: "http://localhost:3311",
@@ -439,10 +431,7 @@ test("mu serve auto-initializes store layout", async () => {
 	const result = await run(["serve", "--port", "3309", "--no-open"], {
 		cwd: dir,
 		serveDeps: {
-			startServer: async () => ({
-				activeAdapters: [],
-				stop: async () => {},
-			}),
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
 			runOperatorSession: async ({ onReady }) => {
 				onReady();
 				return { stdout: "", stderr: "", exitCode: 0 };
@@ -579,24 +568,17 @@ function mkCaptureIo(): {
 	};
 }
 
-test("mu serve starts server + terminal session and shuts both down on operator session exit", async () => {
+test("mu serve spawns background server, attaches TUI, and leaves server running on TUI exit", async () => {
 	const dir = await mkTempRepo();
 	const events: string[] = [];
-	let stopCalls = 0;
 	const { io, chunks } = mkCaptureIo();
 	const result = await run(["serve", "--port", "3300", "--no-open"], {
 		cwd: dir,
 		io,
 		serveDeps: {
-			startServer: async ({ port }) => {
-				events.push(`server:start:${port}`);
-				return {
-					activeAdapters: [],
-					stop: async () => {
-						stopCalls += 1;
-						events.push("server:stop");
-					},
-				};
+			spawnBackgroundServer: async ({ port }) => {
+				events.push(`server:spawn:${port}`);
+				return { pid: 99999, url: `http://localhost:${port}` };
 			},
 			runOperatorSession: async ({ onReady }) => {
 				events.push("operator:start");
@@ -613,8 +595,9 @@ test("mu serve starts server + terminal session and shuts both down on operator 
 	});
 
 	expect(result.exitCode).toBe(0);
-	expect(stopCalls).toBe(1);
-	expect(events).toEqual(["server:start:3300", "operator:start", "operator:end", "server:stop"]);
+	// Server is NOT stopped when TUI exits — it's a background process
+	expect(events).toEqual(["server:spawn:3300", "operator:start", "operator:end"]);
+	expect(chunks.stderr).toContain("started background server");
 });
 
 test("mu serve passes operator provider/model defaults from .mu/config.json to terminal operator session", async () => {
@@ -623,16 +606,10 @@ test("mu serve passes operator provider/model defaults from .mu/config.json to t
 
 	let seenProvider: string | undefined;
 	let seenModel: string | undefined;
-	let stopCalls = 0;
 	const result = await run(["serve", "--port", "3301", "--no-open"], {
 		cwd: dir,
 		serveDeps: {
-			startServer: async () => ({
-				activeAdapters: [],
-				stop: async () => {
-					stopCalls += 1;
-				},
-			}),
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
 			runOperatorSession: async ({ onReady, provider, model }) => {
 				seenProvider = provider;
 				seenModel = model;
@@ -646,25 +623,18 @@ test("mu serve passes operator provider/model defaults from .mu/config.json to t
 	});
 
 	expect(result.exitCode).toBe(0);
-	expect(stopCalls).toBe(1);
 	expect(seenProvider).toBe("openai-codex");
 	expect(seenModel).toBe("gpt-5.3-codex");
 });
 
-test("mu serve surfaces operator-session startup failure and still stops server", async () => {
+test("mu serve surfaces operator-session startup failure (server keeps running)", async () => {
 	const dir = await mkTempRepo();
-	let stopCalls = 0;
 	const { io, chunks } = mkCaptureIo();
 	const result = await run(["serve", "--port", "3302", "--no-open"], {
 		cwd: dir,
 		io,
 		serveDeps: {
-			startServer: async () => ({
-				activeAdapters: [],
-				stop: async () => {
-					stopCalls += 1;
-				},
-			}),
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
 			runOperatorSession: async () => ({
 				stdout: '{"error":"interactive operator session requires a TTY"}\n',
 				stderr: "",
@@ -679,26 +649,19 @@ test("mu serve surfaces operator-session startup failure and still stops server"
 	});
 
 	expect(result.exitCode).toBe(1);
-	expect(stopCalls).toBe(1);
 	expect(result.stdout).toContain("interactive operator session requires a TTY");
 	expect(chunks.stderr).toContain("mu: operator terminal failed to connect.");
 });
 
-test("mu serve forwards SIGINT lifecycle and exits cleanly", async () => {
+test("mu serve forwards SIGINT lifecycle and exits cleanly (server keeps running)", async () => {
 	const dir = await mkTempRepo();
 	const harness = mkSignalHarness();
-	let stopCalls = 0;
 	let operatorResolveFn: (() => void) | null = null;
 
 	const servePromise = run(["serve", "--port", "3302", "--no-open"], {
 		cwd: dir,
 		serveDeps: {
-			startServer: async () => ({
-				activeAdapters: [],
-				stop: async () => {
-					stopCalls += 1;
-				},
-			}),
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
 			runOperatorSession: ({ onReady }) => {
 				onReady();
 				// Simulate a long-running operator session that resolves when we tell it to.
@@ -720,7 +683,6 @@ test("mu serve forwards SIGINT lifecycle and exits cleanly", async () => {
 	harness.emit("SIGINT");
 
 	const result = await servePromise;
-	expect(stopCalls).toBe(1);
 	// Either operator session finishes first (exit 0) or signal wins (exit 130) — both valid.
 	expect(result.exitCode === 0 || result.exitCode === 130).toBe(true);
 });
@@ -731,7 +693,7 @@ test("mu serve reports server startup errors without launching operator session"
 	const result = await run(["serve", "--port", "3303", "--no-open"], {
 		cwd: dir,
 		serveDeps: {
-			startServer: async () => {
+			spawnBackgroundServer: async () => {
 				throw new Error("EADDRINUSE");
 			},
 			runOperatorSession: async () => {
@@ -747,124 +709,88 @@ test("mu serve reports server startup errors without launching operator session"
 	expect(operatorCalls).toBe(0);
 });
 
-test("mu serve releases control-plane writer lock when bind fails", async () => {
+test("mu serve reports startup failure when background server fails to spawn", async () => {
 	const dir = await mkTempRepo();
-	await writeConfigWithActiveAdapter(dir);
+	let operatorCalls = 0;
+	const result = await run(["serve", "--port", "3306", "--no-open"], {
+		cwd: dir,
+		serveDeps: {
+			spawnBackgroundServer: async () => {
+				throw new Error("server did not become healthy within 15000ms");
+			},
+			runOperatorSession: async () => {
+				operatorCalls += 1;
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+		},
+	});
 
-	const occupied = await occupyPort();
+	expect(result.exitCode).toBe(1);
+	expect(result.stdout).toContain("failed to start server");
+	expect(operatorCalls).toBe(0);
+});
+
+test("mu serve connects to existing server instead of spawning new one", async () => {
+	const dir = await mkTempRepo();
+	await mkdir(join(dir, ".mu", "control-plane"), { recursive: true });
+	// Write a server.json pointing to current PID (so process.kill(pid,0) succeeds)
+	await writeFile(
+		join(dir, ".mu", "control-plane", "server.json"),
+		`${JSON.stringify({ pid: process.pid, port: 23456, url: "http://localhost:23456" })}\n`,
+		"utf8",
+	);
+
+	let spawnCalls = 0;
+	const { io, chunks } = mkCaptureIo();
+
+	// Mock fetch for health check
+	const origFetch = globalThis.fetch;
+	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+		const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+		if (url === "http://localhost:23456/healthz") {
+			return new Response("ok", { status: 200 });
+		}
+		return origFetch(input, init);
+	};
+
 	try {
-		let operatorCalls = 0;
-		const result = await run(["serve", "--port", String(occupied.port), "--no-open"], {
+		const result = await run(["serve", "--port", "3307", "--no-open"], {
 			cwd: dir,
+			io,
 			serveDeps: {
-				runOperatorSession: async () => {
-					operatorCalls += 1;
+				spawnBackgroundServer: async () => {
+					spawnCalls += 1;
+					return { pid: 99999, url: "http://localhost:3307" };
+				},
+				runOperatorSession: async ({ onReady }) => {
+					onReady();
 					return { stdout: "", stderr: "", exitCode: 0 };
 				},
+				registerSignalHandler: () => () => {},
+				isHeadless: () => true,
+				openBrowser: () => {},
 			},
 		});
 
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toContain("failed to start server");
-		expect(operatorCalls).toBe(0);
-
-		const lockPath = join(dir, ".mu", "control-plane", "writer.lock");
-		expect(await Bun.file(lockPath).exists()).toBe(false);
+		expect(result.exitCode).toBe(0);
+		expect(spawnCalls).toBe(0);
+		expect(chunks.stderr).toContain("connecting to existing server");
 	} finally {
-		await occupied.close();
+		globalThis.fetch = origFetch;
 	}
 });
 
-test("mu serve exit hook removes writer lock owned by current process", async () => {
+test("mu stop --help shows usage", async () => {
 	const dir = await mkTempRepo();
-	const lockPath = join(dir, ".mu", "control-plane", "writer.lock");
-	await mkdir(join(dir, ".mu", "control-plane"), { recursive: true });
-	await writeFile(
-		lockPath,
-		`${JSON.stringify({
-			owner_id: `test:${process.pid}`,
-			pid: process.pid,
-			hostname: "test",
-			repo_root: dir,
-			acquired_at_ms: Date.now(),
-		})}\n`,
-		"utf8",
-	);
-
-	let exitHandler: (() => void) | null = null;
-	const result = await run(["serve", "--port", "3304", "--no-open"], {
-		cwd: dir,
-		serveDeps: {
-			startServer: async () => ({
-				activeAdapters: [],
-				stop: async () => {},
-			}),
-			runOperatorSession: async ({ onReady }) => {
-				onReady();
-				exitHandler?.();
-				return { stdout: "", stderr: "", exitCode: 0 };
-			},
-			registerSignalHandler: () => () => {},
-			registerProcessExitHandler: (handler) => {
-				exitHandler = handler;
-				return () => {
-					if (exitHandler === handler) {
-						exitHandler = null;
-					}
-				};
-			},
-			isHeadless: () => true,
-			openBrowser: () => {},
-		},
-	});
-
+	const result = await run(["stop", "--help"], { cwd: dir });
 	expect(result.exitCode).toBe(0);
-	expect(await Bun.file(lockPath).exists()).toBe(false);
+	expect(result.stdout).toContain("mu stop");
+	expect(result.stdout).toContain("--force");
 });
 
-test("mu serve exit hook does not remove writer lock owned by another process", async () => {
+test("mu stop errors when no server is running", async () => {
 	const dir = await mkTempRepo();
-	const lockPath = join(dir, ".mu", "control-plane", "writer.lock");
-	await mkdir(join(dir, ".mu", "control-plane"), { recursive: true });
-	await writeFile(
-		lockPath,
-		`${JSON.stringify({
-			owner_id: `test:${process.pid + 1}`,
-			pid: process.pid + 1,
-			hostname: "test",
-			repo_root: dir,
-			acquired_at_ms: Date.now(),
-		})}\n`,
-		"utf8",
-	);
-
-	let exitHandler: (() => void) | null = null;
-	const result = await run(["serve", "--port", "3305", "--no-open"], {
-		cwd: dir,
-		serveDeps: {
-			startServer: async () => ({
-				activeAdapters: [],
-				stop: async () => {},
-			}),
-			runOperatorSession: async ({ onReady }) => {
-				onReady();
-				exitHandler?.();
-				return { stdout: "", stderr: "", exitCode: 0 };
-			},
-			registerSignalHandler: () => () => {},
-			registerProcessExitHandler: (handler) => {
-				exitHandler = handler;
-				return () => {
-					if (exitHandler === handler) {
-						exitHandler = null;
-					}
-				};
-			},
-			isHeadless: () => true,
-			openBrowser: () => {},
-		},
-	});
-
-	expect(result.exitCode).toBe(0);
-	expect(await Bun.file(lockPath).exists()).toBe(true);
+	const result = await run(["stop"], { cwd: dir });
+	expect(result.exitCode).toBe(1);
+	expect(result.stdout).toContain("no running server found");
 });

@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { existsSync, openSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -55,6 +55,8 @@ type RunHeartbeatRegistration = {
 
 type ServeDeps = {
 	startServer: (opts: { repoRoot: string; port: number }) => Promise<ServeServerHandle>;
+	spawnBackgroundServer: (opts: { repoRoot: string; port: number }) => Promise<{ pid: number; url: string }>;
+	requestServerShutdown: (opts: { serverUrl: string }) => Promise<{ ok: boolean }>;
 	runOperatorSession: (opts: {
 		onReady: () => void;
 		provider?: string;
@@ -419,6 +421,7 @@ function mainHelp(): string {
 		`  ${cmd("replay")} ${dim("<id|path>")}                      Replay a previous run log`,
 		`  ${cmd("control")} ${dim("<subcmd>")}                      Messaging integrations and identity`,
 		`  ${cmd("serve")} ${dim("[--port N] [--no-open]")}          Start API + web UI + operator session`,
+		`  ${cmd("stop")} ${dim("[--force]")}                        Stop the background server`,
 		"",
 		`${dim("Running")} ${cmd("mu")} ${dim("with no arguments starts")} ${cmd("mu serve")}${dim(".")}`,
 		`${dim("Run")} ${cmd("mu guide")} ${dim("for the full in-CLI guide.")}`,
@@ -497,6 +500,8 @@ export async function run(
 			return await cmdControl(rest, ctx);
 		case "serve":
 			return await cmdServe(rest, ctx);
+		case "stop":
+			return await cmdStop(rest, ctx);
 		default:
 			return jsonError(`unknown command: ${cmd}`, {
 				recovery: ["mu --help"],
@@ -2955,9 +2960,13 @@ async function detectRunningServer(repoRoot: string): Promise<{ url: string; por
 		if (typeof pid !== "number" || typeof port !== "number") return null;
 
 		// Check if PID is alive
+		let pidAlive = false;
 		try {
 			process.kill(pid, 0);
+			pidAlive = true;
 		} catch {
+			// PID dead — clean up stale discovery files
+			cleanupStaleServerFiles(repoRoot);
 			return null;
 		}
 
@@ -2967,12 +2976,48 @@ async function detectRunningServer(repoRoot: string): Promise<{ url: string; por
 			const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(2000) });
 			if (res.ok) return { url, port, pid };
 		} catch {
-			/* server not responding */
+			/* server not responding — PID alive but not healthy yet or different process */
 		}
 		return null;
 	} catch {
 		return null;
 	}
+}
+
+function cleanupStaleServerFiles(repoRoot: string): void {
+	try {
+		rmSync(join(repoRoot, ".mu", "control-plane", "server.json"), { force: true });
+	} catch {
+		// best-effort
+	}
+	try {
+		rmSync(join(repoRoot, ".mu", "control-plane", "writer.lock"), { force: true });
+	} catch {
+		// best-effort
+	}
+}
+
+function resolveServerCliPath(): string {
+	// Resolve the mu-server CLI entry point from the @femtomc/mu-server package.
+	// In the workspace, the source entry is src/cli.ts; in a dist build, dist/cli.js.
+	const pkgDir = dirname(require.resolve("@femtomc/mu-server/package.json"));
+	const srcCli = join(pkgDir, "src", "cli.ts");
+	if (existsSync(srcCli)) return srcCli;
+	return join(pkgDir, "dist", "cli.js");
+}
+
+async function pollUntilHealthy(url: string, timeoutMs: number, intervalMs: number): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		try {
+			const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(2_000) });
+			if (res.ok) return;
+		} catch {
+			// not ready yet
+		}
+		await delayMs(intervalMs);
+	}
+	throw new Error(`server at ${url} did not become healthy within ${timeoutMs}ms — check .mu/control-plane/server.log`);
 }
 
 function buildServeDeps(ctx: CliCtx): ServeDeps {
@@ -3012,6 +3057,39 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 					server.stop();
 				},
 			};
+		},
+		spawnBackgroundServer: async ({ repoRoot, port }) => {
+			const serverCliPath = resolveServerCliPath();
+			const logDir = join(repoRoot, ".mu", "control-plane");
+			const logFile = join(logDir, "server.log");
+			const logFd = openSync(logFile, "w");
+
+			const proc = Bun.spawn({
+				cmd: [process.execPath, serverCliPath, "--port", String(port), "--repo-root", repoRoot],
+				cwd: repoRoot,
+				stdin: "ignore",
+				stdout: logFd,
+				stderr: logFd,
+			});
+			proc.unref();
+
+			const url = `http://localhost:${port}`;
+			await pollUntilHealthy(url, 15_000, 200);
+			return { pid: proc.pid, url };
+		},
+		requestServerShutdown: async ({ serverUrl }) => {
+			try {
+				const res = await fetch(`${serverUrl}/api/server/shutdown`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: "{}",
+					signal: AbortSignal.timeout(5_000),
+				});
+				if (res.ok) return { ok: true };
+				return { ok: false };
+			} catch {
+				return { ok: false };
+			}
 		},
 		runOperatorSession: async ({ onReady, provider, model, thinking }) => {
 			const { operatorExtensionPaths } = await import("@femtomc/mu-agent");
@@ -3163,36 +3241,25 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 	const io = ctx.io;
 	const deps = buildServeDeps(ctx);
 
-	// Check for existing running server — connect as client-only
+	// Step 1: Discover or spawn a background server
+	let serverUrl: string;
 	const existingServer = await detectRunningServer(ctx.repoRoot);
 	if (existingServer) {
-		const serverUrl = existingServer.url;
-		Bun.env.MU_SERVER_URL = serverUrl;
+		serverUrl = existingServer.url;
 		io?.stderr?.write(`mu: connecting to existing server at ${serverUrl} (pid ${existingServer.pid})\n`);
-
-		return await deps.runOperatorSession({
-			onReady: () => {},
-			provider: operatorProvider,
-			model: operatorModel,
-			thinking: opts.operatorThinking,
-		});
+	} else {
+		// Spawn server as a detached background process
+		try {
+			const spawned = await deps.spawnBackgroundServer({ repoRoot: ctx.repoRoot, port: opts.port });
+			serverUrl = spawned.url;
+			io?.stderr?.write(`mu: started background server at ${serverUrl} (pid ${spawned.pid})\n`);
+		} catch (err) {
+			return jsonError(`failed to start server: ${describeError(err)}`, {
+				recovery: [`mu ${opts.commandName} --port 3000`, `mu ${opts.commandName} --help`, "check .mu/control-plane/server.log"],
+			});
+		}
 	}
 
-	let server: ServeServerHandle;
-	try {
-		server = await deps.startServer({ repoRoot: ctx.repoRoot, port: opts.port });
-	} catch (err) {
-		return jsonError(`failed to start server: ${describeError(err)}`, {
-			recovery: [`mu ${opts.commandName} --port 3000`, `mu ${opts.commandName} --help`],
-		});
-	}
-
-	let unregisterProcessExitCleanup: (() => void) | null = null;
-	unregisterProcessExitCleanup = deps.registerProcessExitHandler(() => {
-		cleanupWriterLockIfOwnedByCurrentProcess(ctx.repoRoot);
-	});
-
-	const serverUrl = `http://localhost:${opts.port}`;
 	Bun.env.MU_SERVER_URL = serverUrl;
 
 	const isHeadless = deps.isHeadless();
@@ -3205,68 +3272,46 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 		}
 	}
 
-	let stopError: unknown | null = null;
-	let stopped = false;
-	const stopServer = async (): Promise<void> => {
-		if (stopped) {
-			return;
-		}
-		stopped = true;
+	// Step 2: Run pre-operator hooks (mu run: queue + heartbeat)
+	if (opts.beforeOperatorSession) {
 		try {
-			await server.stop();
+			await opts.beforeOperatorSession({ serverUrl, deps, io });
 		} catch (err) {
-			stopError = err;
-			io?.stderr?.write(`mu: server shutdown failed: ${describeError(err)}\n`);
+			return jsonError(`failed to prepare run lifecycle: ${describeError(err)}`, {
+				recovery: ["mu serve --help", "mu run --help"],
+			});
+		}
+	}
+
+	// Step 3: Run operator TUI (blocks until Ctrl+D / exit)
+	let operatorConnected = false;
+	const onOperatorReady = (): void => {
+		if (operatorConnected) return;
+		operatorConnected = true;
+	};
+
+	let resolveSignal: ((signal: NodeJS.Signals) => void) | null = null;
+	const signalPromise = new Promise<NodeJS.Signals>((resolve) => {
+		resolveSignal = resolve;
+	});
+	let receivedSignal: NodeJS.Signals | null = null;
+	const onSignal = (signal: NodeJS.Signals): void => {
+		if (receivedSignal != null) return;
+		receivedSignal = signal;
+		resolveSignal?.(signal);
+	};
+	const removeSignalHandlers = [
+		deps.registerSignalHandler("SIGINT", () => onSignal("SIGINT")),
+		deps.registerSignalHandler("SIGTERM", () => onSignal("SIGTERM")),
+	];
+	const unregisterSignals = () => {
+		for (const remove of removeSignalHandlers) {
+			try { remove(); } catch { /* no-op */ }
 		}
 	};
 
-	let unregisterSignals: (() => void) | null = null;
-	let result: RunResult = ok();
+	let result: RunResult;
 	try {
-		if (opts.beforeOperatorSession) {
-			try {
-				await opts.beforeOperatorSession({ serverUrl, deps, io });
-			} catch (err) {
-				return jsonError(`failed to prepare run lifecycle: ${describeError(err)}`, {
-					recovery: ["mu serve --help", "mu run --help"],
-				});
-			}
-		}
-
-		let operatorConnected = false;
-		const onOperatorReady = (): void => {
-			if (operatorConnected) {
-				return;
-			}
-			operatorConnected = true;
-		};
-
-		let resolveSignal: ((signal: NodeJS.Signals) => void) | null = null;
-		const signalPromise = new Promise<NodeJS.Signals>((resolve) => {
-			resolveSignal = resolve;
-		});
-		let receivedSignal: NodeJS.Signals | null = null;
-		const onSignal = (signal: NodeJS.Signals): void => {
-			if (receivedSignal != null) {
-				return;
-			}
-			receivedSignal = signal;
-			resolveSignal?.(signal);
-		};
-		const removeSignalHandlers = [
-			deps.registerSignalHandler("SIGINT", () => onSignal("SIGINT")),
-			deps.registerSignalHandler("SIGTERM", () => onSignal("SIGTERM")),
-		];
-		unregisterSignals = () => {
-			for (const remove of removeSignalHandlers) {
-				try {
-					remove();
-				} catch {
-					// no-op
-				}
-			}
-		};
-
 		const operatorPromise = deps
 			.runOperatorSession({
 				onReady: onOperatorReady,
@@ -3295,18 +3340,9 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 			result = winner.operatorResult;
 		}
 	} finally {
-		unregisterSignals?.();
-		await stopServer();
-		// Belt-and-suspenders: sync-remove the lock in case the async
-		// release inside stopServer was interrupted or skipped.
-		cleanupWriterLockIfOwnedByCurrentProcess(ctx.repoRoot);
-		unregisterProcessExitCleanup?.();
-	}
-
-	if (stopError && result.exitCode === 0) {
-		return jsonError(`server shutdown failed: ${describeError(stopError)}`, {
-			recovery: ["Retry `mu serve`", "Inspect local process state"],
-		});
+		unregisterSignals();
+		// TUI exits — server keeps running in the background.
+		// No stopServer(), no lock cleanup.
 	}
 
 	return result;
@@ -3316,7 +3352,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (hasHelpFlag(argv)) {
 		return ok(
 			[
-				"mu serve - start server + terminal operator session + web UI",
+				"mu serve - start background server + attach terminal operator session + web UI",
 				"",
 				"Usage:",
 				"  mu serve [--port N] [--no-open]",
@@ -3325,8 +3361,11 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  --port N       Server port (default: 3000)",
 				"  --no-open      Don't open browser automatically",
 				"",
-				"Starts the API + bundled web UI, then attaches an interactive terminal",
-				"operator session in this same shell.",
+				"Spawns the server as a background process (if not already running),",
+				"then attaches an interactive terminal operator session. Ctrl+D exits",
+				"the TUI only — the server keeps running.",
+				"",
+				"Use `mu stop` to shut down the background server.",
 				"",
 				"Control plane configuration:",
 				"  .mu/config.json is the source of truth for adapter + assistant settings",
@@ -3334,7 +3373,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  Use `/mu setup <adapter>` in mu serve operator session for guided setup",
 				"  Use `mu control status` to inspect current config",
 				"",
-				"See also: `mu serve --help`, `mu guide`",
+				"See also: `mu stop --help`, `mu guide`",
 			].join("\n") + "\n",
 		);
 	}
@@ -3354,6 +3393,86 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		commandName: "serve",
 		port,
 		noOpen,
+	});
+}
+
+async function cmdStop(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	if (hasHelpFlag(argv)) {
+		return ok(
+			[
+				"mu stop - stop the background server",
+				"",
+				"Usage:",
+				"  mu stop [--force]",
+				"",
+				"Options:",
+				"  --force    Kill the server process with SIGKILL if graceful shutdown fails",
+				"",
+				"Sends a graceful shutdown request to the running server.",
+				"If --force is given and graceful shutdown fails, sends SIGKILL.",
+				"",
+				"See also: `mu serve --help`",
+			].join("\n") + "\n",
+		);
+	}
+
+	const { present: force, rest } = popFlag(argv, "--force");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { recovery: ["mu stop --help"] });
+	}
+
+	const io = ctx.io;
+	const deps = buildServeDeps(ctx);
+
+	const existing = await detectRunningServer(ctx.repoRoot);
+	if (!existing) {
+		return jsonError("no running server found", {
+			recovery: ["mu serve", "mu stop --help"],
+		});
+	}
+
+	io?.stderr?.write(`mu: stopping server at ${existing.url} (pid ${existing.pid})...\n`);
+
+	// Try graceful shutdown via API
+	const shutdownResult = await deps.requestServerShutdown({ serverUrl: existing.url });
+
+	if (shutdownResult.ok) {
+		// Poll until PID dies (10s timeout)
+		const deadline = Date.now() + 10_000;
+		while (Date.now() < deadline) {
+			try {
+				process.kill(existing.pid, 0);
+			} catch {
+				// PID is gone — success
+				io?.stderr?.write("mu: server stopped.\n");
+				return ok();
+			}
+			await delayMs(200);
+		}
+		// Timed out waiting for graceful shutdown
+		if (!force) {
+			return jsonError("server did not exit within 10s — use --force to kill it", {
+				recovery: ["mu stop --force"],
+			});
+		}
+	}
+
+	if (force) {
+		io?.stderr?.write("mu: force-killing server process...\n");
+		try {
+			process.kill(existing.pid, "SIGKILL");
+		} catch {
+			// Already dead
+		}
+		// Wait briefly for process to actually exit
+		await delayMs(500);
+		cleanupStaleServerFiles(ctx.repoRoot);
+		io?.stderr?.write("mu: server killed.\n");
+		return ok();
+	}
+
+	return jsonError("graceful shutdown request failed", {
+		recovery: ["mu stop --force"],
 	});
 }
 

@@ -56,6 +56,7 @@ export type ServerRoutingDependencies = {
 	registerAutoRunHeartbeatProgram: (run: AutoHeartbeatRunSnapshot) => Promise<void>;
 	disableAutoRunHeartbeatProgram: (opts: { jobId: string; status: string; reason: string }) => Promise<void>;
 	describeError: (error: unknown) => string;
+	initiateShutdown?: () => Promise<void>;
 	publicDir?: string;
 	mimeTypes?: Record<string, string>;
 };
@@ -79,6 +80,19 @@ return async (request: Request): Promise<Response> => {
 
 	if (path === "/healthz" || path === "/health") {
 		return new Response("ok", { status: 200, headers });
+	}
+
+	if (path === "/api/server/shutdown") {
+		if (request.method !== "POST") {
+			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+		}
+		if (!deps.initiateShutdown) {
+			return Response.json({ error: "shutdown not supported" }, { status: 501, headers });
+		}
+		const shutdown = deps.initiateShutdown;
+		// Respond before shutting down so the client receives the response.
+		setTimeout(() => { void shutdown(); }, 100);
+		return Response.json({ ok: true, message: "shutdown initiated" }, { headers });
 	}
 
 	if (path === "/api/config") {
