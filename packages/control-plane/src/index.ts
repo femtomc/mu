@@ -2,6 +2,8 @@ export * from "./adapter_audit.js";
 export * from "./adapter_contract.js";
 export * from "./channel_adapters.js";
 export * from "./command_context.js";
+export * from "./frontend_client_contract.js";
+export * from "./frontend_client.js";
 export * from "./command_journal.js";
 export * from "./command_parser.js";
 export * from "./command_pipeline.js";

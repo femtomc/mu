@@ -27,6 +27,11 @@ export type MuSession = {
 	dispose: () => void;
 	bindExtensions: (bindings: any) => Promise<void>;
 	agent: { waitForIdle: () => Promise<void> };
+	sessionId?: string;
+	sessionFile?: string;
+	sessionManager?: {
+		getLeafId?: () => string | null;
+	};
 };
 
 type SessionManagerFactory = {

@@ -359,7 +359,9 @@ describe("mu-server", () => {
 		);
 
 		const response = await server.fetch(
-			new Request(`http://localhost/api/context/timeline?conversation_key=${encodeURIComponent(conversationKey)}&limit=50`),
+			new Request(
+				`http://localhost/api/context/timeline?conversation_key=${encodeURIComponent(conversationKey)}&limit=50`,
+			),
 		);
 		expect(response.status).toBe(200);
 		const payload = (await response.json()) as {
@@ -521,6 +523,138 @@ describe("mu-server", () => {
 			routes: [{ name: "slack", route: "/webhooks/slack" }],
 		});
 		expect(status.control_plane.generation.active_generation?.generation_id).toBe("control-plane-gen-0");
+	});
+
+	test("control-plane channels endpoint advertises frontend channel capabilities", async () => {
+		const serverWithControlPlane = await createServerForTest({
+			repoRoot: tempDir,
+			controlPlane: {
+				activeAdapters: [{ name: "neovim", route: "/webhooks/neovim" }],
+				handleWebhook: async () => null,
+				stop: async () => {},
+			},
+		});
+
+		const patchRes = await serverWithControlPlane.fetch(
+			new Request("http://localhost/api/config", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					patch: {
+						control_plane: {
+							adapters: {
+								neovim: { shared_secret: "nvim-secret" },
+								vscode: { shared_secret: "vscode-secret" },
+							},
+						},
+					},
+				}),
+			}),
+		);
+		expect(patchRes.status).toBe(200);
+
+		const channelsRes = await serverWithControlPlane.fetch(
+			new Request("http://localhost/api/control-plane/channels"),
+		);
+		expect(channelsRes.status).toBe(200);
+		const payload = (await channelsRes.json()) as {
+			ok: boolean;
+			channels: Array<{
+				channel: string;
+				route: string;
+				configured: boolean;
+				active: boolean;
+				frontend: boolean;
+				verification: { kind?: string; secret_header?: string };
+			}>;
+		};
+		expect(payload.ok).toBe(true);
+
+		const byChannel = new Map(payload.channels.map((entry) => [entry.channel, entry]));
+		expect(byChannel.get("neovim")).toMatchObject({
+			channel: "neovim",
+			route: "/webhooks/neovim",
+			configured: true,
+			active: true,
+			frontend: true,
+		});
+		expect(byChannel.get("vscode")).toMatchObject({
+			channel: "vscode",
+			route: "/webhooks/vscode",
+			configured: true,
+			frontend: true,
+		});
+		expect(byChannel.get("neovim")?.verification?.kind).toBe("shared_secret_header");
+		expect(byChannel.get("vscode")?.verification?.kind).toBe("shared_secret_header");
+	});
+
+	test("session flash API supports create/list/get/ack lifecycle", async () => {
+		const createRes = await server.fetch(
+			new Request("http://localhost/api/session-flash", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					session_id: "operator-123",
+					session_kind: "cp_operator",
+					body: "Use context id ctx-123 when answering.",
+					context_ids: ["ctx-123"],
+					source: "neovim",
+				}),
+			}),
+		);
+		expect(createRes.status).toBe(201);
+		const createPayload = (await createRes.json()) as {
+			ok: boolean;
+			flash: { flash_id: string; session_id: string; status: string; context_ids: string[] };
+		};
+		expect(createPayload.ok).toBe(true);
+		expect(createPayload.flash.session_id).toBe("operator-123");
+		expect(createPayload.flash.status).toBe("pending");
+		expect(createPayload.flash.context_ids).toEqual(["ctx-123"]);
+
+		const listRes = await server.fetch(
+			new Request("http://localhost/api/session-flash?session_id=operator-123&status=pending"),
+		);
+		expect(listRes.status).toBe(200);
+		const listPayload = (await listRes.json()) as {
+			count: number;
+			flashes: Array<{ flash_id: string; status: string }>;
+		};
+		expect(listPayload.count).toBe(1);
+		expect(listPayload.flashes[0]?.flash_id).toBe(createPayload.flash.flash_id);
+		expect(listPayload.flashes[0]?.status).toBe("pending");
+
+		const ackRes = await server.fetch(
+			new Request("http://localhost/api/session-flash/ack", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ flash_id: createPayload.flash.flash_id, delivered_by: "test" }),
+			}),
+		);
+		expect(ackRes.status).toBe(200);
+		const ackPayload = (await ackRes.json()) as { flash: { status: string; delivered_by: string | null } };
+		expect(ackPayload.flash.status).toBe("delivered");
+		expect(ackPayload.flash.delivered_by).toBe("test");
+
+		const getRes = await server.fetch(
+			new Request(`http://localhost/api/session-flash/${encodeURIComponent(createPayload.flash.flash_id)}`),
+		);
+		expect(getRes.status).toBe(200);
+		const getPayload = (await getRes.json()) as { flash: { status: string } };
+		expect(getPayload.flash.status).toBe("delivered");
+	});
+
+	test("session turn API validates required fields before execution", async () => {
+		const response = await server.fetch(
+			new Request("http://localhost/api/session-turn", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ body: "hello" }),
+			}),
+		);
+		expect(response.status).toBe(400);
+		const payload = (await response.json()) as { error?: string };
+		expect(payload.error).toContain("session_id is required");
 	});
 
 	test("control-plane reload endpoint swaps adapters in-process", async () => {
@@ -798,6 +932,66 @@ describe("mu-server", () => {
 			}),
 		);
 		expect(forumRes.status).toBe(200);
+
+		expect(submitted).toEqual([]);
+	});
+
+	test("/api/commands/submit supports session flash mutation kinds without terminal command dispatch", async () => {
+		const submitted: string[] = [];
+		const controlPlane: ControlPlaneHandle = {
+			activeAdapters: [{ name: "telegram", route: "/webhooks/telegram" }],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async (opts) => {
+				submitted.push(opts.commandText);
+				return { kind: "invalid", reason: "stubbed" } as any;
+			},
+			stop: async () => {},
+		};
+		const serverWithCommands = await createServerForTest({ repoRoot: tempDir, controlPlane });
+
+		const createRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					kind: "session_flash_create",
+					session_id: "operator-xyz",
+					session_kind: "cp_operator",
+					body: "ctx-555",
+					context_ids: "ctx-555,ctx-556",
+				}),
+			}),
+		);
+		expect(createRes.status).toBe(200);
+		const createPayload = (await createRes.json()) as {
+			result: { command: { target_type: string; result: { flash: { flash_id: string; status: string } } } };
+		};
+		expect(createPayload.result.command.target_type).toBe("session flash create");
+		expect(createPayload.result.command.result.flash.status).toBe("pending");
+		const flashId = createPayload.result.command.result.flash.flash_id;
+
+		const ackRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "session_flash_ack", flash_id: flashId }),
+			}),
+		);
+		expect(ackRes.status).toBe(200);
+		const ackPayload = (await ackRes.json()) as {
+			result: { command: { target_type: string; result: { flash: { status: string } } } };
+		};
+		expect(ackPayload.result.command.target_type).toBe("session flash ack");
+		expect(ackPayload.result.command.result.flash.status).toBe("delivered");
+
+		const invalidTurnRes = await serverWithCommands.fetch(
+			new Request("http://localhost/api/commands/submit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "session_turn", body: "hello" }),
+			}),
+		);
+		expect(invalidTurnRes.status).toBe(400);
 
 		expect(submitted).toEqual([]);
 	});
@@ -1691,7 +1885,9 @@ describe("mu-server", () => {
 		const decisionPayload = decisionPayloads[0] as Record<string, unknown>;
 
 		const wakePayloads = await waitFor(async () => {
-			const response = await wakeServer.fetch(new Request("http://localhost/api/events?type=operator.wake&limit=50"));
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/events?type=operator.wake&limit=50"),
+			);
 			if (response.status !== 200) {
 				return null;
 			}

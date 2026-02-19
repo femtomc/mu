@@ -1,4 +1,4 @@
-import { appendJsonl } from "@femtomc/mu-core/node";
+import { appendJsonl, readJsonl } from "@femtomc/mu-core/node";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -297,6 +297,156 @@ function conversationKey(inbound: InboundEnvelope, binding: IdentityBinding): st
 	return `${inbound.channel}:${inbound.channel_tenant_id}:${inbound.channel_conversation_id}:${binding.binding_id}`;
 }
 
+type SessionFlashPromptMessage = {
+	flash_id: string;
+	created_at_ms: number;
+	session_id: string;
+	session_kind: string | null;
+	body: string;
+	context_ids: string[];
+	source: string | null;
+	metadata: Record<string, unknown>;
+};
+
+type SessionFlashCreateRow = {
+	kind: "session_flash.create";
+	ts_ms: number;
+	flash_id: string;
+	session_id: string;
+	session_kind: string | null;
+	body: string;
+	context_ids?: string[];
+	source?: string | null;
+	metadata?: Record<string, unknown>;
+};
+
+type SessionFlashDeliveryRow = {
+	kind: "session_flash.delivery";
+	ts_ms: number;
+	flash_id: string;
+	session_id: string;
+	delivered_by: string;
+	note?: string | null;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return null;
+	}
+	return value as Record<string, unknown>;
+}
+
+function nonEmptyString(value: unknown): string | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function finiteInt(value: unknown): number | null {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return null;
+	}
+	return Math.trunc(value);
+}
+
+function stringList(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	const out: string[] = [];
+	for (const item of value) {
+		const parsed = nonEmptyString(item);
+		if (parsed) {
+			out.push(parsed);
+		}
+	}
+	return out;
+}
+
+function sessionFlashPath(repoRoot: string): string {
+	return join(repoRoot, ".mu", "control-plane", "session_flash.jsonl");
+}
+
+async function loadPendingSessionFlashes(opts: {
+	repoRoot: string;
+	sessionId: string;
+	limit?: number;
+}): Promise<SessionFlashPromptMessage[]> {
+	const rows = await readJsonl(sessionFlashPath(opts.repoRoot));
+	const created = new Map<string, SessionFlashPromptMessage>();
+	const delivered = new Set<string>();
+
+	for (const row of rows) {
+		const rec = asRecord(row);
+		if (!rec) {
+			continue;
+		}
+		const kind = nonEmptyString(rec.kind);
+		if (kind === "session_flash.create") {
+			const tsMs = finiteInt(rec.ts_ms) ?? Date.now();
+			const flashId = nonEmptyString(rec.flash_id);
+			const sessionId = nonEmptyString(rec.session_id);
+			const body = nonEmptyString(rec.body);
+			if (!flashId || !sessionId || !body || sessionId !== opts.sessionId) {
+				continue;
+			}
+			created.set(flashId, {
+				flash_id: flashId,
+				created_at_ms: tsMs,
+				session_id: sessionId,
+				session_kind: nonEmptyString(rec.session_kind),
+				body,
+				context_ids: stringList(rec.context_ids),
+				source: nonEmptyString(rec.source),
+				metadata: asRecord(rec.metadata) ?? {},
+			});
+			continue;
+		}
+		if (kind === "session_flash.delivery") {
+			const flashId = nonEmptyString(rec.flash_id);
+			const sessionId = nonEmptyString(rec.session_id);
+			if (!flashId || !sessionId || sessionId !== opts.sessionId) {
+				continue;
+			}
+			delivered.add(flashId);
+		}
+	}
+
+	const pending = [...created.values()]
+		.filter((row) => !delivered.has(row.flash_id))
+		.sort((a, b) => a.created_at_ms - b.created_at_ms);
+	const limit = Math.max(1, Math.trunc(opts.limit ?? 16));
+	if (pending.length <= limit) {
+		return pending;
+	}
+	return pending.slice(pending.length - limit);
+}
+
+async function markSessionFlashesDelivered(opts: {
+	repoRoot: string;
+	sessionId: string;
+	flashIds: string[];
+	nowMs: number;
+}): Promise<void> {
+	if (opts.flashIds.length === 0) {
+		return;
+	}
+	const deduped = [...new Set(opts.flashIds.filter((id) => id.trim().length > 0))];
+	for (const flashId of deduped) {
+		const row: SessionFlashDeliveryRow = {
+			kind: "session_flash.delivery",
+			ts_ms: opts.nowMs,
+			flash_id: flashId,
+			session_id: opts.sessionId,
+			delivered_by: "messaging_operator_runtime",
+			note: null,
+		};
+		await appendJsonl(sessionFlashPath(opts.repoRoot), row);
+	}
+}
+
 type PersistedConversationSessionState = {
 	version: 1;
 	bindings: Record<string, string>;
@@ -455,16 +605,48 @@ export class MessagingOperatorRuntime {
 			};
 		}
 
+		let pendingFlashes: SessionFlashPromptMessage[] = [];
+		try {
+			pendingFlashes = await loadPendingSessionFlashes({
+				repoRoot: opts.inbound.repo_root,
+				sessionId,
+			});
+		} catch {
+			pendingFlashes = [];
+		}
+		const inboundForBackend: InboundEnvelope =
+			pendingFlashes.length > 0
+				? {
+						...opts.inbound,
+						metadata: {
+							...opts.inbound.metadata,
+							session_flash_messages: pendingFlashes,
+						},
+				  }
+				: opts.inbound;
+
 		let backendResult: OperatorBackendTurnResult;
 		try {
 			backendResult = OperatorBackendTurnResultSchema.parse(
 				await this.#backend.runTurn({
 					sessionId,
 					turnId,
-					inbound: opts.inbound,
+					inbound: inboundForBackend,
 					binding: opts.binding,
 				}),
 			);
+			if (pendingFlashes.length > 0) {
+				try {
+					await markSessionFlashesDelivered({
+						repoRoot: opts.inbound.repo_root,
+						sessionId,
+						flashIds: pendingFlashes.map((row) => row.flash_id),
+						nowMs: Date.now(),
+					});
+				} catch {
+					// Best-effort delivery bookkeeping; do not fail the operator turn.
+				}
+			}
 		} catch (err) {
 			return {
 				kind: "response",
@@ -540,16 +722,119 @@ export type PiMessagingOperatorBackendOpts = {
 export { DEFAULT_OPERATOR_SYSTEM_PROMPT };
 
 const COMMAND_TOOL_NAME = "command";
+const OPERATOR_PROMPT_CONTEXT_MAX_CHARS = 2_500;
+
+function compactJsonPreview(value: unknown, maxChars: number = OPERATOR_PROMPT_CONTEXT_MAX_CHARS): string | null {
+	let raw = "";
+	if (typeof value === "string") {
+		raw = value;
+	} else {
+		try {
+			raw = JSON.stringify(value);
+		} catch {
+			return null;
+		}
+	}
+	const compact = raw.replace(/\s+/g, " ").trim();
+	if (compact.length === 0) {
+		return null;
+	}
+	if (compact.length <= maxChars) {
+		return compact;
+	}
+	const keep = Math.max(1, maxChars - 1);
+	return `${compact.slice(0, keep)}…`;
+}
+
+function extractPromptContext(metadata: Record<string, unknown>): unknown | null {
+	for (const key of ["client_context", "context", "editor_context"] as const) {
+		if (!(key in metadata)) {
+			continue;
+		}
+		const value = metadata[key];
+		if (value == null) {
+			continue;
+		}
+		if (typeof value === "object" || typeof value === "string") {
+			return value;
+		}
+	}
+	return null;
+}
+
+function buildOperatorPromptContextBlock(metadata: Record<string, unknown>): string[] {
+	const context = extractPromptContext(metadata);
+	if (!context) {
+		return [];
+	}
+	const preview = compactJsonPreview(context);
+	if (!preview) {
+		return [];
+	}
+	return ["", "Client context (structured preview):", preview];
+}
+
+function extractSessionFlashPromptMessages(metadata: Record<string, unknown>): SessionFlashPromptMessage[] {
+	const raw = metadata.session_flash_messages;
+	if (!Array.isArray(raw)) {
+		return [];
+	}
+	const out: SessionFlashPromptMessage[] = [];
+	for (const value of raw) {
+		const rec = asRecord(value);
+		if (!rec) {
+			continue;
+		}
+		const flashId = nonEmptyString(rec.flash_id);
+		const body = nonEmptyString(rec.body);
+		const sessionId = nonEmptyString(rec.session_id);
+		if (!flashId || !body || !sessionId) {
+			continue;
+		}
+		out.push({
+			flash_id: flashId,
+			created_at_ms: finiteInt(rec.created_at_ms) ?? 0,
+			session_id: sessionId,
+			session_kind: nonEmptyString(rec.session_kind),
+			body,
+			context_ids: stringList(rec.context_ids),
+			source: nonEmptyString(rec.source),
+			metadata: asRecord(rec.metadata) ?? {},
+		});
+	}
+	out.sort((a, b) => a.created_at_ms - b.created_at_ms);
+	return out;
+}
+
+function buildOperatorPromptFlashBlock(metadata: Record<string, unknown>): string[] {
+	const flashes = extractSessionFlashPromptMessages(metadata);
+	if (flashes.length === 0) {
+		return [];
+	}
+	const lines = ["", `Session flash messages (${flashes.length}):`];
+	for (const flash of flashes) {
+		const source = flash.source ?? "unknown";
+		const contextIds = flash.context_ids.length > 0 ? ` | context_ids=${flash.context_ids.join(",")}` : "";
+		const bodyPreview = compactJsonPreview(flash.body, 400) ?? flash.body;
+		lines.push(`- [${flash.flash_id}] source=${source}${contextIds}`);
+		lines.push(`  ${bodyPreview}`);
+	}
+	lines.push("Treat these as high-priority user-provided context for this session.");
+	return lines;
+}
 
 function buildOperatorPrompt(input: OperatorBackendTurnInput): string {
-	return [
+	const lines = [
 		`[Messaging context]`,
 		`channel: ${input.inbound.channel}`,
 		`request_id: ${input.inbound.request_id}`,
 		`repo_root: ${input.inbound.repo_root}`,
 		``,
 		`User message: ${input.inbound.command_text}`,
-	].join("\n");
+		...buildOperatorPromptContextBlock(input.inbound.metadata),
+		...buildOperatorPromptFlashBlock(input.inbound.metadata),
+	];
+	return lines.join("\n");
 }
 
 function sessionFileStem(sessionId: string): string {

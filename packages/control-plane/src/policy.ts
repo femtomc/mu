@@ -318,6 +318,8 @@ export const DEFAULT_CONTROL_PLANE_POLICY: ControlPlanePolicy = ControlPlanePoli
 			slack: { mutations_enabled: true },
 			discord: { mutations_enabled: true },
 			telegram: { mutations_enabled: true },
+			neovim: { mutations_enabled: true },
+			vscode: { mutations_enabled: true },
 			terminal: { mutations_enabled: true },
 		},
 		command_classes: {

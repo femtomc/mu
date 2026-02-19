@@ -25,7 +25,12 @@ export const AdapterVerificationSchema = z.discriminatedUnion("kind", [
 ]);
 export type AdapterVerification = z.infer<typeof AdapterVerificationSchema>;
 
-export const AdapterAckFormatSchema = z.enum(["slack_ephemeral_json", "discord_ephemeral_json", "telegram_ok_json"]);
+export const AdapterAckFormatSchema = z.enum([
+	"slack_ephemeral_json",
+	"discord_ephemeral_json",
+	"telegram_ok_json",
+	"json",
+]);
 export type AdapterAckFormat = z.infer<typeof AdapterAckFormatSchema>;
 
 /**
@@ -52,6 +57,8 @@ export const DEFAULT_CONTROL_PLANE_WEBHOOK_ROUTES = {
 	slack: "/webhooks/slack",
 	discord: "/webhooks/discord",
 	telegram: "/webhooks/telegram",
+	neovim: "/webhooks/neovim",
+	vscode: "/webhooks/vscode",
 	terminal: "/api/commands/submit",
 } as const satisfies Record<Channel, string>;
 

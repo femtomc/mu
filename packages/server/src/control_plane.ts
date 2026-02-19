@@ -8,13 +8,11 @@ import {
 	ControlPlaneOutbox,
 	ControlPlaneRuntime,
 	type ControlPlaneSignalObserver,
-	DiscordControlPlaneAdapter,
 	type GenerationTelemetryRecorder,
 	getControlPlanePaths,
 	type MutationCommandExecutionResult,
 	type OutboxDeliveryHandlerResult,
 	type OutboxRecord,
-	SlackControlPlaneAdapter,
 	TelegramControlPlaneAdapterSpec,
 } from "@femtomc/mu-control-plane";
 import { DEFAULT_MU_CONFIG } from "./config.js";
@@ -53,6 +51,11 @@ import {
 	wakeDispatchReasonCode,
 	wakeFanoutDedupeKey,
 } from "./control_plane_wake_delivery.js";
+import {
+	createStaticAdaptersFromDetected,
+	detectAdapters,
+} from "./control_plane_adapter_registry.js";
+import { OutboundDeliveryRouter } from "./outbound_delivery_router.js";
 import { TelegramAdapterGenerationManager } from "./control_plane_telegram_generation.js";
 
 export type {
@@ -113,41 +116,7 @@ function normalizeIssueId(value: string | null | undefined): string | null {
 	return trimmed.toLowerCase();
 }
 
-type DetectedAdapter =
-	| { name: "slack"; signingSecret: string }
-	| { name: "discord"; signingSecret: string }
-	| {
-			name: "telegram";
-			webhookSecret: string;
-			botToken: string | null;
-			botUsername: string | null;
-	  };
-
-export function detectAdapters(config: ControlPlaneConfig): DetectedAdapter[] {
-	const adapters: DetectedAdapter[] = [];
-
-	const slackSecret = config.adapters.slack.signing_secret;
-	if (slackSecret) {
-		adapters.push({ name: "slack", signingSecret: slackSecret });
-	}
-
-	const discordSecret = config.adapters.discord.signing_secret;
-	if (discordSecret) {
-		adapters.push({ name: "discord", signingSecret: discordSecret });
-	}
-
-	const telegramSecret = config.adapters.telegram.webhook_secret;
-	if (telegramSecret) {
-		adapters.push({
-			name: "telegram",
-			webhookSecret: telegramSecret,
-			botToken: config.adapters.telegram.bot_token,
-			botUsername: config.adapters.telegram.bot_username,
-		});
-	}
-
-	return adapters;
-}
+export { detectAdapters };
 
 export type TelegramSendMessagePayload = {
 	chat_id: string;
@@ -278,7 +247,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 	let runSupervisor: ControlPlaneRunSupervisor | null = null;
 	let outboxDrainLoop: ReturnType<typeof createOutboxDrainLoop> | null = null;
 	let wakeDeliveryObserver: WakeDeliveryObserver | null = opts.wakeDeliveryObserver ?? null;
-	const outboundDeliveryChannels = new Set<Channel>(["telegram"]);
+	const outboundDeliveryChannels = new Set<Channel>();
 	const adapterMap = new Map<
 		string,
 		{
@@ -541,24 +510,11 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		});
 		await telegramManager.initialize();
 
-		for (const d of detected) {
-			if (d.name === "telegram") {
-				continue;
-			}
-
-			const adapter: ControlPlaneAdapter =
-				d.name === "slack"
-					? new SlackControlPlaneAdapter({
-							pipeline,
-							outbox,
-							signingSecret: d.signingSecret,
-						})
-					: new DiscordControlPlaneAdapter({
-							pipeline,
-							outbox,
-							signingSecret: d.signingSecret,
-						});
-
+		for (const adapter of createStaticAdaptersFromDetected({
+			detected,
+			pipeline,
+			outbox,
+		})) {
 			const route = adapter.spec.route;
 			if (adapterMap.has(route)) {
 				throw new Error(`duplicate control-plane webhook route: ${route}`);
@@ -607,6 +563,58 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			},
 			isActive: () => telegramManager.hasActiveGeneration(),
 		});
+
+		const deliveryRouter = new OutboundDeliveryRouter([
+			{
+				channel: "telegram",
+				deliver: async (record: OutboxRecord): Promise<OutboxDeliveryHandlerResult> => {
+					const telegramBotToken = telegramManager.activeBotToken();
+					if (!telegramBotToken) {
+						return { kind: "retry", error: "telegram bot token not configured in .mu/config.json" };
+					}
+
+					const richPayload = buildTelegramSendMessagePayload({
+						chatId: record.envelope.channel_conversation_id,
+						text: record.envelope.body,
+						richFormatting: true,
+					});
+					let res = await postTelegramMessage(telegramBotToken, richPayload);
+
+					// Fallback: if Telegram rejects markdown entities, retry as plain text.
+					if (!res.ok && res.status === 400 && richPayload.parse_mode) {
+						const plainPayload = buildTelegramSendMessagePayload({
+							chatId: record.envelope.channel_conversation_id,
+							text: record.envelope.body,
+							richFormatting: false,
+						});
+						res = await postTelegramMessage(telegramBotToken, plainPayload);
+					}
+
+					if (res.ok) {
+						return { kind: "delivered" };
+					}
+
+					const responseBody = await res.text().catch(() => "");
+					if (res.status === 429 || res.status >= 500) {
+						const retryAfter = res.headers.get("retry-after");
+						const retryDelayMs = retryAfter ? Number.parseInt(retryAfter, 10) * 1000 : undefined;
+						return {
+							kind: "retry",
+							error: `telegram sendMessage ${res.status}: ${responseBody}`,
+							retryDelayMs: retryDelayMs && Number.isFinite(retryDelayMs) ? retryDelayMs : undefined,
+						};
+					}
+
+					return {
+						kind: "retry",
+						error: `telegram sendMessage ${res.status}: ${responseBody}`,
+					};
+				},
+			},
+		]);
+		for (const channel of deliveryRouter.supportedChannels()) {
+			outboundDeliveryChannels.add(channel);
+		}
 
 		const notifyOperators = async (notifyOpts: NotifyOperatorsOpts): Promise<NotifyOperatorsResult> => {
 			if (!pipeline) {
@@ -715,53 +723,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		};
 
 		const deliver = async (record: OutboxRecord): Promise<undefined | OutboxDeliveryHandlerResult> => {
-			const { envelope } = record;
-
-			if (envelope.channel === "telegram") {
-				const telegramBotToken = telegramManager.activeBotToken();
-				if (!telegramBotToken) {
-					return { kind: "retry", error: "telegram bot token not configured in .mu/config.json" };
-				}
-
-				const richPayload = buildTelegramSendMessagePayload({
-					chatId: envelope.channel_conversation_id,
-					text: envelope.body,
-					richFormatting: true,
-				});
-				let res = await postTelegramMessage(telegramBotToken, richPayload);
-
-				// Fallback: if Telegram rejects markdown entities, retry as plain text.
-				if (!res.ok && res.status === 400 && richPayload.parse_mode) {
-					const plainPayload = buildTelegramSendMessagePayload({
-						chatId: envelope.channel_conversation_id,
-						text: envelope.body,
-						richFormatting: false,
-					});
-					res = await postTelegramMessage(telegramBotToken, plainPayload);
-				}
-
-				if (res.ok) {
-					return { kind: "delivered" };
-				}
-
-				const responseBody = await res.text().catch(() => "");
-				if (res.status === 429 || res.status >= 500) {
-					const retryAfter = res.headers.get("retry-after");
-					const retryDelayMs = retryAfter ? Number.parseInt(retryAfter, 10) * 1000 : undefined;
-					return {
-						kind: "retry",
-						error: `telegram sendMessage ${res.status}: ${responseBody}`,
-						retryDelayMs: retryDelayMs && Number.isFinite(retryDelayMs) ? retryDelayMs : undefined,
-					};
-				}
-
-				return {
-					kind: "retry",
-					error: `telegram sendMessage ${res.status}: ${responseBody}`,
-				};
-			}
-
-			return undefined;
+			return await deliveryRouter.deliver(record);
 		};
 
 		const outboxDrain = createOutboxDrainLoop({

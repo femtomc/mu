@@ -39,6 +39,7 @@ const QUERY_RESOURCES = [
 	"cron",
 	"identities",
 	"context",
+	"session_flash",
 ] as const;
 
 const QUERY_DESCRIPTOR = {
@@ -59,6 +60,7 @@ const QUERY_DESCRIPTOR = {
 		cron: { actions: ["stats", "list", "get"], note: "Cron status/list/get." },
 		identities: { actions: ["list"], note: "Identity binding list." },
 		context: { actions: ["search", "timeline", "stats"], note: "Cross-store historical context." },
+		session_flash: { actions: ["list", "get"], note: "Session-targeted flash message inbox state." },
 	},
 	defaults: {
 		list_limit: 20,
@@ -93,6 +95,9 @@ const QUERY_DESCRIPTOR = {
 			"cron_trigger",
 			"cron_enable",
 			"cron_disable",
+			"session_flash_create",
+			"session_flash_ack",
+			"session_turn",
 		],
 		note: "All mutations are routed through command -> /api/commands/submit.",
 	},
@@ -106,6 +111,7 @@ const QUERY_DESCRIPTOR = {
 		{ action: "get", resource: "issues", id: "mu-abc123", fields: "id,title,status,tags" },
 		{ action: "search", resource: "context", query: "reload failure", limit: 30 },
 		{ action: "timeline", resource: "context", conversation_key: "telegram:bot:chat-1:binding-1", limit: 80 },
+		{ action: "list", resource: "session_flash", session_id: "operator-abc", status: "pending" },
 	],
 };
 
@@ -138,6 +144,7 @@ export function queryExtension(pi: ExtensionAPI) {
 		issue_id: Type.Optional(Type.String({ description: "Issue filter" })),
 		run_id: Type.Optional(Type.String({ description: "Run filter" })),
 		session_id: Type.Optional(Type.String({ description: "Session filter" })),
+		session_kind: Type.Optional(Type.String({ description: "Session kind filter" })),
 		conversation_key: Type.Optional(Type.String({ description: "Conversation key filter" })),
 		channel: Type.Optional(Type.String({ description: "Channel filter" })),
 		channel_tenant_id: Type.Optional(Type.String({ description: "Channel tenant filter" })),
@@ -176,8 +183,7 @@ export function queryExtension(pi: ExtensionAPI) {
 					const selected = {
 						...QUERY_DESCRIPTOR,
 						resources: {
-							[resource]:
-								QUERY_DESCRIPTOR.resources[resource as keyof typeof QUERY_DESCRIPTOR.resources],
+							[resource]: QUERY_DESCRIPTOR.resources[resource as keyof typeof QUERY_DESCRIPTOR.resources],
 						},
 					};
 					return textResult(toJsonText(selected), selected as unknown as Record<string, unknown>);
@@ -406,6 +412,29 @@ export function queryExtension(pi: ExtensionAPI) {
 								: "/api/context/search";
 					const payload = await fetchMuJson<Record<string, unknown>>(
 						`${endpoint}${search.size > 0 ? `?${search.toString()}` : ""}`,
+					);
+					return render(payload);
+				}
+				case "session_flash": {
+					if (params.action === "get") {
+						const id = trimOrNull(params.id);
+						if (!id) return textResult("session_flash get requires id");
+						const payload = await fetchMuJson<Record<string, unknown>>(
+							`/api/session-flash/${encodeURIComponent(id)}`,
+						);
+						return render(payload);
+					}
+					if (params.action !== "list") {
+						return textResult("session_flash supports action=list|get");
+					}
+					const search = new URLSearchParams();
+					appendIf(search, "session_id", trimOrNull(params.session_id));
+					appendIf(search, "session_kind", trimOrNull(params.session_kind));
+					appendIf(search, "status", trimOrNull(params.status));
+					appendIf(search, "contains", trimOrNull(params.contains));
+					appendIf(search, "limit", limit);
+					const payload = await fetchMuJson<Record<string, unknown>>(
+						`/api/session-flash${search.size > 0 ? `?${search.toString()}` : ""}`,
 					);
 					return render(payload);
 				}

@@ -1,30 +1,44 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+	MessagingOperatorRuntime,
 	PiMessagingOperatorBackend,
 	type MessagingOperatorInboundEnvelope,
 	type OperatorBackendTurnInput,
 } from "@femtomc/mu-agent";
 import type { MuSession } from "@femtomc/mu-agent";
 
-function mkInbound(commandText: string): MessagingOperatorInboundEnvelope {
+function mkInbound(
+	commandText: string,
+	metadata: Record<string, unknown> = {},
+	repoRoot: string = "/repo",
+): MessagingOperatorInboundEnvelope {
 	return {
 		channel: "telegram",
 		channel_tenant_id: "telegram-bot",
 		channel_conversation_id: "chat-1",
 		request_id: "req-1",
-		repo_root: "/repo",
+		repo_root: repoRoot,
 		command_text: commandText,
 		target_type: "status",
 		target_id: "chat-1",
-		metadata: {},
+		metadata,
 	};
 }
 
-function mkInput(opts: { sessionId: string; turnId: string; commandText: string }): OperatorBackendTurnInput {
+function mkInput(opts: {
+	sessionId: string;
+	turnId: string;
+	commandText: string;
+	metadata?: Record<string, unknown>;
+	repoRoot?: string;
+}): OperatorBackendTurnInput {
 	return {
 		sessionId: opts.sessionId,
 		turnId: opts.turnId,
-		inbound: mkInbound(opts.commandText),
+		inbound: mkInbound(opts.commandText, opts.metadata ?? {}, opts.repoRoot ?? "/repo"),
 		binding: {
 			binding_id: "binding-1",
 			assurance_tier: "tier_b",
@@ -189,7 +203,7 @@ describe("PiMessagingOperatorBackend", () => {
 			"Use public base URL https://example.tail4cdecd.ts.net (Tailscale Funnel -> localhost:3000).",
 			"Bot token: 123456:ABCDEF.",
 			"Generate a strong random webhook_secret, update .mu/config.json,",
-			"run command(kind=\"reload\") after writing config, call Telegram setWebhook, then verify.",
+			'run command(kind="reload") after writing config, call Telegram setWebhook, then verify.',
 		].join("\n");
 
 		const backend = new PiMessagingOperatorBackend({
@@ -251,6 +265,104 @@ describe("PiMessagingOperatorBackend", () => {
 			mkInput({ sessionId: "session-plain", turnId: "turn-1", commandText: "what is the status?" }),
 		);
 		expect(result).toEqual({ kind: "respond", message: "Here is some information for you." });
+	});
+
+	test("includes client context previews in the operator prompt", async () => {
+		let seenPrompt = "";
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ["Context received."],
+					onPrompt: (text) => {
+						seenPrompt = text;
+					},
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({
+				sessionId: "session-context",
+				turnId: "turn-1",
+				commandText: "Please review this selection",
+				metadata: {
+					client_context: {
+						file: "core/synth/src/runtime.zig",
+						line: 42,
+						selection: "const value = compute();",
+					},
+				},
+			}),
+		);
+
+		expect(result).toEqual({ kind: "respond", message: "Context received." });
+		expect(seenPrompt).toContain("Client context (structured preview):");
+		expect(seenPrompt).toContain('"file":"core/synth/src/runtime.zig"');
+	});
+
+	test("runtime injects pending session flash messages and marks them delivered", async () => {
+		const repoRoot = await mkdtemp(join(tmpdir(), "mu-operator-flash-"));
+		const flashPath = join(repoRoot, ".mu", "control-plane", "session_flash.jsonl");
+		await mkdir(join(repoRoot, ".mu", "control-plane"), { recursive: true });
+		await Bun.write(
+			flashPath,
+			[
+				JSON.stringify({
+					kind: "session_flash.create",
+					ts_ms: 1,
+					flash_id: "flash-1",
+					session_id: "session-flash",
+					session_kind: "cp_operator",
+					body: "Use context item ctx-123 for this conversation.",
+					context_ids: ["ctx-123"],
+					source: "neovim",
+					metadata: { urgency: "high" },
+				}),
+			].join("\n") + "\n",
+		);
+
+		let seenPrompt = "";
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ["Flash handled."],
+					onPrompt: (text) => {
+						seenPrompt = text;
+					},
+				}),
+		});
+		const runtime = new MessagingOperatorRuntime({
+			backend,
+			sessionIdFactory: () => "session-flash",
+			turnIdFactory: () => "turn-1",
+		});
+
+		try {
+			const decision = await runtime.handleInbound({
+				inbound: mkInbound("status", {}, repoRoot),
+				binding: {
+					binding_id: "binding-1",
+					assurance_tier: "tier_b",
+				},
+			});
+			expect(decision.kind).toBe("response");
+			if (decision.kind === "response") {
+				expect(decision.message).toBe("Flash handled.");
+			}
+			expect(seenPrompt).toContain("Session flash messages (1):");
+			expect(seenPrompt).toContain("ctx-123");
+			expect(seenPrompt).toContain("Use context item ctx-123");
+
+			const rowsRaw = await readFile(flashPath, "utf8");
+			const rows = rowsRaw
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.filter((line) => line.length > 0)
+				.map((line) => JSON.parse(line) as Record<string, unknown>);
+			expect(rows.some((row) => row.kind === "session_flash.delivery" && row.flash_id === "flash-1")).toBe(true);
+		} finally {
+			backend.dispose();
+			await rm(repoRoot, { recursive: true, force: true });
+		}
 	});
 
 	test("non-command tool calls are ignored", async () => {

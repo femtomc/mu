@@ -3,7 +3,10 @@ import { queryExtension } from "../src/extensions/query.js";
 
 type RegisteredTool = {
 	name: string;
-	execute: (toolCallId: string, params: any) => Promise<{ content?: Array<{ text?: string }>; details?: Record<string, unknown> }>;
+	execute: (
+		toolCallId: string,
+		params: any,
+	) => Promise<{ content?: Array<{ text?: string }>; details?: Record<string, unknown> }>;
 };
 
 function createPiMock() {
@@ -59,6 +62,8 @@ describe("queryExtension", () => {
 		expect(payload.mutation_pathway.tool).toBe("command");
 		expect(payload.mutation_pathway.kinds).toContain("heartbeat_create");
 		expect(payload.mutation_pathway.kinds).toContain("cron_create");
+		expect(payload.mutation_pathway.kinds).toContain("session_flash_create");
+		expect(payload.mutation_pathway.kinds).toContain("session_turn");
 	});
 
 	test("get status fetches /api/status and supports fields projection", async () => {
@@ -148,5 +153,44 @@ describe("queryExtension", () => {
 		expect(requested).toContain("sources=events%2Ccp_commands");
 		expect(requested).toContain("limit=15");
 		expect(payload.total).toBe(1);
+	});
+
+	test("session_flash list maps filters to /api/session-flash", async () => {
+		let requested = "";
+		globalThis.fetch = (async (input: string | URL | Request, _init?: RequestInit) => {
+			requested = String(input);
+			return new Response(
+				JSON.stringify({
+					ok: true,
+					count: 1,
+					flashes: [
+						{
+							flash_id: "flash-1",
+							session_id: "operator-1",
+							status: "pending",
+							body: "ctx-123",
+						},
+					],
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as typeof fetch;
+
+		const pi = createPiMock();
+		queryExtension(pi.api as any);
+		const tool = pi.tool("query");
+		const response = await tool.execute("tool-4", {
+			action: "list",
+			resource: "session_flash",
+			session_id: "operator-1",
+			status: "pending",
+			limit: 10,
+		});
+		const payload = JSON.parse(response.content?.[0]?.text ?? "{}");
+		expect(requested).toContain("http://mu.test/api/session-flash?");
+		expect(requested).toContain("session_id=operator-1");
+		expect(requested).toContain("status=pending");
+		expect(requested).toContain("limit=10");
+		expect(payload.count).toBe(1);
 	});
 });

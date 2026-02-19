@@ -18,6 +18,12 @@ export type MuConfig = {
 				bot_token: string | null;
 				bot_username: string | null;
 			};
+			neovim: {
+				shared_secret: string | null;
+			};
+			vscode: {
+				shared_secret: string | null;
+			};
 		};
 		operator: {
 			enabled: boolean;
@@ -43,6 +49,12 @@ export type MuConfigPatch = {
 				bot_token?: string | null;
 				bot_username?: string | null;
 			};
+			neovim?: {
+				shared_secret?: string | null;
+			};
+			vscode?: {
+				shared_secret?: string | null;
+			};
 		};
 		operator?: {
 			enabled?: boolean;
@@ -57,6 +69,8 @@ export type MuConfigPatch = {
 type ControlPlanePatch = NonNullable<MuConfigPatch["control_plane"]>;
 type AdaptersPatch = NonNullable<ControlPlanePatch["adapters"]>;
 type TelegramPatch = NonNullable<AdaptersPatch["telegram"]>;
+type NeovimPatch = NonNullable<AdaptersPatch["neovim"]>;
+type VscodePatch = NonNullable<AdaptersPatch["vscode"]>;
 
 export type MuConfigPresence = {
 	control_plane: {
@@ -71,6 +85,12 @@ export type MuConfigPresence = {
 				webhook_secret: boolean;
 				bot_token: boolean;
 				bot_username: boolean;
+			};
+			neovim: {
+				shared_secret: boolean;
+			};
+			vscode: {
+				shared_secret: boolean;
 			};
 		};
 		operator: {
@@ -97,6 +117,12 @@ export const DEFAULT_MU_CONFIG: MuConfig = {
 				webhook_secret: null,
 				bot_token: null,
 				bot_username: null,
+			},
+			neovim: {
+				shared_secret: null,
+			},
+			vscode: {
+				shared_secret: null,
 			},
 		},
 		operator: {
@@ -183,6 +209,16 @@ export function normalizeMuConfig(input: unknown): MuConfig {
 				next.control_plane.adapters.telegram.bot_username = normalizeNullableString(telegram.bot_username);
 			}
 		}
+
+		const neovim = asRecord(adapters.neovim);
+		if (neovim && "shared_secret" in neovim) {
+			next.control_plane.adapters.neovim.shared_secret = normalizeNullableString(neovim.shared_secret);
+		}
+
+		const vscode = asRecord(adapters.vscode);
+		if (vscode && "shared_secret" in vscode) {
+			next.control_plane.adapters.vscode.shared_secret = normalizeNullableString(vscode.shared_secret);
+		}
 	}
 
 	const operator = asRecord(controlPlane.operator);
@@ -260,6 +296,28 @@ function normalizeMuConfigPatch(input: unknown): MuConfigPatch {
 				patch.control_plane.adapters.telegram = telegramPatch;
 			}
 		}
+
+		const neovim = asRecord(adapters.neovim);
+		if (neovim) {
+			const neovimPatch: NeovimPatch = {};
+			if ("shared_secret" in neovim) {
+				neovimPatch.shared_secret = normalizeNullableString(neovim.shared_secret);
+			}
+			if (Object.keys(neovimPatch).length > 0) {
+				patch.control_plane.adapters.neovim = neovimPatch;
+			}
+		}
+
+		const vscode = asRecord(adapters.vscode);
+		if (vscode) {
+			const vscodePatch: VscodePatch = {};
+			if ("shared_secret" in vscode) {
+				vscodePatch.shared_secret = normalizeNullableString(vscode.shared_secret);
+			}
+			if (Object.keys(vscodePatch).length > 0) {
+				patch.control_plane.adapters.vscode = vscodePatch;
+			}
+		}
 	}
 
 	const operator = asRecord(controlPlane.operator);
@@ -331,6 +389,12 @@ export function applyMuConfigPatch(base: MuConfig, patchInput: unknown): MuConfi
 				next.control_plane.adapters.telegram.bot_username = adapters.telegram.bot_username ?? null;
 			}
 		}
+		if (adapters.neovim && "shared_secret" in adapters.neovim) {
+			next.control_plane.adapters.neovim.shared_secret = adapters.neovim.shared_secret ?? null;
+		}
+		if (adapters.vscode && "shared_secret" in adapters.vscode) {
+			next.control_plane.adapters.vscode.shared_secret = adapters.vscode.shared_secret ?? null;
+		}
 	}
 
 	const operator = patch.control_plane.operator;
@@ -400,6 +464,8 @@ export function redactMuConfigSecrets(config: MuConfig): MuConfig {
 	next.control_plane.adapters.discord.signing_secret = redacted(next.control_plane.adapters.discord.signing_secret);
 	next.control_plane.adapters.telegram.webhook_secret = redacted(next.control_plane.adapters.telegram.webhook_secret);
 	next.control_plane.adapters.telegram.bot_token = redacted(next.control_plane.adapters.telegram.bot_token);
+	next.control_plane.adapters.neovim.shared_secret = redacted(next.control_plane.adapters.neovim.shared_secret);
+	next.control_plane.adapters.vscode.shared_secret = redacted(next.control_plane.adapters.vscode.shared_secret);
 	return next;
 }
 
@@ -421,6 +487,12 @@ export function muConfigPresence(config: MuConfig): MuConfigPresence {
 					webhook_secret: isPresent(config.control_plane.adapters.telegram.webhook_secret),
 					bot_token: isPresent(config.control_plane.adapters.telegram.bot_token),
 					bot_username: isPresent(config.control_plane.adapters.telegram.bot_username),
+				},
+				neovim: {
+					shared_secret: isPresent(config.control_plane.adapters.neovim.shared_secret),
+				},
+				vscode: {
+					shared_secret: isPresent(config.control_plane.adapters.vscode.shared_secret),
 				},
 			},
 			operator: {

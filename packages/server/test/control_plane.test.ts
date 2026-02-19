@@ -192,6 +192,8 @@ async function mkRepoRoot(): Promise<string> {
 
 function configWith(opts: {
 	slackSecret?: string | null;
+	neovimSecret?: string | null;
+	vscodeSecret?: string | null;
 	telegramSecret?: string | null;
 	telegramBotToken?: string | null;
 	telegramBotUsername?: string | null;
@@ -200,6 +202,8 @@ function configWith(opts: {
 }): ControlPlaneConfig {
 	const base = JSON.parse(JSON.stringify(DEFAULT_MU_CONFIG.control_plane)) as ControlPlaneConfig;
 	base.adapters.slack.signing_secret = opts.slackSecret ?? null;
+	base.adapters.neovim.shared_secret = opts.neovimSecret ?? null;
+	base.adapters.vscode.shared_secret = opts.vscodeSecret ?? null;
 	base.adapters.telegram.webhook_secret = opts.telegramSecret ?? null;
 	base.adapters.telegram.bot_token = opts.telegramBotToken ?? null;
 	base.adapters.telegram.bot_username = opts.telegramBotUsername ?? null;
@@ -252,6 +256,36 @@ async function linkTelegramIdentity(repoRoot: string, scopes: string[]): Promise
 		channel: "telegram",
 		channelTenantId: "telegram-bot",
 		channelActorId: "telegram-actor",
+		scopes,
+		nowMs: 1_000,
+	});
+}
+
+async function linkNeovimIdentity(repoRoot: string, scopes: string[]): Promise<void> {
+	const paths = getControlPlanePaths(repoRoot);
+	const identities = new IdentityStore(paths.identitiesPath);
+	await identities.load();
+	await identities.link({
+		bindingId: "binding-neovim",
+		operatorId: "op-neovim",
+		channel: "neovim",
+		channelTenantId: "workspace-1",
+		channelActorId: "neovim-actor",
+		scopes,
+		nowMs: 1_000,
+	});
+}
+
+async function linkVscodeIdentity(repoRoot: string, scopes: string[]): Promise<void> {
+	const paths = getControlPlanePaths(repoRoot);
+	const identities = new IdentityStore(paths.identitiesPath);
+	await identities.load();
+	await identities.link({
+		bindingId: "binding-vscode",
+		operatorId: "op-vscode",
+		channel: "vscode",
+		channelTenantId: "workspace-1",
+		channelActorId: "vscode-actor",
 		scopes,
 		nowMs: 1_000,
 	});
@@ -330,6 +364,116 @@ describe("bootstrapControlPlane operator wiring", () => {
 			name: "slack",
 			route: SlackControlPlaneAdapterSpec.route,
 		});
+	});
+
+	test("neovim adapter accepts shared-secret ingress and returns structured interaction payload", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkNeovimIdentity(repoRoot, ["cp.read", "cp.issue.write"]);
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({ neovimSecret: "neovim-secret" }),
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const response = await handle.handleWebhook(
+			"/webhooks/neovim",
+			new Request("http://localhost/webhooks/neovim", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-mu-neovim-secret": "neovim-secret",
+				},
+				body: JSON.stringify({
+					tenant_id: "workspace-1",
+					conversation_id: "buffer:core/synth/src/runtime.zig",
+					actor_id: "neovim-actor",
+					text: "status",
+					client_context: {
+						file: "core/synth/src/runtime.zig",
+						selection: "const x = y + 1;",
+					},
+				}),
+			}),
+		);
+		expect(response).not.toBeNull();
+		if (!response) {
+			throw new Error("expected webhook response");
+		}
+		expect(response.status).toBe(200);
+		const payload = (await response.json()) as {
+			ok: boolean;
+			accepted: boolean;
+			ack: string;
+			interaction: { payload?: Record<string, unknown> };
+			result: { kind: string };
+		};
+		expect(payload.ok).toBe(true);
+		expect(payload.accepted).toBe(true);
+		expect(payload.result.kind).toBe("completed");
+		expect(payload.ack.length).toBeGreaterThan(0);
+		expect(payload.interaction.payload).toBeDefined();
+		const interactionPayload = payload.interaction.payload ?? {};
+		expect(interactionPayload.target_type).toBe("status");
+	});
+
+	test("vscode adapter accepts shared-secret ingress and returns structured interaction payload", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkVscodeIdentity(repoRoot, ["cp.read", "cp.issue.write"]);
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({ vscodeSecret: "vscode-secret" }),
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const response = await handle.handleWebhook(
+			"/webhooks/vscode",
+			new Request("http://localhost/webhooks/vscode", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-mu-vscode-secret": "vscode-secret",
+				},
+				body: JSON.stringify({
+					tenant_id: "workspace-1",
+					conversation_id: "workspace:main",
+					actor_id: "vscode-actor",
+					text: "status",
+					client_context: {
+						file: "core/claudez/src/main.zig",
+						diagnostics_count: 2,
+					},
+				}),
+			}),
+		);
+		expect(response).not.toBeNull();
+		if (!response) {
+			throw new Error("expected webhook response");
+		}
+		expect(response.status).toBe(200);
+		const payload = (await response.json()) as {
+			ok: boolean;
+			accepted: boolean;
+			ack: string;
+			interaction: { payload?: Record<string, unknown> };
+			result: { kind: string };
+		};
+		expect(payload.ok).toBe(true);
+		expect(payload.accepted).toBe(true);
+		expect(payload.result.kind).toBe("completed");
+		expect(payload.ack.length).toBeGreaterThan(0);
+		expect(payload.interaction.payload).toBeDefined();
+		const interactionPayload = payload.interaction.payload ?? {};
+		expect(interactionPayload.target_type).toBe("status");
 	});
 
 	test("notifyOperators fans out across mixed bindings and skips unsupported/unconfigured channels deterministically", async () => {

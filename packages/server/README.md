@@ -99,6 +99,38 @@ Bun.serve(server);
   ```
   - Response includes generation metadata and, when telegram generation handling runs, `telegram_generation` lifecycle detail.
 - `POST /api/control-plane/rollback` - Explicit rollback trigger (same pipeline, reason=`rollback`)
+- `GET /api/control-plane/channels` - Capability/discovery snapshot for mounted adapter channels (route, verification contract, configured/active/frontend flags)
+
+### Session Flash Inbox (cross-session context handoff)
+
+- `POST /api/session-flash` - Create a session-targeted flash message
+  ```json
+  {
+    "session_id": "operator-abc123",
+    "session_kind": "cp_operator",
+    "body": "Use context id ctx-123 for this question",
+    "context_ids": ["ctx-123"],
+    "source": "neovim"
+  }
+  ```
+- `GET /api/session-flash` - List flash messages
+  - Query params: `session_id`, `session_kind`, `status=pending|delivered|all`, `contains`, `limit`
+- `GET /api/session-flash/:flash_id` - Get one flash message by id
+- `POST /api/session-flash/ack` - Mark a flash message delivered/acknowledged
+
+### Session Turn Injection (canonical transcript turn)
+
+- `POST /api/session-turn` - Run a real turn in an existing target session and return reply + new context cursor
+  ```json
+  {
+    "session_id": "operator-abc123",
+    "session_kind": "cp_operator",
+    "body": "Summarize the last plan and propose next steps.",
+    "source": "neovim"
+  }
+  ```
+  - Optional overrides: `session_file`, `session_dir`, `provider`, `model`, `thinking`, `extension_profile`
+  - Response includes: `turn.reply`, `turn.context_entry_id`, `turn.session_file`
 
 ### Issues
 
@@ -158,7 +190,7 @@ Bun.serve(server);
 Context source kinds:
 
 - `issues`, `forum`, `events`
-- `cp_commands`, `cp_outbox`, `cp_adapter_audit`, `cp_operator_turns`, `cp_telegram_ingress`
+- `cp_commands`, `cp_outbox`, `cp_adapter_audit`, `cp_operator_turns`, `cp_telegram_ingress`, `session_flash`
 - `operator_sessions`, `cp_operator_sessions`
 
 ## Running the Server

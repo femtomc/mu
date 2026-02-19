@@ -4442,6 +4442,8 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	const slackCfg = (adaptersCfg.slack as Record<string, unknown> | undefined) ?? {};
 	const discordCfg = (adaptersCfg.discord as Record<string, unknown> | undefined) ?? {};
 	const telegramCfg = (adaptersCfg.telegram as Record<string, unknown> | undefined) ?? {};
+	const neovimCfg = (adaptersCfg.neovim as Record<string, unknown> | undefined) ?? {};
+	const vscodeCfg = (adaptersCfg.vscode as Record<string, unknown> | undefined) ?? {};
 	const operatorCfg = (controlPlane.operator as Record<string, unknown> | undefined) ?? {};
 
 	const present = (value: unknown): boolean => typeof value === "string" && value.trim().length > 0;
@@ -4453,6 +4455,8 @@ async function controlStatus(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 		{ channel: "slack", configured: present(slackCfg.signing_secret) },
 		{ channel: "discord", configured: present(discordCfg.signing_secret) },
 		{ channel: "telegram", configured: present(telegramCfg.webhook_secret) },
+		{ channel: "neovim", configured: present(neovimCfg.shared_secret) },
+		{ channel: "vscode", configured: present(vscodeCfg.shared_secret) },
 	];
 
 	const operator = {

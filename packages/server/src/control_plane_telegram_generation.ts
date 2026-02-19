@@ -37,6 +37,8 @@ function controlPlaneNonTelegramFingerprint(config: ControlPlaneConfig): string 
 		adapters: {
 			slack: config.adapters.slack,
 			discord: config.adapters.discord,
+			neovim: config.adapters.neovim,
+			vscode: config.adapters.vscode,
 		},
 		operator: config.operator,
 	});

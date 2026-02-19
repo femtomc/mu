@@ -3,7 +3,10 @@ import { COMMAND_TOOL_NAME, operatorCommandExtension } from "../src/extensions/o
 
 type RegisteredTool = {
 	name: string;
-	execute: (toolCallId: string, params: any) => Promise<{ content?: Array<{ text?: string }>; details?: Record<string, unknown> }>;
+	execute: (
+		toolCallId: string,
+		params: any,
+	) => Promise<{ content?: Array<{ text?: string }>; details?: Record<string, unknown> }>;
 };
 
 function createPiMock() {
@@ -149,6 +152,96 @@ describe("operatorCommandExtension", () => {
 
 		expect(requestBody).toEqual({ kind: "issue_close", id: "mu-123", outcome: "success" });
 		expect(response.content?.[0]?.text).toContain("Command completed: issue_close");
+	});
+
+	test("supports session flash mutation kinds", async () => {
+		let requestBody: any = null;
+		globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+			requestBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+			return new Response(
+				JSON.stringify({
+					ok: true,
+					result: {
+						kind: "completed",
+						command: {
+							target_type: "session flash create",
+							result: {
+								flash: {
+									flash_id: "flash-123",
+									session_id: "operator-1",
+									status: "pending",
+								},
+							},
+						},
+					},
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as typeof fetch;
+
+		const pi = createPiMock();
+		operatorCommandExtension(pi.api as any);
+		const tool = pi.tool(COMMAND_TOOL_NAME);
+		const response = await tool.execute("tool-5", {
+			kind: "session_flash_create",
+			session_id: "operator-1",
+			body: "ctx-123",
+			context_ids: "ctx-123,ctx-456",
+		});
+
+		expect(requestBody).toEqual({
+			kind: "session_flash_create",
+			session_id: "operator-1",
+			body: "ctx-123",
+			context_ids: "ctx-123,ctx-456",
+		});
+		expect(response.content?.[0]?.text).toContain("Command completed: session_flash_create");
+	});
+
+	test("supports session_turn command kind", async () => {
+		let requestBody: any = null;
+		globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+			requestBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+			return new Response(
+				JSON.stringify({
+					ok: true,
+					result: {
+						kind: "completed",
+						command: {
+							target_type: "session turn",
+							result: {
+								turn: {
+									session_id: "operator-1",
+									context_entry_id: "entry-1",
+									reply: "Done",
+								},
+							},
+						},
+					},
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as typeof fetch;
+
+		const pi = createPiMock();
+		operatorCommandExtension(pi.api as any);
+		const tool = pi.tool(COMMAND_TOOL_NAME);
+		const response = await tool.execute("tool-6", {
+			kind: "session_turn",
+			session_id: "operator-1",
+			session_kind: "cp_operator",
+			body: "Please answer in-context",
+			source: "neovim",
+		});
+
+		expect(requestBody).toEqual({
+			kind: "session_turn",
+			session_id: "operator-1",
+			session_kind: "cp_operator",
+			body: "Please answer in-context",
+			source: "neovim",
+		});
+		expect(response.content?.[0]?.text).toContain("Command completed: session_turn");
 	});
 
 	test("supports scheduler mutation kinds", async () => {

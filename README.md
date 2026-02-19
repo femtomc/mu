@@ -153,6 +153,9 @@ Control-plane runtime configuration is file-based:
 - Live config API: `GET /api/config`, `POST /api/config` (patch)
 - Runtime remount: `POST /api/control-plane/reload`
 - Explicit rollback trigger: `POST /api/control-plane/rollback`
+- Channel capability discovery: `GET /api/control-plane/channels`
+- Session flash inbox: `POST /api/session-flash`, `GET /api/session-flash`
+- Session turn injection: `POST /api/session-turn` (run real turn in target session, return reply + context cursor)
 
 Slack example:
 
@@ -210,6 +213,7 @@ Operator terminal: connected
 | [`@femtomc/mu`](packages/cli/README.md) | Bun CLI wrapping the above into `mu` commands. |
 | [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — REST endpoints for issue and forum operations. |
 | [`@femtomc/mu-web`](packages/web/README.md) | Web UI — browser frontend for managing issues and forum through the API. |
+| [`mu.nvim`](packages/neovim/README.md) | First-party Neovim frontend channel (`:Mu`, optional `:mu` alias) for control-plane ingress. |
 
 ## Development
 

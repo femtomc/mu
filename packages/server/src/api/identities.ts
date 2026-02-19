@@ -43,9 +43,16 @@ export async function identityRoutes(
 			return Response.json({ error: "invalid json body" }, { status: 400, headers });
 		}
 		const channel = typeof body.channel === "string" ? body.channel.trim() : "";
-		if (!channel || (channel !== "slack" && channel !== "discord" && channel !== "telegram")) {
+		if (
+			!channel ||
+			(channel !== "slack" &&
+				channel !== "discord" &&
+				channel !== "telegram" &&
+				channel !== "neovim" &&
+				channel !== "vscode")
+		) {
 			return Response.json(
-				{ error: "channel is required (slack, discord, telegram)" },
+				{ error: "channel is required (slack, discord, telegram, neovim, vscode)" },
 				{ status: 400, headers },
 			);
 		}
@@ -77,7 +84,7 @@ export async function identityRoutes(
 		const decision = await identityStore.link({
 			bindingId,
 			operatorId,
-			channel: channel as "slack" | "discord" | "telegram",
+			channel: channel as "slack" | "discord" | "telegram" | "neovim" | "vscode",
 			channelTenantId: tenantId,
 			channelActorId: actorId,
 			scopes: [...roleScopes],

@@ -33,6 +33,19 @@ type CommandParams = {
 	src_id?: string;
 	dst_id?: string;
 	dep_type?: string;
+	session_id?: string;
+	session_kind?: string;
+	session_file?: string;
+	session_dir?: string;
+	extension_profile?: string;
+	provider?: string;
+	model?: string;
+	thinking?: string;
+	source?: string;
+	context_ids?: string;
+	flash_id?: string;
+	delivered_by?: string;
+	note?: string;
 	program_id?: string;
 	target_kind?: string;
 	run_job_id?: string;
@@ -136,41 +149,47 @@ async function executeViaServer(
 
 export function operatorCommandExtension(pi: ExtensionAPI) {
 	const CommandParams = Type.Object({
-		kind: StringEnum(
-			[
-				"run_start",
-				"run_resume",
-				"run_interrupt",
-				"reload",
-				"update",
-				"issue_create",
-				"issue_update",
-				"issue_claim",
-				"issue_open",
-				"issue_close",
-				"issue_dep",
-				"issue_undep",
-				"forum_post",
-				"heartbeat_create",
-				"heartbeat_update",
-				"heartbeat_delete",
-				"heartbeat_trigger",
-				"heartbeat_enable",
-				"heartbeat_disable",
-				"cron_create",
-				"cron_update",
-				"cron_delete",
-				"cron_trigger",
-				"cron_enable",
-				"cron_disable",
-			] as const,
-		),
+		kind: StringEnum([
+			"run_start",
+			"run_resume",
+			"run_interrupt",
+			"reload",
+			"update",
+			"issue_create",
+			"issue_update",
+			"issue_claim",
+			"issue_open",
+			"issue_close",
+			"issue_dep",
+			"issue_undep",
+			"forum_post",
+			"heartbeat_create",
+			"heartbeat_update",
+			"heartbeat_delete",
+			"heartbeat_trigger",
+			"heartbeat_enable",
+			"heartbeat_disable",
+			"cron_create",
+			"cron_update",
+			"cron_delete",
+			"cron_trigger",
+			"cron_enable",
+			"cron_disable",
+			"session_flash_create",
+			"session_flash_ack",
+			"session_turn",
+		] as const),
 		prompt: Type.Optional(Type.String({ description: "Prompt for run_start" })),
 		root_issue_id: Type.Optional(Type.String({ description: "Root issue ID for run_resume / run_interrupt" })),
 		max_steps: Type.Optional(Type.Number({ description: "Max steps for run_start / run_resume" })),
 		id: Type.Optional(Type.String({ description: "Issue ID for issue_update/issue_claim/issue_open/issue_close" })),
 		title: Type.Optional(Type.String({ description: "Issue title for issue_create" })),
-		body: Type.Optional(Type.String({ description: "Issue/forum body text (issue_create, issue_update, forum_post)" })),
+		body: Type.Optional(
+			Type.String({
+				description:
+					"Issue/forum/session body text (issue_create, issue_update, forum_post, session_flash_create, session_turn)",
+			}),
+		),
 		topic: Type.Optional(Type.String({ description: "Forum topic for forum_post" })),
 		author: Type.Optional(Type.String({ description: "Forum author for forum_post (default: operator)" })),
 		tags: Type.Optional(Type.String({ description: "Comma-separated tags for issue_create/issue_update" })),
@@ -183,14 +202,39 @@ export function operatorCommandExtension(pi: ExtensionAPI) {
 		src_id: Type.Optional(Type.String({ description: "Source issue id for issue_dep/issue_undep" })),
 		dst_id: Type.Optional(Type.String({ description: "Destination issue id for issue_dep/issue_undep" })),
 		dep_type: Type.Optional(Type.String({ description: "Dependency type: blocks|parent" })),
-		program_id: Type.Optional(Type.String({ description: "Program ID for heartbeat/cron update|delete|trigger|enable|disable" })),
+		session_id: Type.Optional(
+			Type.String({ description: "Target session id for session_flash_create|session_flash_ack|session_turn" }),
+		),
+		session_kind: Type.Optional(
+			Type.String({ description: "Target session kind (cp_operator|operator|worker|reviewer|orchestrator|etc.)" }),
+		),
+		session_file: Type.Optional(Type.String({ description: "Explicit session file path for session_turn" })),
+		session_dir: Type.Optional(Type.String({ description: "Session directory override for session_turn" })),
+		extension_profile: Type.Optional(
+			Type.String({ description: "Extension profile for session_turn: operator|worker|orchestrator|reviewer|none" }),
+		),
+		provider: Type.Optional(Type.String({ description: "Optional provider override for session_turn" })),
+		model: Type.Optional(Type.String({ description: "Optional model override for session_turn" })),
+		thinking: Type.Optional(Type.String({ description: "Optional thinking level override for session_turn" })),
+		source: Type.Optional(Type.String({ description: "Optional source hint for session_flash_create/session_turn" })),
+		context_ids: Type.Optional(Type.String({ description: "Comma-separated context IDs attached to session flash" })),
+		flash_id: Type.Optional(Type.String({ description: "Flash id for session_flash_ack (alias: id)" })),
+		delivered_by: Type.Optional(Type.String({ description: "Delivery actor for session_flash_ack" })),
+		note: Type.Optional(Type.String({ description: "Optional acknowledgement note for session_flash_ack" })),
+		program_id: Type.Optional(
+			Type.String({ description: "Program ID for heartbeat/cron update|delete|trigger|enable|disable" }),
+		),
 		target_kind: Type.Optional(Type.String({ description: "Program target kind: run|activity" })),
 		run_job_id: Type.Optional(Type.String({ description: "Run target job ID for heartbeat/cron program mutations" })),
 		run_root_issue_id: Type.Optional(
 			Type.String({ description: "Run target root issue ID for heartbeat/cron program mutations" }),
 		),
-		activity_id: Type.Optional(Type.String({ description: "Activity target ID for heartbeat/cron program mutations" })),
-		every_ms: Type.Optional(Type.Number({ description: "Heartbeat interval ms, or cron every schedule interval ms" })),
+		activity_id: Type.Optional(
+			Type.String({ description: "Activity target ID for heartbeat/cron program mutations" }),
+		),
+		every_ms: Type.Optional(
+			Type.Number({ description: "Heartbeat interval ms, or cron every schedule interval ms" }),
+		),
 		reason: Type.Optional(Type.String({ description: "Heartbeat/cron execution reason" })),
 		wake_mode: Type.Optional(Type.String({ description: "Wake mode for run targets: immediate|next_heartbeat" })),
 		enabled: Type.Optional(Type.Boolean({ description: "Program enabled state" })),
@@ -207,7 +251,7 @@ export function operatorCommandExtension(pi: ExtensionAPI) {
 		label: "Command",
 		description: [
 			"Execute approved mutation commands through the command API.",
-			"Supports run lifecycle, control-plane lifecycle, issue/forum mutations, and heartbeat/cron program management.",
+			"Supports run lifecycle, control-plane lifecycle, issue/forum mutations, session flash + session turn injection, and heartbeat/cron program management.",
 		].join(" "),
 		parameters: CommandParams,
 		async execute(_toolCallId, params) {

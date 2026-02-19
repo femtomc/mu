@@ -7,8 +7,10 @@ Control-plane command pipeline for messaging ingress, policy/confirmation safety
 - Slack
 - Discord
 - Telegram
+- Neovim
+- VSCode
 
-All three adapters normalize inbound commands into the same control-plane pipeline and preserve correlation across command journal and outbox delivery.
+All adapters normalize inbound commands into the same control-plane pipeline and preserve correlation across command journal and outbox delivery.
 
 ## Adapter contract (v1)
 
@@ -23,6 +25,8 @@ Built-in specs are exported for each first-platform adapter:
 - `SlackControlPlaneAdapterSpec`
 - `DiscordControlPlaneAdapterSpec`
 - `TelegramControlPlaneAdapterSpec`
+- `NeovimControlPlaneAdapterSpec`
+- `VscodeControlPlaneAdapterSpec`
 
 This keeps adapter behavior consistent and makes it easier to add new surfaces without changing core pipeline semantics.
 
@@ -66,6 +70,19 @@ Operator proposals can bridge readonly status/info queries (`status`, `ready`, `
 
 Unsafe or ambiguous requests are rejected with explicit reasons (`context_missing`, `context_ambiguous`, `context_unauthorized`, `cli_validation_failed`, etc.).
 
+## Frontend client helpers
+
+`frontend_client_contract.ts` + `frontend_client.ts` expose typed helpers for first-party editor clients:
+
+- server discovery (`.mu/control-plane/server.json`)
+- channel capability fetch (`/api/control-plane/channels`)
+- identity link bootstrap (`/api/identities/link`)
+- frontend ingress submission (`/webhooks/neovim`, `/webhooks/vscode`)
+- session flash inbox writes (`/api/session-flash`)
+- session turn injection (`/api/session-turn`) for real in-session turns with reply + context cursor
+
+These helpers are intended to keep Neovim/VSCode integration clients aligned with control-plane channel contracts.
+
 ## iMessage status
 
-iMessage is not supported by the v1 runtime. Identity rows must use first-platform channels (`slack`, `discord`, `telegram`). Unsupported channels are rejected during replay.
+iMessage is not supported by the v1 runtime. Identity rows must use first-platform channels (`slack`, `discord`, `telegram`, `neovim`, `vscode`). Unsupported channels are rejected during replay.

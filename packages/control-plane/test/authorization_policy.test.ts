@@ -105,8 +105,15 @@ describe("PolicyEngine authorization", () => {
 		expect(unmapped).toMatchObject({ kind: "deny", reason: "unmapped_command" });
 	});
 
-	test("first-platform channel policy is explicit to Slack/Discord/Telegram and rejects unsupported iMessage overrides", () => {
-		expect(Object.keys(DEFAULT_CONTROL_PLANE_POLICY.ops.channels).sort()).toEqual(["discord", "slack", "telegram", "terminal"]);
+	test("first-platform channel policy is explicit to Slack/Discord/Telegram/Neovim/VSCode and rejects unsupported iMessage overrides", () => {
+		expect(Object.keys(DEFAULT_CONTROL_PLANE_POLICY.ops.channels).sort()).toEqual([
+			"discord",
+			"neovim",
+			"slack",
+			"telegram",
+			"terminal",
+			"vscode",
+		]);
 
 		expect(() =>
 			buildControlPlanePolicy({

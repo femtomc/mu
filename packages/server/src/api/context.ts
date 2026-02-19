@@ -20,6 +20,7 @@ const CONTEXT_SOURCE_KINDS = [
 	"cp_adapter_audit",
 	"cp_operator_turns",
 	"cp_telegram_ingress",
+	"session_flash",
 	"operator_sessions",
 	"cp_operator_sessions",
 ] as const;
@@ -1007,6 +1008,108 @@ async function collectTelegramIngress(repoRoot: string, path: string): Promise<C
 	return out;
 }
 
+async function collectSessionFlash(repoRoot: string, path: string): Promise<ContextItem[]> {
+	const out: ContextItem[] = [];
+	type FlashCreate = {
+		created_at_ms: number;
+		flash_id: string;
+		session_id: string;
+		session_kind: string | null;
+		body: string;
+		context_ids: string[];
+		source: string | null;
+		metadata: Record<string, unknown>;
+		source_line: number;
+	};
+	const created = new Map<string, FlashCreate>();
+	const delivered = new Map<string, { delivered_at_ms: number; delivered_by: string | null; note: string | null }>();
+
+	for (const row of await readJsonlRows(path)) {
+		const rec = asRecord(row.value);
+		if (!rec) {
+			continue;
+		}
+		const kind = nonEmptyString(rec.kind);
+		if (kind === "session_flash.create") {
+			const flashId = nonEmptyString(rec.flash_id);
+			const sessionId = nonEmptyString(rec.session_id);
+			const body = nonEmptyString(rec.body);
+			const tsMs = asInt(rec.ts_ms) ?? 0;
+			if (!flashId || !sessionId || !body) {
+				continue;
+			}
+			const contextIds = Array.isArray(rec.context_ids)
+				? rec.context_ids
+						.map((value) => nonEmptyString(value))
+						.filter((value): value is string => value != null)
+				: [];
+			created.set(flashId, {
+				created_at_ms: tsMs,
+				flash_id: flashId,
+				session_id: sessionId,
+				session_kind: nonEmptyString(rec.session_kind),
+				body,
+				context_ids: contextIds,
+				source: nonEmptyString(rec.source),
+				metadata: asRecord(rec.metadata) ?? {},
+				source_line: row.line,
+			});
+			continue;
+		}
+		if (kind === "session_flash.delivery") {
+			const flashId = nonEmptyString(rec.flash_id);
+			if (!flashId) {
+				continue;
+			}
+			delivered.set(flashId, {
+				delivered_at_ms: asInt(rec.ts_ms) ?? 0,
+				delivered_by: nonEmptyString(rec.delivered_by),
+				note: nonEmptyString(rec.note),
+			});
+		}
+	}
+
+	for (const create of created.values()) {
+		const delivery = delivered.get(create.flash_id);
+		const status = delivery ? "delivered" : "pending";
+		pushItem(out, {
+			id: `session_flash:${create.flash_id}`,
+			ts_ms: create.created_at_ms,
+			source_kind: "session_flash",
+			source_path: normalizeRelative(repoRoot, path),
+			source_line: create.source_line,
+			repo_root: repoRoot,
+			issue_id: null,
+			run_id: null,
+			session_id: create.session_id,
+			channel: null,
+			channel_tenant_id: null,
+			channel_conversation_id: null,
+			actor_binding_id: null,
+			conversation_key: null,
+			topic: null,
+			author: create.source,
+			role: "user",
+			tags: ["session_flash", status, create.session_kind ?? "unknown"],
+			metadata: {
+				flash_id: create.flash_id,
+				session_kind: create.session_kind,
+				context_ids: create.context_ids,
+				delivery: delivery
+					? {
+							delivered_at_ms: delivery.delivered_at_ms,
+							delivered_by: delivery.delivered_by,
+							note: delivery.note,
+					  }
+					: null,
+				...create.metadata,
+			},
+			text: [create.body, create.context_ids.join(" "), status].filter((part) => part.length > 0).join("\n"),
+		});
+	}
+	return out;
+}
+
 function sessionIdFromPath(path: string): string {
 	const fileName = path.split(/[\\/]/).pop() ?? path;
 	return fileName.replace(/\.jsonl$/i, "") || `session-${crypto.randomUUID()}`;
@@ -1116,6 +1219,9 @@ async function collectContextItems(repoRoot: string, requestedSources: Set<Conte
 	}
 	if (include("cp_telegram_ingress")) {
 		tasks.push(collectTelegramIngress(repoRoot, join(cpDir, "telegram_ingress.jsonl")));
+	}
+	if (include("session_flash")) {
+		tasks.push(collectSessionFlash(repoRoot, join(cpDir, "session_flash.jsonl")));
 	}
 	if (include("operator_sessions")) {
 		tasks.push(

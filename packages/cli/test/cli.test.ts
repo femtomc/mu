@@ -23,6 +23,8 @@ async function writeConfigWithOperatorDefaults(dir: string, provider: string, mo
 						slack: { signing_secret: null },
 						discord: { signing_secret: null },
 						telegram: { webhook_secret: null, bot_token: null, bot_username: null },
+						neovim: { shared_secret: null },
+						vscode: { shared_secret: null },
 					},
 					operator: {
 						enabled: true,
