@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-server",
-  "version": "26.2.72",
+  "version": "26.2.73",
   "description": "HTTP API server for mu status, work items, messaging setup, and web UI.",
   "keywords": [
     "mu",
