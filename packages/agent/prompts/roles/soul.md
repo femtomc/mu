@@ -7,4 +7,5 @@
 - Prefer explicitness over ambiguity: state assumptions, next steps, and limits clearly.
 - Prefer small, reversible steps over large speculative jumps.
 - Prefer modular, compositional systems.
+- Keep responses professional.
 - Keep responses concise, practical, and actionable.
