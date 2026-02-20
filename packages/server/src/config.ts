@@ -1,8 +1,6 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-export type WakeTurnMode = "off" | "shadow" | "active";
-
 export type MuConfig = {
 	version: 1;
 	control_plane: {
@@ -25,7 +23,6 @@ export type MuConfig = {
 		operator: {
 			enabled: boolean;
 			run_triggers_enabled: boolean;
-			wake_turn_mode: WakeTurnMode;
 			provider: string | null;
 			model: string | null;
 		};
@@ -53,7 +50,6 @@ export type MuConfigPatch = {
 		operator?: {
 			enabled?: boolean;
 			run_triggers_enabled?: boolean;
-			wake_turn_mode?: WakeTurnMode;
 			provider?: string | null;
 			model?: string | null;
 		};
@@ -86,7 +82,6 @@ export type MuConfigPresence = {
 		operator: {
 			enabled: boolean;
 			run_triggers_enabled: boolean;
-			wake_turn_mode: WakeTurnMode;
 			provider: boolean;
 			model: boolean;
 		};
@@ -115,7 +110,6 @@ export const DEFAULT_MU_CONFIG: MuConfig = {
 		operator: {
 			enabled: true,
 			run_triggers_enabled: true,
-			wake_turn_mode: "active",
 			provider: null,
 			model: null,
 		},
@@ -148,20 +142,6 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
 		if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
 	}
 	return fallback;
-}
-
-function normalizeWakeTurnMode(value: unknown, fallback: WakeTurnMode): WakeTurnMode {
-	if (typeof value !== "string") {
-		return fallback;
-	}
-	const normalized = value.trim().toLowerCase();
-	if (normalized === "shadow") {
-		return "shadow";
-	}
-	if (normalized === "active") {
-		return "active";
-	}
-	return "off";
 }
 
 export function normalizeMuConfig(input: unknown): MuConfig {
@@ -216,12 +196,6 @@ export function normalizeMuConfig(input: unknown): MuConfig {
 			next.control_plane.operator.run_triggers_enabled = normalizeBoolean(
 				operator.run_triggers_enabled,
 				next.control_plane.operator.run_triggers_enabled,
-			);
-		}
-		if ("wake_turn_mode" in operator) {
-			next.control_plane.operator.wake_turn_mode = normalizeWakeTurnMode(
-				operator.wake_turn_mode,
-				next.control_plane.operator.wake_turn_mode,
 			);
 		}
 		if ("provider" in operator) {
@@ -308,12 +282,6 @@ function normalizeMuConfigPatch(input: unknown): MuConfigPatch {
 				DEFAULT_MU_CONFIG.control_plane.operator.run_triggers_enabled,
 			);
 		}
-		if ("wake_turn_mode" in operator) {
-			patch.control_plane.operator.wake_turn_mode = normalizeWakeTurnMode(
-				operator.wake_turn_mode,
-				DEFAULT_MU_CONFIG.control_plane.operator.wake_turn_mode,
-			);
-		}
 		if ("provider" in operator) {
 			patch.control_plane.operator.provider = normalizeNullableString(operator.provider);
 		}
@@ -374,12 +342,6 @@ export function applyMuConfigPatch(base: MuConfig, patchInput: unknown): MuConfi
 		}
 		if ("run_triggers_enabled" in operator && typeof operator.run_triggers_enabled === "boolean") {
 			next.control_plane.operator.run_triggers_enabled = operator.run_triggers_enabled;
-		}
-		if ("wake_turn_mode" in operator) {
-			next.control_plane.operator.wake_turn_mode = normalizeWakeTurnMode(
-				operator.wake_turn_mode,
-				next.control_plane.operator.wake_turn_mode,
-			);
 		}
 		if ("provider" in operator) {
 			next.control_plane.operator.provider = operator.provider ?? null;
@@ -464,7 +426,6 @@ export function muConfigPresence(config: MuConfig): MuConfigPresence {
 			operator: {
 				enabled: config.control_plane.operator.enabled,
 				run_triggers_enabled: config.control_plane.operator.run_triggers_enabled,
-				wake_turn_mode: config.control_plane.operator.wake_turn_mode,
 				provider: isPresent(config.control_plane.operator.provider),
 				model: isPresent(config.control_plane.operator.model),
 			},

@@ -823,7 +823,7 @@ describe("mu-server", () => {
 		expect(wakePayload.delivery_summary_v2).toEqual({ queued: 1, duplicate: 1, skipped: 1, total: 3 });
 	});
 
-	test("wake_turn_mode active invokes autonomous wake turn path and emits deterministic decision telemetry", async () => {
+	test("operator wake invokes autonomous wake turn path and emits deterministic decision telemetry", async () => {
 		const wakeTurns: Array<{ commandText: string; requestId?: string }> = [];
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
@@ -841,22 +841,6 @@ describe("mu-server", () => {
 			serverOptions: { operatorWakeCoalesceMs: 1_000 },
 		});
 
-		const configPatch = await wakeServer.fetch(
-			new Request("http://localhost/api/config", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					patch: {
-						control_plane: {
-							operator: {
-								wake_turn_mode: "active",
-							},
-						},
-					},
-				}),
-			}),
-		);
-		expect(configPatch.status).toBe(200);
 
 		const activityStart = await wakeServer.fetch(
 			new Request("http://localhost/api/activities/start", {
@@ -923,8 +907,6 @@ describe("mu-server", () => {
 		expect(wakeTurn?.commandText).toContain(`program_id=${heartbeatProgramId}`);
 
 		expect(decisionPayload.dedupe_key).toBe(`heartbeat-program:${heartbeatProgramId}`);
-		expect(decisionPayload.wake_turn_mode).toBe("active");
-		expect(decisionPayload.wake_turn_feature_enabled).toBe(true);
 		expect(decisionPayload.wake_turn_outcome).toBe("triggered");
 		expect(decisionPayload.wake_turn_reason).toBe("turn_invoked");
 		expect(decisionPayload.turn_result_kind).toBe("operator_response");
@@ -954,7 +936,7 @@ describe("mu-server", () => {
 		expect(wakePayload.turn_result_kind).toBe("operator_response");
 	});
 
-	test("wake_turn_mode active runs wake→turn→outbound exactly once under repeated wake triggers", async () => {
+	test("operator wake runs wake→turn→outbound exactly once under repeated wake triggers", async () => {
 		const wakeTurns: Array<{ commandText: string; requestId?: string }> = [];
 		const notifyCalls: Array<{
 			dedupeKey: string;
@@ -1032,22 +1014,6 @@ describe("mu-server", () => {
 			serverOptions: { operatorWakeCoalesceMs: 60_000 },
 		});
 
-		const configPatch = await wakeServer.fetch(
-			new Request("http://localhost/api/config", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					patch: {
-						control_plane: {
-							operator: {
-								wake_turn_mode: "active",
-							},
-						},
-					},
-				}),
-			}),
-		);
-		expect(configPatch.status).toBe(200);
 
 		const activityStart = await wakeServer.fetch(
 			new Request("http://localhost/api/activities/start", {
@@ -1165,14 +1131,13 @@ describe("mu-server", () => {
 
 		expect(decisionPayload.wake_turn_outcome).toBe("triggered");
 		expect(decisionPayload.wake_turn_reason).toBe("turn_invoked");
-		expect(decisionPayload.wake_turn_mode).toBe("active");
 		expect(wakePayload.wake_turn_outcome).toBe("triggered");
 		expect(wakePayload.wake_turn_reason).toBe("turn_invoked");
 		expect(wakePayload.delivery_summary_v2).toEqual({ queued: 1, duplicate: 0, skipped: 1, total: 2 });
 		expect(wakePayload.delivery).toEqual({ queued: 1, duplicate: 0, skipped: 1 });
 	});
 
-	test("wake_turn_mode active falls back when control-plane wake turn path is unavailable", async () => {
+	test("operator wake falls back when control-plane wake turn path is unavailable", async () => {
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
@@ -1183,22 +1148,6 @@ describe("mu-server", () => {
 			controlPlane: wakeControlPlane,
 		});
 
-		const configPatch = await wakeServer.fetch(
-			new Request("http://localhost/api/config", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					patch: {
-						control_plane: {
-							operator: {
-								wake_turn_mode: "active",
-							},
-						},
-					},
-				}),
-			}),
-		);
-		expect(configPatch.status).toBe(200);
 
 		const activityStart = await wakeServer.fetch(
 			new Request("http://localhost/api/activities/start", {
@@ -1254,8 +1203,6 @@ describe("mu-server", () => {
 		}
 		expect(decisionPayload.wake_turn_outcome).toBe("fallback");
 		expect(decisionPayload.wake_turn_reason).toBe("control_plane_unavailable");
-		expect(decisionPayload.wake_turn_mode).toBe("active");
-		expect(decisionPayload.wake_turn_feature_enabled).toBe(true);
 
 		const wakePayload = await waitFor(async () => {
 			const response = await wakeServer.fetch(

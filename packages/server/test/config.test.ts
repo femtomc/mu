@@ -45,11 +45,10 @@ describe("mu config", () => {
 			expect(normalized.control_plane.adapters.telegram.webhook_secret).toBe("tg-secret");
 			expect(normalized.control_plane.operator.enabled).toBe(false);
 			expect(normalized.control_plane.operator.run_triggers_enabled).toBe(true);
-			expect(normalized.control_plane.operator.wake_turn_mode).toBe("active");
 
 			const patched = applyMuConfigPatch(normalized, {
 				control_plane: {
-					operator: { run_triggers_enabled: false, wake_turn_mode: "active" },
+					operator: { run_triggers_enabled: false },
 					adapters: {
 						discord: { signing_secret: "discord-secret" },
 						neovim: { shared_secret: "nvim-secret" },
@@ -57,7 +56,6 @@ describe("mu config", () => {
 				},
 			});
 			expect(patched.control_plane.operator.run_triggers_enabled).toBe(false);
-			expect(patched.control_plane.operator.wake_turn_mode).toBe("active");
 			expect(patched.control_plane.adapters.discord.signing_secret).toBe("discord-secret");
 			expect(patched.control_plane.adapters.neovim.shared_secret).toBe("nvim-secret");
 
@@ -82,7 +80,6 @@ describe("mu config", () => {
 				operator: {
 					enabled: true,
 					run_triggers_enabled: false,
-					wake_turn_mode: "shadow",
 					provider: "openai",
 					model: "gpt-5",
 				},
@@ -94,7 +91,6 @@ describe("mu config", () => {
 		expect(presence.control_plane.adapters.telegram.bot_username).toBe(true);
 		expect(presence.control_plane.adapters.neovim.shared_secret).toBe(true);
 		expect(presence.control_plane.operator.run_triggers_enabled).toBe(false);
-		expect(presence.control_plane.operator.wake_turn_mode).toBe("shadow");
 
 		const redacted = redactMuConfigSecrets(config);
 		expect(redacted.control_plane.adapters.slack.signing_secret).toBe("***");

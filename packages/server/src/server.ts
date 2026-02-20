@@ -6,13 +6,7 @@ import {
 import type { EventEnvelope, JsonlStore } from "@femtomc/mu-core";
 import { currentRunId, EventLog, FsJsonlStore, getStorePaths, JsonlEventSink } from "@femtomc/mu-core/node";
 import { ControlPlaneActivitySupervisor } from "./activity_supervisor.js";
-import {
-	DEFAULT_MU_CONFIG,
-	type MuConfig,
-	type WakeTurnMode,
-	readMuConfigFile,
-	writeMuConfigFile,
-} from "./config.js";
+import { DEFAULT_MU_CONFIG, type MuConfig, readMuConfigFile, writeMuConfigFile } from "./config.js";
 import { bootstrapControlPlane } from "./control_plane.js";
 import type {
 	ControlPlaneHandle,
@@ -79,12 +73,11 @@ function describeError(err: unknown): string {
 	return String(err);
 }
 
-type WakeDecisionOutcome = "triggered" | "skipped" | "fallback";
+type WakeDecisionOutcome = "triggered" | "fallback";
 
 type WakeDecision = {
 	outcome: WakeDecisionOutcome;
 	reason: string;
-	wakeTurnMode: WakeTurnMode;
 	turnRequestId: string | null;
 	turnResultKind: string | null;
 	turnReply: string | null;
@@ -98,20 +91,6 @@ function emptyNotifyOperatorsResult(): NotifyOperatorsResult {
 		skipped: 0,
 		decisions: [],
 	};
-}
-
-function normalizeWakeTurnMode(value: unknown): WakeTurnMode {
-	if (typeof value !== "string") {
-		return "off";
-	}
-	const normalized = value.trim().toLowerCase();
-	if (normalized === "shadow") {
-		return "shadow";
-	}
-	if (normalized === "active") {
-		return "active";
-	}
-	return "off";
 }
 
 function stringField(payload: Record<string, unknown>, key: string): string | null {
@@ -259,45 +238,15 @@ function createServer(options: ServerOptions = {}) {
 		const programId = stringField(opts.payload, "program_id");
 		const sourceTsMs = numberField(opts.payload, "source_ts_ms");
 
-		let wakeTurnMode = normalizeWakeTurnMode(fallbackConfig.control_plane.operator.wake_turn_mode);
-		let configReadError: string | null = null;
-		try {
-			const config = await loadConfigFromDisk();
-			wakeTurnMode = normalizeWakeTurnMode(config.control_plane.operator.wake_turn_mode);
-		} catch (err) {
-			configReadError = describeError(err);
-		}
-
 		let decision: WakeDecision;
-		if (wakeTurnMode === "off") {
-			decision = {
-				outcome: "skipped",
-				reason: "feature_disabled",
-				wakeTurnMode,
-				turnRequestId: null,
-				turnResultKind: null,
-				turnReply: null,
-				error: configReadError,
-			};
-		} else if (wakeTurnMode === "shadow") {
-			decision = {
-				outcome: "skipped",
-				reason: "shadow_mode",
-				wakeTurnMode,
-				turnRequestId: null,
-				turnResultKind: null,
-				turnReply: null,
-				error: configReadError,
-			};
-		} else if (typeof controlPlaneProxy.submitTerminalCommand !== "function") {
+		if (typeof controlPlaneProxy.submitTerminalCommand !== "function") {
 			decision = {
 				outcome: "fallback",
 				reason: "control_plane_unavailable",
-				wakeTurnMode,
 				turnRequestId: null,
 				turnResultKind: null,
 				turnReply: null,
-				error: configReadError,
+				error: null,
 			};
 		} else {
 			const turnRequestId = `wake-turn-${wakeId}`;
@@ -315,11 +264,10 @@ function createServer(options: ServerOptions = {}) {
 					decision = {
 						outcome: "fallback",
 						reason: `turn_result_${turnResult.kind}`,
-						wakeTurnMode,
 						turnRequestId,
 						turnResultKind: turnResult.kind,
 						turnReply: null,
-						error: configReadError,
+						error: null,
 					};
 				} else {
 					const turnReply = extractWakeTurnReply(turnResult);
@@ -327,21 +275,19 @@ function createServer(options: ServerOptions = {}) {
 						decision = {
 							outcome: "fallback",
 							reason: "turn_reply_empty",
-							wakeTurnMode,
 							turnRequestId,
 							turnResultKind: turnResult.kind,
 							turnReply: null,
-							error: configReadError,
+							error: null,
 						};
 					} else {
 						decision = {
 							outcome: "triggered",
 							reason: "turn_invoked",
-							wakeTurnMode,
 							turnRequestId,
 							turnResultKind: turnResult.kind,
 							turnReply,
-							error: configReadError,
+							error: null,
 						};
 					}
 				}
@@ -350,7 +296,6 @@ function createServer(options: ServerOptions = {}) {
 				decision = {
 					outcome: "fallback",
 					reason: error === "control_plane_unavailable" ? "control_plane_unavailable" : "turn_execution_failed",
-					wakeTurnMode,
 					turnRequestId,
 					turnResultKind: null,
 					turnReply: null,
@@ -367,8 +312,6 @@ function createServer(options: ServerOptions = {}) {
 				wake_source: wakeSource,
 				program_id: programId,
 				source_ts_ms: sourceTsMs,
-				wake_turn_mode: decision.wakeTurnMode,
-				wake_turn_feature_enabled: decision.wakeTurnMode === "active",
 				wake_turn_outcome: decision.outcome,
 				wake_turn_reason: decision.reason,
 				turn_request_id: decision.turnRequestId,
@@ -437,8 +380,6 @@ function createServer(options: ServerOptions = {}) {
 				wake_id: wakeId,
 				wake_turn_outcome: decision.outcome,
 				wake_turn_reason: decision.reason,
-				wake_turn_mode: decision.wakeTurnMode,
-				wake_turn_feature_enabled: decision.wakeTurnMode === "active",
 				turn_request_id: decision.turnRequestId,
 				turn_result_kind: decision.turnResultKind,
 				wake_turn_error: decision.error,
