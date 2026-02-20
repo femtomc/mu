@@ -30,13 +30,16 @@ export function createServerProgramOrchestration(opts: {
 		repoRoot: opts.repoRoot,
 		heartbeatScheduler: opts.heartbeatScheduler,
 		dispatchWake: async (wakeOpts) => {
+			const prompt = wakeOpts.prompt && wakeOpts.prompt.trim().length > 0 ? wakeOpts.prompt : null;
 			const wakeResult = await opts.emitOperatorWake({
 				dedupeKey: `heartbeat-program:${wakeOpts.programId}`,
-				message: `Heartbeat wake: ${wakeOpts.title}`,
+				message: prompt ?? `Heartbeat wake: ${wakeOpts.title}`,
 				payload: {
 					wake_source: "heartbeat_program",
 					source_ts_ms: wakeOpts.triggeredAtMs,
 					program_id: wakeOpts.programId,
+					title: wakeOpts.title,
+					prompt,
 					reason: wakeOpts.reason,
 					metadata: wakeOpts.metadata,
 				},
@@ -75,6 +78,8 @@ export function createServerProgramOrchestration(opts: {
 						wake_source: "cron_program",
 						source_ts_ms: wakeOpts.triggeredAtMs,
 						program_id: wakeOpts.programId,
+						title: wakeOpts.title,
+						prompt: null,
 						reason: wakeOpts.reason,
 						schedule: wakeOpts.schedule,
 						metadata: wakeOpts.metadata,

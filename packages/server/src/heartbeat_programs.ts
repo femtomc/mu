@@ -7,6 +7,7 @@ export type HeartbeatProgramSnapshot = {
 	v: 1;
 	program_id: string;
 	title: string;
+	prompt: string | null;
 	enabled: boolean;
 	every_ms: number;
 	reason: string;
@@ -46,6 +47,7 @@ export type HeartbeatProgramRegistryOpts = {
 	dispatchWake: (opts: {
 		programId: string;
 		title: string;
+		prompt: string | null;
 		reason: string;
 		metadata: Record<string, unknown>;
 		triggeredAtMs: number;
@@ -64,6 +66,16 @@ function sanitizeMetadata(value: unknown): Record<string, unknown> {
 		return {};
 	}
 	return { ...(value as Record<string, unknown>) };
+}
+
+function normalizePrompt(value: unknown): string | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	if (value.trim().length === 0) {
+		return null;
+	}
+	return value;
 }
 
 function normalizeProgram(row: unknown): HeartbeatProgramSnapshot | null {
@@ -99,6 +111,7 @@ function normalizeProgram(row: unknown): HeartbeatProgramSnapshot | null {
 		v: 1,
 		program_id: programId,
 		title,
+		prompt: normalizePrompt(record.prompt),
 		enabled: record.enabled !== false,
 		every_ms: everyMs,
 		reason,
@@ -221,6 +234,7 @@ export class HeartbeatProgramRegistry {
 			const result = await this.#dispatchWake({
 				programId: program.program_id,
 				title: program.title,
+				prompt: program.prompt,
 				reason: heartbeatReason,
 				metadata: { ...program.metadata },
 				triggeredAtMs: nowMs,
@@ -291,6 +305,7 @@ export class HeartbeatProgramRegistry {
 
 	public async create(opts: {
 		title: string;
+		prompt?: string | null;
 		everyMs?: number;
 		reason?: string;
 		enabled?: boolean;
@@ -306,6 +321,7 @@ export class HeartbeatProgramRegistry {
 			v: 1,
 			program_id: `hb-${crypto.randomUUID().slice(0, 12)}`,
 			title,
+			prompt: normalizePrompt(opts.prompt),
 			enabled: opts.enabled !== false,
 			every_ms:
 				typeof opts.everyMs === "number" && Number.isFinite(opts.everyMs)
@@ -328,6 +344,7 @@ export class HeartbeatProgramRegistry {
 	public async update(opts: {
 		programId: string;
 		title?: string;
+		prompt?: string | null;
 		everyMs?: number;
 		reason?: string;
 		enabled?: boolean;
@@ -344,6 +361,9 @@ export class HeartbeatProgramRegistry {
 				throw new Error("heartbeat_program_title_required");
 			}
 			program.title = title;
+		}
+		if ("prompt" in opts) {
+			program.prompt = normalizePrompt(opts.prompt);
 		}
 		if (typeof opts.everyMs === "number" && Number.isFinite(opts.everyMs)) {
 			program.every_ms = Math.max(0, Math.trunc(opts.everyMs));

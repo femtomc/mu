@@ -493,16 +493,21 @@ function summarizeHeartbeatProgram(program: Record<string, unknown>): string {
 function renderHeartbeatProgramCompact(program: Record<string, unknown>): string {
 	const id = recordString(program, "program_id") ?? "-";
 	const title = recordString(program, "title") ?? "-";
+	const prompt = recordString(program, "prompt") ?? null;
 	const enabled = recordBool(program, "enabled");
 	const everyMs = recordInt(program, "every_ms");
 	const reason = recordString(program, "reason") ?? "-";
 	const updated = recordInt(program, "updated_at_ms");
-	return [
+	const lines = [
 		`Heartbeat ${id}`,
 		`title=${truncateInline(title, 120)}`,
 		`enabled=${enabled == null ? "-" : String(enabled)} every_ms=${everyMs ?? "-"} reason=${truncateInline(reason, 80)}`,
-		`updated=${formatTsIsoMinute(updated ?? 0)} (${formatAgeShort(updated ?? 0)})`,
-	].join("\n") + "\n";
+	];
+	if (prompt != null) {
+		lines.push(`prompt=${truncateInline(prompt, 140)}`);
+	}
+	lines.push(`updated=${formatTsIsoMinute(updated ?? 0)} (${formatAgeShort(updated ?? 0)})`);
+	return `${lines.join("\n")}\n`;
 }
 
 export function renderHeartbeatsPayloadCompact(payload: Record<string, unknown>): string {

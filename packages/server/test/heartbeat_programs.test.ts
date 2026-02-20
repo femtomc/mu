@@ -23,29 +23,32 @@ describe("HeartbeatProgramRegistry", () => {
 	test("creates, triggers, and persists wake heartbeat programs", async () => {
 		const store = new InMemoryJsonlStore<HeartbeatProgramSnapshot>([]);
 		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 10 });
-		const wakeCalls: Array<{ programId: string; reason: string }> = [];
+		const wakeCalls: Array<{ programId: string; reason: string; prompt: string | null }> = [];
 		const registry = new HeartbeatProgramRegistry({
 			repoRoot: "/repo",
 			heartbeatScheduler: scheduler,
 			store,
 			dispatchWake: async (opts) => {
-				wakeCalls.push({ programId: opts.programId, reason: opts.reason });
+				wakeCalls.push({ programId: opts.programId, reason: opts.reason, prompt: opts.prompt });
 				return { status: "ok" };
 			},
 		});
 
 		const program = await registry.create({
 			title: "Wake pulse",
+			prompt: "Investigate stalled work and recover",
 			everyMs: 0,
 			reason: "scheduled",
 		});
 		expect(program.title).toBe("Wake pulse");
+		expect(program.prompt).toBe("Investigate stalled work and recover");
 
 		const trigger = await registry.trigger({ programId: program.program_id, reason: "manual" });
 		expect(trigger.ok).toBe(true);
 		expect(wakeCalls.length).toBe(1);
 		expect(wakeCalls[0]?.programId).toBe(program.program_id);
 		expect(wakeCalls[0]?.reason).toBe("manual");
+		expect(wakeCalls[0]?.prompt).toBe("Investigate stalled work and recover");
 
 		const rows = await store.read();
 		expect(rows.length).toBe(1);
@@ -112,6 +115,7 @@ describe("HeartbeatProgramRegistry", () => {
 				v: 1,
 				program_id: "hb-preloaded-1",
 				title: "Preloaded wake pulse",
+				prompt: null,
 				enabled: true,
 				every_ms: 40,
 				reason: "scheduled",

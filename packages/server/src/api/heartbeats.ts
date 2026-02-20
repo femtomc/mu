@@ -27,6 +27,7 @@ export async function heartbeatRoutes(
 		}
 		let body: {
 			title?: unknown;
+			prompt?: unknown;
 			every_ms?: unknown;
 			reason?: unknown;
 			enabled?: unknown;
@@ -35,6 +36,7 @@ export async function heartbeatRoutes(
 		try {
 			body = (await request.json()) as {
 				title?: unknown;
+				prompt?: unknown;
 				every_ms?: unknown;
 				reason?: unknown;
 				enabled?: unknown;
@@ -47,6 +49,11 @@ export async function heartbeatRoutes(
 		if (!title) {
 			return Response.json({ error: "title is required" }, { status: 400, headers });
 		}
+		if ("prompt" in body && typeof body.prompt !== "string" && body.prompt !== null) {
+			return Response.json({ error: "prompt must be string or null" }, { status: 400, headers });
+		}
+		const prompt =
+			typeof body.prompt === "string" ? body.prompt : body.prompt === null ? null : undefined;
 		const everyMs =
 			typeof body.every_ms === "number" && Number.isFinite(body.every_ms)
 				? Math.max(0, Math.trunc(body.every_ms))
@@ -56,6 +63,7 @@ export async function heartbeatRoutes(
 		try {
 			const program = await deps.heartbeatPrograms.create({
 				title,
+				prompt,
 				everyMs,
 				reason,
 				enabled,
@@ -77,6 +85,7 @@ export async function heartbeatRoutes(
 		let body: {
 			program_id?: unknown;
 			title?: unknown;
+			prompt?: unknown;
 			every_ms?: unknown;
 			reason?: unknown;
 			enabled?: unknown;
@@ -86,6 +95,7 @@ export async function heartbeatRoutes(
 			body = (await request.json()) as {
 				program_id?: unknown;
 				title?: unknown;
+				prompt?: unknown;
 				every_ms?: unknown;
 				reason?: unknown;
 				enabled?: unknown;
@@ -99,7 +109,15 @@ export async function heartbeatRoutes(
 			return Response.json({ error: "program_id is required" }, { status: 400, headers });
 		}
 		try {
-			const result = await deps.heartbeatPrograms.update({
+			const updateOpts: {
+				programId: string;
+				title?: string;
+				prompt?: string | null;
+				everyMs?: number;
+				reason?: string;
+				enabled?: boolean;
+				metadata?: Record<string, unknown>;
+			} = {
 				programId,
 				title: typeof body.title === "string" ? body.title : undefined,
 				everyMs:
@@ -112,7 +130,17 @@ export async function heartbeatRoutes(
 					body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
 						? (body.metadata as Record<string, unknown>)
 						: undefined,
-			});
+			};
+			if ("prompt" in body) {
+				if (typeof body.prompt === "string") {
+					updateOpts.prompt = body.prompt;
+				} else if (body.prompt === null) {
+					updateOpts.prompt = null;
+				} else {
+					return Response.json({ error: "prompt must be string or null" }, { status: 400, headers });
+				}
+			}
+			const result = await deps.heartbeatPrograms.update(updateOpts);
 			if (result.ok) {
 				return Response.json(result, { headers });
 			}

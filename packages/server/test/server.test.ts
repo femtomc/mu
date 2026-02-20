@@ -847,12 +847,14 @@ describe("mu-server", () => {
 		});
 
 
+		const heartbeatPrompt = "Review backlog and execute one highest-priority task.";
 		const heartbeatCreate = await wakeServer.fetch(
 			new Request("http://localhost/api/heartbeats/create", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					title: "Wake heartbeat",
+					prompt: heartbeatPrompt,
 					every_ms: 0,
 					reason: "heartbeat-wake",
 				}),
@@ -900,6 +902,7 @@ describe("mu-server", () => {
 		expect(wakeTurn?.commandText).toContain(`wake_id=${decisionPayload.wake_id as string}`);
 		expect(wakeTurn?.commandText).toContain("wake_source=heartbeat_program");
 		expect(wakeTurn?.commandText).toContain(`program_id=${heartbeatProgramId}`);
+		expect(wakeTurn?.commandText).toContain(heartbeatPrompt);
 
 		expect(decisionPayload.dedupe_key).toBe(`heartbeat-program:${heartbeatProgramId}`);
 		expect(decisionPayload.wake_turn_outcome).toBe("triggered");
@@ -929,6 +932,7 @@ describe("mu-server", () => {
 		expect(wakePayload.wake_turn_reason).toBe("turn_invoked");
 		expect(wakePayload.turn_request_id).toBe(decisionPayload.turn_request_id);
 		expect(wakePayload.turn_result_kind).toBe("operator_response");
+		expect(wakePayload.prompt).toBe(heartbeatPrompt);
 	});
 
 	test("operator wake runs wake→turn→outbound exactly once under repeated wake triggers", async () => {
@@ -1215,6 +1219,7 @@ describe("mu-server", () => {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					title: "Watch indexing pulse",
+					prompt: "Review index health and repair stale memory references",
 					every_ms: 0,
 					reason: "watchdog",
 					enabled: true,
@@ -1262,8 +1267,15 @@ describe("mu-server", () => {
 			.split("\n")
 			.map((line) => line.trim())
 			.filter((line) => line.length > 0)
-			.map((line) => JSON.parse(line) as { program_id?: string; reason?: string });
+			.map((line) => JSON.parse(line) as { program_id?: string; reason?: string; prompt?: string | null });
 		expect(lines.some((row) => row.program_id === programId && row.reason === "watchdog")).toBe(true);
+		expect(
+			lines.some(
+				(row) =>
+					row.program_id === programId &&
+					row.prompt === "Review index health and repair stale memory references",
+			),
+		).toBe(true);
 	});
 
 	test("cron program APIs persist schedules, emit events, and restore on startup", async () => {

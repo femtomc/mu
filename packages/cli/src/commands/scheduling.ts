@@ -330,7 +330,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"  list      List heartbeat programs",
 					"  get       Show a single heartbeat program",
 					"  create    Create a heartbeat program",
-					"  update    Update title/every-ms/reason/enabled",
+					"  update    Update title/prompt/every-ms/reason/enabled",
 					"  delete    Delete a heartbeat program",
 					"  trigger   Trigger a heartbeat immediately",
 					"  enable    Enable a heartbeat program",
@@ -346,7 +346,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"  2) Link your Telegram identity",
 					"       mu control link --channel telegram --actor-id <chat-id> --tenant-id bot",
 					"  3) Create heartbeat",
-					"       mu heartbeats create --title \"Telegram heartbeat\" --every-ms 300000 --reason telegram_heartbeat",
+					"       mu heartbeats create --title \"Telegram heartbeat\" --prompt \"Review open issues and post next actions\" --every-ms 300000 --reason telegram_heartbeat",
 					"  4) Validate + smoke test",
 					"       mu heartbeats list --limit 20",
 					"       mu heartbeats trigger <program-id> --reason smoke_test",
@@ -483,17 +483,18 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"mu heartbeats create - create a heartbeat program",
 					"",
 					"Usage:",
-					"  mu heartbeats create [--title <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
-					"  mu heartbeats create <title> [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
+					"  mu heartbeats create [--title <text>] [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
+					"  mu heartbeats create <title> [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
 					"",
 					"Notes:",
+					"  - --prompt is an optional free-form operator instruction (can be multi-line).",
 					"  - every-ms omitted: defaults to 15000ms.",
 					"  - every-ms 0: event-driven heartbeat (no periodic timer).",
 					"  - Heartbeats wake operator; delivery depends on linked channel identities.",
 					"",
 					"Examples:",
-					"  mu heartbeats create --title \"Run heartbeat\" --every-ms 15000 --reason run_watchdog",
-					"  mu heartbeats create --title \"Telegram heartbeat\" --every-ms 300000 --reason telegram_heartbeat",
+					"  mu heartbeats create --title \"Run heartbeat\" --prompt \"Check for stuck runs and recover\" --every-ms 15000 --reason run_watchdog",
+					"  mu heartbeats create --title \"Telegram heartbeat\" --prompt \"Review open issues and post next actions\" --every-ms 300000 --reason telegram_heartbeat",
 					"",
 					"Telegram prerequisites:",
 					"  mu control status",
@@ -515,9 +516,10 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 				recovery: ['mu heartbeats create --title "Wake heartbeat" --every-ms 15000'],
 			});
 		}
-		const { value: everyMsRaw, rest: argv1 } = getFlagValue(argv0, "--every-ms");
-		const { value: reason, rest: argv2 } = getFlagValue(argv1, "--reason");
-		const { value: enabledRaw, rest } = getFlagValue(argv2, "--enabled");
+		const { value: promptRaw, rest: argv1 } = getFlagValue(argv0, "--prompt");
+		const { value: everyMsRaw, rest: argv2 } = getFlagValue(argv1, "--every-ms");
+		const { value: reason, rest: argv3 } = getFlagValue(argv2, "--reason");
+		const { value: enabledRaw, rest } = getFlagValue(argv3, "--enabled");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats create --help"] });
 		}
@@ -535,6 +537,8 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 				recovery: ["mu heartbeats create --enabled true"],
 			});
 		}
+		const prompt =
+			promptRaw == null ? undefined : promptRaw.trim().length === 0 ? null : promptRaw;
 		const req = await requestServerJson<Record<string, unknown>>({
 			ctx,
 			pretty,
@@ -542,6 +546,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 			path: "/api/heartbeats/create",
 			body: {
 				title,
+				prompt,
 				every_ms: everyMs,
 				reason: reason ?? null,
 				enabled,
@@ -561,11 +566,12 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"mu heartbeats update - update a heartbeat program",
 					"",
 					"Usage:",
-					"  mu heartbeats update <program-id> [--title <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
-					"  mu heartbeats update --program-id <id> [--title <text>] [--every-ms N] [--reason <text>] [--enabled true|false]",
+					"  mu heartbeats update <program-id> [--title <text>] [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
+					"  mu heartbeats update --program-id <id> [--title <text>] [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false]",
 					"",
 					"Examples:",
 					"  mu heartbeats update hb-123 --every-ms 600000",
+					"  mu heartbeats update hb-123 --prompt \"Re-plan from current blockers and act\"",
 					"  mu heartbeats update --program-id hb-123 --enabled false",
 				].join("\n") + "\n",
 			);
@@ -582,9 +588,10 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 			return jsonError("missing program id", { pretty, recovery: ["mu heartbeats update --program-id <id>"] });
 		}
 		const { value: title, rest: argv1 } = getFlagValue(argv0, "--title");
-		const { value: everyMsRaw, rest: argv2 } = getFlagValue(argv1, "--every-ms");
-		const { value: reason, rest: argv3 } = getFlagValue(argv2, "--reason");
-		const { value: enabledRaw, rest } = getFlagValue(argv3, "--enabled");
+		const { value: promptRaw, rest: argv2 } = getFlagValue(argv1, "--prompt");
+		const { value: everyMsRaw, rest: argv3 } = getFlagValue(argv2, "--every-ms");
+		const { value: reason, rest: argv4 } = getFlagValue(argv3, "--reason");
+		const { value: enabledRaw, rest } = getFlagValue(argv4, "--enabled");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats update --help"] });
 		}
@@ -606,6 +613,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 			program_id: programId,
 		};
 		if (title != null) body.title = title;
+		if (promptRaw != null) body.prompt = promptRaw.trim().length === 0 ? null : promptRaw;
 		if (everyMs != null) body.every_ms = everyMs;
 		if (reason != null) body.reason = reason;
 		if (enabled != null) body.enabled = enabled;

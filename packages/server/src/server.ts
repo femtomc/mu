@@ -101,6 +101,11 @@ function stringField(payload: Record<string, unknown>, key: string): string | nu
 	return trimmed.length > 0 ? trimmed : null;
 }
 
+function stringFieldRaw(payload: Record<string, unknown>, key: string): string | null {
+	const value = payload[key];
+	return typeof value === "string" ? value : null;
+}
+
 function numberField(payload: Record<string, unknown>, key: string): number | null {
 	const value = payload[key];
 	if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -149,15 +154,25 @@ function buildWakeTurnCommandText(opts: {
 }): string {
 	const wakeSource = stringField(opts.payload, "wake_source") ?? "unknown";
 	const programId = stringField(opts.payload, "program_id") ?? "unknown";
+	const title = stringField(opts.payload, "title") ?? "(untitled wake program)";
 	const reason = stringField(opts.payload, "reason") ?? "scheduled";
+	const prompt = stringFieldRaw(opts.payload, "prompt");
+	const wakeInstruction = prompt ?? opts.message;
 	const payloadSnapshot = stablePayloadSnapshot(opts.payload);
 	return [
 		"Autonomous wake turn triggered by heartbeat/cron scheduler.",
 		`wake_id=${opts.wakeId}`,
 		`wake_source=${wakeSource}`,
 		`program_id=${programId}`,
-		`reason=${reason}`,
-		`trigger_message=${opts.message}`,
+		`wake_title=${title}`,
+		`wake_reason=${reason}`,
+		"",
+		"wake_prompt:",
+		prompt ?? "(none)",
+		"",
+		"wake_instruction:",
+		wakeInstruction,
+		"",
 		`payload=${payloadSnapshot}`,
 		"",
 		"If action is needed, produce exactly one `/mu ...` command. If no action is needed, return a short operator response that can be broadcast verbatim.",

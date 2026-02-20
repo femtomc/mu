@@ -57,19 +57,42 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 		expect(runsPayload.count).toBe(1);
 		expect(runsPayload.runs[0]?.job_id).toBe("run-1");
 
-		const hb = await run(["heartbeats", "create", "--title", "Run heartbeat", "--every-ms", "15000"], {
-			cwd: dir,
-		});
+		const hb = await run(
+			[
+				"heartbeats",
+				"create",
+				"--title",
+				"Run heartbeat",
+				"--prompt",
+				"Check queued runs and recover stuck work",
+				"--every-ms",
+				"15000",
+			],
+			{
+				cwd: dir,
+			},
+		);
 		expect(hb.exitCode).toBe(0);
-		const hbPayload = JSON.parse(hb.stdout) as { ok: boolean; program: { program_id: string; title: string } };
+		const hbPayload = JSON.parse(hb.stdout) as {
+			ok: boolean;
+			program: { program_id: string; title: string; prompt?: string | null };
+		};
 		expect(hbPayload.ok).toBe(true);
 		expect(hbPayload.program.program_id).toBe("hb-1");
 		expect(hbPayload.program.title).toBe("Run heartbeat");
+		expect(hbPayload.program.prompt).toBe("Check queued runs and recover stuck work");
 
 		expect(
 			seen.some((entry) => entry.path === "/api/control-plane/runs" && entry.search.includes("status=running")),
 		).toBe(true);
 		expect(seen.some((entry) => entry.path === "/api/heartbeats/create" && entry.method === "POST")).toBe(true);
+		expect(
+			seen.some(
+				(entry) =>
+					entry.path === "/api/heartbeats/create" &&
+					(entry.body as Record<string, unknown> | null)?.prompt === "Check queued runs and recover stuck work",
+			),
+		).toBe(true);
 		expect(seen.some((entry) => entry.path.startsWith("/api/context"))).toBe(false);
 		expect(seen.some((entry) => entry.path === "/api/query")).toBe(false);
 		expect(seen.some((entry) => entry.path === "/api/commands/submit")).toBe(false);

@@ -161,6 +161,7 @@ test("mu heartbeats help surfaces telegram setup and subcommand guidance", async
 	const createHelp = await run(["heartbeats", "create", "--help"], { cwd: dir });
 	expect(createHelp.exitCode).toBe(0);
 	expect(createHelp.stdout).toContain("mu heartbeats create - create a heartbeat program");
+	expect(createHelp.stdout).toContain("--prompt <text>");
 	expect(createHelp.stdout).toContain("--every-ms N");
 	expect(createHelp.stdout).toContain("Telegram prerequisites:");
 

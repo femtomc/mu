@@ -132,6 +132,7 @@ Bun.serve(server);
 - Scheduling + orchestration:
   - `GET|POST|PATCH|DELETE /api/heartbeats...`
   - `GET|POST|PATCH|DELETE /api/cron...`
+  - Heartbeat programs support an optional free-form `prompt` field; when present it becomes the primary wake instruction sent to the operator turn path.
   - Heartbeat/cron ticks dispatch operator wake turns and broadcast the resulting operator reply.
   - Built-in memory-index maintenance runs on the server heartbeat scheduler (config: `control_plane.memory_index`).
 - Identity bindings:
