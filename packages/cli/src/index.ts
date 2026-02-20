@@ -43,6 +43,14 @@ import {
 	renderIssueMutationCompact,
 	renderRunPayloadCompact,
 } from "./render.js";
+import {
+	asRecord,
+	cleanupStaleServerFiles,
+	detectRunningServer,
+	normalizeQueuedRun,
+	readApiError,
+	requestServerJson as requestServerJsonHelper,
+} from "./server_helpers.js";
 
 export type RunResult = {
 	stdout: string;
@@ -930,108 +938,6 @@ async function cmdLogin(argv: string[]): Promise<RunResult> {
 	return await cmdLoginCommand(argv, loginCommandDeps());
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-	if (typeof value !== "object" || value == null || Array.isArray(value)) {
-		return null;
-	}
-	return value as Record<string, unknown>;
-}
-
-async function readApiError(response: Response, payloadOverride?: unknown): Promise<string> {
-	let detail = "";
-	if (payloadOverride !== undefined) {
-		const payload = asRecord(payloadOverride);
-		const error = payload && typeof payload.error === "string" ? payload.error.trim() : "";
-		if (error.length > 0) {
-			detail = error;
-		}
-	} else {
-		try {
-			const payload = asRecord(await response.json());
-			const error = payload && typeof payload.error === "string" ? payload.error.trim() : "";
-			if (error.length > 0) {
-				detail = error;
-			}
-		} catch {
-			// Ignore invalid/empty JSON; fallback to HTTP status text.
-		}
-	}
-	const statusText = `${response.status} ${response.statusText}`.trim();
-	if (detail.length > 0) {
-		return `${detail} (${statusText})`;
-	}
-	return statusText;
-}
-
-function normalizeQueuedRun(value: unknown): QueuedRunSnapshot | null {
-	const rec = asRecord(value);
-	if (!rec) {
-		return null;
-	}
-	const jobId = typeof rec.job_id === "string" ? rec.job_id.trim() : "";
-	if (jobId.length === 0) {
-		return null;
-	}
-	const rootRaw = typeof rec.root_issue_id === "string" ? rec.root_issue_id.trim() : "";
-	const rootIssueId = rootRaw.length > 0 ? rootRaw : null;
-	const maxSteps =
-		typeof rec.max_steps === "number" && Number.isFinite(rec.max_steps) ? Math.max(1, Math.trunc(rec.max_steps)) : 20;
-	return {
-		job_id: jobId,
-		root_issue_id: rootIssueId,
-		max_steps: maxSteps,
-		mode: typeof rec.mode === "string" ? rec.mode : undefined,
-		status: typeof rec.status === "string" ? rec.status : undefined,
-		source: typeof rec.source === "string" ? rec.source : undefined,
-	};
-}
-
-async function detectRunningServer(repoRoot: string): Promise<{ url: string; port: number; pid: number } | null> {
-	const discoveryPath = storePathForRepoRoot(repoRoot, "control-plane", "server.json");
-	try {
-		const raw = await Bun.file(discoveryPath).text();
-		const parsed = JSON.parse(raw.trim());
-		const pid = parsed?.pid;
-		const port = parsed?.port;
-		if (typeof pid !== "number" || typeof port !== "number") return null;
-
-		// Check if PID is alive
-		try {
-			process.kill(pid, 0);
-		} catch {
-			// PID dead — clean up stale discovery files
-			cleanupStaleServerFiles(repoRoot);
-			return null;
-		}
-
-		// Probe health endpoint
-		const url = `http://localhost:${port}`;
-		try {
-			const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(2000) });
-			if (res.ok) return { url, port, pid };
-		} catch {
-			/* server not responding — PID alive but not healthy yet or different process */
-		}
-		return null;
-	} catch {
-		return null;
-	}
-}
-
-async function requireRunningServer(
-	ctx: CliCtx,
-	opts: { pretty: boolean; recoveryCommand: string },
-): Promise<{ url: string } | RunResult> {
-	const running = await detectRunningServer(ctx.repoRoot);
-	if (running) {
-		return { url: running.url };
-	}
-	return jsonError("no running server found", {
-		pretty: opts.pretty,
-		recovery: [opts.recoveryCommand, "mu serve"],
-	});
-}
-
 async function requestServerJson<T>(opts: {
 	ctx: CliCtx;
 	pretty: boolean;
@@ -1040,64 +946,11 @@ async function requestServerJson<T>(opts: {
 	body?: Record<string, unknown>;
 	recoveryCommand: string;
 }): Promise<{ ok: true; payload: T } | { ok: false; result: RunResult }> {
-	const resolved = await requireRunningServer(opts.ctx, {
-		pretty: opts.pretty,
-		recoveryCommand: opts.recoveryCommand,
+	return await requestServerJsonHelper<CliCtx, T, RunResult>({
+		...opts,
+		jsonError,
+		describeError,
 	});
-	if ("exitCode" in resolved) {
-		return { ok: false, result: resolved };
-	}
-	const url = `${resolved.url}${opts.path}`;
-	let response: Response;
-	try {
-		response = await fetch(url, {
-			method: opts.method ?? "GET",
-			headers: opts.body ? { "Content-Type": "application/json" } : undefined,
-			body: opts.body ? JSON.stringify(opts.body) : undefined,
-			signal: AbortSignal.timeout(10_000),
-		});
-	} catch (err) {
-		return {
-			ok: false,
-			result: jsonError(`server request failed: ${describeError(err)}`, {
-				pretty: opts.pretty,
-				recovery: [opts.recoveryCommand, "mu serve"],
-			}),
-		};
-	}
-
-	let payload: unknown = null;
-	try {
-		payload = await response.json();
-	} catch {
-		payload = null;
-	}
-
-	if (!response.ok) {
-		const detail = await readApiError(response, payload);
-		return {
-			ok: false,
-			result: jsonError(`request failed: ${detail}`, {
-				pretty: opts.pretty,
-				recovery: [opts.recoveryCommand],
-			}),
-		};
-	}
-
-	return { ok: true, payload: payload as T };
-}
-
-function cleanupStaleServerFiles(repoRoot: string): void {
-	try {
-		rmSync(storePathForRepoRoot(repoRoot, "control-plane", "server.json"), { force: true });
-	} catch {
-		// best-effort
-	}
-	try {
-		rmSync(storePathForRepoRoot(repoRoot, "control-plane", "writer.lock"), { force: true });
-	} catch {
-		// best-effort
-	}
 }
 
 function resolveServerCliPath(): string {
