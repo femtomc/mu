@@ -127,8 +127,68 @@ type ServeLifecycleOptions = {
 	beforeOperatorSession?: (opts: { serverUrl: string; deps: ServeDeps; io: CliIO | undefined }) => Promise<void>;
 };
 
+function hasAnsiSequences(text: string): boolean {
+	return /\x1b\[[0-9;]*m/.test(text);
+}
+
+function styleHelpLine(line: string, index: number): string {
+	if (line.length === 0) {
+		return line;
+	}
+	const match = line.match(/^(\s*)(.*)$/);
+	const indent = match?.[1] ?? "";
+	const body = match?.[2] ?? line;
+	const trimmed = body.trim();
+	if (trimmed.length === 0) {
+		return line;
+	}
+
+	if (index === 0 && trimmed.startsWith("mu ")) {
+		const header = trimmed.match(/^mu\s+([\w-]+)(\s+-\s+.*)?$/);
+		if (header) {
+			const subcommand = header[1] ?? "";
+			const summary = header[2] ?? "";
+			return `${indent}${chalk.bold.magenta("mu")} ${chalk.cyan(subcommand)}${chalk.dim(summary)}`;
+		}
+	}
+
+	if (/^[A-Za-z][A-Za-z0-9 /_-]*:$/.test(trimmed)) {
+		return `${indent}${chalk.bold(trimmed)}`;
+	}
+
+	const usageLine = body.match(/^mu\s+([\w-]+)(.*)$/);
+	if (usageLine) {
+		const subcommand = usageLine[1] ?? "";
+		const rest = usageLine[2] ?? "";
+		return `${indent}${chalk.bold.magenta("mu")} ${chalk.cyan(subcommand)}${chalk.dim(rest)}`;
+	}
+
+	const optionLine = body.match(/^(--[\w-]+)(\s+.*)?$/);
+	if (optionLine) {
+		const flag = optionLine[1] ?? "";
+		const rest = optionLine[2] ?? "";
+		return `${indent}${chalk.cyan(flag)}${chalk.dim(rest)}`;
+	}
+
+	return `${indent}${body.replace(/`(mu [^`]+)`/g, (_m, cmdText) => `\`${chalk.cyan(cmdText)}\``)}`;
+}
+
+function styleHelpTextIfNeeded(stdout: string): string {
+	if (!process.stdout.isTTY) {
+		return stdout;
+	}
+	if (hasAnsiSequences(stdout)) {
+		return stdout;
+	}
+	if (!stdout.includes("\nUsage:\n") && !stdout.startsWith("mu ")) {
+		return stdout;
+	}
+	const lines = stdout.split("\n");
+	return lines.map((line, index) => styleHelpLine(line, index)).join("\n");
+}
+
 function ok(stdout: string = "", exitCode: number = 0): RunResult {
-	return { stdout, stderr: "", exitCode };
+	return { stdout: styleHelpTextIfNeeded(stdout), stderr: "", exitCode };
 }
 
 function jsonText(data: unknown, pretty: boolean): string {
