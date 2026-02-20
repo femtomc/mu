@@ -318,16 +318,40 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 
 	async function cmdHeartbeats(argv: string[], ctx: Ctx): Promise<SchedulingCommandRunResult> {
 		const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-		if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		if (argv0.length === 0 || argv0[0] === "--help" || argv0[0] === "-h") {
 			return ok(
 				[
-					"mu heartbeats - heartbeat program lifecycle",
+					"mu heartbeats - heartbeat program lifecycle (periodic operator wake)",
 					"",
 					"Usage:",
-					"  mu heartbeats <list|get|create|update|delete|trigger|enable|disable> [args...] [--json] [--pretty]",
+					"  mu heartbeats <list|get|create|update|delete|trigger|enable|disable> [args...] [--pretty]",
+					"",
+					"Commands:",
+					"  list      List heartbeat programs",
+					"  get       Show a single heartbeat program",
+					"  create    Create a heartbeat program",
+					"  update    Update title/every-ms/reason/enabled",
+					"  delete    Delete a heartbeat program",
+					"  trigger   Trigger a heartbeat immediately",
+					"  enable    Enable a heartbeat program",
+					"  disable   Disable a heartbeat program",
 					"",
 					"Output mode:",
 					"  list/get are compact by default; add --json for full records.",
+					"  create/update/delete/trigger/enable/disable return structured JSON.",
+					"",
+					"Telegram quick setup:",
+					"  1) Check control-plane + adapter config",
+					"       mu control status",
+					"  2) Link your Telegram identity",
+					"       mu control link --channel telegram --actor-id <chat-id> --tenant-id bot",
+					"  3) Create heartbeat",
+					"       mu heartbeats create --title \"Telegram heartbeat\" --every-ms 300000 --reason telegram_heartbeat",
+					"  4) Validate + smoke test",
+					"       mu heartbeats list --limit 20",
+					"       mu heartbeats trigger <program-id> --reason smoke_test",
+					"",
+					"Run `mu heartbeats <subcommand> --help` for command-specific options + examples.",
 				].join("\n") + "\n",
 			);
 		}
@@ -357,6 +381,21 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function heartbeatsList(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu heartbeats list - list heartbeat programs",
+					"",
+					"Usage:",
+					"  mu heartbeats list [--enabled true|false] [--limit N] [--json] [--pretty]",
+					"",
+					"Examples:",
+					"  mu heartbeats list",
+					"  mu heartbeats list --enabled true --limit 20",
+					"  mu heartbeats list --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		const { value: enabledRaw, rest: argv0 } = getFlagValue(argv, "--enabled");
 		const { value: limitRaw, rest: argv1 } = getFlagValue(argv0, "--limit");
 		const { present: jsonMode, rest: argv2 } = popFlag(argv1, "--json");
@@ -399,6 +438,20 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function heartbeatsGet(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu heartbeats get - show one heartbeat program",
+					"",
+					"Usage:",
+					"  mu heartbeats get <program-id> [--json] [--pretty]",
+					"",
+					"Examples:",
+					"  mu heartbeats get hb-123",
+					"  mu heartbeats get hb-123 --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		if (argv.length === 0) {
 			return jsonError("missing program id", { pretty, recovery: ["mu heartbeats get <program-id>"] });
 		}
@@ -424,6 +477,30 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function heartbeatsCreate(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu heartbeats create - create a heartbeat program",
+					"",
+					"Usage:",
+					"  mu heartbeats create [--title <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
+					"  mu heartbeats create <title> [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
+					"",
+					"Notes:",
+					"  - every-ms omitted: defaults to 15000ms.",
+					"  - every-ms 0: event-driven heartbeat (no periodic timer).",
+					"  - Heartbeats wake operator; delivery depends on linked channel identities.",
+					"",
+					"Examples:",
+					"  mu heartbeats create --title \"Run heartbeat\" --every-ms 15000 --reason run_watchdog",
+					"  mu heartbeats create --title \"Telegram heartbeat\" --every-ms 300000 --reason telegram_heartbeat",
+					"",
+					"Telegram prerequisites:",
+					"  mu control status",
+					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id bot",
+				].join("\n") + "\n",
+			);
+		}
 		let positionalTitle: string | null = null;
 		let args = argv;
 		if (args[0] && !args[0].startsWith("-")) {
@@ -478,6 +555,21 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function heartbeatsUpdate(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu heartbeats update - update a heartbeat program",
+					"",
+					"Usage:",
+					"  mu heartbeats update <program-id> [--title <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
+					"  mu heartbeats update --program-id <id> [--title <text>] [--every-ms N] [--reason <text>] [--enabled true|false]",
+					"",
+					"Examples:",
+					"  mu heartbeats update hb-123 --every-ms 600000",
+					"  mu heartbeats update --program-id hb-123 --enabled false",
+				].join("\n") + "\n",
+			);
+		}
 		let positionalProgramId: string | null = null;
 		let args = argv;
 		if (args[0] && !args[0].startsWith("-")) {
@@ -532,6 +624,19 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function heartbeatsDelete(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu heartbeats delete - delete a heartbeat program",
+					"",
+					"Usage:",
+					"  mu heartbeats delete <program-id> [--pretty]",
+					"",
+					"Example:",
+					"  mu heartbeats delete hb-123",
+				].join("\n") + "\n",
+			);
+		}
 		const programId = argv[0];
 		if (!programId) {
 			return jsonError("missing program id", { pretty, recovery: ["mu heartbeats delete <program-id>"] });
@@ -551,6 +656,20 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function heartbeatsTrigger(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu heartbeats trigger - trigger a heartbeat now",
+					"",
+					"Usage:",
+					"  mu heartbeats trigger <program-id> [--reason <text>] [--pretty]",
+					"",
+					"Examples:",
+					"  mu heartbeats trigger hb-123",
+					"  mu heartbeats trigger hb-123 --reason smoke_test",
+				].join("\n") + "\n",
+			);
+		}
 		const programId = argv[0];
 		if (!programId) {
 			return jsonError("missing program id", { pretty, recovery: ["mu heartbeats trigger <program-id>"] });
@@ -579,6 +698,20 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 		pretty: boolean,
 		enabled: boolean,
 	): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			const action = enabled ? "enable" : "disable";
+			return ok(
+				[
+					`mu heartbeats ${action} - ${action} a heartbeat program`,
+					"",
+					"Usage:",
+					`  mu heartbeats ${action} <program-id> [--pretty]`,
+					"",
+					"Example:",
+					`  mu heartbeats ${action} hb-123`,
+				].join("\n") + "\n",
+			);
+		}
 		const programId = argv[0];
 		if (!programId) {
 			return jsonError("missing program id", {
@@ -608,10 +741,11 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"mu cron - cron program lifecycle",
 					"",
 					"Usage:",
-					"  mu cron <stats|list|get|create|update|delete|trigger|enable|disable> [args...] [--json] [--pretty]",
+					"  mu cron <stats|list|get|create|update|delete|trigger|enable|disable> [args...] [--pretty]",
 					"",
 					"Output mode:",
 					"  stats/list/get are compact by default; add --json for full records.",
+					"  create/update/delete/trigger/enable/disable return structured JSON.",
 				].join("\n") + "\n",
 			);
 		}

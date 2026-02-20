@@ -149,6 +149,27 @@ test("mu memory help surfaces filters, timeline anchors, and index workflows", a
 	expect(contextAliasHelp.stdout).toContain("`mu context ...` remains available as an alias to `mu memory ...`.");
 });
 
+test("mu heartbeats help surfaces telegram setup and subcommand guidance", async () => {
+	const dir = await mkTempRepo();
+
+	const rootHelp = await run(["heartbeats", "--help"], { cwd: dir });
+	expect(rootHelp.exitCode).toBe(0);
+	expect(rootHelp.stdout).toContain("Telegram quick setup:");
+	expect(rootHelp.stdout).toContain("mu control link --channel telegram --actor-id <chat-id> --tenant-id bot");
+	expect(rootHelp.stdout).toContain("Run `mu heartbeats <subcommand> --help`");
+
+	const createHelp = await run(["heartbeats", "create", "--help"], { cwd: dir });
+	expect(createHelp.exitCode).toBe(0);
+	expect(createHelp.stdout).toContain("mu heartbeats create - create a heartbeat program");
+	expect(createHelp.stdout).toContain("--every-ms N");
+	expect(createHelp.stdout).toContain("Telegram prerequisites:");
+
+	const listHelp = await run(["heartbeats", "list", "--help"], { cwd: dir });
+	expect(listHelp.exitCode).toBe(0);
+	expect(listHelp.stdout).toContain("--enabled true|false");
+	expect(listHelp.stdout).toContain("--limit N");
+});
+
 test("mu store paths/ls/tail provide workspace-store navigation tools", async () => {
 	const dir = await mkTempRepo();
 	const storeDir = workspaceStoreDir(dir);
