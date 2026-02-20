@@ -16,7 +16,7 @@ export type ResolvedModelConfig = {
 
 /**
  * Rank models by capability: xhigh > reasoning > output cost (proxy for tier) > context window.
- * xhigh-capable models (GPT-5.x, Opus 4.6) are strongly preferred over older generations.
+ * Prefer xhigh-capable, reasoning-enabled models before lower-capability fallbacks.
  */
 function rankModel(m: Model<any>): number {
 	const xhighScore = supportsXhigh(m) ? 10_000_000 : 0;

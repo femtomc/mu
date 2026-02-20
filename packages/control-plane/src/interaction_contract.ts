@@ -3,7 +3,7 @@ import type { CommandPipelineResult } from "./command_pipeline.js";
 import type { CommandRecord } from "./command_record.js";
 
 /**
- * Interaction contract + style guide (v1)
+ * Interaction contract + style guide.
  *
  * Prior control-plane responses were ad-hoc plain strings (for example `state: completed`)
  * that omitted stable speaker/intent/state semantics. This module centralizes:

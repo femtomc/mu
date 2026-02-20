@@ -402,8 +402,8 @@ export class ControlPlaneRunSupervisor {
 	}
 
 	/**
-	 * Compatibility adapter entrypoint for run-start intent.
-	 * Default architecture should enqueue first, then call this after lease acquisition.
+	 * Queue-launch entrypoint for run-start intent.
+	 * Expected call path: enqueue/activate first, then invoke after lease acquisition.
 	 */
 	public async launchStart(opts: {
 		prompt: string;
@@ -431,8 +431,8 @@ export class ControlPlaneRunSupervisor {
 	}
 
 	/**
-	 * Compatibility adapter entrypoint for run-resume intent.
-	 * No feature-flag branch: queue-first reconcile remains the canonical path.
+	 * Queue-launch entrypoint for run-resume intent.
+	 * Queue-first reconcile remains the canonical execution path.
 	 */
 	public async launchResume(opts: {
 		rootIssueId: string;

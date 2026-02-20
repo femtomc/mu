@@ -50,7 +50,7 @@ export const DAG_RUNNER_CONTRACT_INVARIANTS = [
 	"ORCH-RECON-008: Integrations must preserve this state machine and emitted events.",
 ] as const;
 
-/** Default refine-loop budget for upcoming reviewer integration modules. */
+/** Default refine-loop budget for reviewer refine cycles. */
 export const DEFAULT_MAX_REFINE_ROUNDS_PER_ROOT = 3;
 
 /**

@@ -45,7 +45,7 @@ async function ensureDb(opts: { dbName: string; stores: readonly string[] }): Pr
 	const idb = getIndexedDb();
 	invariant(idb, "IndexedDB is not available in this environment");
 
-	// First open creates a v1 DB when missing; ensure object stores exist on create.
+	// First open creates an initial DB when missing; ensure object stores exist on create.
 	{
 		const req = idb.open(opts.dbName);
 		req.onupgradeneeded = () => {

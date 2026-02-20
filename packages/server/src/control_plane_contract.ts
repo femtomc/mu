@@ -164,7 +164,7 @@ export type ControlPlaneHandle = {
 	getRun?(idOrRoot: string): Promise<ControlPlaneRunSnapshot | null>;
 	/**
 	 * Run lifecycle boundary: accepts start intent into the default queue/reconcile path.
-	 * Compatibility adapters may dispatch immediately after enqueue, but must preserve queue invariants.
+	 * Queue coordinators may dispatch immediately after enqueue, but must preserve queue invariants.
 	 */
 	startRun?(opts: { prompt: string; maxSteps?: number }): Promise<ControlPlaneRunSnapshot>;
 	/**
