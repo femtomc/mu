@@ -88,8 +88,6 @@ type ServeDeps = {
 	registerRunHeartbeat: (opts: { serverUrl: string; run: QueuedRunSnapshot }) => Promise<RunHeartbeatRegistration>;
 	registerSignalHandler: (signal: NodeJS.Signals, handler: () => void) => () => void;
 	registerProcessExitHandler: (handler: () => void) => () => void;
-	openBrowser: (url: string) => void;
-	isHeadless: () => boolean;
 };
 
 type OperatorSession = {
@@ -128,7 +126,6 @@ type OperatorSessionCommandOptions = {
 type ServeLifecycleOptions = {
 	commandName: "serve" | "run" | "session";
 	port: number;
-	noOpen: boolean;
 	operatorProvider?: string;
 	operatorModel?: string;
 	operatorThinking?: string;
@@ -451,7 +448,7 @@ function mainHelp(): string {
 		`  ${cmd("replay")} ${dim("<id|path>")}                      Replay a previous run log`,
 		`  ${cmd("control")} ${dim("<subcmd>")}                      Messaging integrations and identity`,
 		`  ${cmd("session")} ${dim("[list|<id>] [opts]")}               Reconnect/list terminal operator sessions`,
-		`  ${cmd("serve")} ${dim("[--port N] [--no-open]")}          Start API + operator session`,
+		`  ${cmd("serve")} ${dim("[--port N]")}                    Start API + operator session`,
 		`  ${cmd("stop")} ${dim("[--force]")}                        Stop the background server`,
 		"",
 		`${dim("Running")} ${cmd("mu")} ${dim("with no arguments starts")} ${cmd("mu serve")}${dim(".")}`,
@@ -3301,7 +3298,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu run - start mu serve, queue a run, register heartbeat, and attach operator terminal",
 				"",
 				"Usage:",
-				"  mu run <prompt...> [--max-steps N] [--model ID] [--provider ID] [--reasoning LVL] [--port N] [--no-open]",
+				"  mu run <prompt...> [--max-steps N] [--model ID] [--provider ID] [--reasoning LVL] [--port N]",
 				"",
 				"Run queue options:",
 				"  --max-steps <N>    Max DAG steps for the queued run (default: 20)",
@@ -3311,7 +3308,6 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"",
 				"Serve passthrough:",
 				"  --port <N>         Server port (default: 3000)",
-				"  --no-open          Headless mode (compatibility flag)",
 				"",
 				"Legacy note:",
 				"  --json and --raw-stream are no longer supported on mu run.",
@@ -3324,7 +3320,6 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 	let maxSteps = 20;
 	let port = 3000;
-	let noOpen = false;
 	let modelFlag: string | undefined;
 	let providerFlag: string | undefined;
 	let reasoningFlag: string | undefined;
@@ -3355,10 +3350,6 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 					],
 				},
 			);
-		}
-		if (a === "--no-open") {
-			noOpen = true;
-			continue;
 		}
 		if (a === "--max-steps") {
 			const next = argv[i + 1];
@@ -3473,7 +3464,6 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await runServeLifecycle(ctx, {
 		commandName: "run",
 		port,
-		noOpen,
 		operatorProvider: provider,
 		operatorModel: model,
 		operatorThinking: reasoning,
@@ -4227,7 +4217,7 @@ async function cmdSession(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu session - reconnect/list terminal operator sessions",
 				"",
 				"Usage:",
-				"  mu session [--new] [--resume <session-id|path>] [--port N] [--no-open]",
+				"  mu session [--new] [--resume <session-id|path>] [--port N]",
 				"             [--provider ID] [--model ID] [--thinking LEVEL]",
 				"  mu session <session-id|path>",
 				"  mu session list [--limit N] [--json] [--pretty]",
@@ -4250,8 +4240,7 @@ async function cmdSession(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 
 	const { value: portRaw, rest: argv0 } = getFlagValue(argv, "--port");
-	const { present: noOpen, rest: argv1 } = popFlag(argv0, "--no-open");
-	const { present: listFlag, rest: argv2 } = popFlag(argv1, "--list");
+	const { present: listFlag, rest: argv2 } = popFlag(argv0, "--list");
 	const { present: newFlag, rest: argv3 } = popFlag(argv2, "--new");
 	const { value: resumeRaw, rest: argv4 } = getFlagValue(argv3, "--resume");
 	const { value: limitRaw, rest: argv5 } = getFlagValue(argv4, "--limit");
@@ -4303,7 +4292,7 @@ async function cmdSession(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				recovery: ["mu session list", "mu session --help"],
 			});
 		}
-		if (portRaw != null || noOpen || providerRaw != null || modelRaw != null || thinkingRaw != null) {
+		if (portRaw != null || providerRaw != null || modelRaw != null || thinkingRaw != null) {
 			return jsonError("list mode only supports --limit/--json/--pretty", {
 				recovery: ["mu session list --help"],
 			});
@@ -4429,7 +4418,6 @@ async function cmdSession(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await runServeLifecycle(ctx, {
 		commandName: "session",
 		port,
-		noOpen,
 		operatorProvider: provider,
 		operatorModel: model,
 		operatorThinking: thinking,
@@ -4448,12 +4436,10 @@ async function cmdOperatorSession(
 				"mu serve - operator session (server + terminal)",
 				"",
 				"Usage:",
-				"  mu serve [--port N] [--no-open]",
-				"           [--provider ID] [--model ID] [--thinking LEVEL]",
+				"  mu serve [--port N] [--provider ID] [--model ID] [--thinking LEVEL]",
 				"",
 				"Options:",
 				"  --port N               Server port (default: 3000)",
-				"  --no-open              Headless mode (no browser open)",
 				"  --provider ID          LLM provider for operator session",
 				"  --model ID             Model ID (default: gpt-5.3-codex)",
 				"  --thinking LEVEL       Thinking level (minimal|low|medium|high)",
@@ -5139,14 +5125,6 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 				process.removeListener("exit", handler);
 			};
 		},
-		openBrowser: (url) => {
-			if (process.platform === "darwin") {
-				Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
-				return;
-			}
-			Bun.spawn(["xdg-open", url], { stdout: "ignore", stderr: "ignore" });
-		},
-		isHeadless: () => !Bun.env.DISPLAY && !Bun.env.BROWSER,
 	};
 	return { ...defaults, ...ctx.serveDeps };
 }
@@ -5187,16 +5165,6 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 	}
 
 	Bun.env.MU_SERVER_URL = serverUrl;
-
-	const isHeadless = deps.isHeadless();
-	const shouldOpen = false;
-	if (!isHeadless && shouldOpen) {
-		try {
-			deps.openBrowser(serverUrl);
-		} catch {
-			// Browser open is best-effort; the TUI header shows the server URL.
-		}
-	}
 
 	// Step 2: Run pre-operator hooks (mu run: queue + heartbeat)
 	if (opts.beforeOperatorSession) {
@@ -5288,11 +5256,10 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu serve - start background server + attach terminal operator session",
 				"",
 				"Usage:",
-				"  mu serve [--port N] [--no-open]",
+				"  mu serve [--port N]",
 				"",
 				"Options:",
 				"  --port N       Server port (default: 3000)",
-				"  --no-open      Headless mode (no browser open)",
 				"",
 				"Spawns the server as a background process (if not already running),",
 				"then attaches an interactive terminal operator session. Ctrl+D exits",
@@ -5312,8 +5279,7 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		);
 	}
 
-	const { value: portRaw, rest: argv0 } = getFlagValue(argv, "--port");
-	const { present: noOpen, rest } = popFlag(argv0, "--no-open");
+	const { value: portRaw, rest } = getFlagValue(argv, "--port");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { recovery: ["mu serve --help"] });
 	}
@@ -5326,7 +5292,6 @@ async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await runServeLifecycle(ctx, {
 		commandName: "serve",
 		port,
-		noOpen,
 	});
 }
 

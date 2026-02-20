@@ -56,13 +56,12 @@ attaches an interactive terminal operator session in the same shell:
 
 ```bash
 mu serve              # Default port: 3000 (operator session)
-mu serve --no-open    # Headless mode
 mu serve --port 8080  # Custom port
 ```
 
 Type `/exit` in the operator prompt (or press Ctrl+C) to stop both operator session and server.
 
-In headless environments, it provides SSH port forwarding instructions.
+In headless environments, use SSH port forwarding as needed.
 
 ### Operator session defaults
 

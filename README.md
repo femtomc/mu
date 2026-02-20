@@ -115,14 +115,13 @@ mu forum post research:topic -m "found something" --author worker
 
 ```bash
 mu serve              # Start server + attach terminal operator session
-mu serve --no-open    # Headless mode (shows SSH forwarding instructions)
 mu serve --port 8080  # Custom API/operator port
 ```
 
 The `mu serve` command:
 - Starts the API on a single port (default 3000, configurable with `--port`)
 - Attaches an interactive terminal operator session in the same shell
-- Shows SSH port forwarding instructions in headless environments
+- Supports headless/SSH usage via normal port forwarding
 - Auto-mounts control-plane webhook routes from `.mu/config.json`
 
 Type `/exit` in the chat prompt (or press Ctrl+C) to stop both chat and server.

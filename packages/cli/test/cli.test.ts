@@ -285,7 +285,7 @@ test("mu session defaults to reconnecting most recent persisted operator session
 	let seenSessionMode: string | undefined;
 	let seenSessionDir: string | undefined;
 	let seenSessionFile: string | undefined;
-	const result = await run(["session", "--port", "3310", "--no-open"], {
+	const result = await run(["session", "--port", "3310"], {
 		cwd: dir,
 		serveDeps: {
 			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
@@ -297,8 +297,6 @@ test("mu session defaults to reconnecting most recent persisted operator session
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
 			registerSignalHandler: () => () => {},
-			isHeadless: () => true,
-			openBrowser: () => {},
 		},
 	});
 
@@ -318,7 +316,7 @@ test("mu session <id-prefix> resolves and opens a specific persisted operator se
 
 	let seenSessionMode: string | undefined;
 	let seenSessionFile: string | undefined;
-	const result = await run(["session", "sess-open-333", "--port", "3311", "--no-open"], {
+	const result = await run(["session", "sess-open-333", "--port", "3311"], {
 		cwd: dir,
 		serveDeps: {
 			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
@@ -329,8 +327,6 @@ test("mu session <id-prefix> resolves and opens a specific persisted operator se
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
 			registerSignalHandler: () => () => {},
-			isHeadless: () => true,
-			openBrowser: () => {},
 		},
 	});
 
@@ -344,7 +340,7 @@ test("mu run auto-initializes store layout", async () => {
 	let seenSessionMode: string | undefined;
 	let seenSessionDir: string | undefined;
 	let seenSessionFile: string | undefined;
-	const result = await run(["run", "hello", "--max-steps", "1", "--no-open"], {
+	const result = await run(["run", "hello", "--max-steps", "1"], {
 		cwd: dir,
 		serveDeps: {
 			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
@@ -365,8 +361,6 @@ test("mu run auto-initializes store layout", async () => {
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
 			registerSignalHandler: () => () => {},
-			isHeadless: () => true,
-			openBrowser: () => {},
 		},
 	});
 	expect(result.exitCode).toBe(0);
@@ -406,7 +400,6 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 			"high",
 			"--port",
 			"3311",
-			"--no-open",
 		],
 		{
 			cwd: dir,
@@ -441,10 +434,6 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 					return { stdout: "", stderr: "", exitCode: 0 };
 				},
 				registerSignalHandler: () => () => {},
-				isHeadless: () => true,
-				openBrowser: () => {
-					throw new Error("browser should not open in no-open mode");
-				},
 			},
 		},
 	);
@@ -491,7 +480,7 @@ test("mu run rejects removed --json/--raw-stream flows with recovery guidance", 
 
 test("mu serve auto-initializes store layout", async () => {
 	const dir = await mkTempRepo();
-	const result = await run(["serve", "--port", "3309", "--no-open"], {
+	const result = await run(["serve", "--port", "3309"], {
 		cwd: dir,
 		serveDeps: {
 			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
@@ -500,8 +489,6 @@ test("mu serve auto-initializes store layout", async () => {
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
 			registerSignalHandler: () => () => {},
-			isHeadless: () => true,
-			openBrowser: () => {},
 		},
 	});
 
@@ -637,7 +624,7 @@ test("mu serve spawns background server, attaches TUI, and leaves server running
 	let seenSessionDir: string | undefined;
 	let seenSessionFile: string | undefined;
 	const { io, chunks } = mkCaptureIo();
-	const result = await run(["serve", "--port", "3300", "--no-open"], {
+	const result = await run(["serve", "--port", "3300"], {
 		cwd: dir,
 		io,
 		serveDeps: {
@@ -655,10 +642,6 @@ test("mu serve spawns background server, attaches TUI, and leaves server running
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
 			registerSignalHandler: () => () => {},
-			isHeadless: () => true,
-			openBrowser: () => {
-				throw new Error("browser should not open in no-open mode");
-			},
 		},
 	});
 
@@ -677,7 +660,7 @@ test("mu serve passes operator provider/model defaults from .mu/config.json to t
 
 	let seenProvider: string | undefined;
 	let seenModel: string | undefined;
-	const result = await run(["serve", "--port", "3301", "--no-open"], {
+	const result = await run(["serve", "--port", "3301"], {
 		cwd: dir,
 		serveDeps: {
 			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
@@ -688,8 +671,6 @@ test("mu serve passes operator provider/model defaults from .mu/config.json to t
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
 			registerSignalHandler: () => () => {},
-			isHeadless: () => true,
-			openBrowser: () => {},
 		},
 	});
 
@@ -701,7 +682,7 @@ test("mu serve passes operator provider/model defaults from .mu/config.json to t
 test("mu serve surfaces operator-session startup failure (server keeps running)", async () => {
 	const dir = await mkTempRepo();
 	const { io, chunks } = mkCaptureIo();
-	const result = await run(["serve", "--port", "3302", "--no-open"], {
+	const result = await run(["serve", "--port", "3302"], {
 		cwd: dir,
 		io,
 		serveDeps: {
@@ -712,10 +693,6 @@ test("mu serve surfaces operator-session startup failure (server keeps running)"
 				exitCode: 1,
 			}),
 			registerSignalHandler: () => () => {},
-			isHeadless: () => true,
-			openBrowser: () => {
-				throw new Error("browser should not open in no-open mode");
-			},
 		},
 	});
 
@@ -729,7 +706,7 @@ test("mu serve forwards SIGINT lifecycle and exits cleanly (server keeps running
 	const harness = mkSignalHarness();
 	let operatorResolveFn: (() => void) | null = null;
 
-	const servePromise = run(["serve", "--port", "3302", "--no-open"], {
+	const servePromise = run(["serve", "--port", "3302"], {
 		cwd: dir,
 		serveDeps: {
 			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
@@ -741,10 +718,6 @@ test("mu serve forwards SIGINT lifecycle and exits cleanly (server keeps running
 				});
 			},
 			registerSignalHandler: harness.register,
-			isHeadless: () => true,
-			openBrowser: () => {
-				throw new Error("browser should not open in no-open mode");
-			},
 		},
 	});
 
@@ -761,7 +734,7 @@ test("mu serve forwards SIGINT lifecycle and exits cleanly (server keeps running
 test("mu serve reports server startup errors without launching operator session", async () => {
 	const dir = await mkTempRepo();
 	let operatorCalls = 0;
-	const result = await run(["serve", "--port", "3303", "--no-open"], {
+	const result = await run(["serve", "--port", "3303"], {
 		cwd: dir,
 		serveDeps: {
 			spawnBackgroundServer: async () => {
@@ -783,7 +756,7 @@ test("mu serve reports server startup errors without launching operator session"
 test("mu serve reports startup failure when background server fails to spawn", async () => {
 	const dir = await mkTempRepo();
 	let operatorCalls = 0;
-	const result = await run(["serve", "--port", "3306", "--no-open"], {
+	const result = await run(["serve", "--port", "3306"], {
 		cwd: dir,
 		serveDeps: {
 			spawnBackgroundServer: async () => {
@@ -827,7 +800,7 @@ test("mu serve connects to existing server instead of spawning new one", async (
 	globalThis.fetch = mockFetch;
 
 	try {
-		const result = await run(["serve", "--port", "3307", "--no-open"], {
+		const result = await run(["serve", "--port", "3307"], {
 			cwd: dir,
 			io,
 			serveDeps: {
@@ -840,8 +813,6 @@ test("mu serve connects to existing server instead of spawning new one", async (
 					return { stdout: "", stderr: "", exitCode: 0 };
 				},
 				registerSignalHandler: () => () => {},
-				isHeadless: () => true,
-				openBrowser: () => {},
 			},
 		});
 
