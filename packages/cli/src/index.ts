@@ -11,6 +11,7 @@ import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
 import type { ModelOverrides } from "@femtomc/mu-orchestrator";
 import { cmdControl as cmdControlCommand } from "./commands/control.js";
+import { cmdForum as cmdForumCommand } from "./commands/forum.js";
 import { cmdOperatorSession as cmdOperatorSessionCommand } from "./commands/operator_session.js";
 import { cmdReplay as cmdReplayCommand } from "./commands/replay.js";
 import { cmdResume as cmdResumeCommand } from "./commands/resume.js";
@@ -2122,187 +2123,23 @@ async function issuesValidate(argv: string[], ctx: CliCtx, pretty: boolean): Pro
 	return ok(jsonText({ root_id: resolved.issueId, is_final: v.is_final, reason: v.reason }, pretty));
 }
 
+function forumCommandDeps() {
+	return {
+		hasHelpFlag,
+		popFlag,
+		getFlagValue,
+		ensureInt,
+		jsonError,
+		jsonText,
+		ok,
+		renderForumPostCompact,
+		renderForumReadCompact,
+		renderForumTopicsCompact,
+	};
+}
+
 async function cmdForum(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-
-	if (argv0.length === 0 || argv0[0] === "--help" || argv0[0] === "-h") {
-		return ok(
-			[
-				"mu forum - append-only coordination messages (JSON + compact output)",
-				"",
-				"Usage:",
-				"  mu forum <command> [args...] [--pretty]",
-				"",
-				"Commands:",
-				"  post     Add a message to a topic",
-				"  read     Read recent messages in one topic",
-				"  topics   List topics by recency",
-				"",
-				"Output mode:",
-				"  compact-by-default output for forum post/read/topics; add --json for full records.",
-				"",
-				"Common topic patterns:",
-				"  issue:<id>                 Per-issue execution log",
-				"  user:context:<session>     User/session context",
-				"  research:<project>:<topic> Research notes",
-				"",
-				"Daily worker usage:",
-				'  mu forum post issue:<id> -m "claimed, starting implementation" --author worker',
-				'  mu forum post issue:<id> -m "tests passing, closing" --author worker',
-				"  mu forum read issue:<id> --limit 20",
-				"",
-				"Discover active issue threads:",
-				"  mu forum topics --prefix issue: --limit 20",
-			].join("\n") + "\n",
-		);
-	}
-
-	const sub = argv0[0]!;
-	const rest = argv0.slice(1);
-
-	switch (sub) {
-		case "post":
-			return await forumPost(rest, ctx, pretty);
-		case "read":
-			return await forumRead(rest, ctx, pretty);
-		case "topics":
-			return await forumTopics(rest, ctx, pretty);
-		default:
-			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu forum --help"] });
-	}
-}
-
-async function forumPost(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	if (argv.length === 0 || hasHelpFlag(argv)) {
-		return ok(
-			[
-				"mu forum post - post a message to a topic",
-				"",
-				"Usage:",
-				"  mu forum post <topic> -m <message> [--author NAME] [--json] [--pretty]",
-				"",
-				"Options:",
-				"  -m, --message <TEXT>   Required message body",
-				"  --author <NAME>        Author label (default: operator)",
-				"  --json                 Emit full JSON row (default is compact ack)",
-				"",
-				"Examples:",
-				'  mu forum post issue:<id> -m "claimed and starting" --author worker',
-				'  mu forum post issue:<id> -m "blocked on env setup" --author worker',
-				'  mu forum post research:mu:help-audit -m "notes" --author orchestrator --json --pretty',
-			].join("\n") + "\n",
-		);
-	}
-
-	const topic = argv[0]!;
-	const { value: message, rest: argv0 } = getFlagValue(argv.slice(1), "--message");
-	const { value: messageShort, rest: argv1 } = getFlagValue(argv0, "-m");
-	const { value: author, rest: argv2 } = getFlagValue(argv1, "--author");
-	const { present: jsonMode, rest: argv3 } = popFlag(argv2, "--json");
-	const { present: compact, rest } = popFlag(argv3, "--compact");
-
-	const msgBody = message ?? messageShort;
-	if (!msgBody) {
-		return jsonError("missing message (-m/--message)", {
-			pretty,
-			recovery: [`mu forum post ${topic} -m "..." --author worker`],
-		});
-	}
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu forum post --help"] });
-	}
-
-	const msg = await ctx.forum.post(topic, msgBody, author ?? "operator");
-	if (jsonMode && !compact) {
-		return ok(jsonText(msg, pretty));
-	}
-	return ok(renderForumPostCompact(msg));
-}
-
-async function forumRead(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	if (argv.length === 0 || hasHelpFlag(argv)) {
-		return ok(
-			[
-				"mu forum read - read messages from a topic (chronological)",
-				"",
-				"Usage:",
-				"  mu forum read <topic> [--limit N] [--json] [--pretty]",
-				"",
-				"Options:",
-				"  --limit <N>    Number of messages to return (default: 50)",
-				"  --json         Emit full JSON rows (default is compact list)",
-				"",
-				"Examples:",
-				"  mu forum read issue:<id>",
-				"  mu forum read issue:<id> --limit 20",
-				"  mu forum read issue:<id> --json --pretty",
-			].join("\n") + "\n",
-		);
-	}
-
-	const topic = argv[0]!;
-	const { value: limitRaw, rest: argv0 } = getFlagValue(argv.slice(1), "--limit");
-	const { present: jsonMode, rest: argv1 } = popFlag(argv0, "--json");
-	const { present: compact, rest } = popFlag(argv1, "--compact");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu forum read --help"] });
-	}
-
-	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1 }) : 50;
-	if (limit == null) {
-		return jsonError("limit must be >= 1", { pretty, recovery: [`mu forum read ${topic} --limit 20`] });
-	}
-
-	const msgs = await ctx.forum.read(topic, limit);
-	if (!jsonMode || compact) {
-		return ok(renderForumReadCompact(topic, msgs));
-	}
-	return ok(jsonText(msgs, pretty));
-}
-
-async function forumTopics(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	if (hasHelpFlag(argv)) {
-		return ok(
-			[
-				"mu forum topics - list active topics sorted by most recent message",
-				"",
-				"Usage:",
-				"  mu forum topics [--prefix PREFIX] [--limit N] [--json] [--pretty]",
-				"",
-				"Options:",
-				"  --prefix <PREFIX>   Restrict topics by prefix (e.g. issue:, research:)",
-				"  --limit <N>         Max topics returned (default: 100)",
-				"  --json              Emit full JSON rows (default is compact table)",
-				"",
-				"Examples:",
-				"  mu forum topics",
-				"  mu forum topics --prefix issue:",
-				"  mu forum topics --prefix issue: --limit 20 --json --pretty",
-			].join("\n") + "\n",
-		);
-	}
-
-	const { value: prefix, rest: argv0 } = getFlagValue(argv, "--prefix");
-	const { value: limitRaw, rest: argv1 } = getFlagValue(argv0, "--limit");
-	const { present: jsonMode, rest: argv2 } = popFlag(argv1, "--json");
-	const { present: compact, rest } = popFlag(argv2, "--compact");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu forum topics --help"] });
-	}
-
-	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1 }) : 100;
-	if (limit == null) {
-		return jsonError("limit must be >= 1", { pretty, recovery: ["mu forum topics --limit 20"] });
-	}
-
-	let topics: ForumTopicSummary[] = await ctx.forum.topics(prefix ?? null);
-	if (limit > 0) {
-		topics = topics.slice(0, limit);
-	}
-	if (!jsonMode || compact) {
-		return ok(renderForumTopicsCompact(topics));
-	}
-	return ok(jsonText(topics, pretty));
+	return await cmdForumCommand(argv, ctx, forumCommandDeps());
 }
 
 function setSearchParamIfPresent(search: URLSearchParams, key: string, value: string | null | undefined): void {
