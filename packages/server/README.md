@@ -2,7 +2,7 @@
 
 HTTP API server for mu control-plane infrastructure. Powers `mu serve`, messaging frontend transport routes, and control-plane/session coordination endpoints.
 
-> Scope note: server-routed business query/mutation gateway endpoints have been removed. Business reads/writes are CLI-first, while long-lived runtime coordination (runs/activities/heartbeats/cron) stays server-owned.
+> Scope note: server-routed business query/mutation gateway endpoints have been removed. Business reads/writes are CLI-first, while long-lived runtime coordination (runs/heartbeats/cron) stays server-owned.
 
 ## Installation
 
@@ -128,7 +128,6 @@ Bun.serve(server);
 - Scheduling + orchestration:
   - `GET|POST|PATCH|DELETE /api/heartbeats...`
   - `GET|POST|PATCH|DELETE /api/cron...`
-  - `GET|POST /api/control-plane/activities...`
   - Heartbeat/cron ticks dispatch operator wake turns and broadcast the resulting operator reply.
 - Identity bindings:
   - `GET /api/control-plane/identities`

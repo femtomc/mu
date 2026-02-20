@@ -1,4 +1,3 @@
-import type { ControlPlaneActivitySupervisor } from "./activity_supervisor.js";
 import { controlPlaneRoutes } from "./api/control_plane.js";
 import { cronRoutes } from "./api/cron.js";
 import { heartbeatRoutes } from "./api/heartbeats.js";
@@ -11,7 +10,6 @@ import type { ServerContext } from "./server.js";
 export type ServerRoutingDependencies = {
 	context: ServerContext;
 	controlPlaneProxy: ControlPlaneHandle;
-	activitySupervisor: ControlPlaneActivitySupervisor;
 	heartbeatPrograms: HeartbeatProgramRegistry;
 	cronPrograms: CronProgramRegistry;
 	loadConfigFromDisk: () => Promise<MuConfig>;

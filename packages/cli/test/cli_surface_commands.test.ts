@@ -51,7 +51,7 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 	);
 
 	try {
-		const runs = await run(["runs", "list", "--status", "running", "--limit", "5"], { cwd: dir });
+		const runs = await run(["runs", "list", "--status", "running", "--limit", "5", "--json"], { cwd: dir });
 		expect(runs.exitCode).toBe(0);
 		const runsPayload = JSON.parse(runs.stdout) as { count: number; runs: Array<{ job_id: string }> };
 		expect(runsPayload.count).toBe(1);
@@ -73,6 +73,124 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 		expect(seen.some((entry) => entry.path.startsWith("/api/context"))).toBe(false);
 		expect(seen.some((entry) => entry.path === "/api/query")).toBe(false);
 		expect(seen.some((entry) => entry.path === "/api/commands/submit")).toBe(false);
+	} finally {
+		server.stop(true);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("control-plane/context read interfaces default to compact output with opt-in --json", async () => {
+	const dir = await mkTempRepo();
+	const storeDir = getStorePaths(dir).storeDir;
+
+	await writeFile(
+		join(storeDir, "events.jsonl"),
+		`${JSON.stringify({
+			type: "control_plane.reload",
+			source: "control-plane",
+			issue_id: "mu-ctx-compact",
+			run_id: "mu-root-compact",
+			ts_ms: 1_700_000_010_000,
+			payload: { result: "reload complete" },
+		})}\n`,
+		"utf8",
+	);
+
+	const server = Bun.serve({
+		port: 0,
+		fetch: async (req) => {
+			const url = new URL(req.url);
+			if (url.pathname === "/healthz") {
+				return Response.json({ ok: true });
+			}
+			if (url.pathname === "/api/control-plane/runs") {
+				return Response.json({
+					count: 1,
+					runs: [
+						{
+							job_id: "run-compact-1",
+							status: "running",
+							mode: "run_start",
+							root_issue_id: "mu-root-compact",
+							max_steps: 20,
+							updated_at_ms: Date.now(),
+							last_progress: "step 1/20",
+						},
+					],
+				});
+			}
+			if (url.pathname === "/api/heartbeats") {
+				return Response.json({
+					count: 1,
+					programs: [
+						{
+							program_id: "hb-compact-1",
+							title: "health",
+							enabled: true,
+							every_ms: 15_000,
+							updated_at_ms: Date.now(),
+						},
+					],
+				});
+			}
+			if (url.pathname === "/api/cron/status") {
+				return Response.json({ count: 1, enabled_count: 1, armed_count: 0, armed: [] });
+			}
+			if (url.pathname === "/api/cron") {
+				return Response.json({
+					count: 1,
+					programs: [
+						{
+							program_id: "cron-compact-1",
+							title: "daily",
+							enabled: true,
+							schedule: { kind: "every", every_ms: 60_000 },
+							next_run_at_ms: Date.now() + 60_000,
+						},
+					],
+				});
+			}
+			return Response.json({ error: "not found" }, { status: 404 });
+		},
+	});
+
+	const discovery = join(getStorePaths(dir).storeDir, "control-plane", "server.json");
+	await writeFile(
+		discovery,
+		`${JSON.stringify({ pid: process.pid, port: server.port, url: `http://localhost:${server.port}` })}\n`,
+		"utf8",
+	);
+
+	try {
+		const runsCompact = await run(["runs", "list"], { cwd: dir });
+		expect(runsCompact.exitCode).toBe(0);
+		expect(runsCompact.stdout).toContain("Runs:");
+
+		const runsJson = await run(["runs", "list", "--json"], { cwd: dir });
+		expect(runsJson.exitCode).toBe(0);
+		expect((JSON.parse(runsJson.stdout) as { count: number }).count).toBe(1);
+
+		const heartbeatsCompact = await run(["heartbeats", "list"], { cwd: dir });
+		expect(heartbeatsCompact.exitCode).toBe(0);
+		expect(heartbeatsCompact.stdout).toContain("Heartbeats:");
+
+		const cronStatsCompact = await run(["cron", "stats"], { cwd: dir });
+		expect(cronStatsCompact.exitCode).toBe(0);
+		expect(cronStatsCompact.stdout).toContain("Cron status:");
+
+		const cronListCompact = await run(["cron", "list"], { cwd: dir });
+		expect(cronListCompact.exitCode).toBe(0);
+		expect(cronListCompact.stdout).toContain("Cron programs:");
+
+		const contextCompact = await run(["context", "search", "--query", "reload", "--limit", "10"], { cwd: dir });
+		expect(contextCompact.exitCode).toBe(0);
+		expect(contextCompact.stdout).toContain("search:");
+
+		const contextJson = await run(["context", "search", "--query", "reload", "--limit", "10", "--json"], {
+			cwd: dir,
+		});
+		expect(contextJson.exitCode).toBe(0);
+		expect((JSON.parse(contextJson.stdout) as { mode: string }).mode).toBe("search");
 	} finally {
 		server.stop(true);
 		await rm(dir, { recursive: true, force: true });
@@ -144,7 +262,9 @@ test("context search/timeline/stats use direct CLI runtime even when legacy /api
 	);
 
 	try {
-		const search = await run(["context", "search", "--query", "reload", "--limit", "10"], { cwd: dir });
+		const search = await run(["context", "search", "--query", "reload", "--limit", "10", "--json"], {
+			cwd: dir,
+		});
 		expect(search.exitCode).toBe(0);
 		const searchPayload = JSON.parse(search.stdout) as {
 			mode: string;
@@ -155,7 +275,7 @@ test("context search/timeline/stats use direct CLI runtime even when legacy /api
 		expect(searchPayload.total).toBeGreaterThanOrEqual(1);
 		expect(searchPayload.items.some((item) => item.source_kind === "events")).toBe(true);
 
-		const timeline = await run(["context", "timeline", "--issue-id", "mu-ctx-1", "--limit", "10"], {
+		const timeline = await run(["context", "timeline", "--issue-id", "mu-ctx-1", "--limit", "10", "--json"], {
 			cwd: dir,
 		});
 		expect(timeline.exitCode).toBe(0);
@@ -168,7 +288,7 @@ test("context search/timeline/stats use direct CLI runtime even when legacy /api
 		expect(timelinePayload.count).toBeGreaterThanOrEqual(1);
 		expect(timelinePayload.items.every((item) => item.issue_id === "mu-ctx-1")).toBe(true);
 
-		const stats = await run(["context", "stats", "--source", "events"], { cwd: dir });
+		const stats = await run(["context", "stats", "--source", "events", "--json"], { cwd: dir });
 		expect(stats.exitCode).toBe(0);
 		const statsPayload = JSON.parse(stats.stdout) as {
 			mode: string;

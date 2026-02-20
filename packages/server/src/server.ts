@@ -5,7 +5,6 @@ import {
 } from "@femtomc/mu-control-plane";
 import type { EventEnvelope, JsonlStore } from "@femtomc/mu-core";
 import { currentRunId, EventLog, FsJsonlStore, getStorePaths, JsonlEventSink } from "@femtomc/mu-core/node";
-import { ControlPlaneActivitySupervisor } from "./activity_supervisor.js";
 import { DEFAULT_MU_CONFIG, type MuConfig, readMuConfigFile, writeMuConfigFile } from "./config.js";
 import { bootstrapControlPlane } from "./control_plane.js";
 import type {
@@ -46,7 +45,6 @@ export type ServerOptions = {
 	port?: number;
 	controlPlane?: ControlPlaneHandle | null;
 	heartbeatScheduler?: ActivityHeartbeatScheduler;
-	activitySupervisor?: ControlPlaneActivitySupervisor;
 	controlPlaneReloader?: ControlPlaneReloader;
 	generationTelemetry?: GenerationTelemetryRecorder;
 	operatorWakeCoalesceMs?: number;
@@ -183,26 +181,6 @@ function createServer(options: ServerOptions = {}) {
 	const writeConfig: ConfigWriter = options.configWriter ?? writeMuConfigFile;
 	const fallbackConfig = options.config ?? DEFAULT_MU_CONFIG;
 	const heartbeatScheduler = options.heartbeatScheduler ?? new ActivityHeartbeatScheduler();
-
-	const activitySupervisor =
-		options.activitySupervisor ??
-		new ControlPlaneActivitySupervisor({
-			heartbeatScheduler,
-			onEvent: async (event) => {
-				await context.eventLog.emit(`activity.${event.kind}`, {
-					source: "mu-server.activity-supervisor",
-					payload: {
-						seq: event.seq,
-						message: event.message,
-						activity_id: event.activity.activity_id,
-						kind: event.activity.kind,
-						status: event.activity.status,
-						heartbeat_count: event.activity.heartbeat_count,
-						last_progress: event.activity.last_progress,
-					},
-				});
-			},
-		});
 
 	const operatorWakeCoalesceMs = toNonNegativeInt(options.operatorWakeCoalesceMs, DEFAULT_OPERATOR_WAKE_COALESCE_MS);
 	const operatorWakeLastByKey = new Map<string, number>();
@@ -568,7 +546,6 @@ function createServer(options: ServerOptions = {}) {
 	const handleRequest = createServerRequestHandler({
 		context,
 		controlPlaneProxy,
-		activitySupervisor,
 		heartbeatPrograms,
 		cronPrograms,
 		loadConfigFromDisk,
@@ -584,7 +561,6 @@ function createServer(options: ServerOptions = {}) {
 		fetch: handleRequest,
 		hostname: "0.0.0.0",
 		controlPlane: controlPlaneProxy,
-		activitySupervisor,
 		heartbeatPrograms,
 		cronPrograms,
 	};

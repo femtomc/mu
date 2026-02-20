@@ -548,34 +548,34 @@ test("mu serve auto-initializes store layout", async () => {
 
 test("mu issues ready preserves DAG scheduling semantics", async () => {
 	const dir = await mkTempRepo();
-	const root = JSON.parse((await run(["issues", "create", "Root"], { cwd: dir })).stdout) as any;
-	const a = JSON.parse((await run(["issues", "create", "Worker A"], { cwd: dir })).stdout) as any;
-	const b = JSON.parse((await run(["issues", "create", "Worker B"], { cwd: dir })).stdout) as any;
+	const root = JSON.parse((await run(["issues", "create", "Root", "--json"], { cwd: dir })).stdout) as any;
+	const a = JSON.parse((await run(["issues", "create", "Worker A", "--json"], { cwd: dir })).stdout) as any;
+	const b = JSON.parse((await run(["issues", "create", "Worker B", "--json"], { cwd: dir })).stdout) as any;
 
 	expect((await run(["issues", "dep", a.id, "parent", root.id], { cwd: dir })).exitCode).toBe(0);
 	expect((await run(["issues", "dep", b.id, "parent", root.id], { cwd: dir })).exitCode).toBe(0);
 	expect((await run(["issues", "dep", a.id, "blocks", b.id], { cwd: dir })).exitCode).toBe(0);
 
-	const ready0 = JSON.parse((await run(["issues", "ready", "--root", root.id], { cwd: dir })).stdout) as any[];
+	const ready0 = JSON.parse((await run(["issues", "ready", "--root", root.id, "--json"], { cwd: dir })).stdout) as any[];
 	expect(ready0.map((issue) => issue.id)).toEqual([a.id]);
 
 	expect((await run(["issues", "close", a.id, "--outcome", "success"], { cwd: dir })).exitCode).toBe(0);
-	const ready1 = JSON.parse((await run(["issues", "ready", "--root", root.id], { cwd: dir })).stdout) as any[];
+	const ready1 = JSON.parse((await run(["issues", "ready", "--root", root.id, "--json"], { cwd: dir })).stdout) as any[];
 	expect(ready1.map((issue) => issue.id)).toEqual([b.id]);
 
 	expect((await run(["issues", "close", b.id, "--outcome", "success"], { cwd: dir })).exitCode).toBe(0);
-	const ready2 = JSON.parse((await run(["issues", "ready", "--root", root.id], { cwd: dir })).stdout) as any[];
+	const ready2 = JSON.parse((await run(["issues", "ready", "--root", root.id, "--json"], { cwd: dir })).stdout) as any[];
 	expect(ready2.map((issue) => issue.id)).toEqual([root.id]);
 
 	expect((await run(["issues", "close", root.id, "--outcome", "success"], { cwd: dir })).exitCode).toBe(0);
-	const ready3 = JSON.parse((await run(["issues", "ready", "--root", root.id], { cwd: dir })).stdout) as any[];
+	const ready3 = JSON.parse((await run(["issues", "ready", "--root", root.id, "--json"], { cwd: dir })).stdout) as any[];
 	expect(ready3).toHaveLength(0);
 });
 
 test("mu issues create outputs JSON and writes to store", async () => {
 	const dir = await mkTempRepo();
 
-	const created = await run(["issues", "create", "Hello"], { cwd: dir });
+	const created = await run(["issues", "create", "Hello", "--json"], { cwd: dir });
 	expect(created.exitCode).toBe(0);
 
 	const issue = JSON.parse(created.stdout) as any;
@@ -593,7 +593,7 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	expect(rows).toHaveLength(1);
 	expect(rows[0].id).toBe(issue.id);
 
-	const posted = await run(["forum", "post", `issue:${issue.id}`, "-m", "hello", "--author", "worker"], { cwd: dir });
+	const posted = await run(["forum", "post", `issue:${issue.id}`, "-m", "hello", "--author", "worker", "--json"], { cwd: dir });
 	expect(posted.exitCode).toBe(0);
 
 	const msg = JSON.parse(posted.stdout) as any;
@@ -601,6 +601,113 @@ test("mu issues create outputs JSON and writes to store", async () => {
 
 	const forumText = await readFile(join(workspaceStoreDir(dir), "forum.jsonl"), "utf8");
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
+});
+
+test("mu issue/forum/event read interfaces default to compact output with opt-in --json", async () => {
+	const dir = await mkTempRepo();
+	const created = await run(["issues", "create", "Compact defaults", "--json"], { cwd: dir });
+	expect(created.exitCode).toBe(0);
+	const issue = JSON.parse(created.stdout) as { id: string };
+
+	const readyCompact = await run(["issues", "ready"], { cwd: dir });
+	expect(readyCompact.exitCode).toBe(0);
+	expect(readyCompact.stdout).toContain("STATUS");
+	expect(readyCompact.stdout).toContain("TITLE");
+	expect(readyCompact.stdout).toContain(issue.id.slice(0, 10));
+
+	const readyJson = await run(["issues", "ready", "--json"], { cwd: dir });
+	expect(readyJson.exitCode).toBe(0);
+	const readyRows = JSON.parse(readyJson.stdout) as Array<{ id: string }>;
+	expect(readyRows.some((row) => row.id === issue.id)).toBe(true);
+
+	expect((await run(["forum", "post", `issue:${issue.id}`, "-m", "first line\nsecond line"], { cwd: dir })).exitCode).toBe(0);
+
+	const forumCompact = await run(["forum", "read", `issue:${issue.id}`], { cwd: dir });
+	expect(forumCompact.exitCode).toBe(0);
+	expect(forumCompact.stdout).toContain(`Topic: issue:${issue.id}`);
+	expect(forumCompact.stdout).toContain("AUTHOR");
+
+	const forumJson = await run(["forum", "read", `issue:${issue.id}`, "--json"], { cwd: dir });
+	expect(forumJson.exitCode).toBe(0);
+	const forumRows = JSON.parse(forumJson.stdout) as Array<{ topic: string }>;
+	expect(forumRows.some((row) => row.topic === `issue:${issue.id}`)).toBe(true);
+
+	const topicsCompact = await run(["forum", "topics", "--prefix", "issue:"], { cwd: dir });
+	expect(topicsCompact.exitCode).toBe(0);
+	expect(topicsCompact.stdout).toContain("TOPIC");
+	expect(topicsCompact.stdout).toContain("MSG");
+
+	const topicsJson = await run(["forum", "topics", "--prefix", "issue:", "--json"], { cwd: dir });
+	expect(topicsJson.exitCode).toBe(0);
+	const topicRows = JSON.parse(topicsJson.stdout) as Array<{ topic: string }>;
+	expect(topicRows.some((row) => row.topic === `issue:${issue.id}`)).toBe(true);
+
+	const eventsCompact = await run(["events", "list", "--limit", "10"], { cwd: dir });
+	expect(eventsCompact.exitCode).toBe(0);
+	expect(eventsCompact.stdout).toContain("Events:");
+	expect(eventsCompact.stdout).toContain("TYPE");
+
+	const eventsJson = await run(["events", "list", "--limit", "10", "--json"], { cwd: dir });
+	expect(eventsJson.exitCode).toBe(0);
+	const eventsPayload = JSON.parse(eventsJson.stdout) as { count: number; events: Array<{ type: string }> };
+	expect(eventsPayload.count).toBeGreaterThan(0);
+	expect(eventsPayload.events.length).toBeGreaterThan(0);
+});
+
+test("mu issue/forum mutation interfaces default to compact output with opt-in --json", async () => {
+	const dir = await mkTempRepo();
+
+	const createCompact = await run(["issues", "create", "Mutation compact"], { cwd: dir });
+	expect(createCompact.exitCode).toBe(0);
+	expect(createCompact.stdout).toContain("created:");
+	const createdId = /created:\s+(mu-[a-z0-9]+)/i.exec(createCompact.stdout)?.[1];
+	expect(createdId).toBeTruthy();
+	if (!createdId) throw new Error("missing created issue id in compact output");
+
+	const updateCompact = await run(["issues", "update", createdId, "--status", "in_progress"], { cwd: dir });
+	expect(updateCompact.exitCode).toBe(0);
+	expect(updateCompact.stdout).toContain("updated:");
+
+	const updateJson = await run(["issues", "update", createdId, "--status", "open", "--json"], { cwd: dir });
+	expect(updateJson.exitCode).toBe(0);
+	expect((JSON.parse(updateJson.stdout) as { status: string }).status).toBe("open");
+
+	const claimCompact = await run(["issues", "claim", createdId], { cwd: dir });
+	expect(claimCompact.exitCode).toBe(0);
+	expect(claimCompact.stdout).toContain("claimed:");
+
+	const closeCompact = await run(["issues", "close", createdId], { cwd: dir });
+	expect(closeCompact.exitCode).toBe(0);
+	expect(closeCompact.stdout).toContain("closed:");
+
+	const closeJson = await run(["issues", "close", createdId, "--outcome", "success", "--json"], { cwd: dir });
+	expect(closeJson.exitCode).toBe(0);
+	expect((JSON.parse(closeJson.stdout) as { status: string }).status).toBe("closed");
+
+	const depTarget = JSON.parse((await run(["issues", "create", "Dep target", "--json"], { cwd: dir })).stdout) as {
+		id: string;
+	};
+	const depCompact = await run(["issues", "dep", depTarget.id, "blocks", createdId], { cwd: dir });
+	expect(depCompact.exitCode).toBe(0);
+	expect(depCompact.stdout).toContain("dep added:");
+
+	const depJson = await run(["issues", "dep", depTarget.id, "parent", createdId, "--json"], { cwd: dir });
+	expect(depJson.exitCode).toBe(0);
+	expect((JSON.parse(depJson.stdout) as { ok: boolean; type: string }).ok).toBe(true);
+
+	const undepCompact = await run(["issues", "undep", depTarget.id, "blocks", createdId], { cwd: dir });
+	expect(undepCompact.exitCode).toBe(0);
+	expect(undepCompact.stdout).toContain("dep removed:");
+
+	const postCompact = await run(["forum", "post", `issue:${createdId}`, "-m", "mutation update", "--author", "worker"], {
+		cwd: dir,
+	});
+	expect(postCompact.exitCode).toBe(0);
+	expect(postCompact.stdout).toContain("posted:");
+
+	const postJson = await run(["forum", "post", `issue:${createdId}`, "-m", "json post", "--json"], { cwd: dir });
+	expect(postJson.exitCode).toBe(0);
+	expect((JSON.parse(postJson.stdout) as { topic: string }).topic).toBe(`issue:${createdId}`);
 });
 
 function mkSignalHarness(): {

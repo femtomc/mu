@@ -1,7 +1,6 @@
 import { CONTROL_PLANE_CHANNEL_ADAPTER_SPECS } from "@femtomc/mu-control-plane";
 import type { MuConfig } from "../config.js";
 import type { ServerRoutingDependencies } from "../server_routing.js";
-import { activityRoutes } from "./activities.js";
 import { configRoutes } from "./config.js";
 import { eventRoutes } from "./events.js";
 import { identityRoutes } from "./identities.js";
@@ -141,10 +140,6 @@ export async function controlPlaneRoutes(
 
 	if (path === "/api/control-plane/runs" || path.startsWith("/api/control-plane/runs/")) {
 		return runRoutes(request, url, deps, headers);
-	}
-
-	if (path === "/api/control-plane/activities" || path.startsWith("/api/control-plane/activities/")) {
-		return activityRoutes(request, url, deps, headers);
 	}
 
 	if (path === "/api/control-plane/turn") {

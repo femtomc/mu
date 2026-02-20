@@ -751,16 +751,6 @@ describe("mu-server", () => {
 			serverOptions: { operatorWakeCoalesceMs: 1_000 },
 		});
 
-		const activityStart = await wakeServer.fetch(
-			new Request("http://localhost/api/control-plane/activities/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
-			}),
-		);
-		expect(activityStart.status).toBe(201);
-		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
-
 		const heartbeatCreate = await wakeServer.fetch(
 			new Request("http://localhost/api/heartbeats/create", {
 				method: "POST",
@@ -848,16 +838,6 @@ describe("mu-server", () => {
 			serverOptions: { operatorWakeCoalesceMs: 1_000 },
 		});
 
-
-		const activityStart = await wakeServer.fetch(
-			new Request("http://localhost/api/control-plane/activities/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
-			}),
-		);
-		expect(activityStart.status).toBe(201);
-		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
 
 		const heartbeatCreate = await wakeServer.fetch(
 			new Request("http://localhost/api/heartbeats/create", {
@@ -1022,16 +1002,6 @@ describe("mu-server", () => {
 		});
 
 
-		const activityStart = await wakeServer.fetch(
-			new Request("http://localhost/api/control-plane/activities/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
-			}),
-		);
-		expect(activityStart.status).toBe(201);
-		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
-
 		const heartbeatCreate = await wakeServer.fetch(
 			new Request("http://localhost/api/heartbeats/create", {
 				method: "POST",
@@ -1156,16 +1126,6 @@ describe("mu-server", () => {
 		});
 
 
-		const activityStart = await wakeServer.fetch(
-			new Request("http://localhost/api/control-plane/activities/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
-			}),
-		);
-		expect(activityStart.status).toBe(201);
-		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
-
 		const heartbeatCreate = await wakeServer.fetch(
 			new Request("http://localhost/api/heartbeats/create", {
 				method: "POST",
@@ -1229,95 +1189,6 @@ describe("mu-server", () => {
 		}
 		expect(wakePayload.wake_turn_outcome).toBe("fallback");
 		expect(wakePayload.wake_turn_reason).toBe("control_plane_unavailable");
-	});
-
-	test("activity management APIs support generic long-running tasks", async () => {
-		const startRes = await server.fetch(
-			new Request("http://localhost/api/control-plane/activities/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					title: "Index docs",
-					kind: "indexer",
-					heartbeat_every_ms: 0,
-					metadata: { scope: "docs" },
-				}),
-			}),
-		);
-		expect(startRes.status).toBe(201);
-		const started = (await startRes.json()) as {
-			ok: boolean;
-			activity: { activity_id: string; kind: string; status: string };
-		};
-		expect(started.ok).toBe(true);
-		expect(started.activity.kind).toBe("indexer");
-		expect(started.activity.status).toBe("running");
-		const activityId = started.activity.activity_id;
-
-		const listRes = await server.fetch(new Request("http://localhost/api/control-plane/activities?status=running&limit=10"));
-		expect(listRes.status).toBe(200);
-		const listPayload = (await listRes.json()) as {
-			count: number;
-			activities: Array<{ activity_id: string }>;
-		};
-		expect(listPayload.count).toBeGreaterThanOrEqual(1);
-		expect(listPayload.activities.some((activity) => activity.activity_id === activityId)).toBe(true);
-
-		const progressRes = await server.fetch(
-			new Request("http://localhost/api/control-plane/activities/progress", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					activity_id: activityId,
-					message: "Indexed 100/500 files",
-				}),
-			}),
-		);
-		expect(progressRes.status).toBe(200);
-
-		const heartbeatRes = await server.fetch(
-			new Request("http://localhost/api/control-plane/activities/heartbeat", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					activity_id: activityId,
-					reason: "manual",
-				}),
-			}),
-		);
-		expect(heartbeatRes.status).toBe(200);
-
-		const eventsRes = await server.fetch(
-			new Request(`http://localhost/api/control-plane/activities/${activityId}/events?limit=20`),
-		);
-		expect(eventsRes.status).toBe(200);
-		const eventsPayload = (await eventsRes.json()) as {
-			count: number;
-			events: Array<{ kind: string }>;
-		};
-		expect(eventsPayload.count).toBeGreaterThanOrEqual(3);
-		expect(eventsPayload.events.some((event) => event.kind === "activity_started")).toBe(true);
-		expect(eventsPayload.events.some((event) => event.kind === "activity_progress")).toBe(true);
-		expect(eventsPayload.events.some((event) => event.kind === "activity_heartbeat")).toBe(true);
-
-		const completeRes = await server.fetch(
-			new Request("http://localhost/api/control-plane/activities/complete", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					activity_id: activityId,
-					message: "Index complete",
-				}),
-			}),
-		);
-		expect(completeRes.status).toBe(200);
-		const completed = (await completeRes.json()) as {
-			ok: boolean;
-			activity: { status: string; final_message: string | null };
-		};
-		expect(completed.ok).toBe(true);
-		expect(completed.activity.status).toBe("completed");
-		expect(completed.activity.final_message).toBe("Index complete");
 	});
 
 	test("heartbeat program APIs persist runtime-programmed schedules in workspace heartbeats.jsonl", async () => {
@@ -1477,7 +1348,6 @@ describe("mu-server", () => {
 
 		cronServer.cronPrograms.stop();
 		cronServer.heartbeatPrograms.stop();
-		cronServer.activitySupervisor.stop();
 
 		const restarted = await createServerForTest({ repoRoot: tempDir, controlPlane: wakeControlPlane });
 		await Bun.sleep(180);
@@ -1494,7 +1364,6 @@ describe("mu-server", () => {
 
 		restarted.cronPrograms.stop();
 		restarted.heartbeatPrograms.stop();
-		restarted.activitySupervisor.stop();
 	});
 	test("cron update/trigger/delete endpoints enforce lifecycle semantics", async () => {
 		const wakeControlPlane: ControlPlaneHandle = {

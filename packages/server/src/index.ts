@@ -1,12 +1,3 @@
-export type {
-	ControlPlaneActivityEvent,
-	ControlPlaneActivityEventKind,
-	ControlPlaneActivityMutationResult,
-	ControlPlaneActivitySnapshot,
-	ControlPlaneActivityStatus,
-	ControlPlaneActivitySupervisorOpts,
-} from "./activity_supervisor.js";
-export { ControlPlaneActivitySupervisor } from "./activity_supervisor.js";
 export type { MuConfig, MuConfigPatch, MuConfigPresence } from "./config.js";
 export {
 	applyMuConfigPatch,

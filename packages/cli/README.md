@@ -39,6 +39,9 @@ mu run "goal..."           # Run orchestration loop (auto-inits .mu)
 mu resume <root-id>        # Resume interrupted run
 ```
 
+Most issue/forum/event/control-plane read surfaces now default to compact output.
+Use `--json` (optionally with `--pretty`) when you need full machine records.
+
 ### Programmatic API
 
 ```ts

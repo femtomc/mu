@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import chalk from "chalk";
 import { executeSessionTurn, SessionTurnError, type BackendRunner, type SessionTurnRequest } from "@femtomc/mu-agent";
-import type { Issue } from "@femtomc/mu-core";
+import type { ForumMessage, Issue } from "@femtomc/mu-core";
 import { getStorePaths as resolveStorePaths } from "@femtomc/mu-core/node";
 import type { EventLog, StorePaths } from "@femtomc/mu-core/node";
 import type { ForumTopicSummary } from "@femtomc/mu-forum";
@@ -444,6 +444,671 @@ function issueJson(issue: Issue): Record<string, unknown> {
 	};
 }
 
+function compactId(value: string, width: number = 10): string {
+	const normalized = value.trim();
+	if (normalized.length <= width) {
+		return normalized;
+	}
+	return normalized.slice(0, width);
+}
+
+function truncateInline(value: string, width: number): string {
+	if (width <= 0) {
+		return "";
+	}
+	const normalized = value.replace(/\s+/g, " ").trim();
+	if (normalized.length <= width) {
+		return normalized;
+	}
+	if (width === 1) {
+		return "…";
+	}
+	return `${normalized.slice(0, width - 1)}…`;
+}
+
+function normalizeEpochMs(ts: number): number | null {
+	if (!Number.isFinite(ts) || ts <= 0) {
+		return null;
+	}
+	const normalized = Math.trunc(ts);
+	if (normalized < 10_000_000_000) {
+		return normalized * 1000;
+	}
+	return normalized;
+}
+
+function formatTsIsoMinute(ts: number): string {
+	const tsMs = normalizeEpochMs(ts);
+	if (tsMs == null) {
+		return "-";
+	}
+	try {
+		return new Date(tsMs).toISOString().slice(0, 16).replace("T", " ");
+	} catch {
+		return "-";
+	}
+}
+
+function formatAgeShort(ts: number, nowMs: number = Date.now()): string {
+	const tsMs = normalizeEpochMs(ts);
+	if (tsMs == null) {
+		return "-";
+	}
+	const diffMs = Math.max(0, nowMs - tsMs);
+	if (diffMs < 60_000) {
+		return `${Math.max(1, Math.floor(diffMs / 1000))}s`;
+	}
+	if (diffMs < 3_600_000) {
+		return `${Math.floor(diffMs / 60_000)}m`;
+	}
+	if (diffMs < 86_400_000) {
+		return `${Math.floor(diffMs / 3_600_000)}h`;
+	}
+	if (diffMs < 7 * 86_400_000) {
+		return `${Math.floor(diffMs / 86_400_000)}d`;
+	}
+	if (diffMs < 30 * 86_400_000) {
+		return `${Math.floor(diffMs / (7 * 86_400_000))}w`;
+	}
+	return `${Math.floor(diffMs / (30 * 86_400_000))}mo`;
+}
+
+function summarizeBodySingleLine(body: string, width: number): string {
+	const normalized = body.replaceAll("\r\n", "\n");
+	const lines = normalized.split("\n");
+	const first = truncateInline(lines[0] ?? "", width);
+	const base = first.length > 0 ? first : "(empty)";
+	const extraLines = Math.max(0, lines.length - 1);
+	if (extraLines === 0) {
+		return base;
+	}
+	const suffix = ` (+${extraLines} more line${extraLines === 1 ? "" : "s"})`;
+	return truncateInline(`${base}${suffix}`, width + suffix.length);
+}
+
+function summarizeTags(tags: readonly string[], width: number): string {
+	if (tags.length === 0) {
+		return "-";
+	}
+	return truncateInline(tags.join(","), width);
+}
+
+function renderIssueCompactTable(issues: readonly Issue[]): string {
+	const header = `${"ID".padEnd(10)} ${"STATUS".padEnd(11)} ${"P".padStart(2)} ${"UPD".padEnd(4)} ${"TITLE".padEnd(44)} TAGS`;
+	if (issues.length === 0) {
+		return `${header}\n(no issues)\n`;
+	}
+	const rows = issues.map((issue) => {
+		const id = compactId(issue.id, 10).padEnd(10);
+		const status = issue.status.padEnd(11);
+		const priority = String(issue.priority ?? 3).padStart(2);
+		const age = formatAgeShort(issue.updated_at ?? 0).padEnd(4);
+		const title = truncateInline(issue.title, 44).padEnd(44);
+		const tags = summarizeTags(issue.tags ?? [], 36);
+		return `${id} ${status} ${priority} ${age} ${title} ${tags}`;
+	});
+	return `${[header, ...rows].join("\n")}\n`;
+}
+
+function renderIssueDetailCompact(issue: Issue): string {
+	const tags = issue.tags.length > 0 ? issue.tags.join(", ") : "-";
+	const lines = [
+		`ID: ${issue.id}`,
+		`Status: ${issue.status}  Priority: ${issue.priority}  Updated: ${formatTsIsoMinute(issue.updated_at)} (${formatAgeShort(issue.updated_at)})`,
+		`Outcome: ${issue.outcome ?? "-"}`,
+		`Tags: ${tags}`,
+	];
+
+	if (issue.deps.length > 0) {
+		lines.push("Deps:");
+		for (const dep of issue.deps) {
+			lines.push(`  - ${dep.type} -> ${dep.target}`);
+		}
+	}
+
+	lines.push("", "Body:");
+	lines.push(issue.body.length > 0 ? issue.body : "(empty)");
+	return `${lines.join("\n")}\n`;
+}
+
+function renderIssueMutationCompact(
+	action: "created" | "updated" | "claimed" | "opened" | "closed",
+	issue: Issue,
+	opts: { fields?: readonly string[] } = {},
+): string {
+	const parts = [
+		`${action}:`,
+		issue.id,
+		`status=${issue.status}`,
+		`p=${issue.priority}`,
+		`updated=${formatAgeShort(issue.updated_at)}`,
+	];
+	if (issue.outcome != null) {
+		parts.push(`outcome=${issue.outcome}`);
+	}
+	if (opts.fields && opts.fields.length > 0) {
+		parts.push(`fields=${opts.fields.join(",")}`);
+	}
+	parts.push(`title=\"${truncateInline(issue.title, 56)}\"`);
+	return `${parts.join(" ")}\n`;
+}
+
+function renderIssueDepMutationCompact(action: "added" | "removed", dep: {
+	src: string;
+	type: string;
+	dst: string;
+	ok?: boolean;
+}): string {
+	const base = `dep ${action}: ${dep.src} ${dep.type} ${dep.dst}`;
+	if (dep.ok == null) {
+		return `${base}\n`;
+	}
+	return `${base} ok=${dep.ok ? "true" : "false"}\n`;
+}
+
+function renderForumPostCompact(msg: ForumMessage): string {
+	const bodySummary = truncateInline(summarizeBodySingleLine(msg.body, 64), 64);
+	return `posted: ${msg.topic} by ${msg.author} at ${formatTsIsoMinute(msg.created_at)} \"${bodySummary}\"\n`;
+}
+
+function renderForumReadCompact(topic: string, messages: readonly ForumMessage[]): string {
+	const lines = [
+		`Topic: ${topic} (${messages.length} message${messages.length === 1 ? "" : "s"})`,
+		`${"TS (UTC)".padEnd(16)} ${"AGE".padEnd(4)} ${"AUTHOR".padEnd(12)} MESSAGE`,
+	];
+	if (messages.length === 0) {
+		lines.push("(no messages)");
+		return `${lines.join("\n")}\n`;
+	}
+	for (const msg of messages) {
+		const ts = formatTsIsoMinute(msg.created_at).padEnd(16);
+		const age = formatAgeShort(msg.created_at).padEnd(4);
+		const author = truncateInline(msg.author, 12).padEnd(12);
+		const summary = truncateInline(summarizeBodySingleLine(msg.body, 72), 72);
+		lines.push(`${ts} ${age} ${author} ${summary}`);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function renderForumTopicsCompact(topics: readonly ForumTopicSummary[]): string {
+	const lines = [`${"TOPIC".padEnd(44)} ${"MSG".padStart(3)} ${"LAST (UTC)".padEnd(16)} AGE`];
+	if (topics.length === 0) {
+		lines.push("(no topics)");
+		return `${lines.join("\n")}\n`;
+	}
+	for (const topic of topics) {
+		const topicName = truncateInline(topic.topic, 44).padEnd(44);
+		const messages = String(topic.messages).padStart(3);
+		const lastAt = formatTsIsoMinute(topic.last_at).padEnd(16);
+		const age = formatAgeShort(topic.last_at);
+		lines.push(`${topicName} ${messages} ${lastAt} ${age}`);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function summarizeEventScalar(value: unknown): string {
+	if (value == null) {
+		return "null";
+	}
+	if (typeof value === "string") {
+		return truncateInline(value, 28);
+	}
+	if (typeof value === "number" || typeof value === "boolean") {
+		return String(value);
+	}
+	if (Array.isArray(value)) {
+		return `[${value.length}]`;
+	}
+	const rec = asRecord(value);
+	if (rec) {
+		if (typeof rec.id === "string") {
+			return compactId(rec.id, 14);
+		}
+		if (typeof rec.title === "string") {
+			return truncateInline(rec.title, 24);
+		}
+		const keys = Object.keys(rec);
+		if (keys.length === 0) {
+			return "{}";
+		}
+		return `{${keys.slice(0, 2).join(",")}${keys.length > 2 ? ",…" : ""}}`;
+	}
+	return String(value);
+}
+
+function summarizeEventPayload(payload: unknown): string {
+	const rec = asRecord(payload);
+	if (!rec) {
+		return summarizeEventScalar(payload);
+	}
+
+	const issue = asRecord(rec.issue);
+	if (issue) {
+		const parts: string[] = ["issue"];
+		if (typeof issue.status === "string") {
+			parts.push(`status=${issue.status}`);
+		}
+		if (typeof issue.title === "string") {
+			parts.push(`title=${truncateInline(issue.title, 36)}`);
+		}
+		return truncateInline(parts.join(" "), 72);
+	}
+
+	const message = asRecord(rec.message);
+	if (message) {
+		const parts: string[] = [];
+		if (typeof message.author === "string") {
+			parts.push(message.author);
+		}
+		if (typeof message.topic === "string") {
+			parts.push(`@${message.topic}`);
+		}
+		if (typeof message.body === "string") {
+			parts.push(`\"${truncateInline(summarizeBodySingleLine(message.body, 28), 28)}\"`);
+		}
+		if (parts.length > 0) {
+			return truncateInline(parts.join(" "), 72);
+		}
+	}
+
+	const changed = asRecord(rec.changed);
+	if (changed) {
+		const keys = Object.keys(changed);
+		if (keys.length > 0) {
+			return truncateInline(`changed=${keys.join(",")}`, 72);
+		}
+	}
+
+	const entries = Object.entries(rec).slice(0, 3).map(([key, value]) => `${key}=${summarizeEventScalar(value)}`);
+	if (Object.keys(rec).length > 3) {
+		entries.push("…");
+	}
+	if (entries.length === 0) {
+		return "{}";
+	}
+	return truncateInline(entries.join(" "), 72);
+}
+
+function renderEventsCompactTable(rows: readonly Record<string, unknown>[]): string {
+	const lines = [
+		`${"TS (UTC)".padEnd(16)} ${"TYPE".padEnd(18)} ${"SOURCE".padEnd(14)} ${"ISSUE".padEnd(10)} ${"RUN".padEnd(10)} DETAIL`,
+	];
+	if (rows.length === 0) {
+		lines.push("(no events)");
+		return `${lines.join("\n")}\n`;
+	}
+	for (const row of rows) {
+		const ts = typeof row.ts_ms === "number" ? Math.trunc(row.ts_ms) : 0;
+		const type = typeof row.type === "string" ? row.type : "-";
+		const source = typeof row.source === "string" ? row.source : "-";
+		const issueId = typeof row.issue_id === "string" ? row.issue_id : "-";
+		const runId = typeof row.run_id === "string" ? row.run_id : "-";
+		const detail = summarizeEventPayload(row.payload);
+		lines.push(
+			`${formatTsIsoMinute(ts).padEnd(16)} ${truncateInline(type, 18).padEnd(18)} ${truncateInline(source, 14).padEnd(14)} ${compactId(issueId, 10).padEnd(10)} ${compactId(runId, 10).padEnd(10)} ${truncateInline(detail, 72)}`,
+		);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function asRecordArray(value: unknown): Array<Record<string, unknown>> {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value.map((entry) => asRecord(entry)).filter((entry): entry is Record<string, unknown> => entry != null);
+}
+
+function recordString(record: Record<string, unknown>, key: string): string | null {
+	const value = record[key];
+	if (typeof value !== "string") {
+		return null;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function recordInt(record: Record<string, unknown>, key: string): number | null {
+	const value = record[key];
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return null;
+	}
+	return Math.trunc(value);
+}
+
+function recordBool(record: Record<string, unknown>, key: string): boolean | null {
+	const value = record[key];
+	if (typeof value !== "boolean") {
+		return null;
+	}
+	return value;
+}
+
+function summarizeRunRow(run: Record<string, unknown>): string {
+	const job = recordString(run, "job_id") ?? "-";
+	const status = recordString(run, "status") ?? "-";
+	const mode = recordString(run, "mode") ?? "-";
+	const root = recordString(run, "root_issue_id") ?? "-";
+	const steps = recordInt(run, "max_steps");
+	const updated = recordInt(run, "updated_at_ms") ?? recordInt(run, "started_at_ms") ?? 0;
+	const progress = recordString(run, "last_progress") ?? "";
+	return `${compactId(job, 18).padEnd(18)} ${truncateInline(status, 10).padEnd(10)} ${truncateInline(mode, 10).padEnd(10)} ${compactId(root, 10).padEnd(10)} ${String(steps ?? "-").padStart(5)} ${formatAgeShort(updated).padEnd(4)} ${truncateInline(progress, 52)}`;
+}
+
+function renderRunsListCompact(payload: Record<string, unknown>): string {
+	const runs = asRecordArray(payload.runs);
+	const count = recordInt(payload, "count") ?? runs.length;
+	const lines = [
+		`Runs: ${runs.length} shown (reported count=${count})`,
+		`${"JOB".padEnd(18)} ${"STATUS".padEnd(10)} ${"MODE".padEnd(10)} ${"ROOT".padEnd(10)} ${"STEPS".padStart(5)} ${"UPD".padEnd(4)} LAST`,
+	];
+	if (runs.length === 0) {
+		lines.push("(no runs)");
+		return `${lines.join("\n")}\n`;
+	}
+	for (const run of runs) {
+		lines.push(summarizeRunRow(run));
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function renderRunSnapshotCompact(run: Record<string, unknown>): string {
+	const job = recordString(run, "job_id") ?? "-";
+	const status = recordString(run, "status") ?? "-";
+	const mode = recordString(run, "mode") ?? "-";
+	const root = recordString(run, "root_issue_id") ?? "-";
+	const steps = recordInt(run, "max_steps");
+	const started = recordInt(run, "started_at_ms");
+	const updated = recordInt(run, "updated_at_ms");
+	const finished = recordInt(run, "finished_at_ms");
+	const exitCode = recordInt(run, "exit_code");
+	const prompt = recordString(run, "prompt");
+	const progress = recordString(run, "last_progress");
+	const lines = [
+		`Run ${job}`,
+		`status=${status} mode=${mode} root=${root} steps=${steps ?? "-"}`,
+		`started=${formatTsIsoMinute(started ?? 0)} updated=${formatTsIsoMinute(updated ?? 0)} finished=${finished ? formatTsIsoMinute(finished) : "-"}`,
+	];
+	if (exitCode != null) {
+		lines.push(`exit_code=${exitCode}`);
+	}
+	if (progress) {
+		lines.push(`progress: ${truncateInline(progress, 120)}`);
+	}
+	if (prompt) {
+		lines.push(`prompt: ${truncateInline(prompt, 120)}`);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function renderRunTraceCompact(payload: Record<string, unknown>): string {
+	const run = asRecord(payload.run);
+	if (!run) {
+		return "(run trace unavailable)\n";
+	}
+	const stdout = Array.isArray(payload.stdout)
+		? payload.stdout.filter((entry): entry is string => typeof entry === "string")
+		: [];
+	const stderr = Array.isArray(payload.stderr)
+		? payload.stderr.filter((entry): entry is string => typeof entry === "string")
+		: [];
+	const hints = Array.isArray(payload.log_hints)
+		? payload.log_hints.filter((entry): entry is string => typeof entry === "string")
+		: [];
+	const traceFiles = Array.isArray(payload.trace_files)
+		? payload.trace_files.filter((entry): entry is string => typeof entry === "string")
+		: [];
+
+	const lines = [renderRunSnapshotCompact(run).trimEnd()];
+	lines.push(`stdout_lines=${stdout.length} stderr_lines=${stderr.length} hints=${hints.length} trace_files=${traceFiles.length}`);
+	if (hints.length > 0) {
+		lines.push(`log_hints: ${hints.slice(0, 5).map((hint) => truncateInline(hint, 64)).join(" | ")}`);
+	}
+	if (traceFiles.length > 0) {
+		lines.push(`trace_files: ${traceFiles.slice(0, 5).map((path) => truncateInline(path, 64)).join(" | ")}`);
+	}
+	if (stdout.length > 0) {
+		lines.push("stdout tail:");
+		for (const line of stdout.slice(-5)) {
+			lines.push(`  ${truncateInline(line, 120)}`);
+		}
+	}
+	if (stderr.length > 0) {
+		lines.push("stderr tail:");
+		for (const line of stderr.slice(-5)) {
+			lines.push(`  ${truncateInline(line, 120)}`);
+		}
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function renderRunPayloadCompact(payload: Record<string, unknown>): string {
+	if (Array.isArray(payload.runs)) {
+		return renderRunsListCompact(payload);
+	}
+	if (payload.run && (Array.isArray(payload.stdout) || Array.isArray(payload.stderr))) {
+		return renderRunTraceCompact(payload);
+	}
+	if (payload.run) {
+		const run = asRecord(payload.run);
+		if (run) {
+			return renderRunSnapshotCompact(run);
+		}
+	}
+	if (recordString(payload, "job_id")) {
+		return renderRunSnapshotCompact(payload);
+	}
+	return `${truncateInline(JSON.stringify(payload), 240)}\n`;
+}
+
+function summarizeHeartbeatProgram(program: Record<string, unknown>): string {
+	const id = recordString(program, "program_id") ?? "-";
+	const enabled = recordBool(program, "enabled");
+	const everyMs = recordInt(program, "every_ms");
+	const triggered = recordInt(program, "last_triggered_at_ms");
+	const lastResult = recordString(program, "last_result") ?? "-";
+	const title = recordString(program, "title") ?? "-";
+	return `${compactId(id, 18).padEnd(18)} ${(enabled == null ? "-" : enabled ? "y" : "n").padEnd(2)} ${String(everyMs ?? "-").padStart(8)} ${formatAgeShort(triggered ?? 0).padEnd(5)} ${truncateInline(lastResult, 10).padEnd(10)} ${truncateInline(title, 64)}`;
+}
+
+function renderHeartbeatProgramCompact(program: Record<string, unknown>): string {
+	const id = recordString(program, "program_id") ?? "-";
+	const title = recordString(program, "title") ?? "-";
+	const enabled = recordBool(program, "enabled");
+	const everyMs = recordInt(program, "every_ms");
+	const reason = recordString(program, "reason") ?? "-";
+	const updated = recordInt(program, "updated_at_ms");
+	return [
+		`Heartbeat ${id}`,
+		`title=${truncateInline(title, 120)}`,
+		`enabled=${enabled == null ? "-" : String(enabled)} every_ms=${everyMs ?? "-"} reason=${truncateInline(reason, 80)}`,
+		`updated=${formatTsIsoMinute(updated ?? 0)} (${formatAgeShort(updated ?? 0)})`,
+	].join("\n") + "\n";
+}
+
+function renderHeartbeatsPayloadCompact(payload: Record<string, unknown>): string {
+	if (Array.isArray(payload.programs)) {
+		const programs = asRecordArray(payload.programs);
+		const count = recordInt(payload, "count") ?? programs.length;
+		const lines = [
+			`Heartbeats: ${programs.length} shown (reported count=${count})`,
+			`${"PROGRAM".padEnd(18)} ${"EN".padEnd(2)} ${"EVERY_MS".padStart(8)} ${"LAST".padEnd(5)} ${"RESULT".padEnd(10)} TITLE`,
+		];
+		if (programs.length === 0) {
+			lines.push("(no heartbeat programs)");
+			return `${lines.join("\n")}\n`;
+		}
+		for (const program of programs) {
+			lines.push(summarizeHeartbeatProgram(program));
+		}
+		return `${lines.join("\n")}\n`;
+	}
+	if (recordString(payload, "program_id")) {
+		return renderHeartbeatProgramCompact(payload);
+	}
+	if (payload.program) {
+		const program = asRecord(payload.program);
+		if (program) {
+			if (recordBool(payload, "ok") === false) {
+				return `heartbeat op failed: reason=${recordString(payload, "reason") ?? "unknown"}\n${renderHeartbeatProgramCompact(program)}`;
+			}
+			return renderHeartbeatProgramCompact(program);
+		}
+	}
+	if (recordBool(payload, "ok") != null) {
+		const okStatus = recordBool(payload, "ok") ? "ok" : "failed";
+		return `heartbeat op: ${okStatus} reason=${recordString(payload, "reason") ?? "-"}\n`;
+	}
+	return `${truncateInline(JSON.stringify(payload), 240)}\n`;
+}
+
+function summarizeCronSchedule(schedule: Record<string, unknown> | null): string {
+	if (!schedule) {
+		return "-";
+	}
+	const kind = recordString(schedule, "kind") ?? "-";
+	if (kind === "every") {
+		const everyMs = recordInt(schedule, "every_ms");
+		return `every ${everyMs ?? "?"}ms`;
+	}
+	if (kind === "at") {
+		const atMs = recordInt(schedule, "at_ms");
+		return `at ${formatTsIsoMinute(atMs ?? 0)}`;
+	}
+	if (kind === "cron") {
+		const expr = recordString(schedule, "expr") ?? "?";
+		const tz = recordString(schedule, "tz") ?? "UTC";
+		return `cron ${truncateInline(expr, 28)} ${tz}`;
+	}
+	return truncateInline(kind, 32);
+}
+
+function summarizeCronProgram(program: Record<string, unknown>): string {
+	const id = recordString(program, "program_id") ?? "-";
+	const enabled = recordBool(program, "enabled");
+	const schedule = summarizeCronSchedule(asRecord(program.schedule));
+	const nextRun = recordInt(program, "next_run_at_ms");
+	const lastResult = recordString(program, "last_result") ?? "-";
+	const title = recordString(program, "title") ?? "-";
+	return `${compactId(id, 18).padEnd(18)} ${(enabled == null ? "-" : enabled ? "y" : "n").padEnd(2)} ${truncateInline(schedule, 34).padEnd(34)} ${formatAgeShort(nextRun ?? 0).padEnd(5)} ${truncateInline(lastResult, 10).padEnd(10)} ${truncateInline(title, 42)}`;
+}
+
+function renderCronProgramCompact(program: Record<string, unknown>): string {
+	const id = recordString(program, "program_id") ?? "-";
+	const title = recordString(program, "title") ?? "-";
+	const enabled = recordBool(program, "enabled");
+	const schedule = summarizeCronSchedule(asRecord(program.schedule));
+	const reason = recordString(program, "reason") ?? "-";
+	const nextRun = recordInt(program, "next_run_at_ms");
+	return [
+		`Cron ${id}`,
+		`title=${truncateInline(title, 120)}`,
+		`enabled=${enabled == null ? "-" : String(enabled)} schedule=${truncateInline(schedule, 96)}`,
+		`next_run=${formatTsIsoMinute(nextRun ?? 0)} (${formatAgeShort(nextRun ?? 0)}) reason=${truncateInline(reason, 80)}`,
+	].join("\n") + "\n";
+}
+
+function renderCronPayloadCompact(payload: Record<string, unknown>): string {
+	if (Array.isArray(payload.programs)) {
+		const programs = asRecordArray(payload.programs);
+		const count = recordInt(payload, "count") ?? programs.length;
+		const lines = [
+			`Cron programs: ${programs.length} shown (reported count=${count})`,
+			`${"PROGRAM".padEnd(18)} ${"EN".padEnd(2)} ${"SCHEDULE".padEnd(34)} ${"NEXT".padEnd(5)} ${"RESULT".padEnd(10)} TITLE`,
+		];
+		if (programs.length === 0) {
+			lines.push("(no cron programs)");
+			return `${lines.join("\n")}\n`;
+		}
+		for (const program of programs) {
+			lines.push(summarizeCronProgram(program));
+		}
+		return `${lines.join("\n")}\n`;
+	}
+	if (recordInt(payload, "armed_count") != null && Array.isArray(payload.armed)) {
+		const armed = asRecordArray(payload.armed);
+		const lines = [
+			`Cron status: total=${recordInt(payload, "count") ?? 0} enabled=${recordInt(payload, "enabled_count") ?? 0} armed=${recordInt(payload, "armed_count") ?? armed.length}`,
+		];
+		if (armed.length > 0) {
+			lines.push(`${"PROGRAM".padEnd(18)} DUE`);
+			for (const row of armed) {
+				const id = recordString(row, "program_id") ?? "-";
+				const due = recordInt(row, "due_at_ms") ?? 0;
+				lines.push(`${compactId(id, 18).padEnd(18)} ${formatTsIsoMinute(due)} (${formatAgeShort(due)})`);
+			}
+		}
+		return `${lines.join("\n")}\n`;
+	}
+	if (recordString(payload, "program_id")) {
+		return renderCronProgramCompact(payload);
+	}
+	if (payload.program) {
+		const program = asRecord(payload.program);
+		if (program) {
+			if (recordBool(payload, "ok") === false) {
+				return `cron op failed: reason=${recordString(payload, "reason") ?? "unknown"}\n${renderCronProgramCompact(program)}`;
+			}
+			return renderCronProgramCompact(program);
+		}
+	}
+	if (recordBool(payload, "ok") != null) {
+		const okStatus = recordBool(payload, "ok") ? "ok" : "failed";
+		return `cron op: ${okStatus} reason=${recordString(payload, "reason") ?? "-"}\n`;
+	}
+	return `${truncateInline(JSON.stringify(payload), 240)}\n`;
+}
+
+function renderContextItemsCompact(items: Array<Record<string, unknown>>, title: string): string {
+	const lines = [title, `${"TS (UTC)".padEnd(16)} ${"SRC".padEnd(16)} ${"ISSUE".padEnd(10)} ${"RUN".padEnd(10)} PREVIEW`];
+	if (items.length === 0) {
+		lines.push("(no context rows)");
+		return `${lines.join("\n")}\n`;
+	}
+	for (const item of items) {
+		const ts = recordInt(item, "ts_ms") ?? 0;
+		const source = recordString(item, "source_kind") ?? "-";
+		const issue = recordString(item, "issue_id") ?? "-";
+		const run = recordString(item, "run_id") ?? "-";
+		const preview = recordString(item, "preview") ?? recordString(item, "text") ?? "";
+		lines.push(
+			`${formatTsIsoMinute(ts).padEnd(16)} ${truncateInline(source, 16).padEnd(16)} ${compactId(issue, 10).padEnd(10)} ${compactId(run, 10).padEnd(10)} ${truncateInline(preview, 84)}`,
+		);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function renderContextPayloadCompact(payload: Record<string, unknown>): string {
+	const mode = recordString(payload, "mode") ?? "context";
+	if (mode === "search" || mode === "timeline") {
+		const items = asRecordArray(payload.items);
+		const count = recordInt(payload, "count") ?? items.length;
+		const total = recordInt(payload, "total") ?? count;
+		const q = recordString(payload, "query");
+		const title = `${mode}: ${count} shown (total=${total})${q ? ` query=${JSON.stringify(truncateInline(q, 40))}` : ""}`;
+		return renderContextItemsCompact(items, title);
+	}
+	if (mode === "stats") {
+		const sources = asRecordArray(payload.sources);
+		const lines = [
+			`context stats: total_count=${recordInt(payload, "total_count") ?? 0} total_text_bytes=${recordInt(payload, "total_text_bytes") ?? 0}`,
+			`${"SOURCE".padEnd(22)} ${"COUNT".padStart(6)} ${"BYTES".padStart(10)} LAST`,
+		];
+		if (sources.length === 0) {
+			lines.push("(no source stats)");
+			return `${lines.join("\n")}\n`;
+		}
+		for (const source of sources) {
+			const kind = recordString(source, "source_kind") ?? "-";
+			const count = recordInt(source, "count") ?? 0;
+			const bytes = recordInt(source, "text_bytes") ?? 0;
+			const last = recordInt(source, "last_ts_ms") ?? 0;
+			lines.push(`${truncateInline(kind, 22).padEnd(22)} ${String(count).padStart(6)} ${String(bytes).padStart(10)} ${formatTsIsoMinute(last)} (${formatAgeShort(last)})`);
+		}
+		return `${lines.join("\n")}\n`;
+	}
+	return `${truncateInline(JSON.stringify(payload), 240)}\n`;
+}
+
 async function resolveIssueId(
 	store: IssueStore,
 	rawId: string,
@@ -498,7 +1163,6 @@ function mainHelp(): string {
 		`  ${cmd("forum")} ${dim("<subcmd>")}                        Coordination message commands`,
 		`  ${cmd("events")} ${dim("<subcmd>")}                       Event-log query commands`,
 		`  ${cmd("runs")} ${dim("<subcmd>")}                         Run queue + trace commands`,
-		`  ${cmd("activities")} ${dim("<subcmd>")}                   Activity status + trace commands`,
 		`  ${cmd("heartbeats")} ${dim("<subcmd>")}                   Heartbeat program lifecycle`,
 		`  ${cmd("cron")} ${dim("<subcmd>")}                         Cron program lifecycle`,
 		`  ${cmd("context")} ${dim("<subcmd>")}                      Cross-store context search/timeline/stats`,
@@ -582,8 +1246,6 @@ export async function run(
 			return await cmdEvents(rest, ctx);
 		case "runs":
 			return await cmdRuns(rest, ctx);
-		case "activities":
-			return await cmdActivities(rest, ctx);
 		case "heartbeats":
 			return await cmdHeartbeats(rest, ctx);
 		case "cron":
@@ -1029,7 +1691,7 @@ async function cmdIssues(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (argv0.length === 0 || argv0[0] === "--help" || argv0[0] === "-h") {
 		return ok(
 			[
-				"mu issues - work item lifecycle commands (JSON output)",
+				"mu issues - work item lifecycle commands (JSON + compact output)",
 				"",
 				"Usage:",
 				"  mu issues <command> [args...] [--pretty]",
@@ -1047,6 +1709,9 @@ async function cmdIssues(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  children   List direct child issues",
 				"  ready      Open + unblocked + leaf + node:agent queue",
 				"  validate   Check whether a root DAG is terminal",
+				"",
+				"Output mode:",
+				"  compact-by-default output for issue reads + mutations; add --json for full records.",
 				"",
 				"Worker flow (single atomic issue):",
 				"  mu issues ready --root <root-id> --tag role:worker",
@@ -1111,19 +1776,20 @@ async function issuesList(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 				"mu issues list - list issues with optional filters",
 				"",
 				"Usage:",
-				"  mu issues list [--status STATUS] [--tag TAG] [--root ID] [--limit N] [--pretty]",
+				"  mu issues list [--status STATUS] [--tag TAG] [--root ID] [--limit N] [--json] [--pretty]",
 				"",
 				"Filters:",
 				"  --status <open|in_progress|closed>   Filter by status",
 				"  --tag <TAG>                          Repeatable; issue must contain all tags",
 				"  --root <id-or-prefix>                Restrict to a root issue subtree",
 				"  --limit <N>                          Return only the newest N entries (0 = unlimited)",
+				"  --json                               Emit full JSON rows (default is compact table)",
 				"",
 				"Examples:",
 				"  mu issues list",
 				"  mu issues list --status open --limit 20",
 				"  mu issues list --root mu-abc123 --tag role:worker",
-				"  mu issues list --tag node:agent --tag role:orchestrator --pretty",
+				"  mu issues list --status open --limit 20 --json --pretty",
 			].join("\n") + "\n",
 		);
 	}
@@ -1131,7 +1797,9 @@ async function issuesList(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 	const { value: statusRaw, rest: argv0 } = getFlagValue(argv, "--status");
 	const { values: tags, rest: argv1 } = getRepeatFlagValues(argv0, ["--tag"]);
 	const { value: rootRaw, rest: argv2 } = getFlagValue(argv1, "--root");
-	const { value: limitRaw, rest } = getFlagValue(argv2, "--limit");
+	const { present: jsonMode, rest: argv3 } = popFlag(argv2, "--json");
+	const { present: compact, rest: argv4 } = popFlag(argv3, "--compact");
+	const { value: limitRaw, rest } = getFlagValue(argv4, "--limit");
 
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues list --help"] });
@@ -1169,6 +1837,10 @@ async function issuesList(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 		issues = issues.slice(-limit);
 	}
 
+	if (!jsonMode || compact) {
+		return ok(renderIssueCompactTable(issues));
+	}
+
 	return ok(jsonText(issues.map(issueJson), pretty));
 }
 
@@ -1179,20 +1851,27 @@ async function issuesGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 				"mu issues get - fetch a single issue",
 				"",
 				"Usage:",
-				"  mu issues get <id-or-prefix> [--pretty]",
+				"  mu issues get <id-or-prefix> [--json] [--pretty]",
 				"",
 				"Notes:",
 				"  Accepts full issue id or a unique prefix.",
 				"  If prefix is ambiguous, mu returns candidate ids.",
+				"  Default output is compact detail; use --json for full record.",
 				"",
 				"Examples:",
 				"  mu issues get mu-459fd648",
-				"  mu issues get mu-459f --pretty",
+				"  mu issues get mu-459f --json --pretty",
 				"",
 				"Troubleshooting:",
 				"  mu issues list --limit 20",
 			].join("\n") + "\n",
 		);
+	}
+
+	const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+	const { present: compact, rest } = popFlag(argv0, "--compact");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues get --help"] });
 	}
 
 	const resolved = await resolveIssueId(ctx.store, argv[0]!);
@@ -1203,6 +1882,10 @@ async function issuesGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	const issue = await ctx.store.get(resolved.issueId!);
 	if (!issue) {
 		return jsonError(`not found: ${argv[0]}`, { pretty, recovery: ["mu issues list --limit 20"] });
+	}
+
+	if (!jsonMode || compact) {
+		return ok(renderIssueDetailCompact(issue));
 	}
 
 	return ok(jsonText(issueJson(issue), pretty));
@@ -1223,7 +1906,7 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"mu issues create - create a new issue (auto-adds node:agent tag)",
 				"",
 				"Usage:",
-				"  mu issues create <title> [--body TEXT] [--parent ID] [--tag TAG] [--role ROLE] [--priority N] [--pretty]",
+				"  mu issues create <title> [--body TEXT] [--parent ID] [--tag TAG] [--role ROLE] [--priority N] [--json] [--pretty]",
 				"",
 				"Options:",
 				"  --body, -b <TEXT>                   Optional issue body",
@@ -1232,12 +1915,13 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"  --tags <CSV>                        Comma-separated custom tags",
 				"  --role, -r <orchestrator|worker>    Adds role:<role> tag",
 				"  --priority, -p <1..5>               Priority (1 highest urgency, default 3)",
+				"  --json                              Emit full JSON record (default is compact ack)",
 				"  --pretty                            Pretty-print JSON result",
 				"",
 				"Examples:",
 				'  mu issues create "Root planning issue" --tag node:root --role orchestrator',
 				'  mu issues create "Implement parser" --parent <root-id> --role worker --priority 2',
-				'  mu issues create "Write tests" -b "Cover error paths" -t area:test',
+				'  mu issues create "Write tests" -b "Cover error paths" -t area:test --json --pretty',
 			].join("\n") + "\n",
 		);
 	}
@@ -1259,10 +1943,11 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	const { value: tagsCsvRaw, rest: argv4 } = getFlagValue(argv3, "--tags");
 	const { value: role, rest: argv5 } = getFlagValue(argv4, "--role");
 	const { value: roleShort, rest: argv6 } = getFlagValue(argv5, "-r");
-	const { value: priorityRaw, rest } = getFlagValue(argv6, "--priority");
+	const { value: priorityRaw, rest: argv7 } = getFlagValue(argv6, "--priority");
+	const { value: priorityShortRaw, rest: argv8 } = getFlagValue(argv7, "-p");
+	const { present: jsonMode, rest: argv9 } = popFlag(argv8, "--json");
+	const { present: compact, rest: restFinal } = popFlag(argv9, "--compact");
 
-	const { value: priorityShortRaw, rest: rest2 } = getFlagValue(rest, "-p");
-	const restFinal = rest2;
 	const priorityValue = priorityRaw ?? priorityShortRaw ?? "3";
 	if (restFinal.length > 0) {
 		return jsonError(`unknown args: ${restFinal.join(" ")}`, { pretty, recovery: ["mu issues create --help"] });
@@ -1318,7 +2003,10 @@ async function issuesCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 		issue = (await ctx.store.get(issue.id)) ?? issue;
 	}
 
-	return ok(jsonText(issueJson(issue), pretty));
+	if (jsonMode && !compact) {
+		return ok(jsonText(issueJson(issue), pretty));
+	}
+	return ok(renderIssueMutationCompact("created", issue));
 }
 
 async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
@@ -1328,7 +2016,7 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"mu issues update - patch issue fields and routing metadata",
 				"",
 				"Usage:",
-				"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--tags CSV] [--add-tag TAG] [--remove-tag TAG] [--role ROLE] [--pretty]",
+				"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--tags CSV] [--add-tag TAG] [--remove-tag TAG] [--role ROLE] [--json] [--pretty]",
 				"",
 				"Options:",
 				"  --title <TEXT>                       Replace title",
@@ -1340,12 +2028,13 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 				"  --add-tag <TAG>                      Repeatable",
 				"  --remove-tag <TAG>                   Repeatable",
 				"  --role <orchestrator|worker>         Rewrites role:* tag",
+				"  --json                               Emit full JSON record (default is compact ack)",
 				"",
 				"Examples:",
 				"  mu issues update <id> --status in_progress",
 				"  mu issues update <id> --add-tag blocked --remove-tag triage",
 				"  mu issues update <id> --role worker --priority 2",
-				"  mu issues update <id> --status closed --outcome success",
+				"  mu issues update <id> --status closed --outcome success --json --pretty",
 				"",
 				"At least one field flag is required.",
 			].join("\n") + "\n",
@@ -1373,8 +2062,9 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	const { value: tagsRaw, rest: argv5 } = getFlagValue(argv4, "--tags");
 	const { values: addTags, rest: argv6 } = getRepeatFlagValues(argv5, ["--add-tag"]);
 	const { values: removeTags, rest: argv7 } = getRepeatFlagValues(argv6, ["--remove-tag"]);
-
-	const { value: role, rest } = getFlagValue(argv7, "--role");
+	const { value: role, rest: argv8 } = getFlagValue(argv7, "--role");
+	const { present: jsonMode, rest: argv9 } = popFlag(argv8, "--json");
+	const { present: compact, rest } = popFlag(argv9, "--compact");
 
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues update --help"] });
@@ -1432,7 +2122,8 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 		fields.tags = currentTags;
 	}
 
-	if (Object.keys(fields).length === 0) {
+	const changedFields = Object.keys(fields).sort();
+	if (changedFields.length === 0) {
 		return jsonError("no fields to update", {
 			pretty,
 			recovery: [`mu issues update ${issueId} --status in_progress`],
@@ -1440,7 +2131,10 @@ async function issuesUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promi
 	}
 
 	const updated = await ctx.store.update(issueId, fields);
-	return ok(jsonText(issueJson(updated), pretty));
+	if (jsonMode && !compact) {
+		return ok(jsonText(issueJson(updated), pretty));
+	}
+	return ok(renderIssueMutationCompact("updated", updated, { fields: changedFields }));
 }
 
 async function issuesClaim(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
@@ -1450,7 +2144,7 @@ async function issuesClaim(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 				"mu issues claim - mark an open issue as in_progress",
 				"",
 				"Usage:",
-				"  mu issues claim <id-or-prefix> [--pretty]",
+				"  mu issues claim <id-or-prefix> [--json] [--pretty]",
 				"",
 				"Typical worker sequence:",
 				"  mu issues ready --root <root-id>",
@@ -1460,6 +2154,12 @@ async function issuesClaim(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 				"Fails unless current status is open.",
 			].join("\n") + "\n",
 		);
+	}
+
+	const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+	const { present: compact, rest } = popFlag(argv0, "--compact");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues claim --help"] });
 	}
 
 	const resolved = await resolveIssueId(ctx.store, argv[0]!);
@@ -1480,7 +2180,10 @@ async function issuesClaim(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 
 	await ctx.store.claim(issue.id);
 	const claimed = (await ctx.store.get(issue.id)) ?? issue;
-	return ok(jsonText(issueJson(claimed), pretty));
+	if (jsonMode && !compact) {
+		return ok(jsonText(issueJson(claimed), pretty));
+	}
+	return ok(renderIssueMutationCompact("claimed", claimed));
 }
 
 async function issuesOpen(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
@@ -1490,15 +2193,21 @@ async function issuesOpen(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 				"mu issues open - reopen an issue and clear outcome",
 				"",
 				"Usage:",
-				"  mu issues open <id-or-prefix> [--pretty]",
+				"  mu issues open <id-or-prefix> [--json] [--pretty]",
 				"",
 				"Examples:",
 				"  mu issues open <id>",
-				"  mu issues open <id> --pretty",
+				"  mu issues open <id> --json --pretty",
 				"",
 				"Sets status=open and outcome=null.",
 			].join("\n") + "\n",
 		);
+	}
+
+	const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+	const { present: compact, rest } = popFlag(argv0, "--compact");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues open --help"] });
 	}
 
 	const resolved = await resolveIssueId(ctx.store, argv[0]!);
@@ -1512,7 +2221,10 @@ async function issuesOpen(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 	}
 
 	const reopened = await ctx.store.update(issue.id, { status: "open", outcome: null });
-	return ok(jsonText(issueJson(reopened), pretty));
+	if (jsonMode && !compact) {
+		return ok(jsonText(issueJson(reopened), pretty));
+	}
+	return ok(renderIssueMutationCompact("opened", reopened));
 }
 
 async function issuesClose(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
@@ -1522,22 +2234,25 @@ async function issuesClose(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 				"mu issues close - close an issue with an outcome",
 				"",
 				"Usage:",
-				"  mu issues close <id-or-prefix> [--outcome OUTCOME] [--pretty]",
+				"  mu issues close <id-or-prefix> [--outcome OUTCOME] [--json] [--pretty]",
 				"",
 				"Options:",
 				"  --outcome <success|failure|needs_work|expanded|skipped>",
 				"            Default: success",
+				"  --json    Emit full JSON record (default is compact ack)",
 				"",
 				"Examples:",
 				"  mu issues close <id>",
 				"  mu issues close <id> --outcome success",
-				"  mu issues close <id> --outcome needs_work",
+				"  mu issues close <id> --outcome needs_work --json --pretty",
 			].join("\n") + "\n",
 		);
 	}
 
 	const issueRaw = argv[0]!;
-	const { value: outcome, rest } = getFlagValue(argv.slice(1), "--outcome");
+	const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+	const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
+	const { value: outcome, rest } = getFlagValue(argv1, "--outcome");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues close --help"] });
 	}
@@ -1548,7 +2263,10 @@ async function issuesClose(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 	}
 
 	const closed = await ctx.store.close(resolved.issueId!, outcome ?? "success");
-	return ok(jsonText(issueJson(closed), pretty));
+	if (jsonMode && !compact) {
+		return ok(jsonText(issueJson(closed), pretty));
+	}
+	return ok(renderIssueMutationCompact("closed", closed));
 }
 
 async function issuesDep(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
@@ -1558,7 +2276,7 @@ async function issuesDep(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 				"mu issues dep - add dependency edge",
 				"",
 				"Usage:",
-				"  mu issues dep <src-id> <blocks|parent> <dst-id> [--pretty]",
+				"  mu issues dep <src-id> <blocks|parent> <dst-id> [--json] [--pretty]",
 				"",
 				"Edge types:",
 				"  <src> blocks <dst>     <dst> waits until <src> is closed",
@@ -1567,20 +2285,26 @@ async function issuesDep(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 				"Examples:",
 				"  mu issues dep <task-a> blocks <task-b>",
 				"  mu issues dep <child> parent <root>",
+				"  mu issues dep <task-a> blocks <task-b> --json --pretty",
 				"",
 				"Tip: use `mu issues children <root>` and `mu issues ready --root <root>` to verify scheduling.",
 			].join("\n") + "\n",
 		);
 	}
 
-	if (argv.length < 3) {
+	const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+	const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
+	if (argv1.length < 3) {
 		return jsonError("usage: mu issues dep <src> <type> <dst>", {
 			pretty,
 			recovery: ["mu issues dep <src-id> blocks <dst-id>"],
 		});
 	}
 
-	const [srcRaw, depType, dstRaw] = argv;
+	const [srcRaw, depType, dstRaw, ...rest] = argv1;
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues dep --help"] });
+	}
 	if (depType !== "blocks" && depType !== "parent") {
 		return jsonError(`invalid dep type: ${depType} (use 'blocks' or 'parent')`, {
 			pretty,
@@ -1601,7 +2325,11 @@ async function issuesDep(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	}
 
 	await ctx.store.add_dep(src.issueId!, depType, dst.issueId!);
-	return ok(jsonText({ ok: true, src: src.issueId, type: depType, dst: dst.issueId }, pretty));
+	const payload = { ok: true, src: src.issueId!, type: depType, dst: dst.issueId! };
+	if (jsonMode && !compact) {
+		return ok(jsonText(payload, pretty));
+	}
+	return ok(renderIssueDepMutationCompact("added", payload));
 }
 
 async function issuesUndep(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
@@ -1611,25 +2339,31 @@ async function issuesUndep(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 				"mu issues undep - remove dependency edge",
 				"",
 				"Usage:",
-				"  mu issues undep <src-id> <blocks|parent> <dst-id> [--pretty]",
+				"  mu issues undep <src-id> <blocks|parent> <dst-id> [--json] [--pretty]",
 				"",
 				"Examples:",
 				"  mu issues undep <task-a> blocks <task-b>",
 				"  mu issues undep <child> parent <root>",
+				"  mu issues undep <task-a> blocks <task-b> --json --pretty",
 				"",
 				"Use this when dependency planning changes.",
 			].join("\n") + "\n",
 		);
 	}
 
-	if (argv.length < 3) {
+	const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+	const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
+	if (argv1.length < 3) {
 		return jsonError("usage: mu issues undep <src> <type> <dst>", {
 			pretty,
 			recovery: ["mu issues undep <src-id> blocks <dst-id>"],
 		});
 	}
 
-	const [srcRaw, depType, dstRaw] = argv;
+	const [srcRaw, depType, dstRaw, ...rest] = argv1;
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues undep --help"] });
+	}
 	if (depType !== "blocks" && depType !== "parent") {
 		return jsonError(`invalid dep type: ${depType} (use 'blocks' or 'parent')`, {
 			pretty,
@@ -1643,7 +2377,11 @@ async function issuesUndep(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 	if (dst.error) return { stdout: jsonText({ error: dst.error }, pretty), stderr: "", exitCode: 1 };
 
 	const removed = await ctx.store.remove_dep(src.issueId!, depType, dst.issueId!);
-	return ok(jsonText({ ok: removed, src: src.issueId, type: depType, dst: dst.issueId }, pretty));
+	const payload = { ok: removed, src: src.issueId!, type: depType, dst: dst.issueId! };
+	if (jsonMode && !compact) {
+		return ok(jsonText(payload, pretty));
+	}
+	return ok(renderIssueDepMutationCompact("removed", payload));
 }
 
 async function issuesChildren(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
@@ -1653,15 +2391,21 @@ async function issuesChildren(argv: string[], ctx: CliCtx, pretty: boolean): Pro
 				"mu issues children - list direct child issues",
 				"",
 				"Usage:",
-				"  mu issues children <id-or-prefix> [--pretty]",
+				"  mu issues children <id-or-prefix> [--json] [--pretty]",
 				"",
 				"Examples:",
 				"  mu issues children <root-id>",
-				"  mu issues children <root-id> --pretty",
+				"  mu issues children <root-id> --json --pretty",
 				"",
 				"Shows only direct children (not full descendants).",
 			].join("\n") + "\n",
 		);
+	}
+
+	const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+	const { present: compact, rest } = popFlag(argv0, "--compact");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues children --help"] });
 	}
 
 	const resolved = await resolveIssueId(ctx.store, argv[0]!);
@@ -1671,6 +2415,9 @@ async function issuesChildren(argv: string[], ctx: CliCtx, pretty: boolean): Pro
 
 	const children = await ctx.store.children(resolved.issueId!);
 	children.sort((a, b) => (a.priority ?? 3) - (b.priority ?? 3));
+	if (!jsonMode || compact) {
+		return ok(renderIssueCompactTable(children));
+	}
 	return ok(jsonText(children.map(issueJson), pretty));
 }
 
@@ -1681,19 +2428,20 @@ async function issuesReady(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 				"mu issues ready - list open, unblocked, leaf issues tagged node:agent",
 				"",
 				"Usage:",
-				"  mu issues ready [--root ID] [--tag TAG] [--contains TEXT] [--limit N] [--pretty]",
+				"  mu issues ready [--root ID] [--tag TAG] [--contains TEXT] [--limit N] [--json] [--pretty]",
 				"",
 				"Filters:",
 				"  --root <id-or-prefix>   Restrict to one root subtree",
 				"  --tag <TAG>             Repeatable extra tags (node:agent is always required)",
 				"  --contains <TEXT>       Case-insensitive title/body substring",
 				"  --limit <N>             Max rows (default: no explicit cap)",
+				"  --json                  Emit full JSON rows (default is compact table)",
 				"",
 				"Examples:",
 				"  mu issues ready",
 				"  mu issues ready --root <root-id>",
 				"  mu issues ready --root <root-id> --tag role:worker",
-				"  mu issues ready --contains parser --limit 20",
+				"  mu issues ready --contains parser --limit 20 --json --pretty",
 				"",
 				"Ready means:",
 				"  status=open + all blockers closed + no open children + tags match.",
@@ -1704,7 +2452,9 @@ async function issuesReady(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 	const { value: rootRaw, rest: argv0 } = getFlagValue(argv, "--root");
 	const { values: extraTags, rest: argv1 } = getRepeatFlagValues(argv0, ["--tag"]);
 	const { value: contains, rest: argv2 } = getFlagValue(argv1, "--contains");
-	const { value: limitRaw, rest } = getFlagValue(argv2, "--limit");
+	const { present: jsonMode, rest: argv3 } = popFlag(argv2, "--json");
+	const { present: compact, rest: argv4 } = popFlag(argv3, "--compact");
+	const { value: limitRaw, rest } = getFlagValue(argv4, "--limit");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues ready --help"] });
 	}
@@ -1732,6 +2482,9 @@ async function issuesReady(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 		contains: contains ?? null,
 		limit,
 	});
+	if (!jsonMode || compact) {
+		return ok(renderIssueCompactTable(issues));
+	}
 	return ok(jsonText(issues.map(issueJson), pretty));
 }
 
@@ -1771,7 +2524,7 @@ async function cmdForum(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	if (argv0.length === 0 || argv0[0] === "--help" || argv0[0] === "-h") {
 		return ok(
 			[
-				"mu forum - append-only coordination messages (JSON output)",
+				"mu forum - append-only coordination messages (JSON + compact output)",
 				"",
 				"Usage:",
 				"  mu forum <command> [args...] [--pretty]",
@@ -1780,6 +2533,9 @@ async function cmdForum(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  post     Add a message to a topic",
 				"  read     Read recent messages in one topic",
 				"  topics   List topics by recency",
+				"",
+				"Output mode:",
+				"  compact-by-default output for forum post/read/topics; add --json for full records.",
 				"",
 				"Common topic patterns:",
 				"  issue:<id>                 Per-issue execution log",
@@ -1819,16 +2575,17 @@ async function forumPost(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 				"mu forum post - post a message to a topic",
 				"",
 				"Usage:",
-				"  mu forum post <topic> -m <message> [--author NAME] [--pretty]",
+				"  mu forum post <topic> -m <message> [--author NAME] [--json] [--pretty]",
 				"",
 				"Options:",
 				"  -m, --message <TEXT>   Required message body",
 				"  --author <NAME>        Author label (default: operator)",
+				"  --json                 Emit full JSON row (default is compact ack)",
 				"",
 				"Examples:",
 				'  mu forum post issue:<id> -m "claimed and starting" --author worker',
 				'  mu forum post issue:<id> -m "blocked on env setup" --author worker',
-				'  mu forum post research:mu:help-audit -m "notes" --author orchestrator',
+				'  mu forum post research:mu:help-audit -m "notes" --author orchestrator --json --pretty',
 			].join("\n") + "\n",
 		);
 	}
@@ -1836,7 +2593,9 @@ async function forumPost(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	const topic = argv[0]!;
 	const { value: message, rest: argv0 } = getFlagValue(argv.slice(1), "--message");
 	const { value: messageShort, rest: argv1 } = getFlagValue(argv0, "-m");
-	const { value: author, rest } = getFlagValue(argv1, "--author");
+	const { value: author, rest: argv2 } = getFlagValue(argv1, "--author");
+	const { present: jsonMode, rest: argv3 } = popFlag(argv2, "--json");
+	const { present: compact, rest } = popFlag(argv3, "--compact");
 
 	const msgBody = message ?? messageShort;
 	if (!msgBody) {
@@ -1850,7 +2609,10 @@ async function forumPost(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	}
 
 	const msg = await ctx.forum.post(topic, msgBody, author ?? "operator");
-	return ok(jsonText(msg, pretty));
+	if (jsonMode && !compact) {
+		return ok(jsonText(msg, pretty));
+	}
+	return ok(renderForumPostCompact(msg));
 }
 
 async function forumRead(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
@@ -1860,21 +2622,24 @@ async function forumRead(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 				"mu forum read - read messages from a topic (chronological)",
 				"",
 				"Usage:",
-				"  mu forum read <topic> [--limit N] [--pretty]",
+				"  mu forum read <topic> [--limit N] [--json] [--pretty]",
 				"",
 				"Options:",
 				"  --limit <N>    Number of messages to return (default: 50)",
+				"  --json         Emit full JSON rows (default is compact list)",
 				"",
 				"Examples:",
 				"  mu forum read issue:<id>",
 				"  mu forum read issue:<id> --limit 20",
-				"  mu forum read research:mu:help-audit --pretty",
+				"  mu forum read issue:<id> --json --pretty",
 			].join("\n") + "\n",
 		);
 	}
 
 	const topic = argv[0]!;
-	const { value: limitRaw, rest } = getFlagValue(argv.slice(1), "--limit");
+	const { value: limitRaw, rest: argv0 } = getFlagValue(argv.slice(1), "--limit");
+	const { present: jsonMode, rest: argv1 } = popFlag(argv0, "--json");
+	const { present: compact, rest } = popFlag(argv1, "--compact");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu forum read --help"] });
 	}
@@ -1885,6 +2650,9 @@ async function forumRead(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	}
 
 	const msgs = await ctx.forum.read(topic, limit);
+	if (!jsonMode || compact) {
+		return ok(renderForumReadCompact(topic, msgs));
+	}
 	return ok(jsonText(msgs, pretty));
 }
 
@@ -1895,22 +2663,25 @@ async function forumTopics(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 				"mu forum topics - list active topics sorted by most recent message",
 				"",
 				"Usage:",
-				"  mu forum topics [--prefix PREFIX] [--limit N] [--pretty]",
+				"  mu forum topics [--prefix PREFIX] [--limit N] [--json] [--pretty]",
 				"",
 				"Options:",
 				"  --prefix <PREFIX>   Restrict topics by prefix (e.g. issue:, research:)",
 				"  --limit <N>         Max topics returned (default: 100)",
+				"  --json              Emit full JSON rows (default is compact table)",
 				"",
 				"Examples:",
 				"  mu forum topics",
 				"  mu forum topics --prefix issue:",
-				"  mu forum topics --prefix issue: --limit 20 --pretty",
+				"  mu forum topics --prefix issue: --limit 20 --json --pretty",
 			].join("\n") + "\n",
 		);
 	}
 
 	const { value: prefix, rest: argv0 } = getFlagValue(argv, "--prefix");
-	const { value: limitRaw, rest } = getFlagValue(argv0, "--limit");
+	const { value: limitRaw, rest: argv1 } = getFlagValue(argv0, "--limit");
+	const { present: jsonMode, rest: argv2 } = popFlag(argv1, "--json");
+	const { present: compact, rest } = popFlag(argv2, "--compact");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu forum topics --help"] });
 	}
@@ -1923,6 +2694,9 @@ async function forumTopics(argv: string[], ctx: CliCtx, pretty: boolean): Promis
 	let topics: ForumTopicSummary[] = await ctx.forum.topics(prefix ?? null);
 	if (limit > 0) {
 		topics = topics.slice(0, limit);
+	}
+	if (!jsonMode || compact) {
+		return ok(renderForumTopicsCompact(topics));
 	}
 	return ok(jsonText(topics, pretty));
 }
@@ -1960,7 +2734,7 @@ async function cmdEvents(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu events - query event log entries",
 				"",
 				"Usage:",
-				"  mu events <list|trace> [filters...] [--pretty]",
+				"  mu events <list|trace> [filters...] [--json] [--pretty]",
 				"",
 				"Filters:",
 				"  --type <TYPE>",
@@ -1970,6 +2744,7 @@ async function cmdEvents(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"  --contains <TEXT>",
 				"  --since <EPOCH_MS>",
 				"  --limit <N> (default: list=20, trace=40)",
+				"  --json Emit full JSON payload (default is compact event table)",
 			].join("\n") + "\n",
 		);
 	}
@@ -1986,7 +2761,9 @@ async function cmdEvents(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const { value: runId, rest: argv4 } = getFlagValue(argv3, "--run-id");
 	const { value: contains, rest: argv5 } = getFlagValue(argv4, "--contains");
 	const { value: sinceRaw, rest: argv6 } = getFlagValue(argv5, "--since");
-	const { value: limitRaw, rest: unknown } = getFlagValue(argv6, "--limit");
+	const { value: limitRaw, rest: argv7 } = getFlagValue(argv6, "--limit");
+	const { present: jsonMode, rest: argv8 } = popFlag(argv7, "--json");
+	const { present: compact, rest: unknown } = popFlag(argv8, "--compact");
 	if (unknown.length > 0) {
 		return jsonError(`unknown args: ${unknown.join(" ")}`, { pretty, recovery: ["mu events --help"] });
 	}
@@ -2034,6 +2811,10 @@ async function cmdEvents(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		});
 
 	const events = filtered.slice(-limit);
+	if (!jsonMode || compact) {
+		const summary = `Events: ${events.length} shown (matched ${filtered.length})\n`;
+		return ok(`${summary}${renderEventsCompactTable(events)}`);
+	}
 	return ok(jsonText({ count: events.length, events }, pretty));
 }
 
@@ -2045,7 +2826,10 @@ async function cmdRuns(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu runs - run queue + trace operations",
 				"",
 				"Usage:",
-				"  mu runs <list|get|trace|start|resume|interrupt> [args...] [--pretty]",
+				"  mu runs <list|get|trace|start|resume|interrupt> [args...] [--json] [--pretty]",
+				"",
+				"Output mode:",
+				"  compact-by-default output for run reads/mutations; add --json for full records.",
 				"",
 				"Examples:",
 				"  mu runs list --status running --limit 20",
@@ -2081,7 +2865,9 @@ async function cmdRuns(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 async function runsList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
 	const { value: status, rest: argv0 } = getFlagValue(argv, "--status");
-	const { value: limitRaw, rest } = getFlagValue(argv0, "--limit");
+	const { value: limitRaw, rest: argv1 } = getFlagValue(argv0, "--limit");
+	const { present: jsonMode, rest: argv2 } = popFlag(argv1, "--json");
+	const { present: compact, rest } = popFlag(argv2, "--compact");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu runs --help"] });
 	}
@@ -2106,6 +2892,9 @@ async function runsList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<R
 	if (!req.ok) {
 		return req.result;
 	}
+	if (!jsonMode || compact) {
+		return ok(renderRunPayloadCompact(req.payload));
+	}
 	return ok(jsonText(req.payload, pretty));
 }
 
@@ -2114,6 +2903,11 @@ async function runsGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<Ru
 		return jsonError("missing run id", { pretty, recovery: ["mu runs get <run-id-or-root-id>"] });
 	}
 	const id = argv[0]!;
+	const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+	const { present: compact, rest } = popFlag(argv0, "--compact");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu runs get --help"] });
+	}
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
 		pretty,
@@ -2123,6 +2917,9 @@ async function runsGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<Ru
 	if (!req.ok) {
 		return req.result;
 	}
+	if (!jsonMode || compact) {
+		return ok(renderRunPayloadCompact(req.payload));
+	}
 	return ok(jsonText(req.payload, pretty));
 }
 
@@ -2131,7 +2928,9 @@ async function runsTrace(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 		return jsonError("missing run id", { pretty, recovery: ["mu runs trace <run-id-or-root-id>"] });
 	}
 	const id = argv[0]!;
-	const { value: limitRaw, rest } = getFlagValue(argv.slice(1), "--limit");
+	const { value: limitRaw, rest: argv0 } = getFlagValue(argv.slice(1), "--limit");
+	const { present: jsonMode, rest: argv1 } = popFlag(argv0, "--json");
+	const { present: compact, rest } = popFlag(argv1, "--compact");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu runs trace --help"] });
 	}
@@ -2151,11 +2950,16 @@ async function runsTrace(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	if (!req.ok) {
 		return req.result;
 	}
+	if (!jsonMode || compact) {
+		return ok(renderRunPayloadCompact(req.payload));
+	}
 	return ok(jsonText(req.payload, pretty));
 }
 
 async function runsStart(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	const { value: maxStepsRaw, rest } = getFlagValue(argv, "--max-steps");
+	const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+	const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
+	const { value: maxStepsRaw, rest } = getFlagValue(argv1, "--max-steps");
 	const promptParts = rest;
 	const prompt = promptParts.join(" ").trim();
 	if (!prompt) {
@@ -2182,6 +2986,9 @@ async function runsStart(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	if (!req.ok) {
 		return req.result;
 	}
+	if (!jsonMode || compact) {
+		return ok(renderRunPayloadCompact(req.payload));
+	}
 	return ok(jsonText(req.payload, pretty));
 }
 
@@ -2190,7 +2997,9 @@ async function runsResume(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 		return jsonError("missing root issue id", { pretty, recovery: ["mu runs resume <root-id>"] });
 	}
 	const rootIssueId = argv[0]!;
-	const { value: maxStepsRaw, rest } = getFlagValue(argv.slice(1), "--max-steps");
+	const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+	const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
+	const { value: maxStepsRaw, rest } = getFlagValue(argv1, "--max-steps");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu runs resume --help"] });
 	}
@@ -2215,6 +3024,9 @@ async function runsResume(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 	if (!req.ok) {
 		return req.result;
 	}
+	if (!jsonMode || compact) {
+		return ok(renderRunPayloadCompact(req.payload));
+	}
 	return ok(jsonText(req.payload, pretty));
 }
 
@@ -2226,7 +3038,9 @@ async function runsInterrupt(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 		args = args.slice(1);
 	}
 	const { value: rootIssueIdFlag, rest: argv0 } = getFlagValue(args, "--root-issue-id");
-	const { value: jobId, rest } = getFlagValue(argv0, "--job-id");
+	const { value: jobId, rest: argv1 } = getFlagValue(argv0, "--job-id");
+	const { present: jsonMode, rest: argv2 } = popFlag(argv1, "--json");
+	const { present: compact, rest } = popFlag(argv2, "--compact");
 	const rootIssueId = rootIssueIdFlag ?? positionalRoot;
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu runs interrupt --help"] });
@@ -2251,112 +3065,8 @@ async function runsInterrupt(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	if (!req.ok) {
 		return req.result;
 	}
-	return ok(jsonText(req.payload, pretty));
-}
-
-async function cmdActivities(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-	if (argv0.length === 0 || hasHelpFlag(argv0)) {
-		return ok(
-			[
-				"mu activities - inspect control-plane activity state",
-				"",
-				"Usage:",
-				"  mu activities <list|get|trace> [args...] [--pretty]",
-				"",
-				"Examples:",
-				"  mu activities list --status running --kind run --limit 20",
-				"  mu activities get <activity-id>",
-				"  mu activities trace <activity-id> --limit 80",
-			].join("\n") + "\n",
-		);
-	}
-
-	const sub = argv0[0]!;
-	const rest = argv0.slice(1);
-	switch (sub) {
-		case "list":
-			return await activitiesList(rest, ctx, pretty);
-		case "get":
-			return await activitiesGet(rest, ctx, pretty);
-		case "trace":
-			return await activitiesTrace(rest, ctx, pretty);
-		default:
-			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu activities --help"] });
-	}
-}
-
-async function activitiesList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	const { value: status, rest: argv0 } = getFlagValue(argv, "--status");
-	const { value: kind, rest: argv1 } = getFlagValue(argv0, "--kind");
-	const { value: limitRaw, rest } = getFlagValue(argv1, "--limit");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu activities --help"] });
-	}
-	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
-	if (limit == null) {
-		return jsonError("--limit must be an integer between 1 and 500", {
-			pretty,
-			recovery: ["mu activities list --limit 20"],
-		});
-	}
-	const search = new URLSearchParams();
-	setSearchParamIfPresent(search, "status", status ?? null);
-	setSearchParamIfPresent(search, "kind", kind ?? null);
-	search.set("limit", String(limit));
-	const req = await requestServerJson<Record<string, unknown>>({
-		ctx,
-		pretty,
-		path: `/api/control-plane/activities?${search.toString()}`,
-		recoveryCommand: "mu activities list",
-	});
-	if (!req.ok) {
-		return req.result;
-	}
-	return ok(jsonText(req.payload, pretty));
-}
-
-async function activitiesGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	if (argv.length === 0) {
-		return jsonError("missing activity id", { pretty, recovery: ["mu activities get <activity-id>"] });
-	}
-	const id = argv[0]!;
-	const req = await requestServerJson<Record<string, unknown>>({
-		ctx,
-		pretty,
-		path: `/api/control-plane/activities/${encodeURIComponent(id)}`,
-		recoveryCommand: `mu activities get ${id}`,
-	});
-	if (!req.ok) {
-		return req.result;
-	}
-	return ok(jsonText(req.payload, pretty));
-}
-
-async function activitiesTrace(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	if (argv.length === 0) {
-		return jsonError("missing activity id", { pretty, recovery: ["mu activities trace <activity-id>"] });
-	}
-	const id = argv[0]!;
-	const { value: limitRaw, rest } = getFlagValue(argv.slice(1), "--limit");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu activities trace --help"] });
-	}
-	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 2000 }) : 40;
-	if (limit == null) {
-		return jsonError("--limit must be an integer between 1 and 2000", {
-			pretty,
-			recovery: [`mu activities trace ${id} --limit 80`],
-		});
-	}
-	const req = await requestServerJson<Record<string, unknown>>({
-		ctx,
-		pretty,
-		path: `/api/control-plane/activities/${encodeURIComponent(id)}/events?limit=${limit}`,
-		recoveryCommand: `mu activities trace ${id}`,
-	});
-	if (!req.ok) {
-		return req.result;
+	if (!jsonMode || compact) {
+		return ok(renderRunPayloadCompact(req.payload));
 	}
 	return ok(jsonText(req.payload, pretty));
 }
@@ -2369,7 +3079,10 @@ async function cmdHeartbeats(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu heartbeats - heartbeat program lifecycle",
 				"",
 				"Usage:",
-				"  mu heartbeats <list|get|create|update|delete|trigger|enable|disable> [args...] [--pretty]",
+				"  mu heartbeats <list|get|create|update|delete|trigger|enable|disable> [args...] [--json] [--pretty]",
+				"",
+				"Output mode:",
+				"  list/get are compact by default; add --json for full records.",
 			].join("\n") + "\n",
 		);
 	}
@@ -2400,7 +3113,9 @@ async function cmdHeartbeats(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 async function heartbeatsList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
 	const { value: enabledRaw, rest: argv0 } = getFlagValue(argv, "--enabled");
-	const { value: limitRaw, rest } = getFlagValue(argv0, "--limit");
+	const { value: limitRaw, rest: argv1 } = getFlagValue(argv0, "--limit");
+	const { present: jsonMode, rest: argv2 } = popFlag(argv1, "--json");
+	const { present: compact, rest } = popFlag(argv2, "--compact");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats --help"] });
 	}
@@ -2432,6 +3147,9 @@ async function heartbeatsList(argv: string[], ctx: CliCtx, pretty: boolean): Pro
 	if (!req.ok) {
 		return req.result;
 	}
+	if (!jsonMode || compact) {
+		return ok(renderHeartbeatsPayloadCompact(req.payload));
+	}
 	return ok(jsonText(req.payload, pretty));
 }
 
@@ -2440,6 +3158,11 @@ async function heartbeatsGet(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 		return jsonError("missing program id", { pretty, recovery: ["mu heartbeats get <program-id>"] });
 	}
 	const id = argv[0]!;
+	const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+	const { present: compact, rest } = popFlag(argv0, "--compact");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats get --help"] });
+	}
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
 		pretty,
@@ -2448,6 +3171,9 @@ async function heartbeatsGet(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	});
 	if (!req.ok) {
 		return req.result;
+	}
+	if (!jsonMode || compact) {
+		return ok(renderHeartbeatsPayloadCompact(req.payload));
 	}
 	return ok(jsonText(req.payload, pretty));
 }
@@ -2637,7 +3363,10 @@ async function cmdCron(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu cron - cron program lifecycle",
 				"",
 				"Usage:",
-				"  mu cron <stats|list|get|create|update|delete|trigger|enable|disable> [args...] [--pretty]",
+				"  mu cron <stats|list|get|create|update|delete|trigger|enable|disable> [args...] [--json] [--pretty]",
+				"",
+				"Output mode:",
+				"  stats/list/get are compact by default; add --json for full records.",
 			].join("\n") + "\n",
 		);
 	}
@@ -2668,8 +3397,10 @@ async function cmdCron(argv: string[], ctx: CliCtx): Promise<RunResult> {
 }
 
 async function cronStats(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	if (argv.length > 0) {
-		return jsonError(`unknown args: ${argv.join(" ")}`, { pretty, recovery: ["mu cron stats"] });
+	const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+	const { present: compact, rest } = popFlag(argv0, "--compact");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron stats"] });
 	}
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
@@ -2678,13 +3409,18 @@ async function cronStats(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 		recoveryCommand: "mu cron stats",
 	});
 	if (!req.ok) return req.result;
+	if (!jsonMode || compact) {
+		return ok(renderCronPayloadCompact(req.payload));
+	}
 	return ok(jsonText(req.payload, pretty));
 }
 
 async function cronList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
 	const { value: enabledRaw, rest: argv0 } = getFlagValue(argv, "--enabled");
 	const { value: scheduleKind, rest: argv1 } = getFlagValue(argv0, "--schedule-kind");
-	const { value: limitRaw, rest } = getFlagValue(argv1, "--limit");
+	const { value: limitRaw, rest: argv2 } = getFlagValue(argv1, "--limit");
+	const { present: jsonMode, rest: argv3 } = popFlag(argv2, "--json");
+	const { present: compact, rest } = popFlag(argv3, "--compact");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron --help"] });
 	}
@@ -2710,6 +3446,9 @@ async function cronList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<R
 		recoveryCommand: "mu cron list",
 	});
 	if (!req.ok) return req.result;
+	if (!jsonMode || compact) {
+		return ok(renderCronPayloadCompact(req.payload));
+	}
 	return ok(jsonText(req.payload, pretty));
 }
 
@@ -2718,6 +3457,11 @@ async function cronGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<Ru
 	if (!programId) {
 		return jsonError("missing program id", { pretty, recovery: ["mu cron get <program-id>"] });
 	}
+	const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+	const { present: compact, rest } = popFlag(argv0, "--compact");
+	if (rest.length > 0) {
+		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron get --help"] });
+	}
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
 		pretty,
@@ -2725,6 +3469,9 @@ async function cronGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<Ru
 		recoveryCommand: `mu cron get ${programId}`,
 	});
 	if (!req.ok) return req.result;
+	if (!jsonMode || compact) {
+		return ok(renderCronPayloadCompact(req.payload));
+	}
 	return ok(jsonText(req.payload, pretty));
 }
 
@@ -2954,7 +3701,10 @@ async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"mu context - cross-store context search/timeline/stats",
 				"",
 				"Usage:",
-				"  mu context <search|timeline|stats> [filters...] [--pretty]",
+				"  mu context <search|timeline|stats> [filters...] [--json] [--pretty]",
+				"",
+				"Output mode:",
+				"  compact-by-default context summaries; add --json for full result payloads.",
 			].join("\n") + "\n",
 		);
 	}
@@ -2982,7 +3732,9 @@ async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const { value: sinceRaw, rest: argv16 } = getFlagValue(argv15, "--since");
 	const { value: untilRaw, rest: argv17 } = getFlagValue(argv16, "--until");
 	const { value: order, rest: argv18 } = getFlagValue(argv17, "--order");
-	const { value: limitRaw, rest: unknown } = getFlagValue(argv18, "--limit");
+	const { value: limitRaw, rest: argv19 } = getFlagValue(argv18, "--limit");
+	const { present: jsonMode, rest: argv20 } = popFlag(argv19, "--json");
+	const { present: compact, rest: unknown } = popFlag(argv20, "--compact");
 	if (unknown.length > 0) {
 		return jsonError(`unknown args: ${unknown.join(" ")}`, { pretty, recovery: ["mu context --help"] });
 	}
@@ -3024,12 +3776,24 @@ async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 	try {
 		if (sub === "search") {
-			return ok(jsonText(await runContextSearch({ repoRoot: ctx.repoRoot, search }), pretty));
+			const result = await runContextSearch({ repoRoot: ctx.repoRoot, search });
+			if (!jsonMode || compact) {
+				return ok(renderContextPayloadCompact(result as unknown as Record<string, unknown>));
+			}
+			return ok(jsonText(result, pretty));
 		}
 		if (sub === "timeline") {
-			return ok(jsonText(await runContextTimeline({ repoRoot: ctx.repoRoot, search }), pretty));
+			const result = await runContextTimeline({ repoRoot: ctx.repoRoot, search });
+			if (!jsonMode || compact) {
+				return ok(renderContextPayloadCompact(result as unknown as Record<string, unknown>));
+			}
+			return ok(jsonText(result, pretty));
 		}
-		return ok(jsonText(await runContextStats({ repoRoot: ctx.repoRoot, search }), pretty));
+		const result = await runContextStats({ repoRoot: ctx.repoRoot, search });
+		if (!jsonMode || compact) {
+			return ok(renderContextPayloadCompact(result as unknown as Record<string, unknown>));
+		}
+		return ok(jsonText(result, pretty));
 	} catch (err) {
 		if (err instanceof ContextQueryValidationError) {
 			return jsonError(err.message, { pretty, recovery: [`mu context ${sub}`] });

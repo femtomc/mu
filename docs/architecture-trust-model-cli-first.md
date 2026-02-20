@@ -18,7 +18,7 @@ roles are all treated as **trusted-as-root** in the repository.
 
 - transport + webhook ingress (`/webhooks/*`)
 - session coordination (`/api/control-plane/turn`)
-- run/activity coordination + wake scheduling (`/api/control-plane/runs*`, `/api/control-plane/activities*`, `/api/heartbeats*`, `/api/cron*`)
+- run coordination + wake scheduling (`/api/control-plane/runs*`, `/api/heartbeats*`, `/api/cron*`)
 - config/control-plane lifecycle + discovery (`/api/control-plane/config`, `/api/control-plane/*`, `/api/control-plane/identities*`)
 - observability (`/api/control-plane/events*`, `/api/control-plane/status`)
 
@@ -47,7 +47,6 @@ Read/query workflows are direct CLI commands:
 - `mu forum read|topics`
 - `mu events list|trace`
 - `mu runs list|get|trace`
-- `mu activities list|get|trace`
 - `mu heartbeats list|get`
 - `mu cron stats|list|get`
 - `mu context search|timeline|stats`
@@ -94,5 +93,5 @@ Additional architecture-coverage additions:
    - Risk: prompt/operator mistakes can execute destructive commands unless disciplined by workflow and review.
 
 3. **Command-surface documentation drift**
-   - CLI grows quickly (`events/runs/activities/heartbeats/cron/context/turn`).
+   - CLI grows quickly (`events/runs/heartbeats/cron/context/turn`).
    - Risk: static docs become stale unless kept in lockstep with command help output/tests.

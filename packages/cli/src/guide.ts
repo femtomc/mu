@@ -4,6 +4,8 @@ export function guideText(): string {
 		"",
 		"Goal: you should not have to leave the CLI to understand what mu supports.",
 		"",
+		"Most read/list/mutation interfaces default to compact output; add --json for full machine records.",
+		"",
 		"Quickstart",
 		"  1) Start a run (auto-initializes workspace store, starts serve lifecycle, queues run, attaches operator terminal):",
 		'       mu run "Break down this goal and execute it"',
