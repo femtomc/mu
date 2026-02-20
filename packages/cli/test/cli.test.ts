@@ -1097,8 +1097,14 @@ test("mu serve connects to existing server instead of spawning new one", async (
 		`${JSON.stringify({ pid: process.pid, port: 23456, url: "http://localhost:23456" })}\n`,
 		"utf8",
 	);
+	await writeOperatorSessionFile(dir, {
+		id: "sess-existing-55555555",
+		timestamp: "2026-02-19T16:00:00.000Z",
+		message: "persisted",
+	});
 
 	let spawnCalls = 0;
+	let seenSessionMode: string | undefined;
 	const { io, chunks } = mkCaptureIo();
 
 	// Mock fetch for health check
@@ -1122,7 +1128,8 @@ test("mu serve connects to existing server instead of spawning new one", async (
 					spawnCalls += 1;
 					return { pid: 99999, url: "http://localhost:3307" };
 				},
-				runOperatorSession: async ({ onReady }) => {
+				runOperatorSession: async ({ onReady, sessionMode }) => {
+					seenSessionMode = sessionMode;
 					onReady();
 					return { stdout: "", stderr: "", exitCode: 0 };
 				},
@@ -1132,6 +1139,7 @@ test("mu serve connects to existing server instead of spawning new one", async (
 
 		expect(result.exitCode).toBe(0);
 		expect(spawnCalls).toBe(0);
+		expect(seenSessionMode).toBe("new");
 		expect(chunks.stderr).toContain("connecting to existing server");
 	} finally {
 		globalThis.fetch = origFetch;

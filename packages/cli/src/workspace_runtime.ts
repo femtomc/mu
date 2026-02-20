@@ -1,4 +1,3 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { getStorePaths as resolveStorePaths } from "@femtomc/mu-core/node";
@@ -79,45 +78,10 @@ function operatorSessionDir(repoRoot: string): string {
 	return storePathForRepoRoot(repoRoot, "operator", "sessions");
 }
 
-function hasValidSessionHeader(path: string): boolean {
-	try {
-		const firstLine = readFileSync(path, "utf8").split("\n", 1)[0]?.trim();
-		if (!firstLine) {
-			return false;
-		}
-		const parsed = JSON.parse(firstLine) as Record<string, unknown>;
-		return parsed.type === "session" && typeof parsed.id === "string" && parsed.id.trim().length > 0;
-	} catch {
-		return false;
-	}
-}
-
-function findMostRecentPersistedSessionFile(sessionDir: string): string | null {
-	if (!existsSync(sessionDir)) {
-		return null;
-	}
-	const candidates = readdirSync(sessionDir, { withFileTypes: true })
-		.filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-		.map((entry) => join(sessionDir, entry.name))
-		.filter((path) => hasValidSessionHeader(path))
-		.map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }))
-		.sort((a, b) => b.mtimeMs - a.mtimeMs);
-	return candidates[0]?.path ?? null;
-}
-
 export function defaultOperatorSessionStart(repoRoot: string): OperatorSessionStartOpts {
-	const sessionDir = operatorSessionDir(repoRoot);
-	const sessionFile = findMostRecentPersistedSessionFile(sessionDir);
-	if (sessionFile) {
-		return {
-			mode: "open",
-			sessionDir,
-			sessionFile,
-		};
-	}
 	return {
 		mode: "new",
-		sessionDir,
+		sessionDir: operatorSessionDir(repoRoot),
 	};
 }
 
