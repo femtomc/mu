@@ -1,7 +1,7 @@
 {
   "name": "@femtomc/mu",
-  "version": "26.2.80",
-  "description": "Personal agent CLI for technical work.",
+  "version": "26.2.81",
+  "description": "Personal assistant CLI for technical work.",
   "keywords": [
     "mu",
     "agent",

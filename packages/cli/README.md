@@ -1,6 +1,6 @@
 # @femtomc/mu
 
-`mu` is a personal agent for technical work.
+`mu` is a personal assistant for technical work.
 
 This package provides the Bun CLI and programmatic API.
 

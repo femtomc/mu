@@ -17,7 +17,7 @@
     },
     "packages/agent": {
       "name": "@femtomc/mu-agent",
-      "version": "26.2.80",
+      "version": "26.2.81",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
         "@mariozechner/pi-agent-core": "^0.53.0",
@@ -28,7 +28,7 @@
     },
     "packages/cli": {
       "name": "@femtomc/mu",
-      "version": "26.2.80",
+      "version": "26.2.81",
       "bin": {
         "mu": "./dist/cli.js",
       },
@@ -47,7 +47,7 @@
     },
     "packages/control-plane": {
       "name": "@femtomc/mu-control-plane",
-      "version": "26.2.80",
+      "version": "26.2.81",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
         "zod": "^4.1.9",
@@ -55,28 +55,28 @@
     },
     "packages/core": {
       "name": "@femtomc/mu-core",
-      "version": "26.2.80",
+      "version": "26.2.81",
       "dependencies": {
         "zod": "^4.1.9",
       },
     },
     "packages/forum": {
       "name": "@femtomc/mu-forum",
-      "version": "26.2.80",
+      "version": "26.2.81",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
       },
     },
     "packages/issue": {
       "name": "@femtomc/mu-issue",
-      "version": "26.2.80",
+      "version": "26.2.81",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
       },
     },
     "packages/orchestrator": {
       "name": "@femtomc/mu-orchestrator",
-      "version": "26.2.80",
+      "version": "26.2.81",
       "dependencies": {
         "@femtomc/mu-agent": "workspace:*",
         "@femtomc/mu-core": "workspace:*",
@@ -88,7 +88,7 @@
     },
     "packages/server": {
       "name": "@femtomc/mu-server",
-      "version": "26.2.80",
+      "version": "26.2.81",
       "bin": {
         "mu-server": "./dist/cli.js",
       },
