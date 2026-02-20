@@ -55,25 +55,6 @@ unresolved blockers or open children), dispatches them to the agent backend, and
 manages the lifecycle — claim, execute, close/expand, repeat — until the
 root issue is terminal.
 
-## Architecture note (post-refactor)
-
-mu uses an explicit **trusted-as-root** model for all agent roles (`operator`,
-`orchestrator`, `worker`, `reviewer`). Role prompts are workflow contracts,
-not security boundaries.
-
-- Agent sessions use generic tools (`bash`, `read`, `write`, `edit`) and invoke
-  `mu` CLI directly for reads and mutations.
-- There is no dedicated `query(...)` vs `command(...)` tool boundary.
-- `mu-server` is control-plane runtime infrastructure (transport/session/realtime
-  plus run/activity scheduling for heartbeats and cron), not a privileged
-  business-logic gateway.
-
-Legacy gateway routes (`/api/commands/submit`, `/api/query`, `/api/issues*`,
-`/api/forum*`, `/api/context*`) are removed.
-
-For the concise removed-vs-added module summary and follow-up risk list, see
-[`docs/architecture-trust-model-cli-first.md`](docs/architecture-trust-model-cli-first.md).
-
 ## mu builds on pi
 
 mu uses [`pi`](https://github.com/badlogic/pi-mono) directly -- `pi` is a great agent framework, 
