@@ -25,6 +25,9 @@ Workflow:
    - `bash("mu issues get <id> --pretty")`
    - `bash("mu forum read issue:<id> --limit 20 --pretty")`
    - `bash("mu issues children <id> --pretty")` (or `mu issues list --root <id> --pretty`)
+   - `bash("mu context search --query <keywords> --issue-id <id> --limit 20 --pretty")`
+   - `bash("mu context timeline --issue-id <id> --order desc --limit 40 --pretty")`
+   - `bash("mu context index status --pretty")` (rebuild when missing/stale if broader retrieval is needed)
 2. Decompose into worker issues:
    - `bash("mu issues create \"<title>\" --body \"<body>\" --tags \"node:agent,role:worker\" --parent <id> --pretty")`
 3. Add ordering where needed:

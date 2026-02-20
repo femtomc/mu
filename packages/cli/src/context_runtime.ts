@@ -1,7 +1,8 @@
-import { createReadStream } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { existsSync, createReadStream } from "node:fs";
+import { mkdir, readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { createInterface } from "node:readline";
+import { Database } from "bun:sqlite";
 import { getStorePaths } from "@femtomc/mu-core/node";
 import { getControlPlanePaths } from "@femtomc/mu-control-plane";
 
@@ -9,6 +10,10 @@ const DEFAULT_LIMIT = 40;
 const MAX_LIMIT = 500;
 const MAX_TEXT_LENGTH = 8_000;
 const PREVIEW_LENGTH = 240;
+const CONTEXT_INDEX_SCHEMA_VERSION = 1;
+const CONTEXT_INDEX_FILENAME = "memory.db";
+const INDEX_QUERY_ROW_LIMIT = 100_000;
+const INDEX_FTS_ROW_LIMIT = 100_000;
 
 export const CONTEXT_SOURCE_KINDS = [
 	"issues",
@@ -724,7 +729,9 @@ async function collectCommandJournal(repoRoot: string, path: string): Promise<Co
 			const channelConversationId = command ? nonEmptyString(command.channel_conversation_id) : null;
 			const actorBindingId = command ? nonEmptyString(command.actor_binding_id) : null;
 			const runId = command ? nonEmptyString(command.run_root_id) : null;
-			const sessionId = command ? nonEmptyString(command.operator_session_id) : null;
+			const sessionId = command
+				? nonEmptyString(command.operator_session_id) ?? nonEmptyString(command.meta_session_id)
+				: null;
 			const conversationKey = buildConversationKey({
 				channel,
 				tenantId: channelTenantId,
@@ -774,7 +781,9 @@ async function collectCommandJournal(repoRoot: string, path: string): Promise<Co
 			const channelConversationId = correlation ? nonEmptyString(correlation.channel_conversation_id) : null;
 			const actorBindingId = correlation ? nonEmptyString(correlation.actor_binding_id) : null;
 			const runId = correlation ? nonEmptyString(correlation.run_root_id) : null;
-			const sessionId = correlation ? nonEmptyString(correlation.operator_session_id) : null;
+			const sessionId = correlation
+				? nonEmptyString(correlation.operator_session_id) ?? nonEmptyString(correlation.meta_session_id)
+				: null;
 			const conversationKey = buildConversationKey({
 				channel,
 				tenantId: channelTenantId,
@@ -834,7 +843,9 @@ async function collectOutbox(repoRoot: string, path: string): Promise<ContextIte
 			bindingId: actorBindingId,
 		});
 		const runId = correlation ? nonEmptyString(correlation.run_root_id) : null;
-		const sessionId = correlation ? nonEmptyString(correlation.operator_session_id) : null;
+		const sessionId = correlation
+			? nonEmptyString(correlation.operator_session_id) ?? nonEmptyString(correlation.meta_session_id)
+			: null;
 		const body = envelope ? nonEmptyString(envelope.body) : null;
 		const kind = envelope ? nonEmptyString(envelope.kind) : null;
 		const state = record ? nonEmptyString(record.state) : null;
@@ -1331,6 +1342,720 @@ function buildSourceStats(items: ContextItem[]): Array<{
 	return out;
 }
 
+export type ContextIndexSourceSummary = {
+	source_kind: ContextSourceKind;
+	count: number;
+	text_bytes: number;
+	last_ts_ms: number;
+};
+
+export type ContextIndexStatusResult = {
+	mode: "index_status";
+	repo_root: string;
+	index_path: string;
+	exists: boolean;
+	schema_version: number;
+	built_at_ms: number | null;
+	total_count: number;
+	total_text_bytes: number;
+	source_count: number;
+	stale_source_count: number;
+	stale_source_paths: string[];
+	sources: ContextIndexSourceSummary[];
+};
+
+export type ContextIndexRebuildResult = Omit<ContextIndexStatusResult, "mode"> & {
+	mode: "index_rebuild";
+	indexed_count: number;
+	duration_ms: number;
+	requested_sources: ContextSourceKind[] | null;
+};
+
+function contextIndexPath(repoRoot: string): string {
+	return join(getStorePaths(repoRoot).storeDir, "context", CONTEXT_INDEX_FILENAME);
+}
+
+function toContextSourceKind(value: string): ContextSourceKind | null {
+	if ((CONTEXT_SOURCE_KINDS as readonly string[]).includes(value)) {
+		return value as ContextSourceKind;
+	}
+	return null;
+}
+
+function contextIndexFtsText(item: ContextItem): string {
+	return [
+		item.text,
+		item.preview,
+		item.source_kind,
+		item.issue_id ?? "",
+		item.run_id ?? "",
+		item.session_id ?? "",
+		item.channel ?? "",
+		item.channel_tenant_id ?? "",
+		item.channel_conversation_id ?? "",
+		item.actor_binding_id ?? "",
+		item.conversation_key ?? "",
+		item.topic ?? "",
+		item.author ?? "",
+		item.role ?? "",
+		item.tags.join(" "),
+	].join("\n");
+}
+
+function parseStringArrayJson(value: unknown): string[] {
+	if (typeof value !== "string") {
+		return [];
+	}
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		if (!Array.isArray(parsed)) {
+			return [];
+		}
+		return parsed.filter((entry): entry is string => typeof entry === "string");
+	} catch {
+		return [];
+	}
+}
+
+function parseRecordJson(value: unknown): Record<string, unknown> {
+	if (typeof value !== "string") {
+		return {};
+	}
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return asRecord(parsed) ?? {};
+	} catch {
+		return {};
+	}
+}
+
+function contextItemFromIndexedRow(rowRaw: unknown): ContextItem | null {
+	const row = asRecord(rowRaw);
+	if (!row) {
+		return null;
+	}
+	const sourceKindRaw = nonEmptyString(row.source_kind);
+	if (!sourceKindRaw) {
+		return null;
+	}
+	const sourceKind = toContextSourceKind(sourceKindRaw);
+	if (!sourceKind) {
+		return null;
+	}
+	const id = nonEmptyString(row.item_id);
+	const sourcePath = nonEmptyString(row.source_path);
+	const repoRoot = nonEmptyString(row.repo_root);
+	const text = nonEmptyString(row.text);
+	const preview = nonEmptyString(row.preview);
+	if (!id || !sourcePath || !repoRoot || !text || !preview) {
+		return null;
+	}
+	return {
+		id,
+		ts_ms: asInt(row.ts_ms) ?? 0,
+		source_kind: sourceKind,
+		source_path: sourcePath,
+		source_line: asInt(row.source_line) ?? 0,
+		repo_root: repoRoot,
+		text,
+		preview,
+		issue_id: nonEmptyString(row.issue_id),
+		run_id: nonEmptyString(row.run_id),
+		session_id: nonEmptyString(row.session_id),
+		channel: nonEmptyString(row.channel),
+		channel_tenant_id: nonEmptyString(row.channel_tenant_id),
+		channel_conversation_id: nonEmptyString(row.channel_conversation_id),
+		actor_binding_id: nonEmptyString(row.actor_binding_id),
+		conversation_key: nonEmptyString(row.conversation_key),
+		topic: nonEmptyString(row.topic),
+		author: nonEmptyString(row.author),
+		role: nonEmptyString(row.role),
+		tags: parseStringArrayJson(row.tags_json),
+		metadata: parseRecordJson(row.metadata_json),
+	};
+}
+
+function sqlClauseForFilters(filters: SearchFilters): { clause: string; params: unknown[] } {
+	const clauses: string[] = [];
+	const params: unknown[] = [];
+	if (filters.sources && filters.sources.size > 0) {
+		const values = [...filters.sources];
+		clauses.push(`source_kind IN (${values.map(() => "?").join(",")})`);
+		params.push(...values);
+	}
+	if (filters.sinceMs != null) {
+		clauses.push("ts_ms >= ?");
+		params.push(filters.sinceMs);
+	}
+	if (filters.untilMs != null) {
+		clauses.push("ts_ms <= ?");
+		params.push(filters.untilMs);
+	}
+	if (filters.issueId) {
+		clauses.push("issue_id = ?");
+		params.push(filters.issueId);
+	}
+	if (filters.runId) {
+		clauses.push("run_id = ?");
+		params.push(filters.runId);
+	}
+	if (filters.sessionId) {
+		clauses.push("session_id = ?");
+		params.push(filters.sessionId);
+	}
+	if (filters.channel) {
+		clauses.push("channel = ?");
+		params.push(filters.channel);
+	}
+	if (filters.channelTenantId) {
+		clauses.push("channel_tenant_id = ?");
+		params.push(filters.channelTenantId);
+	}
+	if (filters.channelConversationId) {
+		clauses.push("channel_conversation_id = ?");
+		params.push(filters.channelConversationId);
+	}
+	if (filters.actorBindingId) {
+		clauses.push("actor_binding_id = ?");
+		params.push(filters.actorBindingId);
+	}
+	if (filters.topic) {
+		clauses.push("topic = ?");
+		params.push(filters.topic);
+	}
+	if (filters.author) {
+		clauses.push("author = ?");
+		params.push(filters.author);
+	}
+	if (filters.role) {
+		clauses.push("role = ?");
+		params.push(filters.role);
+	}
+	const clause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+	return { clause, params };
+}
+
+type FtsMatchResult =
+	| { kind: "ok"; ids: Set<string> }
+	| { kind: "truncated" }
+	| { kind: "error" };
+
+function ftsQueryFromText(query: string): string {
+	const tokens = tokenizeQuery(query);
+	if (tokens.length === 0) {
+		const escaped = query.replaceAll('"', '""');
+		return `"${escaped}"`;
+	}
+	return tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(" AND ");
+}
+
+function lookupFtsMatches(db: Database, query: string): FtsMatchResult {
+	const ftsQuery = ftsQueryFromText(query);
+	try {
+		const rows = db
+			.query("SELECT item_id FROM memory_fts WHERE memory_fts MATCH ? LIMIT ?")
+			.all(ftsQuery, INDEX_FTS_ROW_LIMIT) as unknown[];
+		if (rows.length >= INDEX_FTS_ROW_LIMIT) {
+			return { kind: "truncated" };
+		}
+		const ids = new Set<string>();
+		for (const rowRaw of rows) {
+			const row = asRecord(rowRaw);
+			const id = row ? nonEmptyString(row.item_id) : null;
+			if (id) {
+				ids.add(id);
+			}
+		}
+		return { kind: "ok", ids };
+	} catch {
+		return { kind: "error" };
+	}
+}
+
+function queryIndexedCandidates(db: Database, filters: SearchFilters): ContextItem[] | null {
+	const sqlFilter = sqlClauseForFilters(filters);
+	const sql = [
+		"SELECT",
+		"  item_id, ts_ms, source_kind, source_path, source_line, repo_root,",
+		"  text, preview, issue_id, run_id, session_id, channel,",
+		"  channel_tenant_id, channel_conversation_id, actor_binding_id, conversation_key,",
+		"  topic, author, role, tags_json, metadata_json",
+		"FROM memory_items",
+		sqlFilter.clause,
+		"ORDER BY ts_ms DESC, item_id ASC",
+		"LIMIT ?",
+	].join(" ");
+	const rows = db.query(sql).all(...(sqlFilter.params as any[]), INDEX_QUERY_ROW_LIMIT) as unknown[];
+	if (rows.length >= INDEX_QUERY_ROW_LIMIT) {
+		return null;
+	}
+	const items: ContextItem[] = [];
+	for (const row of rows) {
+		const item = contextItemFromIndexedRow(row);
+		if (item) {
+			items.push(item);
+		}
+	}
+	return items;
+}
+
+function readContextSearchFromIndex(opts: {
+	repoRoot: string;
+	filters: SearchFilters;
+}): ContextSearchResult | null {
+	const indexPath = contextIndexPath(opts.repoRoot);
+	if (!existsSync(indexPath)) {
+		return null;
+	}
+	let db: Database | null = null;
+	try {
+		db = new Database(indexPath, { readonly: true, create: false });
+		const baseItems = queryIndexedCandidates(db, opts.filters);
+		if (!baseItems) {
+			return null;
+		}
+		let candidates = baseItems;
+		if (opts.filters.query) {
+			const match = lookupFtsMatches(db, opts.filters.query);
+			if (match.kind === "truncated") {
+				return null;
+			}
+			if (match.kind === "ok") {
+				candidates = candidates.filter((item) => match.ids.has(item.id));
+			}
+		}
+		const ranked = searchContext(candidates, opts.filters);
+		const sliced = ranked.slice(0, opts.filters.limit);
+		return {
+			mode: "search",
+			repo_root: opts.repoRoot,
+			query: opts.filters.query,
+			count: sliced.length,
+			total: ranked.length,
+			items: sliced,
+		};
+	} catch {
+		return null;
+	} finally {
+		db?.close();
+	}
+}
+
+function readContextTimelineFromIndex(opts: {
+	repoRoot: string;
+	filters: TimelineFilters;
+}): ContextTimelineResult | null {
+	const indexPath = contextIndexPath(opts.repoRoot);
+	if (!existsSync(indexPath)) {
+		return null;
+	}
+	let db: Database | null = null;
+	try {
+		db = new Database(indexPath, { readonly: true, create: false });
+		const baseItems = queryIndexedCandidates(db, opts.filters);
+		if (!baseItems) {
+			return null;
+		}
+		let candidates = baseItems;
+		if (opts.filters.query) {
+			const match = lookupFtsMatches(db, opts.filters.query);
+			if (match.kind === "truncated") {
+				return null;
+			}
+			if (match.kind === "ok") {
+				candidates = candidates.filter((item) => match.ids.has(item.id));
+			}
+		}
+		const timeline = timelineContext(candidates, opts.filters);
+		const sliced = timeline.slice(0, opts.filters.limit);
+		return {
+			mode: "timeline",
+			repo_root: opts.repoRoot,
+			order: opts.filters.order,
+			count: sliced.length,
+			total: timeline.length,
+			items: sliced,
+		};
+	} catch {
+		return null;
+	} finally {
+		db?.close();
+	}
+}
+
+function readContextStatsFromIndex(opts: {
+	repoRoot: string;
+	filters: SearchFilters;
+}): ContextStatsResult | null {
+	const indexPath = contextIndexPath(opts.repoRoot);
+	if (!existsSync(indexPath)) {
+		return null;
+	}
+	let db: Database | null = null;
+	try {
+		db = new Database(indexPath, { readonly: true, create: false });
+		const items = queryIndexedCandidates(db, opts.filters);
+		if (!items) {
+			return null;
+		}
+		const filtered = items.filter((item) => matchSearchFilters(item, { ...opts.filters, query: null }));
+		const sources = buildSourceStats(filtered);
+		return {
+			mode: "stats",
+			repo_root: opts.repoRoot,
+			total_count: filtered.length,
+			total_text_bytes: filtered.reduce((sum, item) => sum + item.text.length, 0),
+			sources,
+		};
+	} catch {
+		return null;
+	} finally {
+		db?.close();
+	}
+}
+
+function parseMetaInt(db: Database, key: string): number | null {
+	const row = db.query("SELECT value FROM memory_meta WHERE key = ?").get(key) as unknown;
+	const rec = asRecord(row);
+	const valueRaw = rec ? nonEmptyString(rec.value) : null;
+	if (!valueRaw) {
+		return null;
+	}
+	const parsed = Number.parseInt(valueRaw, 10);
+	if (!Number.isFinite(parsed)) {
+		return null;
+	}
+	return parsed;
+}
+
+function ensureContextIndexSchema(db: Database): void {
+	db.exec(
+		[
+			"PRAGMA journal_mode = WAL;",
+			"PRAGMA synchronous = NORMAL;",
+			"CREATE TABLE IF NOT EXISTS memory_meta (",
+			"  key TEXT PRIMARY KEY,",
+			"  value TEXT NOT NULL",
+			");",
+			"CREATE TABLE IF NOT EXISTS memory_items (",
+			"  item_id TEXT PRIMARY KEY,",
+			"  ts_ms INTEGER NOT NULL,",
+			"  source_kind TEXT NOT NULL,",
+			"  source_path TEXT NOT NULL,",
+			"  source_line INTEGER NOT NULL,",
+			"  repo_root TEXT NOT NULL,",
+			"  text TEXT NOT NULL,",
+			"  preview TEXT NOT NULL,",
+			"  issue_id TEXT,",
+			"  run_id TEXT,",
+			"  session_id TEXT,",
+			"  channel TEXT,",
+			"  channel_tenant_id TEXT,",
+			"  channel_conversation_id TEXT,",
+			"  actor_binding_id TEXT,",
+			"  conversation_key TEXT,",
+			"  topic TEXT,",
+			"  author TEXT,",
+			"  role TEXT,",
+			"  tags_json TEXT NOT NULL,",
+			"  metadata_json TEXT NOT NULL",
+			");",
+			"CREATE INDEX IF NOT EXISTS idx_memory_items_ts ON memory_items(ts_ms DESC);",
+			"CREATE INDEX IF NOT EXISTS idx_memory_items_source_ts ON memory_items(source_kind, ts_ms DESC);",
+			"CREATE INDEX IF NOT EXISTS idx_memory_items_issue ON memory_items(issue_id);",
+			"CREATE INDEX IF NOT EXISTS idx_memory_items_run ON memory_items(run_id);",
+			"CREATE INDEX IF NOT EXISTS idx_memory_items_session ON memory_items(session_id);",
+			"CREATE INDEX IF NOT EXISTS idx_memory_items_channel ON memory_items(channel);",
+			"CREATE INDEX IF NOT EXISTS idx_memory_items_topic ON memory_items(topic);",
+			"CREATE INDEX IF NOT EXISTS idx_memory_items_author ON memory_items(author);",
+			"CREATE INDEX IF NOT EXISTS idx_memory_items_role ON memory_items(role);",
+			"CREATE TABLE IF NOT EXISTS source_state (",
+			"  source_kind TEXT NOT NULL,",
+			"  source_path TEXT NOT NULL,",
+			"  row_count INTEGER NOT NULL,",
+			"  mtime_ms INTEGER,",
+			"  size_bytes INTEGER,",
+			"  updated_at_ms INTEGER NOT NULL,",
+			"  PRIMARY KEY(source_kind, source_path)",
+			");",
+			"CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(",
+			"  item_id UNINDEXED,",
+			"  fulltext",
+			");",
+		].join("\n"),
+	);
+}
+
+function writeMeta(db: Database, key: string, value: string): void {
+	db
+		.query("INSERT INTO memory_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+		.run(key, value);
+}
+
+async function buildIndexSourceStateRows(repoRoot: string, items: ContextItem[]): Promise<
+	Array<{
+		source_kind: ContextSourceKind;
+		source_path: string;
+		row_count: number;
+		mtime_ms: number | null;
+		size_bytes: number | null;
+	}>
+> {
+	const rowsByKey = new Map<string, { source_kind: ContextSourceKind; source_path: string; row_count: number }>();
+	for (const item of items) {
+		const key = `${item.source_kind}\u0000${item.source_path}`;
+		const row = rowsByKey.get(key);
+		if (row) {
+			row.row_count += 1;
+			continue;
+		}
+		rowsByKey.set(key, {
+			source_kind: item.source_kind,
+			source_path: item.source_path,
+			row_count: 1,
+		});
+	}
+
+	const out: Array<{
+		source_kind: ContextSourceKind;
+		source_path: string;
+		row_count: number;
+		mtime_ms: number | null;
+		size_bytes: number | null;
+	}> = [];
+	for (const row of rowsByKey.values()) {
+		const absolutePath = join(repoRoot, row.source_path);
+		const stats = await stat(absolutePath).catch(() => null);
+		out.push({
+			...row,
+			mtime_ms: stats ? Math.trunc(stats.mtimeMs) : null,
+			size_bytes: stats ? Math.trunc(stats.size) : null,
+		});
+	}
+	out.sort((a, b) => {
+		if (a.source_kind !== b.source_kind) {
+			return a.source_kind.localeCompare(b.source_kind);
+		}
+		return a.source_path.localeCompare(b.source_path);
+	});
+	return out;
+}
+
+function readSourceSummariesFromIndex(db: Database): ContextIndexSourceSummary[] {
+	const rows = db
+		.query(
+			"SELECT source_kind, COUNT(*) AS count, IFNULL(SUM(LENGTH(text)), 0) AS text_bytes, IFNULL(MAX(ts_ms), 0) AS last_ts_ms FROM memory_items GROUP BY source_kind",
+		)
+		.all() as unknown[];
+	const out: ContextIndexSourceSummary[] = [];
+	for (const rowRaw of rows) {
+		const row = asRecord(rowRaw);
+		if (!row) {
+			continue;
+		}
+		const sourceKindRaw = nonEmptyString(row.source_kind);
+		if (!sourceKindRaw) {
+			continue;
+		}
+		const sourceKind = toContextSourceKind(sourceKindRaw);
+		if (!sourceKind) {
+			continue;
+		}
+		out.push({
+			source_kind: sourceKind,
+			count: asInt(row.count) ?? 0,
+			text_bytes: asInt(row.text_bytes) ?? 0,
+			last_ts_ms: asInt(row.last_ts_ms) ?? 0,
+		});
+	}
+	out.sort((a, b) => {
+		if (a.count !== b.count) {
+			return b.count - a.count;
+		}
+		return a.source_kind.localeCompare(b.source_kind);
+	});
+	return out;
+}
+
+async function staleSourcePathsFromIndex(repoRoot: string, db: Database): Promise<string[]> {
+	const rows = db
+		.query("SELECT source_path, mtime_ms, size_bytes FROM source_state ORDER BY source_path ASC")
+		.all() as unknown[];
+	const stale: string[] = [];
+	for (const rowRaw of rows) {
+		const row = asRecord(rowRaw);
+		if (!row) {
+			continue;
+		}
+		const sourcePath = nonEmptyString(row.source_path);
+		if (!sourcePath) {
+			continue;
+		}
+		const expectedMtime = asInt(row.mtime_ms);
+		const expectedSize = asInt(row.size_bytes);
+		const absolutePath = join(repoRoot, sourcePath);
+		const stats = await stat(absolutePath).catch(() => null);
+		const currentMtime = stats ? Math.trunc(stats.mtimeMs) : null;
+		const currentSize = stats ? Math.trunc(stats.size) : null;
+		if (expectedMtime !== currentMtime || expectedSize !== currentSize) {
+			stale.push(sourcePath);
+		}
+	}
+	return stale;
+}
+
+export async function runContextIndexStatus(opts: { repoRoot: string }): Promise<ContextIndexStatusResult> {
+	const indexPath = contextIndexPath(opts.repoRoot);
+	if (!existsSync(indexPath)) {
+		return {
+			mode: "index_status",
+			repo_root: opts.repoRoot,
+			index_path: indexPath,
+			exists: false,
+			schema_version: CONTEXT_INDEX_SCHEMA_VERSION,
+			built_at_ms: null,
+			total_count: 0,
+			total_text_bytes: 0,
+			source_count: 0,
+			stale_source_count: 0,
+			stale_source_paths: [],
+			sources: [],
+		};
+	}
+
+	const db = new Database(indexPath, { readonly: true, create: false });
+	try {
+		const totalsRow = asRecord(
+			db.query("SELECT COUNT(*) AS count, IFNULL(SUM(LENGTH(text)), 0) AS text_bytes FROM memory_items").get(),
+		);
+		const totalCount = totalsRow ? asInt(totalsRow.count) ?? 0 : 0;
+		const totalTextBytes = totalsRow ? asInt(totalsRow.text_bytes) ?? 0 : 0;
+		const sources = readSourceSummariesFromIndex(db);
+		const staleSourcePaths = await staleSourcePathsFromIndex(opts.repoRoot, db);
+		return {
+			mode: "index_status",
+			repo_root: opts.repoRoot,
+			index_path: indexPath,
+			exists: true,
+			schema_version: parseMetaInt(db, "schema_version") ?? CONTEXT_INDEX_SCHEMA_VERSION,
+			built_at_ms: parseMetaInt(db, "built_at_ms"),
+			total_count: totalCount,
+			total_text_bytes: totalTextBytes,
+			source_count: sources.length,
+			stale_source_count: staleSourcePaths.length,
+			stale_source_paths: staleSourcePaths.slice(0, 25),
+			sources,
+		};
+	} finally {
+		db.close();
+	}
+}
+
+export async function runContextIndexRebuild(opts: {
+	repoRoot: string;
+	search: URLSearchParams;
+}): Promise<ContextIndexRebuildResult> {
+	const startedAtMs = Date.now();
+	const requestedSources = parseSourceFilter(opts.search.get("sources") ?? opts.search.get("source"));
+	const items = await collectContextItems(opts.repoRoot, requestedSources);
+	const sourceStateRows = await buildIndexSourceStateRows(opts.repoRoot, items);
+
+	const indexPath = contextIndexPath(opts.repoRoot);
+	await mkdir(join(getStorePaths(opts.repoRoot).storeDir, "context"), { recursive: true });
+	const db = new Database(indexPath, { create: true });
+	try {
+		ensureContextIndexSchema(db);
+		db.exec("BEGIN IMMEDIATE");
+		try {
+			db.exec("DELETE FROM memory_items");
+			db.exec("DELETE FROM memory_fts");
+			db.exec("DELETE FROM source_state");
+
+			const insertItem = db.query(
+				[
+					"INSERT INTO memory_items (",
+					"  item_id, ts_ms, source_kind, source_path, source_line, repo_root,",
+					"  text, preview, issue_id, run_id, session_id, channel,",
+					"  channel_tenant_id, channel_conversation_id, actor_binding_id, conversation_key,",
+					"  topic, author, role, tags_json, metadata_json",
+					") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				].join("\n"),
+			);
+			const insertFts = db.query("INSERT INTO memory_fts (item_id, fulltext) VALUES (?, ?)");
+			for (const item of items) {
+				insertItem.run(
+					item.id,
+					item.ts_ms,
+					item.source_kind,
+					item.source_path,
+					item.source_line,
+					item.repo_root,
+					item.text,
+					item.preview,
+					item.issue_id,
+					item.run_id,
+					item.session_id,
+					item.channel,
+					item.channel_tenant_id,
+					item.channel_conversation_id,
+					item.actor_binding_id,
+					item.conversation_key,
+					item.topic,
+					item.author,
+					item.role,
+					JSON.stringify(item.tags),
+					JSON.stringify(item.metadata),
+				);
+				insertFts.run(item.id, contextIndexFtsText(item));
+			}
+
+			const insertSourceState = db.query(
+				"INSERT INTO source_state (source_kind, source_path, row_count, mtime_ms, size_bytes, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
+			);
+			const updatedAtMs = Date.now();
+			for (const row of sourceStateRows) {
+				insertSourceState.run(
+					row.source_kind,
+					row.source_path,
+					row.row_count,
+					row.mtime_ms,
+					row.size_bytes,
+					updatedAtMs,
+				);
+			}
+
+			writeMeta(db, "schema_version", String(CONTEXT_INDEX_SCHEMA_VERSION));
+			writeMeta(db, "built_at_ms", String(Date.now()));
+			writeMeta(db, "repo_root", opts.repoRoot);
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	} finally {
+		db.close();
+	}
+
+	const status = await runContextIndexStatus({ repoRoot: opts.repoRoot });
+	return {
+		mode: "index_rebuild",
+		repo_root: status.repo_root,
+		index_path: status.index_path,
+		exists: status.exists,
+		schema_version: status.schema_version,
+		built_at_ms: status.built_at_ms,
+		total_count: status.total_count,
+		total_text_bytes: status.total_text_bytes,
+		source_count: status.source_count,
+		stale_source_count: status.stale_source_count,
+		stale_source_paths: status.stale_source_paths,
+		sources: status.sources,
+		indexed_count: items.length,
+		duration_ms: Math.max(0, Date.now() - startedAtMs),
+		requested_sources: requestedSources ? [...requestedSources].sort((a, b) => a.localeCompare(b)) : null,
+	};
+}
+
 export type ContextSearchResult = {
 	mode: "search";
 	repo_root: string;
@@ -1372,6 +2097,10 @@ export async function runContextSearch(opts: {
 	search: URLSearchParams;
 }): Promise<ContextSearchResult> {
 	const filters = parseSearchFilters(contextUrlFromSearch(opts.search));
+	const indexed = readContextSearchFromIndex({ repoRoot: opts.repoRoot, filters });
+	if (indexed) {
+		return indexed;
+	}
 	const items = await collectContextItems(opts.repoRoot, filters.sources);
 	const ranked = searchContext(items, filters);
 	const sliced = ranked.slice(0, filters.limit);
@@ -1390,6 +2119,10 @@ export async function runContextTimeline(opts: {
 	search: URLSearchParams;
 }): Promise<ContextTimelineResult> {
 	const filters = parseTimelineFilters(contextUrlFromSearch(opts.search));
+	const indexed = readContextTimelineFromIndex({ repoRoot: opts.repoRoot, filters });
+	if (indexed) {
+		return indexed;
+	}
 	const items = await collectContextItems(opts.repoRoot, filters.sources);
 	const timeline = timelineContext(items, filters);
 	const sliced = timeline.slice(0, filters.limit);
@@ -1408,6 +2141,10 @@ export async function runContextStats(opts: {
 	search: URLSearchParams;
 }): Promise<ContextStatsResult> {
 	const filters = parseSearchFilters(contextUrlFromSearch(opts.search));
+	const indexed = readContextStatsFromIndex({ repoRoot: opts.repoRoot, filters });
+	if (indexed) {
+		return indexed;
+	}
 	const items = await collectContextItems(opts.repoRoot, filters.sources);
 	const filtered = items.filter((item) => matchSearchFilters(item, { ...filters, query: null }));
 	const sources = buildSourceStats(filtered);

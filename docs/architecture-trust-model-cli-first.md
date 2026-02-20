@@ -50,6 +50,7 @@ Read/query workflows are direct CLI commands:
 - `mu heartbeats list|get`
 - `mu cron stats|list|get`
 - `mu context search|timeline|stats`
+- `mu context index status|rebuild`
 - `mu control status|identities`
 
 Mutations are also direct CLI commands:

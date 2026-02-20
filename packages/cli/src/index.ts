@@ -12,7 +12,10 @@ import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
 import type { ModelOverrides } from "@femtomc/mu-orchestrator";
 import {
+	CONTEXT_SOURCE_KINDS,
 	ContextQueryValidationError,
+	runContextIndexRebuild,
+	runContextIndexStatus,
 	runContextSearch,
 	runContextStats,
 	runContextTimeline,
@@ -1087,12 +1090,25 @@ function renderContextPayloadCompact(payload: Record<string, unknown>): string {
 		const title = `${mode}: ${count} shown (total=${total})${q ? ` query=${JSON.stringify(truncateInline(q, 40))}` : ""}`;
 		return renderContextItemsCompact(items, title);
 	}
-	if (mode === "stats") {
+	if (mode === "stats" || mode === "index_status" || mode === "index_rebuild") {
 		const sources = asRecordArray(payload.sources);
-		const lines = [
-			`context stats: total_count=${recordInt(payload, "total_count") ?? 0} total_text_bytes=${recordInt(payload, "total_text_bytes") ?? 0}`,
-			`${"SOURCE".padEnd(22)} ${"COUNT".padStart(6)} ${"BYTES".padStart(10)} LAST`,
-		];
+		const heading =
+			mode === "stats"
+				? `context stats: total_count=${recordInt(payload, "total_count") ?? 0} total_text_bytes=${recordInt(payload, "total_text_bytes") ?? 0}`
+				: `context index: ${recordBool(payload, "exists") ? "ready" : "missing"} total_count=${recordInt(payload, "total_count") ?? 0} stale_sources=${recordInt(payload, "stale_source_count") ?? 0}`;
+		const lines = [heading];
+		if (mode !== "stats") {
+			const indexPath = recordString(payload, "index_path") ?? "-";
+			const builtAt = recordInt(payload, "built_at_ms") ?? 0;
+			lines.push(`index_path=${truncateInline(indexPath, 120)}`);
+			lines.push(`built=${builtAt > 0 ? `${formatTsIsoMinute(builtAt)} (${formatAgeShort(builtAt)})` : "never"}`);
+			if (mode === "index_rebuild") {
+				lines.push(
+					`rebuild: indexed_count=${recordInt(payload, "indexed_count") ?? 0} duration_ms=${recordInt(payload, "duration_ms") ?? 0}`,
+				);
+			}
+		}
+		lines.push(`${"SOURCE".padEnd(22)} ${"COUNT".padStart(6)} ${"BYTES".padStart(10)} LAST`);
 		if (sources.length === 0) {
 			lines.push("(no source stats)");
 			return `${lines.join("\n")}\n`;
@@ -1152,30 +1168,39 @@ function mainHelp(): string {
 		"",
 		h("Getting started:"),
 		`  ${dim("1)")} mu run ${dim('"Break down and execute this goal"')}`,
-		`  ${dim("2)")} mu status`,
-		`  ${dim("3)")} mu issues ready --root ${dim("<root-id>")}`,
+		`  ${dim("2)")} mu status --pretty`,
+		`  ${dim("3)")} mu issues ready --root ${dim("<root-id>")} --pretty`,
 		"",
-		h("Commands:"),
+		h("Agent quick navigation:"),
+		`  ${dim("Inspect:")}   ${cmd("mu status --pretty")}`,
+		`  ${dim("Work queue:")} ${cmd("mu issues ready --root <root-id> --tag role:worker --pretty")}`,
+		`  ${dim("Memory:")}    ${cmd("mu context search --query <text> --limit 20")}`,
+		`  ${dim("Index:")}     ${cmd("mu context index status")} ${dim("/ ")} ${cmd("mu context index rebuild")}`,
+		`  ${dim("Forensics:")} ${cmd("mu store tail events --limit 20")}`,
+		"",
+		h("Commands (grouped):"),
 		`  ${cmd("guide")}                                 ${dim("In-CLI guide")}`,
-		`  ${cmd("status")} ${dim("[--json] [--pretty]")}            Show repo and work status`,
-		`  ${cmd("store")} ${dim("<subcmd>")}                        Inspect workspace store files and logs`,
-		`  ${cmd("issues")} ${dim("<subcmd>")}                       Work item commands`,
-		`  ${cmd("forum")} ${dim("<subcmd>")}                        Coordination message commands`,
-		`  ${cmd("events")} ${dim("<subcmd>")}                       Event-log query commands`,
-		`  ${cmd("runs")} ${dim("<subcmd>")}                         Run queue + trace commands`,
+		`  ${cmd("status")} ${dim("[--json] [--pretty]")}            Repo + work summary`,
+		`  ${cmd("issues")} ${dim("<subcmd>")}                       Work-item lifecycle`,
+		`  ${cmd("forum")} ${dim("<subcmd>")}                        Coordination topics/messages`,
+		`  ${cmd("context")} ${dim("<subcmd>")}                      Cross-store memory (search/timeline/stats/index)`,
+		`  ${cmd("events")} ${dim("<subcmd>")}                       Event-log queries`,
+		`  ${cmd("run")} ${dim("<prompt...>")}                       Queue run + attach operator session`,
+		`  ${cmd("resume")} ${dim("<root-id>")}                      Resume a run`,
+		`  ${cmd("runs")} ${dim("<subcmd>")}                         Queued-run management + traces`,
 		`  ${cmd("heartbeats")} ${dim("<subcmd>")}                   Heartbeat program lifecycle`,
 		`  ${cmd("cron")} ${dim("<subcmd>")}                         Cron program lifecycle`,
-		`  ${cmd("context")} ${dim("<subcmd>")}                      Cross-store context search/timeline/stats`,
-		`  ${cmd("turn")} ${dim("[opts]")}                            Inject a prompt into an existing session`,
-		`  ${cmd("run")} ${dim("<prompt...>")}                       Queue a run and attach operator session`,
-		`  ${cmd("resume")} ${dim("<root-id>")}                      Resume a run`,
-		`  ${cmd("login")} ${dim("[<provider>] [--list]")}           Authenticate with an AI provider`,
-		`  ${cmd("replay")} ${dim("<id|path>")}                      Replay a previous run log`,
-		`  ${cmd("control")} ${dim("<subcmd>")}                      Messaging integrations and identity`,
+		`  ${cmd("control")} ${dim("<subcmd>")}                      Messaging integrations + identity`,
+		`  ${cmd("turn")} ${dim("[opts]")}                            Inject prompt into existing session transcript`,
 		`  ${cmd("session")} ${dim("[list|<id>] [opts]")}               Reconnect/list terminal operator sessions`,
 		`  ${cmd("serve")} ${dim("[--port N]")}                    Start API + operator session`,
-		`  ${cmd("stop")} ${dim("[--force]")}                        Stop the background server`,
+		`  ${cmd("stop")} ${dim("[--force]")}                        Stop background server`,
+		`  ${cmd("store")} ${dim("<subcmd>")}                        Inspect workspace store files/logs`,
+		`  ${cmd("replay")} ${dim("<id|path>")}                      Replay previous run log`,
+		`  ${cmd("login")} ${dim("[<provider>] [--list]")}           Authenticate with an AI provider`,
 		"",
+		`${h("Output defaults:")} compact-by-default for most read/mutation commands; add --json for full records.`,
+		`${dim("Run")} ${cmd("mu <command> --help")} ${dim("for command-specific options/examples.")}`,
 		`${dim("Running")} ${cmd("mu")} ${dim("with no arguments starts")} ${cmd("mu serve")}${dim(".")}`,
 		`${dim("Run")} ${cmd("mu guide")} ${dim("for the full in-CLI guide.")}`,
 	].join("\n");
@@ -3693,23 +3718,139 @@ async function cronEnableDisable(argv: string[], ctx: CliCtx, pretty: boolean, e
 	return ok(jsonText(req.payload, pretty));
 }
 
-async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-	if (argv0.length === 0 || hasHelpFlag(argv0)) {
+function contextHelpText(): string {
+	const sourceKinds = CONTEXT_SOURCE_KINDS.join(", ");
+	return (
+		[
+			"mu context - cross-store memory retrieval + index management",
+			"",
+			"Usage:",
+			"  mu context search [filters...] [--json] [--pretty]",
+			"  mu context timeline [filters...] [--order asc|desc] [--json] [--pretty]",
+			"  mu context stats [filters...] [--json] [--pretty]",
+			"  mu context index <status|rebuild> [opts] [--json] [--pretty]",
+			"",
+			"Common filters:",
+			"  --query/-q <text>                    Full-text query",
+			`  --source <kind> | --sources <csv>    Source filter (${sourceKinds})`,
+			"  --issue-id <id> --run-id <id>        Execution anchors",
+			"  --session-id <id>                     Operator/session anchor",
+			"  --conversation-key <key>              Conversation scope anchor",
+			"  --channel <name> --topic <topic>      Channel/forum anchors",
+			"  --author <name> --role <role>         Message-role filters",
+			"  --since <epoch-ms> --until <epoch-ms> Time window",
+			"  --limit <N>                           Result size (1..500, default 20)",
+			"",
+			"Timeline note:",
+			"  mu context timeline requires at least one anchor:",
+			"  --conversation-key | --issue-id | --run-id | --session-id | --topic | --channel",
+			"",
+			"Output mode:",
+			"  compact-by-default context summaries; add --json for full result payloads.",
+			"",
+			"Examples:",
+			"  mu context search --query reload --limit 20",
+			"  mu context timeline --issue-id mu-abc123 --order desc --limit 40",
+			"  mu context stats --source events --json --pretty",
+			"  mu context index status",
+			"  mu context index rebuild --sources issues,forum,events",
+		].join("\n") + "\n"
+	);
+}
+
+async function cmdContextIndex(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+	if (argv.length === 0 || hasHelpFlag(argv)) {
+		const sourceKinds = CONTEXT_SOURCE_KINDS.join(", ");
 		return ok(
 			[
-				"mu context - cross-store context search/timeline/stats",
+				"mu context index - manage local context memory index",
 				"",
 				"Usage:",
-				"  mu context <search|timeline|stats> [filters...] [--json] [--pretty]",
+				"  mu context index status [--json] [--pretty]",
+				"  mu context index rebuild [--source <kind> | --sources <csv>] [--json] [--pretty]",
 				"",
-				"Output mode:",
-				"  compact-by-default context summaries; add --json for full result payloads.",
+				"Rebuild filters:",
+				`  --source <kind>   Single source kind (${sourceKinds})`,
+				"  --sources <csv>   Comma-separated source kinds",
+				"",
+				"Notes:",
+				"  search/timeline/stats are index-first when this index exists,",
+				"  with automatic fallback to direct JSONL scans when index data is unavailable.",
+				"",
+				"Examples:",
+				"  mu context index status",
+				"  mu context index rebuild",
+				"  mu context index rebuild --sources issues,forum,events",
 			].join("\n") + "\n",
 		);
 	}
+	const sub = argv[0]!;
+	const rest0 = argv.slice(1);
+	if (sub !== "status" && sub !== "rebuild") {
+		return jsonError(`unknown subcommand: ${sub}`, {
+			pretty,
+			recovery: ["mu context index --help"],
+		});
+	}
+	const { value: sources, rest: argv1 } = getFlagValue(rest0, "--sources");
+	const { value: source, rest: argv2 } = getFlagValue(argv1, "--source");
+	const { present: jsonMode, rest: argv3 } = popFlag(argv2, "--json");
+	const { present: compact, rest: unknown } = popFlag(argv3, "--compact");
+	if (unknown.length > 0) {
+		return jsonError(`unknown args: ${unknown.join(" ")}`, {
+			pretty,
+			recovery: ["mu context index --help"],
+		});
+	}
+	if (sub === "status" && (sources || source)) {
+		return jsonError("--source/--sources are only supported for `mu context index rebuild`", {
+			pretty,
+			recovery: ["mu context index status", "mu context index rebuild --sources events,forum"],
+		});
+	}
+	const search = new URLSearchParams();
+	setSearchParamIfPresent(search, "sources", sources ?? null);
+	setSearchParamIfPresent(search, "source", source ?? null);
+	try {
+		if (sub === "status") {
+			const result = await runContextIndexStatus({ repoRoot: ctx.repoRoot });
+			if (!jsonMode || compact) {
+				return ok(renderContextPayloadCompact(result as unknown as Record<string, unknown>));
+			}
+			return ok(jsonText(result, pretty));
+		}
+		const result = await runContextIndexRebuild({ repoRoot: ctx.repoRoot, search });
+		if (!jsonMode || compact) {
+			return ok(renderContextPayloadCompact(result as unknown as Record<string, unknown>));
+		}
+		return ok(jsonText(result, pretty));
+	} catch (err) {
+		if (err instanceof ContextQueryValidationError) {
+			return jsonError(err.message, {
+				pretty,
+				recovery: ["mu context index rebuild --sources issues,forum,events"],
+			});
+		}
+		return jsonError(`context index ${sub} failed: ${describeError(err)}`, {
+			pretty,
+			recovery: ["mu context index --help"],
+		});
+	}
+}
+
+async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
+	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
+	if (argv0.length === 0) {
+		return ok(contextHelpText());
+	}
 	const sub = argv0[0]!;
 	const rest = argv0.slice(1);
+	if (sub === "index") {
+		return await cmdContextIndex(rest, ctx, pretty);
+	}
+	if (hasHelpFlag(argv0)) {
+		return ok(contextHelpText());
+	}
 	if (sub !== "search" && sub !== "timeline" && sub !== "stats") {
 		return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu context --help"] });
 	}

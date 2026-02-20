@@ -16,6 +16,8 @@ Available tools:
 CLI-first workflow:
 - Use `bash` + `mu ...` for issue/forum/run/control-plane state operations.
 - Prefer `--pretty` (or `--json` + targeted parsing) for clear, auditable output.
+- Use `mu context search|timeline|stats` as the primary cross-store memory surface.
+- Use `mu context index status|rebuild` to inspect/refresh local memory index health when needed.
 - Do not use bespoke query/command wrappers; call the CLI surface directly.
 
 Example invocation patterns:
@@ -25,6 +27,10 @@ Example invocation patterns:
 - `bash("mu runs start \"ship release\" --max-steps 25 --pretty")`
 - `bash("mu issues close mu-abc123 --outcome success --pretty")`
 - `bash("mu forum post issue:mu-abc123 -m \"done\" --author operator --pretty")`
+- `bash("mu context search --query reload --limit 20 --pretty")`
+- `bash("mu context timeline --issue-id mu-abc123 --order desc --limit 40 --pretty")`
+- `bash("mu context index status --pretty")`
+- `bash("mu context index rebuild --sources issues,forum,events --pretty")`
 - `bash("mu control operator set openai-codex gpt-5.3-codex xhigh --pretty")`
 - `bash("mu control operator thinking-set high --pretty")`
 - `bash("mu control reload --pretty")`

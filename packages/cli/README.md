@@ -42,6 +42,16 @@ mu resume <root-id>        # Resume interrupted run
 Most issue/forum/event/control-plane read surfaces now default to compact output.
 Use `--json` (optionally with `--pretty`) when you need full machine records.
 
+Context retrieval supports a local memory index:
+
+```bash
+mu context index status
+mu context index rebuild
+mu context search --query "reload" --limit 20
+```
+
+When the index exists, `mu context search|timeline|stats` run index-first with automatic fallback to direct JSONL scans.
+
 ### Programmatic API
 
 ```ts

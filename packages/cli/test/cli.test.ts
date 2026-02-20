@@ -109,6 +109,8 @@ test("mu --help", async () => {
 	expect(result.stdout.includes("serve")).toBe(true);
 	expect(result.stdout.includes("session")).toBe(true);
 	expect(result.stdout.includes("Getting started")).toBe(true);
+	expect(result.stdout.includes("Agent quick navigation")).toBe(true);
+	expect(result.stdout.includes("mu context index status")).toBe(true);
 });
 
 test("mu guide", async () => {
@@ -121,8 +123,25 @@ test("mu guide", async () => {
 	expect(result.stdout.includes("~/.mu/workspaces/")).toBe(true);
 	expect(result.stdout.includes("mu store <subcmd>")).toBe(true);
 	expect(result.stdout.includes("mu control diagnose-operator")).toBe(true);
+	expect(result.stdout.includes("Agent Navigation (by intent)")).toBe(true);
+	expect(result.stdout.includes("mu context index status")).toBe(true);
 	expect(result.stdout).toContain("Use direct CLI commands in chat (for example: mu control status, mu session list)");
 	expect(result.stdout).not.toContain("/mu-setup");
+});
+
+test("mu context help surfaces filters, timeline anchors, and index workflows", async () => {
+	const dir = await mkTempRepo();
+
+	const contextHelp = await run(["context", "--help"], { cwd: dir });
+	expect(contextHelp.exitCode).toBe(0);
+	expect(contextHelp.stdout).toContain("Common filters:");
+	expect(contextHelp.stdout).toContain("Timeline note:");
+	expect(contextHelp.stdout).toContain("mu context index <status|rebuild>");
+
+	const indexHelp = await run(["context", "index", "--help"], { cwd: dir });
+	expect(indexHelp.exitCode).toBe(0);
+	expect(indexHelp.stdout).toContain("Rebuild filters:");
+	expect(indexHelp.stdout).toContain("mu context index rebuild --sources issues,forum,events");
 });
 
 test("mu store paths/ls/tail provide workspace-store navigation tools", async () => {

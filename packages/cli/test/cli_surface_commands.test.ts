@@ -197,6 +197,99 @@ test("control-plane/context read interfaces default to compact output with opt-i
 	}
 });
 
+test("context index rebuild/status enables index-first query fallback when source files disappear", async () => {
+	const dir = await mkTempRepo();
+	const storeDir = getStorePaths(dir).storeDir;
+
+	try {
+		await writeFile(
+			join(storeDir, "issues.jsonl"),
+			`${JSON.stringify({
+				id: "mu-idx-1",
+				title: "Index bootstrap",
+				body: "index-only-token from issue",
+				status: "open",
+				tags: ["node:agent"],
+				priority: 2,
+				created_at: 1_700_000_100_000,
+				updated_at: 1_700_000_100_100,
+			})}\n`,
+			"utf8",
+		);
+		await writeFile(
+			join(storeDir, "forum.jsonl"),
+			`${JSON.stringify({
+				topic: "issue:mu-idx-1",
+				author: "worker",
+				body: "index-only-token from forum",
+				created_at: 1_700_000_100_200,
+			})}\n`,
+			"utf8",
+		);
+		await writeFile(
+			join(storeDir, "events.jsonl"),
+			`${JSON.stringify({
+				type: "control_plane.reload",
+				source: "control-plane",
+				issue_id: "mu-idx-1",
+				run_id: "mu-root-idx",
+				ts_ms: 1_700_000_100_300,
+				payload: { note: "index-only-token from events" },
+			})}\n`,
+			"utf8",
+		);
+
+		const statusBefore = await run(["context", "index", "status", "--json"], { cwd: dir });
+		expect(statusBefore.exitCode).toBe(0);
+		expect((JSON.parse(statusBefore.stdout) as { exists: boolean }).exists).toBe(false);
+
+		const rebuild = await run(["context", "index", "rebuild", "--json"], { cwd: dir });
+		expect(rebuild.exitCode).toBe(0);
+		const rebuildPayload = JSON.parse(rebuild.stdout) as {
+			mode: string;
+			exists: boolean;
+			indexed_count: number;
+		};
+		expect(rebuildPayload.mode).toBe("index_rebuild");
+		expect(rebuildPayload.exists).toBe(true);
+		expect(rebuildPayload.indexed_count).toBeGreaterThanOrEqual(3);
+
+		await rm(join(storeDir, "issues.jsonl"), { force: true });
+		await rm(join(storeDir, "forum.jsonl"), { force: true });
+		await rm(join(storeDir, "events.jsonl"), { force: true });
+
+		const search = await run(["context", "search", "--query", "index-only-token", "--json"], {
+			cwd: dir,
+		});
+		expect(search.exitCode).toBe(0);
+		const searchPayload = JSON.parse(search.stdout) as {
+			mode: string;
+			total: number;
+			items: Array<{ source_kind: string }>;
+		};
+		expect(searchPayload.mode).toBe("search");
+		expect(searchPayload.total).toBeGreaterThanOrEqual(1);
+		expect(searchPayload.items.some((item) => item.source_kind === "issues")).toBe(true);
+
+		const timeline = await run(["context", "timeline", "--issue-id", "mu-idx-1", "--json"], {
+			cwd: dir,
+		});
+		expect(timeline.exitCode).toBe(0);
+		expect((JSON.parse(timeline.stdout) as { total: number }).total).toBeGreaterThanOrEqual(1);
+
+		const statusAfter = await run(["context", "index", "status", "--json"], { cwd: dir });
+		expect(statusAfter.exitCode).toBe(0);
+		const statusAfterPayload = JSON.parse(statusAfter.stdout) as {
+			exists: boolean;
+			stale_source_count: number;
+		};
+		expect(statusAfterPayload.exists).toBe(true);
+		expect(statusAfterPayload.stale_source_count).toBeGreaterThanOrEqual(1);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("context search/timeline/stats use direct CLI runtime even when legacy /api/context routes 404", async () => {
 	const dir = await mkTempRepo();
 	const seen: string[] = [];

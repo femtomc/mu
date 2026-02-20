@@ -19,6 +19,8 @@ Workflow:
 1. Inspect:
    - `bash("mu issues get <id> --pretty")`
    - `bash("mu forum read issue:<id> --limit 20 --pretty")`
+   - `bash("mu context search --query <keywords> --issue-id <id> --limit 20 --pretty")`
+   - `bash("mu context timeline --issue-id <id> --order desc --limit 40 --pretty")`
 2. Verify:
    - Re-run relevant tests/checks, inspect changed files/logs.
 3. Decide:
