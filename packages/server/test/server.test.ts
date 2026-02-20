@@ -925,8 +925,8 @@ describe("mu-server", () => {
 		expect(decisionPayload.dedupe_key).toBe(`heartbeat-program:${heartbeatProgramId}`);
 		expect(decisionPayload.wake_turn_mode).toBe("active");
 		expect(decisionPayload.wake_turn_feature_enabled).toBe(true);
-		expect(decisionPayload.outcome).toBe("triggered");
-		expect(decisionPayload.reason).toBe("turn_invoked");
+		expect(decisionPayload.wake_turn_outcome).toBe("triggered");
+		expect(decisionPayload.wake_turn_reason).toBe("turn_invoked");
 		expect(decisionPayload.turn_result_kind).toBe("operator_response");
 		expect(typeof decisionPayload.wake_id).toBe("string");
 		expect((decisionPayload.wake_id as string).length).toBe(16);
@@ -948,8 +948,8 @@ describe("mu-server", () => {
 			throw new Error("expected wake payload");
 		}
 		expect(wakePayload.wake_id).toBe(decisionPayload.wake_id);
-		expect(wakePayload.decision_outcome).toBe("triggered");
-		expect(wakePayload.decision_reason).toBe("turn_invoked");
+		expect(wakePayload.wake_turn_outcome).toBe("triggered");
+		expect(wakePayload.wake_turn_reason).toBe("turn_invoked");
 		expect(wakePayload.turn_request_id).toBe(decisionPayload.turn_request_id);
 		expect(wakePayload.turn_result_kind).toBe("operator_response");
 	});
@@ -1163,11 +1163,11 @@ describe("mu-server", () => {
 			wake_turn_reason: "turn_invoked",
 		});
 
-		expect(decisionPayload.outcome).toBe("triggered");
-		expect(decisionPayload.reason).toBe("turn_invoked");
+		expect(decisionPayload.wake_turn_outcome).toBe("triggered");
+		expect(decisionPayload.wake_turn_reason).toBe("turn_invoked");
 		expect(decisionPayload.wake_turn_mode).toBe("active");
-		expect(wakePayload.decision_outcome).toBe("triggered");
-		expect(wakePayload.decision_reason).toBe("turn_invoked");
+		expect(wakePayload.wake_turn_outcome).toBe("triggered");
+		expect(wakePayload.wake_turn_reason).toBe("turn_invoked");
 		expect(wakePayload.delivery_summary_v2).toEqual({ queued: 1, duplicate: 0, skipped: 1, total: 2 });
 		expect(wakePayload.delivery).toEqual({ queued: 1, duplicate: 0, skipped: 1 });
 	});
@@ -1252,8 +1252,8 @@ describe("mu-server", () => {
 		if (!decisionPayload) {
 			throw new Error("expected fallback wake decision");
 		}
-		expect(decisionPayload.outcome).toBe("fallback");
-		expect(decisionPayload.reason).toBe("control_plane_unavailable");
+		expect(decisionPayload.wake_turn_outcome).toBe("fallback");
+		expect(decisionPayload.wake_turn_reason).toBe("control_plane_unavailable");
 		expect(decisionPayload.wake_turn_mode).toBe("active");
 		expect(decisionPayload.wake_turn_feature_enabled).toBe(true);
 
@@ -1273,8 +1273,8 @@ describe("mu-server", () => {
 		if (!wakePayload) {
 			throw new Error("expected fallback wake payload");
 		}
-		expect(wakePayload.decision_outcome).toBe("fallback");
-		expect(wakePayload.decision_reason).toBe("control_plane_unavailable");
+		expect(wakePayload.wake_turn_outcome).toBe("fallback");
+		expect(wakePayload.wake_turn_reason).toBe("control_plane_unavailable");
 	});
 
 	test("activity management APIs support generic long-running tasks", async () => {
