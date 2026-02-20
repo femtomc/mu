@@ -43,5 +43,10 @@ describe("bundled default prompts", () => {
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT.startsWith(base)).toBe(true);
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("Mu documentation (for mu feature/configuration/setup questions):");
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("- Read these when users ask about mu capabilities");
+		expect(
+			DEFAULT_OPERATOR_SYSTEM_PROMPT.includes("- Package READMEs:") ||
+				DEFAULT_OPERATOR_SYSTEM_PROMPT.includes("- Package README paths unavailable at runtime."),
+		).toBe(true);
+		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).not.toContain("/path/to/README.md");
 	});
 });

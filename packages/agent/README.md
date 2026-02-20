@@ -82,6 +82,6 @@ There is no dedicated `query(...)` vs `command(...)` wrapper boundary in this pa
 
 ## Control-plane config notes
 
-- Runtime config source of truth is `.mu/config.json`.
+- Runtime config source of truth is `<store>/config.json` (resolve with `mu store paths`).
 - Inspect runtime state via CLI (`mu control status`, `mu status`).
 - Apply control-plane lifecycle mutations via CLI (`mu control reload`, `mu control update`).

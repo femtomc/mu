@@ -7,7 +7,7 @@ It talks to the same control-plane channel pipeline as Slack/Discord/Telegram vi
 
 ## Features
 
-- Server discovery from `.mu/control-plane/server.json`
+- Server discovery from `<store>/control-plane/server.json`
 - Capability discovery from `GET /api/control-plane/channels`
 - Identity bootstrap via `POST /api/control-plane/identities/link`
 - Command ingress via `POST /webhooks/neovim`
@@ -34,7 +34,7 @@ With `lazy.nvim` in this monorepo checkout:
       shared_secret = vim.env.MU_NEOVIM_SHARED_SECRET,
 
       -- optional overrides
-      server_url = nil, -- defaults to .mu/control-plane/server.json
+      server_url = nil, -- defaults to <store>/control-plane/server.json
       enable_mu_alias = true, -- lets `:mu` expand to `:Mu`
       auto_link_identity = true,
 
@@ -57,7 +57,7 @@ With `lazy.nvim` in this monorepo checkout:
 
 ## Server setup
 
-Set a Neovim shared secret in `.mu/config.json`:
+Set a Neovim shared secret in `<store>/config.json` (resolve `<store>` with `mu store paths`):
 
 ```json
 {

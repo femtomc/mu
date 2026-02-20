@@ -77,7 +77,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"Examples:",
 					"  mu control status",
 					"  mu control identities --all",
-					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id bot",
+					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot",
 					"  mu control operator models",
 					"  mu control operator set <provider> <model> <thinking>",
 					"  mu control reload",
@@ -409,7 +409,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"  viewer        Read-only",
 					"",
 					"Examples:",
-					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id bot",
+					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot",
 					"  mu control link --channel slack --actor-id U123 --tenant-id T123 --role contributor",
 					"  mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id> --scope issue:write",
 				].join("\n") + "\n",
@@ -434,7 +434,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		if (channel !== "slack" && channel !== "discord" && channel !== "telegram") {
 			return jsonError(`invalid channel: ${channel} (slack, discord, telegram)`, {
 				pretty,
-				recovery: ["mu control link --channel telegram --actor-id 123 --tenant-id bot"],
+				recovery: ["mu control link --channel telegram --actor-id 123 --tenant-id telegram-bot"],
 			});
 		}
 		if (!actorId) {

@@ -29,6 +29,8 @@ const server = createServerFromRuntime(runtime, {
 Bun.serve(server);
 ```
 
+Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace.
+
 ## API Endpoints
 
 ### Health Check
@@ -76,8 +78,8 @@ Bun.serve(server);
 
 ### Config + Control Plane Admin
 
-- `GET /api/control-plane/config` - Read redacted `.mu/config.json` plus presence booleans
-- `POST /api/control-plane/config` - Apply a partial patch to `.mu/config.json`
+- `GET /api/control-plane/config` - Read redacted `<store>/config.json` plus presence booleans
+- `POST /api/control-plane/config` - Apply a partial patch to `<store>/config.json`
   - Body:
   ```json
   {
@@ -95,7 +97,7 @@ Bun.serve(server);
   }
   ```
 - `POST /api/control-plane/reload` - Trigger generation-scoped control-plane hot reload
-  - Re-reads current config from `.mu/config.json` and executes warmup/cutover/drain/rollback flow
+  - Re-reads current config from `<store>/config.json` and executes warmup/cutover/drain/rollback flow
   - Coalesces concurrent requests onto a single in-flight attempt
   - Body (optional):
   ```json
@@ -143,6 +145,39 @@ Bun.serve(server);
   - `GET /api/control-plane/events`
   - `GET /api/control-plane/events/tail`
 
+## Messaging adapter setup (workspace config)
+
+1) Resolve workspace paths and inspect current readiness:
+
+```bash
+mu store paths --pretty
+mu control status --pretty
+```
+
+2) Edit `<store>/config.json` and set adapter secrets:
+
+- Slack: `control_plane.adapters.slack.signing_secret`
+- Discord: `control_plane.adapters.discord.signing_secret`
+- Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`, `bot_username`
+- Neovim: `control_plane.adapters.neovim.shared_secret`
+
+3) Reload live control-plane runtime:
+
+```bash
+mu control reload
+# or POST /api/control-plane/reload
+```
+
+4) Link identities for channel actors (examples):
+
+```bash
+mu control link --channel slack --actor-id U123 --tenant-id T123
+mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id>
+mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot
+```
+
+For Neovim, use `:Mu link` in `mu.nvim` after configuring `shared_secret`.
+
 ## Running the Server
 
 ### With terminal operator session (recommended)
@@ -155,7 +190,7 @@ mu serve              # API + terminal operator session
 mu serve --port 8080  # Custom API/operator port
 ```
 
-Type `/exit` (or press Ctrl+C) to stop both the operator session and server.
+Type `/exit`, Ctrl+D, or Ctrl+C to leave the operator session. The server keeps running; use `mu stop` when you want to shut it down.
 
 ### Standalone Server
 
@@ -163,7 +198,7 @@ Type `/exit` (or press Ctrl+C) to stop both the operator session and server.
 # Install globally
 bun install -g @femtomc/mu-server
 
-# Run server (looks for .mu/ in current directory or ancestors)
+# Run server (derives workspace store from current repo root)
 mu-server
 
 # Or set custom port
@@ -201,4 +236,4 @@ The server uses:
 - Control-plane adapter/webhook transport + session coordination routes
 - Generation-supervised control-plane hot reload lifecycle (see `docs/adr-0001-control-plane-hot-reload.md`)
 
-Control-plane/coordination data is persisted to `.mu/` (for example `.mu/events.jsonl` and `.mu/control-plane/*`).
+Control-plane/coordination data is persisted under `<store>/` (for example `<store>/events.jsonl` and `<store>/control-plane/*`). Use `mu store paths` to resolve `<store>` for your repo.

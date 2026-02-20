@@ -27,7 +27,7 @@ packages/cli/dist/cli.js --help
 ### CLI Commands
 
 ```bash
-mu serve                   # Start server + terminal operator session (auto-inits .mu)
+mu serve                   # Start server + terminal operator session (auto-inits workspace store)
 mu session                 # Reconnect to latest persisted operator session
 mu session list            # List persisted operator sessions for this repo
 mu status                  # Show repository status
@@ -35,7 +35,7 @@ mu issues list             # List all issues
 mu issues create "title"   # Create new issue
 mu issues ready            # Show ready leaf issues
 mu forum post topic -m "message"  # Post to forum
-mu run "goal..."           # Run orchestration loop (auto-inits .mu)
+mu run "goal..."           # Queue a run + attach operator terminal (auto-inits workspace store)
 mu resume <root-id>        # Resume interrupted run
 ```
 
@@ -73,20 +73,45 @@ mu serve              # Default port: 3000 (operator session)
 mu serve --port 8080  # Custom port
 ```
 
-Type `/exit` in the operator prompt (or press Ctrl+C) to stop both operator session and server.
+Type `/exit`, Ctrl+D, or Ctrl+C to leave the operator session. The server keeps running in the background; use `mu stop` to shut it down.
 
 In headless environments, use SSH port forwarding as needed.
 
 ### Operator session defaults
 
-`mu serve`'s attached terminal operator session inherits `.mu/config.json` defaults
+`mu serve`'s attached terminal operator session inherits `<store>/config.json` defaults
 from `control_plane.operator.provider/model` when present. The session uses generic
 tools and invokes `mu` CLI commands directly for reads and mutations.
 
-By default, operator sessions are persisted under `.mu/operator/sessions`, and
+By default, operator sessions are persisted under `<store>/operator/sessions`, and
 `mu session` reconnects to the latest persisted session.
 
-Use `mu control status` to inspect current config-driven control-plane/operator state.
+Use `mu store paths` to resolve `<store>`, and `mu control status` to inspect current
+config-driven control-plane/operator state.
+
+### Messaging setup quick reference
+
+```bash
+# 1) Inspect adapter readiness + config path
+mu control status --pretty
+
+# 2) Configure adapter secrets in <store>/config.json
+mu store paths --pretty
+
+# 3) Reload adapters
+mu control reload
+
+# 4) Link identities (examples)
+mu control link --channel slack --actor-id U123 --tenant-id T123
+mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id>
+mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot
+```
+
+For Telegram delivery, `control_plane.adapters.telegram.bot_token` must be set in
+`<store>/config.json` so outbox messages can be sent by the bot.
+
+For Neovim, configure `control_plane.adapters.neovim.shared_secret` and use `:Mu link`
+from `mu.nvim`.
 
 ## Tests / Typecheck
 
@@ -100,4 +125,4 @@ bun run typecheck
 ## Runtime
 
 - **Bun runtime** (ESM).
-- Reads/writes a `.mu/` store at the git repo root.
+- Reads/writes workspace-scoped state under `~/.mu/workspaces/<workspace-id>/` (or `$MU_HOME/workspaces/<workspace-id>/`).

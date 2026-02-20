@@ -459,7 +459,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"  1) Check control-plane + adapter config",
 					"       mu control status",
 					"  2) Link your Telegram identity",
-					"       mu control link --channel telegram --actor-id <chat-id> --tenant-id bot",
+					"       mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot",
 					"  3) Create heartbeat",
 					"       mu heartbeats create --title \"Telegram heartbeat\" --prompt \"Review open issues and post next actions\" --every-ms 300000 --reason telegram_heartbeat",
 					"  4) Validate + smoke test",
@@ -613,7 +613,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"",
 					"Telegram prerequisites:",
 					"  mu control status",
-					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id bot",
+					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot",
 				].join("\n") + "\n",
 			);
 		}

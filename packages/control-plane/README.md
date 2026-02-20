@@ -11,6 +11,29 @@ Control-plane command pipeline for messaging ingress, policy/confirmation safety
 
 All adapters normalize inbound commands into the same control-plane pipeline and preserve correlation across command journal and outbox delivery.
 
+## Runtime setup checklist
+
+Use `mu store paths --pretty` to resolve `<store>`, then configure `<store>/config.json`:
+
+- `control_plane.adapters.slack.signing_secret`
+- `control_plane.adapters.discord.signing_secret`
+- `control_plane.adapters.telegram.webhook_secret`
+- `control_plane.adapters.telegram.bot_token`
+- `control_plane.adapters.telegram.bot_username`
+- `control_plane.adapters.neovim.shared_secret`
+
+After config changes, run `mu control reload` (or `POST /api/control-plane/reload`).
+
+Identity binding examples:
+
+```bash
+mu control link --channel slack --actor-id U123 --tenant-id T123
+mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id>
+mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot
+```
+
+`mu control link` is currently for Slack/Discord/Telegram. For Neovim, use `:Mu link` from `mu.nvim`.
+
 ## Adapter contract (v1)
 
 Adapter integration points are now explicitly specified in code (`adapter_contract.ts`):
@@ -25,6 +48,13 @@ Built-in specs are exported for each first-platform adapter:
 - `DiscordControlPlaneAdapterSpec`
 - `TelegramControlPlaneAdapterSpec`
 - `NeovimControlPlaneAdapterSpec`
+
+Default routes + verification contracts:
+
+- Slack: `POST /webhooks/slack` with `x-slack-signature` + `x-slack-request-timestamp`
+- Discord: `POST /webhooks/discord` with `x-discord-signature` + `x-discord-request-timestamp`
+- Telegram: `POST /webhooks/telegram` with `x-telegram-bot-api-secret-token`
+- Neovim: `POST /webhooks/neovim` with `x-mu-neovim-secret`
 
 This keeps adapter behavior consistent and makes it easier to add new surfaces without changing core pipeline semantics.
 
@@ -72,7 +102,7 @@ Unsafe or ambiguous requests are rejected with explicit reasons (`context_missin
 
 `frontend_client_contract.ts` + `frontend_client.ts` expose typed helpers for first-party editor clients:
 
-- server discovery (`.mu/control-plane/server.json`)
+- server discovery (`<store>/control-plane/server.json`)
 - channel capability fetch (`/api/control-plane/channels`)
 - identity link bootstrap (`/api/control-plane/identities/link`)
 - frontend ingress submission (`/webhooks/neovim`)

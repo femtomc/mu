@@ -21,6 +21,3 @@ Using `mu`:
 - Use `mu memory index status|rebuild` to inspect/refresh local memory index health when needed.
 - Use `mu heartbeats` and `mu cron` to access persistent scheduled processes that broadcast to the user.
 
-Documentation:
-- Your own documentation (including custom model setup and theme creation) is at: /path/to/README.md
-- Read it when users ask about features, configuration, or setup.

@@ -84,11 +84,11 @@ you can customize the behavior of `mu` as you would any other agent.
 npm install -g @femtomc/mu
 cd /path/to/your/repo
 
-mu run "build the thing"  # initialize workspace store + root issue + start orchestration
-mu serve         # start server + terminal operator
-mu status        # show DAG state (CLI)
-mu issues create "build the thing" --body "details here" --pretty
-mu issues ready  # show executable leaf issues
+mu run "build the thing"     # Queue a run + start server + attach operator
+mu serve                    # Start server + terminal operator session
+mu status --pretty          # Show DAG state
+mu issues list --status open --limit 20 --pretty
+mu issues ready --pretty    # Show executable leaf issues
 mu forum post research:topic -m "found something" --author worker
 ```
 
@@ -197,6 +197,52 @@ Operator terminal: connected
 
 Business state reads/mutations are CLI-first (`mu issues ...`, `mu forum ...`, `mu memory ...`).
 
+### Messaging service setup (Slack/Discord/Telegram/Neovim)
+
+Use this baseline flow for all channel adapters:
+
+```bash
+# 1) Resolve workspace store paths + config location
+mu store paths --pretty
+
+# 2) Inspect current adapter readiness
+mu control status --pretty
+
+# 3) Edit <store>/config.json with adapter secrets (see below)
+# 4) Apply config changes live
+mu control reload
+
+# 5) Link identities for channel actors
+mu control link --channel slack --actor-id U123 --tenant-id T123
+mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id>
+mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot
+```
+
+Adapter config keys in `<store>/config.json`:
+
+- Slack: `control_plane.adapters.slack.signing_secret`
+- Discord: `control_plane.adapters.discord.signing_secret`
+- Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`, `bot_username`
+- Neovim: `control_plane.adapters.neovim.shared_secret`
+
+Default ingress routes:
+
+- Slack: `POST /webhooks/slack`
+- Discord: `POST /webhooks/discord`
+- Telegram: `POST /webhooks/telegram`
+- Neovim: `POST /webhooks/neovim`
+
+Telegram webhook registration example (Bot API):
+
+```bash
+curl -sS -X POST "https://api.telegram.org/bot<bot_token>/setWebhook" \
+  -d "url=https://<public-host>/webhooks/telegram" \
+  -d "secret_token=<webhook_secret>"
+```
+
+`mu control link` currently covers Slack/Discord/Telegram. For Neovim identity binding, use
+`:Mu link` from `mu.nvim` after configuring `shared_secret`.
+
 ## Packages
 
 | Package | Description |
@@ -210,6 +256,10 @@ Business state reads/mutations are CLI-first (`mu issues ...`, `mu forum ...`, `
 | [`@femtomc/mu`](packages/cli/README.md) | Bun CLI wrapping the above into `mu` commands. |
 | [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — control-plane transport/session/realtime plus run/activity coordination and heartbeat/cron operator-wake scheduling for `mu serve` and channel adapters. |
 | [`mu.nvim`](packages/neovim/README.md) | First-party Neovim frontend channel (`:Mu`, optional `:mu` alias) for control-plane ingress. |
+
+When `mu` is installed from npm, package READMEs are available under the install tree
+(for example `<mu-install>/node_modules/@femtomc/mu-control-plane/README.md`).
+The operator prompt now injects absolute runtime paths for these package READMEs.
 
 ## Development
 
