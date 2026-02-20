@@ -12,6 +12,7 @@ import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
 import type { ModelOverrides } from "@femtomc/mu-orchestrator";
 import { cmdControl as cmdControlCommand } from "./commands/control.js";
+import { cmdReplay as cmdReplayCommand } from "./commands/replay.js";
 import { cmdStore as cmdStoreCommand } from "./commands/store.js";
 import { cmdStatus as cmdStatusCommand } from "./commands/status.js";
 import {
@@ -3162,88 +3163,18 @@ async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return { stdout: out, stderr: "", exitCode };
 }
 
+function replayCommandDeps() {
+	return {
+		hasHelpFlag,
+		getFlagValue,
+		jsonError,
+		ok,
+		fileExists,
+	};
+}
+
 async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	if (argv.length === 0 || hasHelpFlag(argv)) {
-		return ok(
-			[
-				"mu replay - replay a logged run",
-				"",
-				"Usage:",
-				"  mu replay <issue-id|path> [--backend pi]",
-				"",
-				"See also: `mu guide`",
-			].join("\n") + "\n",
-		);
-	}
-
-	const target = argv[0]!;
-	const { value: backend, rest } = getFlagValue(argv.slice(1), "--backend");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { recovery: ["mu replay --help"] });
-	}
-	if (backend && backend !== "pi") {
-		return jsonError(`unsupported backend: ${backend} (only pi is supported)`, {
-			recovery: ["mu replay --backend pi <id>"],
-		});
-	}
-
-	const logsDir = ctx.paths.logsDir;
-	let path = resolve(ctx.cwd, target);
-	if (!(await fileExists(path))) {
-		// Search in subdirectories organized by root issue ID
-		const allMatches: { rootId: string; filename: string; fullPath: string }[] = [];
-
-		try {
-			// First check if target is a direct path within a root directory
-			const parts = target.split("/");
-			if (parts.length === 2) {
-				const [rootId, filename] = parts;
-				const candidate = join(logsDir, rootId, filename.endsWith(".jsonl") ? filename : `${filename}.jsonl`);
-				if (await fileExists(candidate)) {
-					path = candidate;
-				}
-			}
-
-			// If not found, search all root directories
-			if (!path || !(await fileExists(path))) {
-				const rootDirs = await readdir(logsDir);
-
-				for (const rootId of rootDirs) {
-					const rootPath = join(logsDir, rootId);
-					const stat = await Bun.file(rootPath).stat();
-					if (!stat.isDirectory()) continue;
-
-					const files = await readdir(rootPath);
-					// Exact match
-					if (files.includes(`${target}.jsonl`)) {
-						allMatches.push({ rootId, filename: `${target}.jsonl`, fullPath: join(rootPath, `${target}.jsonl`) });
-					}
-					// Prefix match
-					const prefixMatches = files.filter((f) => f.startsWith(target) && f.endsWith(".jsonl"));
-					for (const match of prefixMatches) {
-						allMatches.push({ rootId, filename: match, fullPath: join(rootPath, match) });
-					}
-				}
-			}
-		} catch {
-			// Ignore errors reading directories
-		}
-
-		if (allMatches.length === 1) {
-			path = allMatches[0]!.fullPath;
-		} else if (allMatches.length > 1) {
-			return jsonError(`ambiguous prefix '${target}'`, {
-				recovery: allMatches
-					.slice(0, 10)
-					.map((m) => `mu replay ${m.rootId}/${m.filename.replace(/\\.jsonl$/, "")}`),
-			});
-		} else if (!path || !(await fileExists(path))) {
-			return jsonError(`log not found: ${target}`, { recovery: ["mu status", "mu store paths"] });
-		}
-	}
-
-	const text = await Bun.file(path).text();
-	return ok(text.length > 0 && !text.endsWith("\n") ? `${text}\n` : text);
+	return await cmdReplayCommand(argv, ctx, replayCommandDeps());
 }
 
 type PersistedOperatorSessionRow = {
