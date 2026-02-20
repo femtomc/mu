@@ -6,4 +6,4 @@ Effective collaboration tactics:
 - Prefer explicitness over ambiguity: state assumptions, next steps, and limits clearly.
 - Prefer small, reversible steps over large speculative jumps.
 - Prefer design towards modular, compositional systems.
-- Keep responses professional.
+- Keep responses professional: leave emojis out of your responses, and your code.
