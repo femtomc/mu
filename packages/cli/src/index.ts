@@ -12,6 +12,7 @@ import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
 import type { ModelOverrides } from "@femtomc/mu-orchestrator";
 import { cmdControl as cmdControlCommand } from "./commands/control.js";
+import { cmdOperatorSession as cmdOperatorSessionCommand } from "./commands/operator_session.js";
 import { cmdReplay as cmdReplayCommand } from "./commands/replay.js";
 import { cmdResume as cmdResumeCommand } from "./commands/resume.js";
 import { cmdRun as cmdRunCommand } from "./commands/run.js";
@@ -2559,168 +2560,24 @@ async function cmdSession(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await cmdSessionCommand(argv, ctx, sessionCommandDeps());
 }
 
+function operatorSessionCommandDeps() {
+	return {
+		hasHelpFlag,
+		popFlag,
+		getFlagValue,
+		jsonError,
+		jsonText,
+		ok,
+		defaultOperatorSessionStart,
+	};
+}
+
 async function cmdOperatorSession(
 	argv: string[],
 	ctx: CliCtx,
 	options: OperatorSessionCommandOptions = {},
 ): Promise<RunResult> {
-	if (hasHelpFlag(argv)) {
-		return ok(
-			[
-				"mu serve - operator session (server + terminal)",
-				"",
-				"Usage:",
-				"  mu serve [--port N] [--provider ID] [--model ID] [--thinking LEVEL]",
-				"",
-				"Options:",
-				"  --port N               Server port (default: 3000)",
-				"  --provider ID          LLM provider for operator session",
-				"  --model ID             Model ID (default: gpt-5.3-codex)",
-				"  --thinking LEVEL       Thinking level (minimal|low|medium|high)",
-				"",
-				"Examples:",
-				"  mu serve",
-				"  mu serve --port 8080",
-				"",
-				"See also: `mu guide`, `mu control status`",
-			].join("\n") + "\n",
-		);
-	}
-
-	const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
-	const { value: messageLong, rest: argv1 } = getFlagValue(argv0, "--message");
-	const { value: messageShort, rest: argv2 } = getFlagValue(argv1, "-m");
-	const { value: providerRaw, rest: argv3 } = getFlagValue(argv2, "--provider");
-	const { value: modelRaw, rest: argv4 } = getFlagValue(argv3, "--model");
-	const { value: thinkingRaw, rest: argv5 } = getFlagValue(argv4, "--thinking");
-	const { value: systemPromptRaw, rest } = getFlagValue(argv5, "--system-prompt");
-
-	for (const [flagName, rawValue] of [
-		["--message", messageLong],
-		["-m", messageShort],
-		["--provider", providerRaw],
-		["--model", modelRaw],
-		["--thinking", thinkingRaw],
-		["--system-prompt", systemPromptRaw],
-	] as const) {
-		if (rawValue === "") {
-			return jsonError(`missing value for ${flagName}`, {
-				recovery: ["mu serve --help"],
-			});
-		}
-	}
-
-	let message = messageLong ?? messageShort;
-	if (message != null && message.trim().length === 0) {
-		return jsonError("message must not be empty", {
-			recovery: ["mu serve --help"],
-		});
-	}
-
-	if (rest.length > 0) {
-		if (rest.some((arg) => arg.startsWith("-"))) {
-			return jsonError(`unknown args: ${rest.join(" ")}`, {
-				recovery: ["mu serve --help"],
-			});
-		}
-		const positionalMessage = rest.join(" ").trim();
-		if (positionalMessage.length > 0) {
-			if (message != null) {
-				return jsonError("provide either --message/-m or positional text, not both", {
-					recovery: ["mu serve --help"],
-				});
-			}
-			message = positionalMessage;
-		}
-	}
-
-	if (jsonMode && message == null) {
-		return jsonError("--json requires --message", {
-			recovery: ["mu serve --help"],
-		});
-	}
-
-	const { DEFAULT_OPERATOR_SYSTEM_PROMPT } = await import("@femtomc/mu-agent");
-	const provider = providerRaw?.trim() || undefined;
-	const model = modelRaw?.trim() || undefined;
-	const thinking = thinkingRaw?.trim() || undefined;
-	const systemPrompt = systemPromptRaw?.trim() || DEFAULT_OPERATOR_SYSTEM_PROMPT;
-
-	const createOperatorSession = async (): Promise<OperatorSession> => {
-		if (ctx.operatorSessionFactory) {
-			return ctx.operatorSessionFactory({ cwd: ctx.repoRoot, systemPrompt, provider, model, thinking });
-		}
-
-		const { createMuSession } = await import("@femtomc/mu-agent");
-		const requestedSession = options.session ?? defaultOperatorSessionStart(ctx.repoRoot);
-		const session = await createMuSession({
-			cwd: ctx.repoRoot,
-			systemPrompt,
-			provider,
-			model,
-			thinking,
-			extensionPaths: ctx.serveExtensionPaths,
-			session: {
-				mode: requestedSession.mode,
-				sessionDir: requestedSession.sessionDir,
-				sessionFile: requestedSession.sessionFile,
-			},
-		});
-
-		return session;
-	};
-
-	// One-shot mode: --message provided
-	if (message != null) {
-		const session = await createOperatorSession();
-		try {
-			if (ctx.operatorSessionFactory) {
-				// Test seam: use lightweight operator session path
-				let assistantText = "";
-				const unsub = session.subscribe((event: any) => {
-					if (event?.type === "message_end" && event?.message?.role === "assistant") {
-						const msg = event.message;
-						if (typeof msg.text === "string") assistantText = msg.text;
-						else if (typeof msg.content === "string") assistantText = msg.content;
-					}
-				});
-				try {
-					await session.prompt(message, { expandPromptTemplates: false });
-				} finally {
-					unsub();
-				}
-				if (jsonMode) {
-					return ok(jsonText({ role: "assistant", content: assistantText }, true));
-				}
-				return ok(assistantText.length > 0 ? `${assistantText}\n` : "");
-			}
-			const { runPrintMode } = await import("@mariozechner/pi-coding-agent");
-			await runPrintMode(session as any, { mode: jsonMode ? "json" : "text", initialMessage: message });
-		} finally {
-			session.dispose();
-		}
-		return ok();
-	}
-
-	// Interactive mode: full pi TUI
-	if (!(process.stdin as { isTTY?: boolean }).isTTY) {
-		return jsonError("interactive operator session requires a TTY; use --message for one-shot mode", {
-			recovery: ["mu serve --help"],
-		});
-	}
-
-	options.onInteractiveReady?.();
-
-	const session = await createOperatorSession();
-	try {
-		const { InteractiveMode } = await import("@mariozechner/pi-coding-agent");
-		const mode = new InteractiveMode(session as any);
-		await mode.init();
-		await mode.run();
-	} finally {
-		session.dispose();
-	}
-	return ok();
+	return await cmdOperatorSessionCommand(argv, ctx, options, operatorSessionCommandDeps());
 }
 
 function readLine(prompt: string): Promise<string> {
