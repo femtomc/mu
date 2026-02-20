@@ -16,6 +16,7 @@ import { cmdReplay as cmdReplayCommand } from "./commands/replay.js";
 import { cmdResume as cmdResumeCommand } from "./commands/resume.js";
 import { cmdRun as cmdRunCommand } from "./commands/run.js";
 import { cmdRunDirect as cmdRunDirectCommand } from "./commands/run_direct.js";
+import { cmdServe as cmdServeCommand, cmdStop as cmdStopCommand } from "./commands/serve.js";
 import { cmdStore as cmdStoreCommand } from "./commands/store.js";
 import { cmdStatus as cmdStatusCommand } from "./commands/status.js";
 import {
@@ -3638,130 +3639,28 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 	return result;
 }
 
+function serveCommandDeps() {
+	return {
+		hasHelpFlag,
+		getFlagValue,
+		popFlag,
+		ensureInt,
+		jsonError,
+		ok,
+		delayMs,
+		detectRunningServer,
+		buildServeDeps,
+		cleanupStaleServerFiles,
+		runServeLifecycle,
+	};
+}
+
 async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	if (hasHelpFlag(argv)) {
-		return ok(
-			[
-				"mu serve - start background server + attach terminal operator session",
-				"",
-				"Usage:",
-				"  mu serve [--port N]",
-				"",
-				"Options:",
-				"  --port N       Server port (default: 3000)",
-				"",
-				"Spawns the server as a background process (if not already running),",
-				"then attaches an interactive terminal operator session. Ctrl+D exits",
-				"the TUI only — the server keeps running.",
-				"",
-				"Use `mu stop` to shut down the background server.",
-				"Use `mu session` to reconnect to a persisted terminal operator session.",
-				"",
-				"Control plane configuration:",
-				"  workspace config.json is the source of truth for adapter + assistant settings",
-				"  Attached terminal operator session inherits control_plane.operator.provider/model/thinking when set",
-				"  Use direct CLI commands in the operator session for capability discovery (for example: `mu --help`)",
-				"  Use `mu control status` to inspect current config",
-				"",
-				"See also: `mu session --help`, `mu stop --help`, `mu guide`",
-			].join("\n") + "\n",
-		);
-	}
-
-	const { value: portRaw, rest } = getFlagValue(argv, "--port");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { recovery: ["mu serve --help"] });
-	}
-
-	const port = portRaw ? ensureInt(portRaw, { name: "--port", min: 1, max: 65535 }) : 3000;
-	if (port == null) {
-		return jsonError("port must be 1-65535", { recovery: ["mu serve --port 3000"] });
-	}
-
-	return await runServeLifecycle(ctx, {
-		commandName: "serve",
-		port,
-	});
+	return await cmdServeCommand(argv, ctx, serveCommandDeps());
 }
 
 async function cmdStop(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	if (hasHelpFlag(argv)) {
-		return ok(
-			[
-				"mu stop - stop the background server",
-				"",
-				"Usage:",
-				"  mu stop [--force]",
-				"",
-				"Options:",
-				"  --force    Kill the server process with SIGKILL if graceful shutdown fails",
-				"",
-				"Sends a graceful shutdown request to the running server.",
-				"If --force is given and graceful shutdown fails, sends SIGKILL.",
-				"",
-				"See also: `mu serve --help`",
-			].join("\n") + "\n",
-		);
-	}
-
-	const { present: force, rest } = popFlag(argv, "--force");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { recovery: ["mu stop --help"] });
-	}
-
-	const io = ctx.io;
-	const deps = buildServeDeps(ctx);
-
-	const existing = await detectRunningServer(ctx.repoRoot);
-	if (!existing) {
-		return jsonError("no running server found", {
-			recovery: ["mu serve", "mu stop --help"],
-		});
-	}
-
-	io?.stderr?.write(`mu: stopping server at ${existing.url} (pid ${existing.pid})...\n`);
-
-	// Try graceful shutdown via API
-	const shutdownResult = await deps.requestServerShutdown({ serverUrl: existing.url });
-
-	if (shutdownResult.ok) {
-		// Poll until PID dies (10s timeout)
-		const deadline = Date.now() + 10_000;
-		while (Date.now() < deadline) {
-			try {
-				process.kill(existing.pid, 0);
-			} catch {
-				// PID is gone — success
-				io?.stderr?.write("mu: server stopped.\n");
-				return ok();
-			}
-			await delayMs(200);
-		}
-		// Timed out waiting for graceful shutdown
-		if (!force) {
-			return jsonError("server did not exit within 10s — use --force to kill it", {
-				recovery: ["mu stop --force"],
-			});
-		}
-	}
-
-	if (force) {
-		io?.stderr?.write("mu: force-killing server process...\n");
-		try {
-			process.kill(existing.pid, "SIGKILL");
-		} catch {
-			// Already dead
-		}
-		// Wait briefly for process to actually exit
-		await delayMs(500);
-		cleanupStaleServerFiles(ctx.repoRoot);
-		io?.stderr?.write("mu: server killed.\n");
-		return ok();
-	}
-
-	return jsonError("graceful shutdown request failed", {
-		recovery: ["mu stop --force"],
-	});
+	return await cmdStopCommand(argv, ctx, serveCommandDeps());
 }
 
 // ROLE_SCOPES lives in @femtomc/mu-control-plane; lazy-imported alongside IdentityStore.
