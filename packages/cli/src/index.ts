@@ -4803,6 +4803,7 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 			}
 
 			const discoveryPath = join(repoRoot, ".mu", "control-plane", "server.json");
+			await mkdir(dirname(discoveryPath), { recursive: true });
 			await Bun.write(
 				discoveryPath,
 				JSON.stringify({ pid: process.pid, port, url: `http://localhost:${port}` }) + "\n",
@@ -4824,6 +4825,7 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 		spawnBackgroundServer: async ({ repoRoot, port }) => {
 			const serverCliPath = resolveServerCliPath();
 			const logDir = join(repoRoot, ".mu", "control-plane");
+			await mkdir(logDir, { recursive: true });
 			const logFile = join(logDir, "server.log");
 			const logFd = openSync(logFile, "w");
 
