@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { splitFrontmatter } from "./prompt.js";
+import { appendMuDocumentationSection } from "./self_documentation.js";
 
 function bundledPromptPath(name: string): string {
 	const here = dirname(fileURLToPath(import.meta.url));
@@ -44,4 +45,6 @@ const BASE_OPERATOR_SYSTEM_PROMPT = loadBundledPrompt("roles/operator.md");
 export const DEFAULT_ORCHESTRATOR_PROMPT = appendSharedSoul(BASE_ORCHESTRATOR_PROMPT, DEFAULT_SOUL_PROMPT);
 export const DEFAULT_REVIEWER_PROMPT = appendSharedSoul(BASE_REVIEWER_PROMPT, DEFAULT_SOUL_PROMPT);
 export const DEFAULT_WORKER_PROMPT = appendSharedSoul(BASE_WORKER_PROMPT, DEFAULT_SOUL_PROMPT);
-export const DEFAULT_OPERATOR_SYSTEM_PROMPT = appendSharedSoul(BASE_OPERATOR_SYSTEM_PROMPT, DEFAULT_SOUL_PROMPT);
+export const DEFAULT_OPERATOR_SYSTEM_PROMPT = appendMuDocumentationSection(
+	appendSharedSoul(BASE_OPERATOR_SYSTEM_PROMPT, DEFAULT_SOUL_PROMPT),
+);

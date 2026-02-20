@@ -38,9 +38,10 @@ describe("bundled default prompts", () => {
 		);
 	});
 
-	test("operator default is role prompt + shared soul", async () => {
-		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toBe(
-			appendSharedSoul(await bundledPromptBody("roles/operator.md"), await bundledPromptBody("roles/soul.md")),
-		);
+	test("operator default is role prompt + shared soul + mu docs guidance", async () => {
+		const base = appendSharedSoul(await bundledPromptBody("roles/operator.md"), await bundledPromptBody("roles/soul.md"));
+		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT.startsWith(base)).toBe(true);
+		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("Mu documentation (for mu feature/configuration/setup questions):");
+		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("- Read these when users ask about mu capabilities");
 	});
 });
