@@ -559,7 +559,6 @@ describe("mu-server", () => {
 			startRun: async () => run,
 			resumeRun: async () => ({ ...run, mode: "run_resume" }),
 			interruptRun: async () => ({ ok: true, reason: null, run }),
-			heartbeatRun: async () => ({ ok: true, reason: null, run }),
 			traceRun: async () => ({ run, stdout: ["a"], stderr: ["b"], log_hints: [".mu/logs/x"], trace_files: [] }),
 			stop: async () => {},
 		};

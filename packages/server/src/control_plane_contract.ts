@@ -1,10 +1,5 @@
 import type { Channel, CommandPipelineResult, ReloadableGenerationIdentity } from "@femtomc/mu-control-plane";
-import type {
-	ControlPlaneRunHeartbeatResult,
-	ControlPlaneRunInterruptResult,
-	ControlPlaneRunSnapshot,
-	ControlPlaneRunTrace,
-} from "./run_supervisor.js";
+import type { ControlPlaneRunInterruptResult, ControlPlaneRunSnapshot, ControlPlaneRunTrace } from "./run_supervisor.js";
 import type { MuConfig } from "./config.js";
 
 /**
@@ -178,12 +173,6 @@ export type ControlPlaneHandle = {
 	 */
 	resumeRun?(opts: { rootIssueId: string; maxSteps?: number }): Promise<ControlPlaneRunSnapshot>;
 	interruptRun?(opts: { jobId?: string | null; rootIssueId?: string | null }): Promise<ControlPlaneRunInterruptResult>;
-	heartbeatRun?(opts: {
-		jobId?: string | null;
-		rootIssueId?: string | null;
-		reason?: string | null;
-		wakeMode?: string | null;
-	}): Promise<ControlPlaneRunHeartbeatResult>;
 	traceRun?(opts: { idOrRoot: string; limit?: number }): Promise<ControlPlaneRunTrace | null>;
 	submitTerminalCommand?(opts: {
 		commandText: string;

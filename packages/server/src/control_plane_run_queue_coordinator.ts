@@ -8,7 +8,6 @@ import {
 } from "./run_queue.js";
 import type {
 	ControlPlaneRunEvent,
-	ControlPlaneRunHeartbeatResult,
 	ControlPlaneRunInterruptResult,
 	ControlPlaneRunSnapshot,
 	ControlPlaneRunSupervisor,
@@ -36,10 +35,6 @@ function normalizeIssueId(value: string | null | undefined): string | null {
 		return null;
 	}
 	return trimmed.toLowerCase();
-}
-
-function isTerminalQueueState(state: DurableRunQueueSnapshot["state"]): boolean {
-	return state === "done" || state === "failed" || state === "cancelled";
 }
 
 function isInFlightQueueState(state: DurableRunQueueSnapshot["state"]): boolean {
@@ -307,67 +302,6 @@ export class ControlPlaneRunQueueCoordinator {
 				run: runSnapshotFromQueueSnapshot(cancelled),
 			};
 		}
-		return {
-			ok: false,
-			reason: "not_running",
-			run: runSnapshotFromQueueSnapshot(queued),
-		};
-	}
-
-	public async heartbeatQueuedRun(opts: {
-		jobId?: string | null;
-		rootIssueId?: string | null;
-		reason?: string | null;
-		wakeMode?: string | null;
-	}): Promise<ControlPlaneRunHeartbeatResult> {
-		const runSupervisor = this.#getRunSupervisor();
-		const result = runSupervisor?.heartbeat(opts) ?? { ok: false, reason: "not_found", run: null };
-		let syncedQueue: DurableRunQueueSnapshot | null = null;
-		if (result.run) {
-			syncedQueue = await this.#runQueue
-				.applyRunSnapshot({
-					run: result.run,
-					operationId: `heartbeat-sync:${result.run.job_id}:${result.run.updated_at_ms}`,
-					createIfMissing: true,
-				})
-				.catch(() => {
-					// Best effort only.
-					return null;
-				});
-		}
-		if (result.ok || result.reason === "missing_target") {
-			if (syncedQueue && isTerminalQueueState(syncedQueue.state)) {
-				await this.scheduleReconcile(`heartbeat-terminal:${syncedQueue.queue_id}`);
-			}
-			return result;
-		}
-		const target = opts.jobId?.trim() || opts.rootIssueId?.trim() || "";
-		if (!target) {
-			return result;
-		}
-		const queued = await this.#runQueue.get(target);
-		if (!queued) {
-			return result;
-		}
-
-		if (result.reason === "not_found" && queued.job_id && isInFlightQueueState(queued.state)) {
-			const failed = await this.#runQueue.transition({
-				queueId: queued.queue_id,
-				toState: "failed",
-				operationId: `heartbeat-fallback:not-found:${queued.queue_id}`,
-			});
-			await this.scheduleReconcile(`heartbeat-fallback:not-found:${queued.queue_id}`);
-			return {
-				ok: false,
-				reason: "not_running",
-				run: runSnapshotFromQueueSnapshot(failed),
-			};
-		}
-
-		if ((syncedQueue && isTerminalQueueState(syncedQueue.state)) || (result.reason === "not_running" && isInFlightQueueState(queued.state))) {
-			await this.scheduleReconcile(`heartbeat-wake:${queued.queue_id}:${result.reason ?? "unknown"}`);
-		}
-
 		return {
 			ok: false,
 			reason: "not_running",

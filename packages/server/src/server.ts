@@ -539,13 +539,6 @@ function createServer(options: ServerOptions = {}) {
 			}
 			return await handle.interruptRun(opts);
 		},
-		async heartbeatRun(opts) {
-			const handle = reloadManager.getControlPlaneCurrent();
-			if (!handle?.heartbeatRun) {
-				return { ok: false, reason: "not_found", run: null };
-			}
-			return await handle.heartbeatRun(opts);
-		},
 		async traceRun(opts) {
 			const handle = reloadManager.getControlPlaneCurrent();
 			if (!handle?.traceRun) return null;

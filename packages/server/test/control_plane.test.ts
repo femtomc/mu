@@ -20,7 +20,6 @@ import {
 	containsTelegramMathNotation,
 	renderTelegramMarkdown,
 } from "../src/control_plane.js";
-import { DurableRunQueue } from "../src/run_queue.js";
 import type { ControlPlaneRunProcess } from "../src/run_supervisor.js";
 
 const handlesToCleanup = new Set<ControlPlaneHandle>();
@@ -898,7 +897,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(calls).toEqual(["reload", "update"]);
 	});
 
-	test("command-originated run lifecycle/heartbeat notifications stay routable via outbox", async () => {
+	test("command-originated run lifecycle notifications stay routable via outbox", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read", "cp.run.execute"]);
 
@@ -970,13 +969,6 @@ describe("bootstrapControlPlane operator wiring", () => {
 			return run?.status === "running" ? true : null;
 		});
 
-		const heartbeat = await handle.heartbeatRun?.({
-			rootIssueId: "mu-rootcmd123",
-			reason: "manual",
-			wakeMode: "immediate",
-		});
-		expect(heartbeat?.ok).toBe(true);
-
 		await Bun.sleep(150);
 		resolveExit(0);
 
@@ -990,7 +982,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 				.map((record) => String(record.envelope.metadata.run_event_kind)),
 		);
 		expect(runEventKinds.has("run_started")).toBe(true);
-		expect(runEventKinds.has("run_heartbeat")).toBe(true);
+		expect(runEventKinds.has("run_completed")).toBe(true);
 	});
 
 	test("run queue snapshots persist across control-plane restarts", async () => {
@@ -1116,7 +1108,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		});
 	});
 
-	test("terminal event wake re-enters queue reconcile and repeated wakes keep terminal rows stable", async () => {
+	test("terminal event wake re-enters queue reconcile and keeps terminal rows stable", async () => {
 		const repoRoot = await mkRepoRoot();
 		const spawned: number[] = [];
 		const exitResolvers: Array<(code: number) => void> = [];
@@ -1172,16 +1164,6 @@ describe("bootstrapControlPlane operator wiring", () => {
 		});
 		expect(spawned.length).toBe(2);
 
-		for (let attempt = 0; attempt < 3; attempt += 1) {
-			const heartbeat = await handle.heartbeatRun?.({
-				rootIssueId: "mu-rootwakea",
-				reason: `repeat-${attempt}`,
-				wakeMode: "immediate",
-			});
-			expect(heartbeat?.ok).toBe(false);
-			expect(heartbeat?.reason).toBe("not_running");
-		}
-
 		const firstAfterRepeatedWake = await handle.getRun?.(first.queue_id ?? first.job_id);
 		expect(firstAfterRepeatedWake?.status).toBe("completed");
 		expect(firstAfterRepeatedWake?.queue_state).toBe("done");
@@ -1191,131 +1173,6 @@ describe("bootstrapControlPlane operator wiring", () => {
 		await waitFor(async () => {
 			const latestSecond = await handle.getRun?.(second.queue_id ?? second.job_id);
 			return latestSecond?.status === "completed" ? true : null;
-		});
-	});
-
-	test("heartbeat fallback wakes reconcile when stale active rows miss runtime terminal events", async () => {
-		const repoRoot = await mkRepoRoot();
-		const now = Date.now();
-		const queue = new DurableRunQueue({ repoRoot, nowMs: () => now });
-
-		const staleActive = await queue.enqueue({
-			mode: "run_resume",
-			prompt: null,
-			rootIssueId: "mu-rootfallbacka",
-			maxSteps: 4,
-			source: "api",
-			dedupeKey: "fallback:stale-active",
-			operationId: "fallback:enqueue-stale",
-		});
-		await queue.claim({
-			queueId: staleActive.queue_id,
-			operationId: "fallback:claim-stale",
-		});
-		await queue.bindRunSnapshot({
-			queueId: staleActive.queue_id,
-			run: {
-				job_id: "run-stale-fallback",
-				mode: "run_resume",
-				status: "running",
-				prompt: null,
-				root_issue_id: "mu-rootfallbacka",
-				max_steps: 4,
-				command_id: null,
-				source: "api",
-				started_at_ms: now - 10_000,
-				updated_at_ms: now - 9_000,
-				finished_at_ms: null,
-				exit_code: null,
-				pid: 777,
-				last_progress: "Step 1/4",
-			},
-			operationId: "fallback:bind-stale",
-		});
-
-		await queue.enqueue({
-			mode: "run_resume",
-			prompt: null,
-			rootIssueId: "mu-rootfallbackb",
-			maxSteps: 4,
-			source: "api",
-			dedupeKey: "fallback:queued-next",
-			operationId: "fallback:enqueue-next",
-		});
-
-		const spawned: number[] = [];
-		let nextPid = 1_050;
-		let resolveExit: (code: number) => void = () => {};
-		const exited = new Promise<number>((resolve) => {
-			resolveExit = resolve;
-		});
-
-		const handle = await bootstrapControlPlaneForTest({
-			repoRoot,
-			config: configWith({}),
-			terminalEnabled: true,
-			interRootQueuePolicy: { mode: "sequential", max_active_roots: 1 },
-			runSupervisorSpawnProcess: () => {
-				const pid = nextPid;
-				nextPid += 1;
-				spawned.push(pid);
-				const process: ControlPlaneRunProcess = {
-					pid,
-					stdout: streamFromLines([]),
-					stderr: streamFromLines([]),
-					exited,
-					kill() {
-						resolveExit(0);
-					},
-				};
-				return process;
-			},
-		});
-		expect(handle).not.toBeNull();
-		if (!handle) {
-			throw new Error("expected control plane handle");
-		}
-		handlesToCleanup.add(handle);
-
-		expect(spawned.length).toBe(0);
-		const queuedBeforeFallback = await handle.getRun?.("mu-rootfallbackb");
-		expect(queuedBeforeFallback?.queue_state).toBe("queued");
-
-		const heartbeatFallback = await handle.heartbeatRun?.({
-			rootIssueId: "mu-rootfallbacka",
-			reason: "manual-fallback",
-			wakeMode: "immediate",
-		});
-		expect(heartbeatFallback?.ok).toBe(false);
-		expect(heartbeatFallback?.reason).toBe("not_running");
-
-		await waitFor(async () => {
-			const latestNext = await handle.getRun?.("mu-rootfallbackb");
-			return latestNext?.queue_state === "active" ? latestNext : null;
-		});
-		expect(spawned.length).toBe(1);
-
-		const staleAfterFallback = await handle.getRun?.("mu-rootfallbacka");
-		expect(staleAfterFallback?.queue_state).toBe("failed");
-		expect(staleAfterFallback?.status).toBe("failed");
-
-		for (let attempt = 0; attempt < 2; attempt += 1) {
-			const repeated = await handle.heartbeatRun?.({
-				rootIssueId: "mu-rootfallbacka",
-				reason: `repeat-${attempt}`,
-				wakeMode: "immediate",
-			});
-			expect(repeated?.ok).toBe(false);
-			expect(repeated?.reason).toBe("not_running");
-		}
-		expect(spawned.length).toBe(1);
-		const staleAfterRepeated = await handle.getRun?.("mu-rootfallbacka");
-		expect(staleAfterRepeated?.queue_state).toBe("failed");
-
-		resolveExit(0);
-		await waitFor(async () => {
-			const latestNext = await handle.getRun?.("mu-rootfallbackb");
-			return latestNext?.status === "completed" ? true : null;
 		});
 	});
 

@@ -33,7 +33,6 @@ import {
 } from "./control_plane_contract.js";
 import type { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 import {
-	type ControlPlaneRunHeartbeatResult,
 	type ControlPlaneRunInterruptResult,
 	type ControlPlaneRunSnapshot,
 	ControlPlaneRunSupervisor,
@@ -868,10 +867,6 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 
 			async interruptRun(interruptOpts): Promise<ControlPlaneRunInterruptResult> {
 				return await runQueueCoordinator.interruptQueuedRun(interruptOpts);
-			},
-
-			async heartbeatRun(heartbeatOpts): Promise<ControlPlaneRunHeartbeatResult> {
-				return await runQueueCoordinator.heartbeatQueuedRun(heartbeatOpts);
 			},
 
 			async traceRun(traceOpts: { idOrRoot: string; limit?: number }): Promise<ControlPlaneRunTrace | null> {
