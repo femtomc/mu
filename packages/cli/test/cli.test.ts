@@ -171,6 +171,77 @@ test("mu heartbeats help surfaces telegram setup and subcommand guidance", async
 	expect(listHelp.stdout).toContain("--limit N");
 });
 
+test("mu command-group help is self-explanatory across events/runs/cron/control/turn/replay", async () => {
+	const dir = await mkTempRepo();
+
+	const checks: Array<{ argv: string[]; contains: string[] }> = [
+		{
+			argv: ["events", "--help"],
+			contains: ["Subcommands:", "Examples:", "mu events <subcommand> --help"],
+		},
+		{
+			argv: ["events", "list", "--help"],
+			contains: ["mu events list - bounded event listing", "--type TYPE", "Examples:"],
+		},
+		{
+			argv: ["events", "trace", "--help"],
+			contains: ["mu events trace - deeper bounded trace view", "Defaults:", "--limit 40"],
+		},
+		{
+			argv: ["runs", "--help"],
+			contains: ["Subcommands:", "mu runs <subcommand> --help", "compact-by-default output"],
+		},
+		{
+			argv: ["runs", "start", "--help"],
+			contains: ["mu runs start - queue a new run", "--max-steps <N>", "Examples:"],
+		},
+		{
+			argv: ["runs", "interrupt", "--help"],
+			contains: ["mu runs interrupt - interrupt an active run", "--job-id <job-id>", "Examples:"],
+		},
+		{
+			argv: ["cron", "--help"],
+			contains: ["Commands:", "Examples:", "mu cron <subcommand> --help"],
+		},
+		{
+			argv: ["cron", "create", "--help"],
+			contains: ["mu cron create - create a cron program", "Schedule flags:", "--expr <cron-expr>"],
+		},
+		{
+			argv: ["cron", "trigger", "--help"],
+			contains: ["mu cron trigger - trigger a cron program immediately", "--reason <text>"],
+		},
+		{
+			argv: ["control", "--help"],
+			contains: ["Examples:", "mu control <subcommand> --help", "operator"],
+		},
+		{
+			argv: ["control", "operator", "models", "--help"],
+			contains: ["mu control operator models - list provider model catalogs", "Usage:", "Examples:"],
+		},
+		{
+			argv: ["control", "operator", "set", "--help"],
+			contains: ["mu control operator set - set provider/model/thinking defaults", "Usage:", "workspace config.json"],
+		},
+		{
+			argv: ["turn", "--help"],
+			contains: ["mu turn - inject one prompt turn", "Examples:", "--session-id <id> --body <text>"],
+		},
+		{
+			argv: ["replay", "--help"],
+			contains: ["Target resolution:", "Examples:", "<root-id>/<issue-id-or-log-file>"],
+		},
+	];
+
+	for (const check of checks) {
+		const result = await run(check.argv, { cwd: dir });
+		expect(result.exitCode).toBe(0);
+		for (const token of check.contains) {
+			expect(result.stdout).toContain(token);
+		}
+	}
+});
+
 test("mu store paths/ls/tail provide workspace-store navigation tools", async () => {
 	const dir = await mkTempRepo();
 	const storeDir = workspaceStoreDir(dir);

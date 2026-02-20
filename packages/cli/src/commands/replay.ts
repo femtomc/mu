@@ -31,12 +31,22 @@ export async function cmdReplay(
 	if (argv.length === 0 || hasHelpFlag(argv)) {
 		return ok(
 			[
-				"mu replay - replay a logged run",
+				"mu replay - print a persisted run log",
 				"",
 				"Usage:",
 				"  mu replay <issue-id|path> [--backend pi]",
 				"",
-				"See also: `mu guide`",
+				"Target resolution:",
+				"  - explicit path (absolute/relative)",
+				"  - <root-id>/<issue-id-or-log-file>",
+				"  - unique issue-id prefix across <store>/logs/<root-id>/*.jsonl",
+				"",
+				"Examples:",
+				"  mu replay mu-abc123",
+				"  mu replay mu-root123/mu-worker456",
+				"  mu replay ~/.mu/workspaces/<workspace-id>/logs/<root-id>/<issue-id>.jsonl",
+				"",
+				"See also: `mu resume`, `mu store paths`, `mu guide`",
 			].join("\n") + "\n",
 		);
 	}

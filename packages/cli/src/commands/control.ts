@@ -59,7 +59,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		if (argv0.length === 0 || argv0[0] === "--help" || argv0[0] === "-h") {
 			return ok(
 				[
-					"mu control - control-plane identity & config",
+					"mu control - control-plane identity, adapter, and operator config",
 					"",
 					"Usage:",
 					"  mu control <command> [args...] [--pretty]",
@@ -68,12 +68,21 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"  link               Link a channel identity",
 					"  unlink             Unlink a binding (self-unlink or admin revoke)",
 					"  identities         List identity bindings",
-					"  status             Show control-plane status",
+					"  status             Show adapter/operator/config readiness",
 					"  operator           Inspect/update operator model + thinking",
-					"  reload             Schedule session reload (process restart)",
-					"  update             Run update command then schedule reload",
+					"  reload             Trigger in-process control-plane reload",
+					"  update             Run update command then trigger reload",
 					"  diagnose-operator  Diagnose operator turn parsing/execution health",
 					"",
+					"Examples:",
+					"  mu control status",
+					"  mu control identities --all",
+					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id bot",
+					"  mu control operator models",
+					"  mu control operator set <provider> <model> <thinking>",
+					"  mu control reload",
+					"",
+					"Run `mu control <subcommand> --help` for subcommand-specific usage.",
 					"See also: `mu guide`",
 				].join("\n") + "\n",
 			);
@@ -398,6 +407,11 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"  operator      Full access (read, write, execute, admin)",
 					"  contributor   Read + write + execute (no admin)",
 					"  viewer        Read-only",
+					"",
+					"Examples:",
+					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id bot",
+					"  mu control link --channel slack --actor-id U123 --tenant-id T123 --role contributor",
+					"  mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id> --scope issue:write",
 				].join("\n") + "\n",
 			);
 		}
@@ -491,6 +505,10 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"",
 					"Without --revoke: self-unlink (binding acts on itself).",
 					"With --revoke: admin revocation (synthetic cli-admin actor).",
+					"",
+					"Examples:",
+					"  mu control unlink bind-abc123",
+					"  mu control unlink bind-abc123 --revoke --reason \"offboarded\"",
 				].join("\n") + "\n",
 			);
 		}
@@ -575,6 +593,10 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"  mu control identities [--all] [--pretty]",
 					"",
 					"By default shows active bindings. Use --all to include inactive.",
+					"",
+					"Examples:",
+					"  mu control identities",
+					"  mu control identities --all --pretty",
 				].join("\n") + "\n",
 			);
 		}
@@ -597,10 +619,17 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		if (hasHelpFlag(argv)) {
 			return ok(
 				[
-					"mu control status - show control-plane status",
+					"mu control status - show control-plane readiness snapshot",
 					"",
 					"Usage:",
 					"  mu control status [--json] [--pretty]",
+					"",
+					"Includes:",
+					"  identity binding counts, adapter config presence, operator defaults, config/policy paths",
+					"",
+					"Examples:",
+					"  mu control status",
+					"  mu control status --json --pretty",
 				].join("\n") + "\n",
 			);
 		}
@@ -787,7 +816,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 	}
 
 	async function controlOperator(argv: string[], ctx: Ctx, pretty: boolean): Promise<ControlCommandRunResult> {
-		if (hasHelpFlag(argv) || argv.length === 0) {
+		if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
 			return ok(
 				[
 					"mu control operator - inspect/update operator model + thinking",
@@ -801,9 +830,18 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"",
 					"Thinking levels: off|minimal|low|medium|high|xhigh",
 					"",
+					"Examples:",
+					"  mu control operator get",
+					"  mu control operator models",
+					"  mu control operator thinking anthropic claude-opus-4-6",
+					"  mu control operator set openai-codex gpt-5.3-codex high",
+					"  mu control operator thinking-set minimal",
+					"",
 					"Notes:",
 					"  - set / thinking-set persist workspace config.json",
 					"  - if a server is running, mu requests /api/control-plane/reload for live apply",
+					"",
+					"Run `mu control operator <subcommand> --help` for subcommand details.",
 				].join("\n") + "\n",
 			);
 		}
@@ -851,6 +889,20 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 			});
 
 		if (sub === "get") {
+			if (hasHelpFlag(args)) {
+				return ok(
+					[
+						"mu control operator get - show operator defaults from workspace config",
+						"",
+						"Usage:",
+						"  mu control operator get [--json] [--pretty]",
+						"",
+						"Examples:",
+						"  mu control operator get",
+						"  mu control operator get --json --pretty",
+					].join("\n") + "\n",
+				);
+			}
 			if (args.length > 0) {
 				return jsonError(`unknown args: ${args.join(" ")}`, {
 					pretty,
@@ -885,6 +937,21 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		}
 
 		if (sub === "models") {
+			if (hasHelpFlag(args)) {
+				return ok(
+					[
+						"mu control operator models - list provider model catalogs",
+						"",
+						"Usage:",
+						"  mu control operator models [provider] [--json] [--pretty]",
+						"",
+						"Examples:",
+						"  mu control operator models",
+						"  mu control operator models anthropic",
+						"  mu control operator models openai-codex --json --pretty",
+					].join("\n") + "\n",
+				);
+			}
 			if (args.length > 1) {
 				return jsonError(`unknown args: ${args.join(" ")}`, {
 					pretty,
@@ -928,6 +995,26 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		}
 
 		if (sub === "thinking") {
+			if (hasHelpFlag(args)) {
+				return ok(
+					[
+						"mu control operator thinking - show allowed thinking levels",
+						"",
+						"Usage:",
+						"  mu control operator thinking [provider] [model] [--json] [--pretty]",
+						"",
+						"Modes:",
+						"  (no args)             Global thinking levels",
+						"  <provider>            Thinking levels by model for provider",
+						"  <provider> <model>    Thinking levels for one specific model",
+						"",
+						"Examples:",
+						"  mu control operator thinking",
+						"  mu control operator thinking anthropic",
+						"  mu control operator thinking openai-codex gpt-5.3-codex --json --pretty",
+					].join("\n") + "\n",
+				);
+			}
 			if (args.length === 0) {
 				const payload = {
 					thinking_levels: [...OPERATOR_THINKING_LEVELS],
@@ -1002,6 +1089,24 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		}
 
 		if (sub === "set") {
+			if (hasHelpFlag(args)) {
+				return ok(
+					[
+						"mu control operator set - set provider/model/thinking defaults",
+						"",
+						"Usage:",
+						"  mu control operator set <provider> <model> [thinking] [--json] [--pretty]",
+						"",
+						"Examples:",
+						"  mu control operator set openai-codex gpt-5.3-codex",
+						"  mu control operator set anthropic claude-opus-4-6 high",
+						"  mu control operator set openai-codex gpt-5.3-codex minimal --json --pretty",
+						"",
+						"Notes:",
+						"  Writes workspace config.json and requests live reload when server is running.",
+					].join("\n") + "\n",
+				);
+			}
 			if (args.length < 2 || args.length > 3) {
 				return jsonError("usage: mu control operator set <provider> <model> [thinking]", {
 					pretty,
@@ -1091,6 +1196,23 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		}
 
 		if (sub === "thinking-set") {
+			if (hasHelpFlag(args)) {
+				return ok(
+					[
+						"mu control operator thinking-set - set default thinking level",
+						"",
+						"Usage:",
+						"  mu control operator thinking-set <thinking> [--json] [--pretty]",
+						"",
+						"Thinking levels:",
+						"  off|minimal|low|medium|high|xhigh",
+						"",
+						"Examples:",
+						"  mu control operator thinking-set minimal",
+						"  mu control operator thinking-set high --json --pretty",
+					].join("\n") + "\n",
+				);
+			}
 			if (args.length !== 1) {
 				return jsonError("usage: mu control operator thinking-set <thinking>", {
 					pretty,

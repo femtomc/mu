@@ -29,7 +29,17 @@ export async function cmdTurn(argv: string[], ctx: TurnCommandCtx, deps: TurnCom
 				"mu turn - inject one prompt turn into an existing session transcript",
 				"",
 				"Usage:",
-				"  mu turn --session-id <id> --body <text> [--session-kind KIND] [--source SRC] [--provider ID] [--model ID] [--thinking LVL]",
+				"  mu turn --session-id <id> --body <text> [--session-kind KIND] [--source SRC]",
+				"         [--provider ID] [--model ID] [--thinking LVL]",
+				"         [--session-file PATH] [--session-dir PATH] [--extension-profile NAME] [--pretty]",
+				"",
+				"Notes:",
+				"  - Requires an existing operator session id.",
+				"  - Returns structured JSON turn result.",
+				"",
+				"Examples:",
+				"  mu turn --session-id <id> --body \"Summarize current blockers\"",
+				"  mu turn --session-id <id> --body \"Replan\" --provider openai-codex --model gpt-5.3-codex",
 			].join("\n") + "\n",
 		);
 	}

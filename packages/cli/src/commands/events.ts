@@ -32,23 +32,36 @@ export async function cmdEvents<Ctx extends EventsCommandCtx>(
 	const { hasHelpFlag, popFlag, getFlagValue, ensureInt, jsonError, jsonText, ok, renderEventsCompactTable } = deps;
 
 	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-	if (argv0.length === 0 || hasHelpFlag(argv0)) {
+	if (argv0.length === 0 || argv0[0] === "--help" || argv0[0] === "-h") {
 		return ok(
 			[
-				"mu events - query event log entries",
+				"mu events - query and trace event log entries",
 				"",
 				"Usage:",
 				"  mu events <list|trace> [filters...] [--json] [--pretty]",
 				"",
-				"Filters:",
+				"Subcommands:",
+				"  list   Bounded event listing (default limit: 20)",
+				"  trace  Deeper bounded trace view (default limit: 40)",
+				"",
+				"Common filters:",
 				"  --type <TYPE>",
 				"  --source <SOURCE>",
 				"  --issue-id <ID>",
 				"  --run-id <ID>",
 				"  --contains <TEXT>",
 				"  --since <EPOCH_MS>",
-				"  --limit <N> (default: list=20, trace=40)",
-				"  --json Emit full JSON payload (default is compact event table)",
+				"  --limit <N>",
+				"",
+				"Output mode:",
+				"  compact-by-default event table; add --json for full payloads.",
+				"",
+				"Examples:",
+				"  mu events list --limit 20",
+				"  mu events list --type issue.update --issue-id <id>",
+				"  mu events trace --run-id <run-id> --contains error --limit 80",
+				"",
+				"Run `mu events <subcommand> --help` for command-specific usage.",
 			].join("\n") + "\n",
 		);
 	}
@@ -57,6 +70,43 @@ export async function cmdEvents<Ctx extends EventsCommandCtx>(
 	const rest = argv0.slice(1);
 	if (sub !== "list" && sub !== "trace") {
 		return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu events --help"] });
+	}
+	if (sub === "list" && hasHelpFlag(rest)) {
+		return ok(
+			[
+				"mu events list - bounded event listing",
+				"",
+				"Usage:",
+				"  mu events list [--type TYPE] [--source SOURCE] [--issue-id ID] [--run-id ID]",
+				"                 [--contains TEXT] [--since EPOCH_MS] [--limit N] [--json] [--pretty]",
+				"",
+				"Defaults:",
+				"  --limit 20",
+				"",
+				"Examples:",
+				"  mu events list --limit 20",
+				"  mu events list --type issue.update --issue-id <id>",
+				"  mu events list --contains coalesced --since 1700000000000 --json --pretty",
+			].join("\n") + "\n",
+		);
+	}
+	if (sub === "trace" && hasHelpFlag(rest)) {
+		return ok(
+			[
+				"mu events trace - deeper bounded trace view",
+				"",
+				"Usage:",
+				"  mu events trace [--type TYPE] [--source SOURCE] [--issue-id ID] [--run-id ID]",
+				"                  [--contains TEXT] [--since EPOCH_MS] [--limit N] [--json] [--pretty]",
+				"",
+				"Defaults:",
+				"  --limit 40",
+				"",
+				"Examples:",
+				"  mu events trace --run-id <run-id> --limit 80",
+				"  mu events trace --issue-id <id> --contains error --json --pretty",
+			].join("\n") + "\n",
+		);
 	}
 
 	const { value: type, rest: argv1 } = getFlagValue(rest, "--type");

@@ -65,13 +65,21 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 
 	async function cmdRuns(argv: string[], ctx: Ctx): Promise<SchedulingCommandRunResult> {
 		const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-		if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		if (argv0.length === 0 || argv0[0] === "--help" || argv0[0] === "-h") {
 			return ok(
 				[
 					"mu runs - run queue + trace operations",
 					"",
 					"Usage:",
 					"  mu runs <list|get|trace|start|resume|interrupt> [args...] [--json] [--pretty]",
+					"",
+					"Subcommands:",
+					"  list       List queued/running/completed runs",
+					"  get        Show one run by job id or root issue id",
+					"  trace      Show run trace rows for a run",
+					"  start      Queue a new run",
+					"  resume     Queue resume for an existing root",
+					"  interrupt  Interrupt an active run",
 					"",
 					"Output mode:",
 					"  compact-by-default output for run reads/mutations; add --json for full records.",
@@ -83,6 +91,8 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					'  mu runs start "Ship release" --max-steps 25',
 					"  mu runs resume <root-id> --max-steps 25",
 					"  mu runs interrupt <root-id>",
+					"",
+					"Run `mu runs <subcommand> --help` for command-specific usage.",
 				].join("\n") + "\n",
 			);
 		}
@@ -109,6 +119,26 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function runsList(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu runs list - list queued/running/completed runs",
+					"",
+					"Usage:",
+					"  mu runs list [--status STATUS] [--limit N] [--json] [--pretty]",
+					"",
+					"Options:",
+					"  --status <queued|running|succeeded|failed|cancelled>   Optional status filter",
+					"  --limit <N>                                             Result size (default: 20)",
+					"  --json                                                  Emit full JSON payload",
+					"",
+					"Examples:",
+					"  mu runs list",
+					"  mu runs list --status running --limit 20",
+					"  mu runs list --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		const { value: status, rest: argv0 } = getFlagValue(argv, "--status");
 		const { value: limitRaw, rest: argv1 } = getFlagValue(argv0, "--limit");
 		const { present: jsonMode, rest: argv2 } = popFlag(argv1, "--json");
@@ -144,6 +174,20 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function runsGet(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu runs get - show one run by job id or root issue id",
+					"",
+					"Usage:",
+					"  mu runs get <run-id-or-root-id> [--json] [--pretty]",
+					"",
+					"Examples:",
+					"  mu runs get run-abc123",
+					"  mu runs get mu-root1234 --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		if (argv.length === 0) {
 			return jsonError("missing run id", { pretty, recovery: ["mu runs get <run-id-or-root-id>"] });
 		}
@@ -169,6 +213,23 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function runsTrace(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu runs trace - show trace rows for one run",
+					"",
+					"Usage:",
+					"  mu runs trace <run-id-or-root-id> [--limit N] [--json] [--pretty]",
+					"",
+					"Options:",
+					"  --limit <N>   Trace rows to return (default: 40, max: 2000)",
+					"",
+					"Examples:",
+					"  mu runs trace <run-id> --limit 80",
+					"  mu runs trace <run-id> --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		if (argv.length === 0) {
 			return jsonError("missing run id", { pretty, recovery: ["mu runs trace <run-id-or-root-id>"] });
 		}
@@ -202,6 +263,24 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function runsStart(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu runs start - queue a new run",
+					"",
+					"Usage:",
+					"  mu runs start <prompt...> [--max-steps N] [--json] [--pretty]",
+					"",
+					"Options:",
+					"  --max-steps <N>   DAG step budget (default: 20, max: 500)",
+					"  --json            Emit full JSON payload",
+					"",
+					"Examples:",
+					'  mu runs start "Ship release" --max-steps 25',
+					'  mu runs start "Investigate failing test" --json --pretty',
+				].join("\n") + "\n",
+			);
+		}
 		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
 		const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
 		const { value: maxStepsRaw, rest } = getFlagValue(argv1, "--max-steps");
@@ -238,6 +317,23 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function runsResume(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu runs resume - queue a resume for a root issue",
+					"",
+					"Usage:",
+					"  mu runs resume <root-id> [--max-steps N] [--json] [--pretty]",
+					"",
+					"Options:",
+					"  --max-steps <N>   DAG step budget (default: 20, max: 500)",
+					"",
+					"Examples:",
+					"  mu runs resume <root-id>",
+					"  mu runs resume <root-id> --max-steps 30 --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		if (argv.length === 0) {
 			return jsonError("missing root issue id", { pretty, recovery: ["mu runs resume <root-id>"] });
 		}
@@ -276,6 +372,25 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function runsInterrupt(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu runs interrupt - interrupt an active run",
+					"",
+					"Usage:",
+					"  mu runs interrupt <root-id> [--json] [--pretty]",
+					"  mu runs interrupt --job-id <job-id> [--json] [--pretty]",
+					"  mu runs interrupt --root-issue-id <root-id> [--json] [--pretty]",
+					"",
+					"Notes:",
+					"  Provide either root issue id or job id.",
+					"",
+					"Examples:",
+					"  mu runs interrupt <root-id>",
+					"  mu runs interrupt --job-id run-abc123 --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		let positionalRoot: string | null = null;
 		let args = argv;
 		if (args[0] && !args[0].startsWith("-")) {
@@ -743,7 +858,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 
 	async function cmdCron(argv: string[], ctx: Ctx): Promise<SchedulingCommandRunResult> {
 		const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-		if (argv0.length === 0 || hasHelpFlag(argv0)) {
+		if (argv0.length === 0 || argv0[0] === "--help" || argv0[0] === "-h") {
 			return ok(
 				[
 					"mu cron - cron program lifecycle",
@@ -751,9 +866,28 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"Usage:",
 					"  mu cron <stats|list|get|create|update|delete|trigger|enable|disable> [args...] [--pretty]",
 					"",
+					"Commands:",
+					"  stats     Show scheduler summary",
+					"  list      List cron programs",
+					"  get       Show one cron program",
+					"  create    Create cron program",
+					"  update    Update cron program",
+					"  delete    Delete cron program",
+					"  trigger   Trigger cron program immediately",
+					"  enable    Enable cron program",
+					"  disable   Disable cron program",
+					"",
 					"Output mode:",
 					"  stats/list/get are compact by default; add --json for full records.",
 					"  create/update/delete/trigger/enable/disable return structured JSON.",
+					"",
+					"Examples:",
+					"  mu cron stats",
+					"  mu cron list --enabled true --limit 20",
+					"  mu cron create --title \"Nightly audit\" --schedule-kind cron --expr \"0 2 * * *\" --tz UTC",
+					"  mu cron trigger <program-id> --reason smoke_test",
+					"",
+					"Run `mu cron <subcommand> --help` for command-specific usage.",
 				].join("\n") + "\n",
 			);
 		}
@@ -784,6 +918,20 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function cronStats(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu cron stats - show cron scheduler summary",
+					"",
+					"Usage:",
+					"  mu cron stats [--json] [--pretty]",
+					"",
+					"Examples:",
+					"  mu cron stats",
+					"  mu cron stats --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
 		const { present: compact, rest } = popFlag(argv0, "--compact");
 		if (rest.length > 0) {
@@ -803,6 +951,21 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function cronList(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu cron list - list cron programs",
+					"",
+					"Usage:",
+					"  mu cron list [--enabled true|false] [--schedule-kind KIND] [--limit N] [--json] [--pretty]",
+					"",
+					"Examples:",
+					"  mu cron list",
+					"  mu cron list --enabled true --limit 20",
+					"  mu cron list --schedule-kind cron --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		const { value: enabledRaw, rest: argv0 } = getFlagValue(argv, "--enabled");
 		const { value: scheduleKind, rest: argv1 } = getFlagValue(argv0, "--schedule-kind");
 		const { value: limitRaw, rest: argv2 } = getFlagValue(argv1, "--limit");
@@ -840,6 +1003,20 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function cronGet(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu cron get - show one cron program",
+					"",
+					"Usage:",
+					"  mu cron get <program-id> [--json] [--pretty]",
+					"",
+					"Examples:",
+					"  mu cron get cron-123",
+					"  mu cron get cron-123 --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
 		const programId = argv[0];
 		if (!programId) {
 			return jsonError("missing program id", { pretty, recovery: ["mu cron get <program-id>"] });
@@ -932,6 +1109,28 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function cronCreate(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu cron create - create a cron program",
+					"",
+					"Usage:",
+					"  mu cron create [--title <text>] [schedule flags] [--reason <text>] [--enabled true|false] [--pretty]",
+					"  mu cron create <title> [schedule flags] [--reason <text>] [--enabled true|false] [--pretty]",
+					"",
+					"Schedule flags:",
+					"  --schedule-kind <at|every|cron>",
+					"  --at-ms <epoch-ms> | --at <iso8601>",
+					"  --every-ms <ms> [--anchor-ms <epoch-ms>]",
+					"  --expr <cron-expr> [--tz <timezone>]",
+					"",
+					"Examples:",
+					"  mu cron create --title \"One-shot audit\" --schedule-kind at --at 2026-02-22T02:00:00Z",
+					"  mu cron create --title \"Every 10m\" --schedule-kind every --every-ms 600000",
+					"  mu cron create --title \"Nightly\" --schedule-kind cron --expr \"0 2 * * *\" --tz UTC",
+				].join("\n") + "\n",
+			);
+		}
 		let positionalTitle: string | null = null;
 		let args = argv;
 		if (args[0] && !args[0].startsWith("-")) {
@@ -981,6 +1180,28 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function cronUpdate(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu cron update - update a cron program",
+					"",
+					"Usage:",
+					"  mu cron update <program-id> [--title <text>] [schedule flags] [--reason <text>] [--enabled true|false] [--pretty]",
+					"  mu cron update --program-id <id> [--title <text>] [schedule flags] [--reason <text>] [--enabled true|false] [--pretty]",
+					"",
+					"Schedule flags:",
+					"  --schedule-kind <at|every|cron>",
+					"  --at-ms <epoch-ms> | --at <iso8601>",
+					"  --every-ms <ms> [--anchor-ms <epoch-ms>]",
+					"  --expr <cron-expr> [--tz <timezone>]",
+					"",
+					"Examples:",
+					"  mu cron update cron-123 --enabled false",
+					"  mu cron update cron-123 --schedule-kind every --every-ms 300000",
+					"  mu cron update --program-id cron-123 --schedule-kind cron --expr \"0 3 * * *\" --tz UTC",
+				].join("\n") + "\n",
+			);
+		}
 		let positionalProgramId: string | null = null;
 		let args = argv;
 		if (args[0] && !args[0].startsWith("-")) {
@@ -1023,6 +1244,19 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function cronDelete(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu cron delete - delete a cron program",
+					"",
+					"Usage:",
+					"  mu cron delete <program-id> [--pretty]",
+					"",
+					"Example:",
+					"  mu cron delete cron-123",
+				].join("\n") + "\n",
+			);
+		}
 		const programId = argv[0];
 		if (!programId) {
 			return jsonError("missing program id", { pretty, recovery: ["mu cron delete <program-id>"] });
@@ -1040,6 +1274,20 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function cronTrigger(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu cron trigger - trigger a cron program immediately",
+					"",
+					"Usage:",
+					"  mu cron trigger <program-id> [--reason <text>] [--pretty]",
+					"",
+					"Examples:",
+					"  mu cron trigger cron-123",
+					"  mu cron trigger cron-123 --reason smoke_test",
+				].join("\n") + "\n",
+			);
+		}
 		const programId = argv[0];
 		if (!programId) {
 			return jsonError("missing program id", { pretty, recovery: ["mu cron trigger <program-id>"] });
@@ -1061,6 +1309,20 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 	}
 
 	async function cronEnableDisable(argv: string[], ctx: Ctx, pretty: boolean, enabled: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			const action = enabled ? "enable" : "disable";
+			return ok(
+				[
+					`mu cron ${action} - ${action} a cron program`,
+					"",
+					"Usage:",
+					`  mu cron ${action} <program-id> [--pretty]`,
+					"",
+					"Example:",
+					`  mu cron ${action} cron-123`,
+				].join("\n") + "\n",
+			);
+		}
 		const programId = argv[0];
 		if (!programId) {
 			return jsonError("missing program id", {
