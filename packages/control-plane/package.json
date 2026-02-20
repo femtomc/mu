@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-control-plane",
-  "version": "26.2.83",
+  "version": "26.2.84",
   "description": "Messaging integration runtime for mu with policy, confirmation, idempotency, and delivery.",
   "keywords": [
     "mu",

@@ -206,6 +206,7 @@ export function buildServeDeps<Ctx extends { repoRoot: string; serveDeps?: Parti
 				stdin: "ignore",
 				stdout: logFd,
 				stderr: logFd,
+				detached: true,
 			});
 			proc.unref();
 
