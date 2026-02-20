@@ -114,48 +114,7 @@ describe("ControlPlaneRunSupervisor", () => {
 		expect(cancelled.exit_code).toBe(130);
 	});
 
-	test("heartbeat can be requested on-demand for a running job", async () => {
-		const eventKinds: string[] = [];
-		let resolveExit: (exitCode: number) => void = () => {};
-		const exited = new Promise<number>((resolve) => {
-			resolveExit = resolve;
-		});
-
-		const supervisor = new ControlPlaneRunSupervisor({
-			repoRoot: "/repo",
-			heartbeatIntervalMs: 60_000,
-			spawnProcess: () => {
-				const process: ControlPlaneRunProcess = {
-					pid: 123,
-					stdout: streamFromLines([]),
-					stderr: streamFromLines([]),
-					exited,
-					kill() {
-						resolveExit(0);
-					},
-				};
-				return process;
-			},
-			onEvent: (event) => {
-				eventKinds.push(event.kind);
-			},
-		});
-
-		const run = await supervisor.launchResume({ rootIssueId: "mu-root4444", source: "api" });
-		const heartbeat = supervisor.heartbeat({ rootIssueId: "mu-root4444", reason: "manual" });
-		expect(heartbeat.ok).toBe(true);
-
-		await waitFor(() => (eventKinds.includes("run_heartbeat") ? true : null));
-
-		resolveExit(0);
-		await waitFor(() => {
-			const current = supervisor.get(run.job_id);
-			return current?.status === "completed" ? true : null;
-		});
-		await supervisor.stop();
-	});
-
-	test("heartbeat wakeMode next_heartbeat defers wake reason until interval-style tick", async () => {
+	test("running jobs emit periodic heartbeat telemetry", async () => {
 		const events: Array<{ kind: string; message: string }> = [];
 		let resolveExit: (exitCode: number) => void = () => {};
 		const exited = new Promise<number>((resolve) => {
@@ -164,10 +123,10 @@ describe("ControlPlaneRunSupervisor", () => {
 
 		const supervisor = new ControlPlaneRunSupervisor({
 			repoRoot: "/repo",
-			heartbeatIntervalMs: 60_000,
+			heartbeatIntervalMs: 2_000,
 			spawnProcess: () => {
 				const process: ControlPlaneRunProcess = {
-					pid: 124,
+					pid: 123,
 					stdout: streamFromLines([]),
 					stderr: streamFromLines([]),
 					exited,
@@ -182,25 +141,14 @@ describe("ControlPlaneRunSupervisor", () => {
 			},
 		});
 
-		const run = await supervisor.launchResume({ rootIssueId: "mu-root5555", source: "api" });
-		const deferred = supervisor.heartbeat({
-			rootIssueId: "mu-root5555",
-			reason: "queued-reason",
-			wakeMode: "next_heartbeat",
-		});
-		expect(deferred.ok).toBe(true);
+		const run = await supervisor.launchResume({ rootIssueId: "mu-root4444", source: "api" });
 
-		const immediate = supervisor.heartbeat({
-			rootIssueId: "mu-root5555",
-			reason: "interval",
-			wakeMode: "immediate",
-		});
-		expect(immediate.ok).toBe(true);
-
-		await waitFor(() =>
-			events.some((event) => event.kind === "run_heartbeat" && event.message.includes("wake=queued-reason"))
-				? true
-				: null,
+		await waitFor(
+			() =>
+				events.some((event) => event.kind === "run_heartbeat" && event.message.includes("mu-root4444"))
+					? true
+					: null,
+			{ timeoutMs: 6_000, intervalMs: 50 },
 		);
 
 		resolveExit(0);

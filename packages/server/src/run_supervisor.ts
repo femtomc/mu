@@ -5,7 +5,6 @@ import { ActivityHeartbeatScheduler, type HeartbeatRunResult } from "./heartbeat
 
 export type ControlPlaneRunMode = "run_start" | "run_resume";
 export type ControlPlaneRunStatus = "running" | "completed" | "failed" | "cancelled";
-export type ControlPlaneRunWakeMode = "immediate" | "next_heartbeat";
 
 export type ControlPlaneRunSnapshot = {
 	job_id: string;
@@ -35,12 +34,6 @@ export type ControlPlaneRunTrace = {
 };
 
 export type ControlPlaneRunInterruptResult = {
-	ok: boolean;
-	reason: "not_found" | "not_running" | "missing_target" | null;
-	run: ControlPlaneRunSnapshot | null;
-};
-
-export type ControlPlaneRunHeartbeatResult = {
 	ok: boolean;
 	reason: "not_found" | "not_running" | "missing_target" | null;
 	run: ControlPlaneRunSnapshot | null;
@@ -92,7 +85,6 @@ type InternalRunJob = {
 	stderr_lines: string[];
 	log_hints: Set<string>;
 	interrupt_requested: boolean;
-	next_heartbeat_reason: string | null;
 	hard_kill_timer: ReturnType<typeof setTimeout> | null;
 };
 
@@ -142,14 +134,6 @@ function normalizeIssueId(value: string | null | undefined): string | null {
 		return null;
 	}
 	return trimmed.toLowerCase();
-}
-
-function normalizeWakeMode(value: string | null | undefined): ControlPlaneRunWakeMode {
-	if (typeof value !== "string") {
-		return "immediate";
-	}
-	const normalized = value.trim().toLowerCase().replaceAll("-", "_");
-	return normalized === "next_heartbeat" ? "next_heartbeat" : "immediate";
 }
 
 function pushBounded(lines: string[], line: string, maxLines: number): void {
@@ -380,7 +364,6 @@ export class ControlPlaneRunSupervisor {
 			stderr_lines: [],
 			log_hints: new Set<string>(),
 			interrupt_requested: false,
-			next_heartbeat_reason: null,
 			hard_kill_timer: null,
 		};
 
@@ -398,23 +381,14 @@ export class ControlPlaneRunSupervisor {
 		this.#heartbeatScheduler.register({
 			activityId: snapshot.job_id,
 			everyMs: this.#heartbeatIntervalMs,
-			handler: async ({ reason }): Promise<HeartbeatRunResult> => {
+			handler: async (): Promise<HeartbeatRunResult> => {
 				if (job.snapshot.status !== "running") {
 					return { status: "skipped", reason: "not_running" };
-				}
-				const normalizedReason = reason?.trim();
-				const heartbeatReason =
-					normalizedReason && normalizedReason.length > 0 && normalizedReason !== "interval"
-						? normalizedReason
-						: job.next_heartbeat_reason;
-				if (heartbeatReason) {
-					job.next_heartbeat_reason = null;
 				}
 				const elapsedSec = Math.max(0, Math.trunc((this.#nowMs() - job.snapshot.started_at_ms) / 1_000));
 				const root = job.snapshot.root_issue_id ?? job.snapshot.job_id;
 				const progress = job.snapshot.last_progress ? ` · ${job.snapshot.last_progress}` : "";
-				const reasonSuffix = heartbeatReason ? ` · wake=${heartbeatReason}` : "";
-				this.#emit("run_heartbeat", job, `⏱ ${root} running for ${elapsedSec}s${progress}${reasonSuffix}`);
+				this.#emit("run_heartbeat", job, `⏱ ${root} running for ${elapsedSec}s${progress}`);
 				return { status: "ran" };
 			},
 		});
@@ -605,40 +579,6 @@ export class ControlPlaneRunSupervisor {
 		}, 5_000);
 		const root = job.snapshot.root_issue_id ?? job.snapshot.job_id;
 		this.#emit("run_interrupt_requested", job, `⚠️ Interrupt requested for ${root}.`);
-		return { ok: true, reason: null, run: this.#snapshot(job) };
-	}
-
-	public heartbeat(opts: {
-		jobId?: string | null;
-		rootIssueId?: string | null;
-		reason?: string | null;
-		wakeMode?: string | null;
-	}): ControlPlaneRunHeartbeatResult {
-		const target = opts.jobId?.trim() || opts.rootIssueId?.trim() || "";
-		if (target.length === 0) {
-			return { ok: false, reason: "missing_target", run: null };
-		}
-		const job = this.#resolveJob(target);
-		if (!job) {
-			return { ok: false, reason: "not_found", run: null };
-		}
-		if (job.snapshot.status !== "running") {
-			return { ok: false, reason: "not_running", run: this.#snapshot(job) };
-		}
-		const reason = opts.reason?.trim() || "manual";
-		const wakeMode = normalizeWakeMode(opts.wakeMode);
-		if (wakeMode === "next_heartbeat") {
-			job.next_heartbeat_reason = reason;
-			this.#touch(job);
-			return { ok: true, reason: null, run: this.#snapshot(job) };
-		}
-		if (reason !== "interval") {
-			job.next_heartbeat_reason = null;
-		}
-		this.#heartbeatScheduler.requestNow(job.snapshot.job_id, {
-			reason,
-			coalesceMs: 0,
-		});
 		return { ok: true, reason: null, run: this.#snapshot(job) };
 	}
 
