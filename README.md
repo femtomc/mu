@@ -12,10 +12,10 @@ You can think of the main UX model as a sort of "fire and forget" style: compare
 **the idea is that you spend a good amount of time thinking upfront about your prompt and context, 
 and then expect to let the agent run for many hours.**
 
-The philosophy behind this design arises from an observation: _chat is a terrible interface for serious engineering work_.
-Chat is _excellent_ for exploratory work! But ... you know ... if I have a good plan, do I really need to be glued
-to my harness? Can't I just ... let it do its thing, and receive updates every so often at the right level to understand
-if I need to get involved? 
+The philosophy behind this design is simple: chat is excellent for exploration and steering,
+while structured execution is better for long-running engineering work.
+If you already have a solid plan, mu should be able to run for hours and report back at the right level,
+so you only jump in when needed.
 
 Most harnesses are trending in this direction, here's the pitch for this one:
 - **this is an open source agent that does it well,
@@ -40,15 +40,15 @@ At the core, mu provides AI agents (and humans) with three primitives for struct
 - **Event log** — append-only audit trail. Every issue state change and forum post
   emits a structured event with run correlation IDs.
 
-All state lives in a `.mu/` directory at your repo root: three JSONL files
-(`issues.jsonl`, `forum.jsonl`, `events.jsonl`) and a `logs/` directory for
-per-step backend output.
+Runtime state lives in a workspace-scoped global store under:
+`~/.mu/workspaces/<workspace-id>/` (or `$MU_HOME/workspaces/<workspace-id>/`).
+Core files include `issues.jsonl`, `forum.jsonl`, `events.jsonl`, and `logs/`.
 
 ### Long running operation
 
-mu has two built-in system prompts: `orchestrator` and `worker`. Orchestrators are
-essentially planners and reviewers. They do a bunch of reading and thinking, organize the issue DAG, 
-and schedule work. Workers are ... workers: they implement things, do tasks, etc.
+mu ships with role prompts for `operator`, `orchestrator`, `reviewer`, and `worker`.
+In long-running execution, orchestrators plan and coordinate, reviewers gate/iterate,
+and workers execute concrete tasks.
 
 The **orchestration engine** walks the issue DAG: it finds ready leaves (open issues with no
 unresolved blockers or open children), dispatches them to the agent backend, and
@@ -102,7 +102,7 @@ you can customize the behavior of `mu` as you would any other agent.
 npm install -g @femtomc/mu
 cd /path/to/your/repo
 
-mu run "build the thing"  # create .mu/ store + root issue + start orchestration
+mu run "build the thing"  # initialize workspace store + root issue + start orchestration
 mu serve         # start server + terminal operator
 mu status        # show DAG state (CLI)
 mu issues create "build the thing" --body "details here" --pretty
@@ -123,9 +123,10 @@ The `mu serve` command:
 - Starts the API on a single port (default 3000, configurable with `--port`)
 - Attaches an interactive terminal operator session in the same shell
 - Supports headless/SSH usage via normal port forwarding
-- Auto-mounts control-plane webhook routes from `.mu/config.json`
+- Auto-mounts control-plane webhook routes from `<store>/config.json`
 
-Type `/exit` in the chat prompt (or press Ctrl+C) to stop both chat and server.
+Type `/exit` (or press Ctrl+C) to leave the attached terminal operator session.
+The server continues running in the background; use `mu stop` when you want to shut it down.
 
 ### `mu serve` operator quickstart
 
@@ -157,20 +158,22 @@ Operator CLI discipline (context-safe by default):
 
 `mu serve` attaches an interactive terminal operator session in the same shell as the server.
 
-Operator sessions are persisted by default (`.mu/operator/sessions`). Use `mu session`
-to reconnect to the latest session, `mu session list` to browse persisted sessions,
+Operator sessions are persisted by default under `<store>/operator/sessions`.
+Use `mu session` to reconnect to the latest session, `mu session list` to browse persisted sessions,
 or `mu session <session-id>` to reopen a specific one.
 
 ### Control Plane
 
 Control-plane runtime configuration is file-based:
 
-- Source of truth: `.mu/config.json`
+- Source of truth: `<store>/config.json`
 - Live config API: `GET /api/control-plane/config`, `POST /api/control-plane/config` (patch)
 - Runtime remount: `POST /api/control-plane/reload`
 - Explicit rollback trigger: `POST /api/control-plane/rollback`
 - Channel capability discovery: `GET /api/control-plane/channels`
 - Session turn injection: `POST /api/control-plane/turn` (run real turn in target session, return reply + context cursor)
+
+Use `mu store paths` to resolve `<store>` for the current repo/workspace.
 
 Slack example:
 
@@ -187,13 +190,14 @@ Slack example:
       "enabled": true,
       "run_triggers_enabled": true,
       "provider": null,
-      "model": null
+      "model": null,
+      "thinking": null
     }
   }
 }
 ```
 
-Use `mu control status` plus `.mu/config.json` edits to configure adapters, then reload control-plane (`POST /api/control-plane/reload` or `mu control reload`).
+Use `mu control status` plus `<store>/config.json` edits to configure adapters, then reload control-plane (`POST /api/control-plane/reload` or `mu control reload`).
 
 When adapters are active, `mu serve` prints mounted routes:
 
@@ -281,27 +285,37 @@ bun run pack:smoke
 Builds `dist/`, packs each publishable package, installs them into a temp
 project, verifies imports under Bun, and verifies the `mu` CLI runs.
 
-## The `.mu/` directory
+## Workspace store layout
+
+mu keeps runtime state in a global workspace store (default `~/.mu`, override with `$MU_HOME`):
 
 ```
-.mu/
-├── .gitignore             # auto-generated; ignores all `.mu` runtime state
-├── issues.jsonl           # issue DAG state
-├── forum.jsonl            # forum messages
-├── events.jsonl           # audit trail
-├── logs/                  # per-run output
-│   └── <issue-id>.jsonl
-└── control-plane/         # (created when adapters are active)
-    ├── commands.jsonl     # command journal
-    ├── outbox.jsonl       # outbound message queue
-    ├── identities.jsonl   # channel identity bindings
-    ├── idempotency.jsonl  # dedup ledger
-    ├── adapter_audit.jsonl
-    ├── policy.json
-    └── writer.lock
+~/.mu/
+└── workspaces/
+    └── <workspace-id>/
+        ├── .gitignore
+        ├── config.json
+        ├── issues.jsonl
+        ├── forum.jsonl
+        ├── events.jsonl
+        ├── logs/
+        ├── operator/
+        │   └── sessions/
+        └── control-plane/
+            ├── server.json
+            ├── commands.jsonl
+            ├── outbox.jsonl
+            ├── identities.jsonl
+            ├── idempotency.jsonl
+            ├── adapter_audit.jsonl
+            ├── operator-sessions/
+            ├── operator_conversations.json
+            ├── policy.json
+            └── writer.lock
 ```
 
-All files are newline-delimited JSON. The store is discovered by walking up from
-the current directory until a `.mu/` directory is found.
+The store contains both JSONL logs/journals and JSON config/state files.
+Workspace IDs are derived from repo root identity; use `mu store paths` to inspect
+exact paths for your current repo.
 
 
