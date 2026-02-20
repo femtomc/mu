@@ -92,7 +92,9 @@ you can customize the behavior of `mu` as you would any other agent.
 - **Project context**: mu only loads `AGENTS.md` (ignores `CLAUDE.md`).
 - **Customization**: if you wish to customize the context and behavior of mu's execution, use skills.
   - Pi skills: `.pi/skills/` (project) and `~/.pi/agent/skills/` (global).
+  - Mu skills: `~/.mu/skills/` (global) and `~/.mu/workspaces/<workspace-id>/skills/` (workspace-local).
   - Repo skills: if a repo has a top-level `skills/` directory, mu loads it too.
+  - On skill-name collisions, mu-prefixed roots are preferred by default.
 
 ## Quickstart
 

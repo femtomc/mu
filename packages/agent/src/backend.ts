@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, open } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { findRepoRoot, getMuHomeDir, getStorePaths } from "@femtomc/mu-core/node";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
@@ -13,6 +14,7 @@ import {
 	createReadTool,
 	createWriteTool,
 	DefaultResourceLoader,
+	getAgentDir,
 	SessionManager,
 	SettingsManager,
 } from "@mariozechner/pi-coding-agent";
@@ -230,20 +232,37 @@ export type CreateMuResourceLoaderOpts = {
 };
 
 export function createMuResourceLoader(opts: CreateMuResourceLoaderOpts): DefaultResourceLoader {
-	const skillPaths = new Set<string>();
+	const repoRoot = findRepoRoot(opts.cwd);
+	const storePaths = getStorePaths(repoRoot);
+	const piAgentDir = opts.agentDir ?? getAgentDir();
+
+	const skillPaths: string[] = [];
+	const seenSkillPaths = new Set<string>();
+	const addSkillPath = (path: string, requireExists: boolean): void => {
+		if (requireExists && !existsSync(path)) {
+			return;
+		}
+		if (seenSkillPaths.has(path)) {
+			return;
+		}
+		seenSkillPaths.add(path);
+		skillPaths.push(path);
+	};
+
+	// Preference order (first match wins on skill-name collisions):
+	// mu workspace -> mu global -> repo top-level -> explicit additions -> pi project -> pi global.
+	addSkillPath(join(storePaths.storeDir, "skills"), true);
+	addSkillPath(join(getMuHomeDir(), "skills"), true);
+	addSkillPath(join(repoRoot, "skills"), true);
 	for (const p of opts.additionalSkillPaths ?? []) {
-		skillPaths.add(p);
+		addSkillPath(p, false);
 	}
+	addSkillPath(join(repoRoot, ".pi", "skills"), true);
+	addSkillPath(join(piAgentDir, "skills"), true);
 
 	const themePaths = new Set<string>([MU_DEFAULT_THEME_PATH]);
 	for (const p of opts.additionalThemePaths ?? []) {
 		themePaths.add(p);
-	}
-
-	// If a repo has a top-level `skills/` dir (like workshop/), load it.
-	const repoSkills = join(opts.cwd, "skills");
-	if (existsSync(repoSkills)) {
-		skillPaths.add(repoSkills);
 	}
 
 	return new DefaultResourceLoader({
@@ -251,7 +270,8 @@ export function createMuResourceLoader(opts: CreateMuResourceLoaderOpts): Defaul
 		agentDir: opts.agentDir,
 		settingsManager: opts.settingsManager ?? SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME, quietStartup: true }),
 		additionalExtensionPaths: opts.additionalExtensionPaths,
-		additionalSkillPaths: [...skillPaths],
+		noSkills: true,
+		additionalSkillPaths: skillPaths,
 		additionalThemePaths: [...themePaths],
 		systemPromptOverride: (_base) => opts.systemPrompt,
 		agentsFilesOverride: (base) => ({
