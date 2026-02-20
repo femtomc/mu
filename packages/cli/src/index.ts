@@ -27,25 +27,25 @@ import { cmdMemory as cmdMemoryCommand } from "./commands/memory.js";
 import { cmdLogin as cmdLoginCommand } from "./commands/login.js";
 import { cmdTurn as cmdTurnCommand } from "./commands/turn.js";
 import {
-	issueJson,
-	renderCronPayloadCompact,
-	renderEventsCompactTable,
-	renderForumPostCompact,
-	renderForumReadCompact,
-	renderForumTopicsCompact,
-	renderHeartbeatsPayloadCompact,
-	renderIssueCompactTable,
-	renderIssueDepMutationCompact,
-	renderIssueDetailCompact,
-	renderIssueMutationCompact,
-	renderRunPayloadCompact,
-} from "./render.js";
-import {
-	cleanupStaleServerFiles,
-	detectRunningServer,
-	readApiError,
-	requestServerJson as requestServerJsonHelper,
-} from "./server_helpers.js";
+	controlCommandDeps,
+	eventsCommandDeps,
+	forumCommandDeps,
+	issuesCommandDeps,
+	loginCommandDeps,
+	memoryCommandDeps,
+	operatorSessionCommandDeps,
+	replayCommandDeps,
+	resumeCommandDeps,
+	runCommandDeps,
+	runDirectCommandDeps,
+	schedulingCommandDeps,
+	sessionCommandDeps,
+	serveCommandDeps,
+	statusCommandDeps,
+	storeCommandDeps,
+	turnCommandDeps,
+} from "./command_deps.js";
+import { detectRunningServer, requestServerJson as requestServerJsonHelper } from "./server_helpers.js";
 import {
 	buildServeDeps as buildServeDepsRuntime,
 	runServeLifecycle as runServeLifecycleRuntime,
@@ -58,32 +58,12 @@ import {
 	defaultOperatorSessionStart,
 	ensureCtx,
 	ensureStoreInitialized,
-	fileExists,
-	nonEmptyString,
 	readServeOperatorDefaults,
-	storePathForRepoRoot,
 } from "./workspace_runtime.js";
-import {
-	ensureInt,
-	formatRecovery,
-	getFlagValue,
-	getRepeatFlagValues,
-	hasHelpFlag,
-	jsonError,
-	jsonText,
-	ok,
-	popFlag,
-} from "./cli_primitives.js";
+import { formatRecovery, hasHelpFlag, jsonError, ok } from "./cli_primitives.js";
 import { resolveIssueId as resolveIssueIdCore } from "./issue_resolution.js";
 import { mainHelp } from "./main_help.js";
-import {
-	delayMs,
-	describeError,
-	ensureTrailingNewline,
-	setSearchParamIfPresent,
-	signalExitCode,
-	trimForHeader,
-} from "./cli_utils.js";
+import { delayMs, describeError, signalExitCode } from "./cli_utils.js";
 
 export type RunResult = {
 	stdout: string;
@@ -248,243 +228,64 @@ async function cmdGuide(argv: string[]): Promise<RunResult> {
 	return ok(`${guideText()}\n`);
 }
 
-function statusCommandDeps() {
-	return {
-		hasHelpFlag,
-		popFlag,
-		jsonError,
-		jsonText,
-		ok,
-	};
-}
-
 async function cmdStatus(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await cmdStatusCommand(argv, ctx, statusCommandDeps());
-}
-
-function storeCommandDeps() {
-	return {
-		hasHelpFlag,
-		popFlag,
-		getFlagValue,
-		ensureInt,
-		jsonError,
-		jsonText,
-		ok,
-		fileExists,
-	};
 }
 
 async function cmdStore(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await cmdStoreCommand(argv, ctx, storeCommandDeps());
 }
 
-function issuesCommandDeps() {
-	return {
-		hasHelpFlag,
-		popFlag,
-		getFlagValue,
-		getRepeatFlagValues,
-		ensureInt,
-		jsonError,
-		jsonText,
-		ok,
-		resolveIssueId,
-		issueJson,
-		renderIssueCompactTable,
-		renderIssueDetailCompact,
-		renderIssueMutationCompact,
-		renderIssueDepMutationCompact,
-	};
-}
-
 async function cmdIssues(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdIssuesCommand(argv, ctx, issuesCommandDeps());
-}
-
-function forumCommandDeps() {
-	return {
-		hasHelpFlag,
-		popFlag,
-		getFlagValue,
-		ensureInt,
-		jsonError,
-		jsonText,
-		ok,
-		renderForumPostCompact,
-		renderForumReadCompact,
-		renderForumTopicsCompact,
-	};
+	return await cmdIssuesCommand(argv, ctx, issuesCommandDeps(resolveIssueId));
 }
 
 async function cmdForum(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await cmdForumCommand(argv, ctx, forumCommandDeps());
 }
 
-function eventsCommandDeps() {
-	return {
-		hasHelpFlag,
-		popFlag,
-		getFlagValue,
-		ensureInt,
-		jsonError,
-		jsonText,
-		ok,
-		renderEventsCompactTable,
-	};
-}
-
 async function cmdEvents(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await cmdEventsCommand(argv, ctx, eventsCommandDeps());
 }
 
-function schedulingCommandDeps() {
-	return {
-		hasHelpFlag,
-		popFlag,
-		getFlagValue,
-		ensureInt,
-		setSearchParamIfPresent,
-		jsonError,
-		jsonText,
-		ok,
-		requestServerJson,
-		renderRunPayloadCompact,
-		renderHeartbeatsPayloadCompact,
-		renderCronPayloadCompact,
-	};
-}
-
 async function cmdRuns(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdRunsCommand(argv, ctx, schedulingCommandDeps());
+	return await cmdRunsCommand(argv, ctx, schedulingCommandDeps(requestServerJson));
 }
 
 async function cmdHeartbeats(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdHeartbeatsCommand(argv, ctx, schedulingCommandDeps());
+	return await cmdHeartbeatsCommand(argv, ctx, schedulingCommandDeps(requestServerJson));
 }
 
 async function cmdCron(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdCronCommand(argv, ctx, schedulingCommandDeps());
+	return await cmdCronCommand(argv, ctx, schedulingCommandDeps(requestServerJson));
 }
 
 async function cmdMemoryDelegated(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdMemoryCommand(argv, ctx, {
-		hasHelpFlag,
-		popFlag,
-		getFlagValue,
-		ensureInt,
-		setSearchParamIfPresent,
-		jsonError,
-		jsonText,
-		ok,
-		describeError,
-	});
+	return await cmdMemoryCommand(argv, ctx, memoryCommandDeps());
 }
 
 async function cmdTurn(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdTurnCommand(argv, ctx, {
-		hasHelpFlag,
-		popFlag,
-		getFlagValue,
-		jsonError,
-		ok,
-		jsonText,
-		describeError,
-	});
-}
-
-function runCommandDeps() {
-	return {
-		hasHelpFlag,
-		ensureInt,
-		jsonError,
-		ok,
-		runServeLifecycle,
-	};
+	return await cmdTurnCommand(argv, ctx, turnCommandDeps());
 }
 
 async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdRunCommand(argv, ctx, runCommandDeps());
-}
-
-function runDirectCommandDeps() {
-	return {
-		hasHelpFlag,
-		ensureInt,
-		jsonError,
-		jsonText,
-		ok,
-		ensureStoreInitialized,
-		trimForHeader,
-		ensureTrailingNewline,
-	};
+	return await cmdRunCommand(argv, ctx, runCommandDeps(runServeLifecycle));
 }
 
 async function cmdRunDirect(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await cmdRunDirectCommand(argv, ctx, runDirectCommandDeps());
 }
 
-function resumeCommandDeps() {
-	return {
-		hasHelpFlag,
-		ensureInt,
-		jsonError,
-		jsonText,
-		ok,
-		ensureStoreInitialized,
-		resolveIssueId,
-		trimForHeader,
-		ensureTrailingNewline,
-	};
-}
-
 async function cmdResume(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdResumeCommand(argv, ctx, resumeCommandDeps());
-}
-
-function replayCommandDeps() {
-	return {
-		hasHelpFlag,
-		getFlagValue,
-		jsonError,
-		ok,
-		fileExists,
-	};
+	return await cmdResumeCommand(argv, ctx, resumeCommandDeps(resolveIssueId));
 }
 
 async function cmdReplay(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await cmdReplayCommand(argv, ctx, replayCommandDeps());
 }
 
-function sessionCommandDeps() {
-	return {
-		hasHelpFlag,
-		getFlagValue,
-		popFlag,
-		ensureInt,
-		jsonError,
-		jsonText,
-		ok,
-		fileExists,
-		trimForHeader,
-		runServeLifecycle,
-	};
-}
-
 async function cmdSession(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdSessionCommand(argv, ctx, sessionCommandDeps());
-}
-
-function operatorSessionCommandDeps() {
-	return {
-		hasHelpFlag,
-		popFlag,
-		getFlagValue,
-		jsonError,
-		jsonText,
-		ok,
-		defaultOperatorSessionStart,
-	};
+	return await cmdSessionCommand(argv, ctx, sessionCommandDeps(runServeLifecycle));
 }
 
 async function cmdOperatorSession(
@@ -493,15 +294,6 @@ async function cmdOperatorSession(
 	options: OperatorSessionCommandOptions = {},
 ): Promise<RunResult> {
 	return await cmdOperatorSessionCommand(argv, ctx, options, operatorSessionCommandDeps());
-}
-
-function loginCommandDeps() {
-	return {
-		hasHelpFlag,
-		popFlag,
-		jsonError,
-		ok,
-	};
 }
 
 async function cmdLogin(argv: string[]): Promise<RunResult> {
@@ -571,50 +363,15 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 	});
 }
 
-function serveCommandDeps() {
-	return {
-		hasHelpFlag,
-		getFlagValue,
-		popFlag,
-		ensureInt,
-		jsonError,
-		ok,
-		delayMs,
-		detectRunningServer,
-		buildServeDeps,
-		cleanupStaleServerFiles,
-		runServeLifecycle,
-	};
-}
-
 async function cmdServe(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdServeCommand(argv, ctx, serveCommandDeps());
+	return await cmdServeCommand(argv, ctx, serveCommandDeps({ buildServeDeps, runServeLifecycle }));
 }
 
 async function cmdStop(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	return await cmdStopCommand(argv, ctx, serveCommandDeps());
+	return await cmdStopCommand(argv, ctx, serveCommandDeps({ buildServeDeps, runServeLifecycle }));
 }
 
 // ROLE_SCOPES lives in @femtomc/mu-control-plane; lazy-imported alongside IdentityStore.
-
-function controlCommandDeps() {
-	return {
-		hasHelpFlag,
-		popFlag,
-		getFlagValue,
-		getRepeatFlagValues,
-		ensureInt,
-		jsonError,
-		jsonText,
-		ok,
-		fileExists,
-		nonEmptyString,
-		describeError,
-		storePathForRepoRoot,
-		detectRunningServer,
-		readApiError,
-	};
-}
 
 async function cmdControl(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await cmdControlCommand(argv, ctx, controlCommandDeps());
