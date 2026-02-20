@@ -2,58 +2,85 @@
 
 **The little long-running assistant that could.**
 
-`mu` is a personal assistant for technical work.
+`mu` is a personal assistant for technical work, designed for long-running execution, persistence, and reactivity.
 
-There's thousands of agents slopped into existence every day: the main distinguishing feature of this one is that it is
-designed _to be long running_ (allowing you to prompt, and then leave it running for many hours). 
-It bundles tools (within the `mu` CLI! all you need is bash and `mu` installed) designed to make this capability straightforward and practical. 
+## Quickstart
 
-You can think of the main UX model as a sort of "fire and forget" style: compared to interactive chat, 
-**the idea is that you spend a good amount of time thinking upfront about your prompt and context, 
-and then expect to let the agent run for many hours.**
+```bash
+npm install -g @femtomc/mu
+cd /path/to/your/repo
 
-The philosophy behind this design is simple: chat is excellent for exploration and steering,
-while structured execution is better for long-running engineering work.
-If you already have a solid plan, mu should be able to run for hours and report back at the right level,
-so you only jump in when needed.
+mu --help
+mu run "build the thing"
+mu status --pretty
+mu issues ready --pretty
+mu forum post research:topic -m "found something" --author worker
+```
 
-Most harnesses are trending in this direction, here's the pitch for this one:
-- **this is an open source agent that does it well,
-by people who care about the UX, and dogfood their own shit**
-- **mu is a programmable tool: programmable tools prioritize _you_ and your relationship with your tools, not VC funders**
+For messaging adapter-specific setup (Slack/Discord/Telegram/Neovim), use the package READMEs linked in [Packages](#packages).
 
-The design of `mu` supports _long-running_ operation by allowing agents to carefully keep track and manage 
-context using an issue tracker, a forum, and a work orchestration pattern based loosely on hierarchical planning.
-Each of these tools is built into the package, and accessible via the CLI, and agents are quite good
-at using CLIs!
+## Agent workflow commands
+
+```bash
+# Start work
+mu run "Break down and execute this goal"
+mu status --pretty
+mu issues ready --root <root-id> --pretty
+
+# Inspect + mutate state (bounded first)
+mu issues list --status open --limit 20 --pretty
+mu issues get <id> --pretty
+mu forum read issue:<id> --limit 20 --pretty
+mu issues update <id> --status in_progress --pretty
+mu issues close <id> --outcome success --pretty
+
+# Memory + store inspection
+mu memory search --query "<text>" --limit 20
+mu memory index status
+mu store paths --pretty
+mu store tail events --limit 20 --pretty
+
+# Messaging/control-plane lifecycle
+mu control status --pretty
+mu control reload
+```
 
 ## mu, quickly
 
-At the core, mu provides AI agents (and humans) with three primitives for structured work:
+`mu` is a modular and compositional system. Broken apart, here are some of the main ideas:
 
-- **Issue DAG** — decompose work into issues with parent/child and blocking
-  dependencies. The DAG tracks status, priority, and outcomes.
-- **Forum** — topic-keyed message log for communication between agents and humans.
-  Forum threads are cheap: one per issue, per research topic, etc. Very easy
-  for agents to store persistent knowledge, comment on threads ... without leaving a
-  tangled mess of Markdown.
-- **Event log** — append-only audit trail. Every issue state change and forum post
-  emits a structured event with run correlation IDs.
+- **Work orchestration: structured work state**
+  - **Issue DAG** for decomposition, dependencies, status, and outcomes
+  - **Forum** for topic-based coordination and durable agent notes
+  - **Event log** for append-only audit trails and run correlation
 
-Runtime state lives in a workspace-scoped global store under:
+- **Work orchestration: long-running execution engine**
+  - Role prompts for `orchestrator`, `reviewer`, and `worker`
+  - A DAG execution engine that claims ready leaves, executes work, and advances lifecycle state
+
+- **Chat: operators and sessions**
+  - Operators are your chat-based portal to `mu`: they are capable coding agent sessions with knowledge of how `mu` works
+  - Operators are able to assist you with anything you wish `mu` to do, including extending `mu` for yourself
+  - Executing `mu` gives you a terminal operator session (`operator` role)
+  - All sessions are stored and can be resumed or connected to
+
+- **Chat: messaging control-plane**
+  - Ingress/egress pipeline for Slack, Discord, Telegram, and Neovim
+  - Control-plane attaches messaging services to operator sessions
+  - Identity binding, policy gates, confirmation workflow, idempotency, and outbox delivery
+  - Runtime config + adapter lifecycle control (`mu control status`, `mu control reload`)
+
+- **Reactivity: scheduled automation**
+  - Heartbeat programs (`mu heartbeats ...`) and cron programs (`mu cron ...`)
+  - Operator-wake driven execution loops for recurring and event-driven work
+
+- **Memory: context retrieval + indexing**
+  - `mu memory search|timeline|stats`
+  - Local memory index management (`mu memory index status|rebuild`)
+
+Runtime state is workspace-scoped under:
 `~/.mu/workspaces/<workspace-id>/` (or `$MU_HOME/workspaces/<workspace-id>/`).
-Core files include `issues.jsonl`, `forum.jsonl`, `events.jsonl`, and `logs/`.
-
-### Long running operation
-
-mu ships with role prompts for `operator`, `orchestrator`, `reviewer`, and `worker`.
-In long-running execution, orchestrators plan and coordinate, reviewers gate/iterate,
-and workers execute concrete tasks.
-
-The **orchestration engine** walks the issue DAG: it finds ready leaves (open issues with no
-unresolved blockers or open children), dispatches them to the agent backend, and
-manages the lifecycle — claim, execute, close/expand, repeat — until the
-root issue is terminal.
+Use `mu store paths` to resolve exact locations for the current repo.
 
 ## mu builds on pi
 
@@ -78,21 +105,8 @@ you can customize the behavior of `mu` as you would any other agent.
   - Repo skills: if a repo has a top-level `skills/` directory, mu loads it too.
   - On skill-name collisions, mu-prefixed roots are preferred by default.
 
-## Quickstart
 
-```bash
-npm install -g @femtomc/mu
-cd /path/to/your/repo
-
-mu run "build the thing"     # Queue a run + start server + attach operator
-mu serve                    # Start server + terminal operator session
-mu status --pretty          # Show DAG state
-mu issues list --status open --limit 20 --pretty
-mu issues ready --pretty    # Show executable leaf issues
-mu forum post research:topic -m "found something" --author worker
-```
-
-### Terminal operator session
+## Terminal operator session
 
 `mu serve` is the primary interactive surface:
 
@@ -107,7 +121,7 @@ The `mu serve` command:
 - Supports headless/SSH usage via normal port forwarding
 - Auto-mounts control-plane webhook routes from `<store>/config.json`
 
-Type `/exit` (or press Ctrl+C) to leave the attached terminal operator session.
+Type `/exit`, Ctrl+D, or Ctrl+C to leave the attached terminal operator session.
 The server continues running in the background; use `mu stop` when you want to shut it down.
 
 ### `mu serve` operator quickstart
@@ -144,7 +158,7 @@ Operator sessions are persisted by default under `<store>/operator/sessions`.
 Use `mu session` to reconnect to the latest session, `mu session list` to browse persisted sessions,
 or `mu session <session-id>` to reopen a specific one.
 
-### Control Plane
+## Control Plane
 
 Control-plane runtime configuration is file-based:
 
@@ -197,51 +211,33 @@ Operator terminal: connected
 
 Business state reads/mutations are CLI-first (`mu issues ...`, `mu forum ...`, `mu memory ...`).
 
-### Messaging service setup (Slack/Discord/Telegram/Neovim)
+## Messaging setup (at a glance)
 
-Use this baseline flow for all channel adapters:
+Use this baseline flow for Slack/Discord/Telegram/Neovim:
 
 ```bash
-# 1) Resolve workspace store paths + config location
-mu store paths --pretty
+mu store paths --pretty      # resolve <store>
+mu control status --pretty   # inspect adapter readiness
+# edit <store>/config.json   # set adapter secrets
+mu control reload            # apply config live
+```
 
-# 2) Inspect current adapter readiness
-mu control status --pretty
+Identity linking:
 
-# 3) Edit <store>/config.json with adapter secrets (see below)
-# 4) Apply config changes live
-mu control reload
-
-# 5) Link identities for channel actors
+```bash
 mu control link --channel slack --actor-id U123 --tenant-id T123
 mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id>
 mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot
 ```
 
-Adapter config keys in `<store>/config.json`:
-
-- Slack: `control_plane.adapters.slack.signing_secret`
-- Discord: `control_plane.adapters.discord.signing_secret`
-- Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`, `bot_username`
-- Neovim: `control_plane.adapters.neovim.shared_secret`
-
-Default ingress routes:
-
-- Slack: `POST /webhooks/slack`
-- Discord: `POST /webhooks/discord`
-- Telegram: `POST /webhooks/telegram`
-- Neovim: `POST /webhooks/neovim`
-
-Telegram webhook registration example (Bot API):
-
-```bash
-curl -sS -X POST "https://api.telegram.org/bot<bot_token>/setWebhook" \
-  -d "url=https://<public-host>/webhooks/telegram" \
-  -d "secret_token=<webhook_secret>"
-```
-
 `mu control link` currently covers Slack/Discord/Telegram. For Neovim identity binding, use
-`:Mu link` from `mu.nvim` after configuring `shared_secret`.
+`:Mu link` from `mu.nvim`.
+
+Detailed adapter runbooks live in package READMEs:
+
+- `packages/server/README.md`
+- `packages/control-plane/README.md`
+- `packages/neovim/README.md`
 
 ## Packages
 
@@ -259,7 +255,7 @@ curl -sS -X POST "https://api.telegram.org/bot<bot_token>/setWebhook" \
 
 When `mu` is installed from npm, package READMEs are available under the install tree
 (for example `<mu-install>/node_modules/@femtomc/mu-control-plane/README.md`).
-The operator prompt now injects absolute runtime paths for these package READMEs.
+The operator prompt injects absolute runtime paths for these package READMEs.
 
 ## Development
 
@@ -349,5 +345,3 @@ mu keeps runtime state in a global workspace store (default `~/.mu`, override wi
 The store contains both JSONL logs/journals and JSON config/state files.
 Workspace IDs are derived from repo root identity; use `mu store paths` to inspect
 exact paths for your current repo.
-
-
