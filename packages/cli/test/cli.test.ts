@@ -460,7 +460,7 @@ test("mu session list reports persisted operator sessions", async () => {
 	expect(payload.sessions[0]?.rel_path).toContain("operator/sessions/");
 });
 
-test("mu session defaults to reconnecting most recent persisted operator session", async () => {
+test("mu session defaults to a new operator session when no persisted sessions exist", async () => {
 	const dir = await mkTempRepo();
 	let seenSessionMode: string | undefined;
 	let seenSessionDir: string | undefined;
@@ -481,9 +481,46 @@ test("mu session defaults to reconnecting most recent persisted operator session
 	});
 
 	expect(result.exitCode).toBe(0);
-	expect(seenSessionMode).toBe("continue-recent");
+	expect(seenSessionMode).toBe("new");
 	expect(seenSessionDir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
 	expect(seenSessionFile).toBeUndefined();
+});
+
+test("mu session defaults to opening the most recent persisted operator session when available", async () => {
+	const dir = await mkTempRepo();
+	await writeOperatorSessionFile(dir, {
+		id: "sess-old-11111111",
+		timestamp: "2026-02-19T10:00:00.000Z",
+		message: "older",
+	});
+	const newest = await writeOperatorSessionFile(dir, {
+		id: "sess-new-22222222",
+		timestamp: "2026-02-19T11:00:00.000Z",
+		message: "newer",
+	});
+
+	let seenSessionMode: string | undefined;
+	let seenSessionDir: string | undefined;
+	let seenSessionFile: string | undefined;
+	const result = await run(["session", "--port", "3310"], {
+		cwd: dir,
+		serveDeps: {
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
+			runOperatorSession: async ({ onReady, sessionMode, sessionDir, sessionFile }) => {
+				seenSessionMode = sessionMode;
+				seenSessionDir = sessionDir;
+				seenSessionFile = sessionFile;
+				onReady();
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+			registerSignalHandler: () => () => {},
+		},
+	});
+
+	expect(result.exitCode).toBe(0);
+	expect(seenSessionMode).toBe("open");
+	expect(seenSessionDir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
+	expect(seenSessionFile).toBe(newest.path);
 });
 
 test("mu session <id-prefix> resolves and opens a specific persisted operator session", async () => {
@@ -543,7 +580,7 @@ test("mu run auto-initializes store layout", async () => {
 		},
 	});
 	expect(result.exitCode).toBe(0);
-	expect(seenSessionMode).toBe("continue-recent");
+	expect(seenSessionMode).toBe("new");
 	expect(seenSessionDir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
 	expect(seenSessionFile).toBeUndefined();
 	await expectStoreBootstrapped(dir);
@@ -922,7 +959,7 @@ test("mu serve spawns background server, attaches TUI, and leaves server running
 	expect(result.exitCode).toBe(0);
 	// Server is NOT stopped when TUI exits — it's a background process
 	expect(events).toEqual(["server:spawn:3300", "operator:start", "operator:end"]);
-	expect(seenSessionMode).toBe("continue-recent");
+	expect(seenSessionMode).toBe("new");
 	expect(seenSessionDir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
 	expect(seenSessionFile).toBeUndefined();
 	expect(chunks.stderr).toContain("started background server");

@@ -76,10 +76,18 @@ function operatorSessionDir(storeDir: string): string {
 	return join(storeDir, "operator", "sessions");
 }
 
-function defaultOperatorSessionStart(storeDir: string): OperatorSessionStartOpts {
+function defaultOperatorSessionStart(storeDir: string, mostRecentSessionFile: string | null): OperatorSessionStartOpts {
+	const sessionDir = operatorSessionDir(storeDir);
+	if (mostRecentSessionFile) {
+		return {
+			mode: "open",
+			sessionDir,
+			sessionFile: mostRecentSessionFile,
+		};
+	}
 	return {
-		mode: "continue-recent",
-		sessionDir: operatorSessionDir(storeDir),
+		mode: "new",
+		sessionDir,
 	};
 }
 
@@ -404,7 +412,7 @@ export async function cmdSession<Ctx extends SessionCommandCtx>(
 		return jsonError("port must be 1-65535", { recovery: ["mu session --port 3000"] });
 	}
 
-	let operatorSession: OperatorSessionStartOpts = defaultOperatorSessionStart(ctx.paths.storeDir);
+	let operatorSession: OperatorSessionStartOpts;
 	if (newMode) {
 		operatorSession = {
 			mode: "new",
@@ -428,6 +436,9 @@ export async function cmdSession<Ctx extends SessionCommandCtx>(
 			sessionDir,
 			sessionFile: resolved.path,
 		};
+	} else {
+		const persistedSessions = await loadPersistedOperatorSessions(ctx.repoRoot, sessionDir);
+		operatorSession = defaultOperatorSessionStart(ctx.paths.storeDir, persistedSessions[0]?.path ?? null);
 	}
 
 	return await runServeLifecycle(ctx, {
