@@ -1,10 +1,6 @@
 import { dirname, join } from "node:path";
 import chalk from "chalk";
-import type { BackendRunner } from "@femtomc/mu-agent";
-import type { EventLog, StorePaths } from "@femtomc/mu-core/node";
-import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
-import type { ModelOverrides } from "@femtomc/mu-orchestrator";
 import { cmdControl as cmdControlCommand } from "./commands/control.js";
 import { cmdEvents as cmdEventsCommand } from "./commands/events.js";
 import { cmdForum as cmdForumCommand } from "./commands/forum.js";
@@ -49,7 +45,6 @@ import { detectRunningServer, requestServerJson as requestServerJsonHelper } fro
 import {
 	buildServeDeps as buildServeDepsRuntime,
 	runServeLifecycle as runServeLifecycleRuntime,
-	type OperatorSessionStartMode,
 	type OperatorSessionStartOpts,
 	type ServeDeps,
 	type ServeLifecycleOptions,
@@ -64,55 +59,8 @@ import { formatRecovery, hasHelpFlag, jsonError, ok } from "./cli_primitives.js"
 import { resolveIssueId as resolveIssueIdCore } from "./issue_resolution.js";
 import { mainHelp } from "./main_help.js";
 import { routeCommand } from "./command_router.js";
+import type { CliCtx, CliIO, OperatorSessionCommandOptions, RunResult } from "./types.js";
 import { delayMs, describeError, signalExitCode } from "./cli_utils.js";
-
-export type RunResult = {
-	stdout: string;
-	stderr: string;
-	exitCode: number;
-};
-
-type CliWriter = {
-	write: (chunk: string) => void;
-};
-
-type CliIO = {
-	stdout?: CliWriter;
-	stderr?: CliWriter;
-};
-
-type OperatorSession = {
-	subscribe: (listener: (event: any) => void) => () => void;
-	prompt: (text: string, options?: { expandPromptTemplates?: boolean }) => Promise<void>;
-	dispose: () => void;
-	bindExtensions: (bindings: any) => Promise<void>;
-	agent: { waitForIdle: () => Promise<void> };
-};
-
-type CliCtx = {
-	cwd: string;
-	repoRoot: string;
-	store: IssueStore;
-	forum: ForumStore;
-	events: EventLog;
-	paths: StorePaths;
-	io?: CliIO;
-	backend?: BackendRunner;
-	operatorSessionFactory?: (opts: {
-		cwd: string;
-		systemPrompt: string;
-		provider?: string;
-		model?: string;
-		thinking?: string;
-	}) => Promise<OperatorSession>;
-	serveDeps?: Partial<ServeDeps>;
-	serveExtensionPaths?: string[];
-};
-
-type OperatorSessionCommandOptions = {
-	onInteractiveReady?: () => void;
-	session?: OperatorSessionStartOpts;
-};
 
 async function resolveIssueId(
 	store: IssueStore,
@@ -126,7 +74,7 @@ export async function run(
 	opts: {
 		cwd?: string;
 		io?: CliIO;
-		backend?: BackendRunner;
+		backend?: CliCtx["backend"];
 		operatorSessionFactory?: CliCtx["operatorSessionFactory"];
 		serveDeps?: Partial<ServeDeps>;
 	} = {},
