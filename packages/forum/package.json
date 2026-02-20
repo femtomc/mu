@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-forum",
-  "version": "26.2.74",
+  "version": "26.2.75",
   "description": "Topic-based coordination message store used by mu.",
   "keywords": [
     "mu",
