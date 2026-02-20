@@ -76,6 +76,14 @@ import {
 } from "./cli_primitives.js";
 import { resolveIssueId as resolveIssueIdCore } from "./issue_resolution.js";
 import { mainHelp } from "./main_help.js";
+import {
+	delayMs,
+	describeError,
+	ensureTrailingNewline,
+	setSearchParamIfPresent,
+	signalExitCode,
+	trimForHeader,
+} from "./cli_utils.js";
 
 export type RunResult = {
 	stdout: string;
@@ -124,30 +132,6 @@ type OperatorSessionCommandOptions = {
 	onInteractiveReady?: () => void;
 	session?: OperatorSessionStartOpts;
 };
-
-function describeError(err: unknown): string {
-	if (err instanceof Error) {
-		return err.message;
-	}
-	return String(err);
-}
-
-function signalExitCode(signal: NodeJS.Signals): number {
-	switch (signal) {
-		case "SIGINT":
-			return 130;
-		case "SIGTERM":
-			return 143;
-		default:
-			return 1;
-	}
-}
-
-function delayMs(ms: number): Promise<void> {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
-}
 
 async function resolveIssueId(
 	store: IssueStore,
@@ -337,17 +321,6 @@ async function cmdForum(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	return await cmdForumCommand(argv, ctx, forumCommandDeps());
 }
 
-function setSearchParamIfPresent(search: URLSearchParams, key: string, value: string | null | undefined): void {
-	if (value == null) {
-		return;
-	}
-	const trimmed = value.trim();
-	if (trimmed.length === 0) {
-		return;
-	}
-	search.set(key, trimmed);
-}
-
 function eventsCommandDeps() {
 	return {
 		hasHelpFlag,
@@ -418,21 +391,6 @@ async function cmdTurn(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		jsonText,
 		describeError,
 	});
-}
-
-function oneLine(text: string): string {
-	return text.replace(/\s+/g, " ").trim();
-}
-
-function trimForHeader(text: string, maxLen: number): string {
-	const t = oneLine(text);
-	if (t.length <= maxLen) return t;
-	if (maxLen <= 3) return t.slice(0, maxLen);
-	return `${t.slice(0, maxLen - 3)}...`;
-}
-
-function ensureTrailingNewline(text: string): string {
-	return text.length > 0 && !text.endsWith("\n") ? `${text}\n` : text;
 }
 
 function runCommandDeps() {
