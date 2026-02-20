@@ -1,4 +1,3 @@
-import { existsSync, openSync, rmSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import chalk from "chalk";
@@ -44,13 +43,19 @@ import {
 	renderRunPayloadCompact,
 } from "./render.js";
 import {
-	asRecord,
 	cleanupStaleServerFiles,
 	detectRunningServer,
-	normalizeQueuedRun,
 	readApiError,
 	requestServerJson as requestServerJsonHelper,
 } from "./server_helpers.js";
+import {
+	buildServeDeps as buildServeDepsRuntime,
+	runServeLifecycle as runServeLifecycleRuntime,
+	type OperatorSessionStartMode,
+	type OperatorSessionStartOpts,
+	type ServeDeps,
+	type ServeLifecycleOptions,
+} from "./serve_runtime.js";
 
 export type RunResult = {
 	stdout: string;
@@ -65,58 +70,6 @@ type CliWriter = {
 type CliIO = {
 	stdout?: CliWriter;
 	stderr?: CliWriter;
-};
-
-type ServeActiveAdapter = {
-	name: string;
-	route: string;
-};
-
-type ServeServerHandle = {
-	activeAdapters: readonly ServeActiveAdapter[];
-	stop: () => Promise<void>;
-};
-
-type QueuedRunSnapshot = {
-	job_id: string;
-	root_issue_id: string | null;
-	max_steps: number;
-	mode?: string;
-	status?: string;
-	source?: string;
-};
-
-type OperatorSessionStartMode = "in-memory" | "continue-recent" | "new" | "open";
-
-type OperatorSessionStartOpts = {
-	mode: OperatorSessionStartMode;
-	sessionDir?: string;
-	sessionFile?: string;
-};
-
-type ServeDeps = {
-	startServer: (opts: { repoRoot: string; port: number }) => Promise<ServeServerHandle>;
-	spawnBackgroundServer: (opts: { repoRoot: string; port: number }) => Promise<{ pid: number; url: string }>;
-	requestServerShutdown: (opts: { serverUrl: string }) => Promise<{ ok: boolean }>;
-	runOperatorSession: (opts: {
-		onReady: () => void;
-		provider?: string;
-		model?: string;
-		thinking?: string;
-		sessionMode?: OperatorSessionStartMode;
-		sessionDir?: string;
-		sessionFile?: string;
-	}) => Promise<RunResult>;
-	queueRun: (opts: {
-		serverUrl: string;
-		prompt: string;
-		maxSteps: number;
-		provider?: string;
-		model?: string;
-		reasoning?: string;
-	}) => Promise<QueuedRunSnapshot>;
-	registerSignalHandler: (signal: NodeJS.Signals, handler: () => void) => () => void;
-	registerProcessExitHandler: (handler: () => void) => () => void;
 };
 
 type OperatorSession = {
@@ -150,16 +103,6 @@ type CliCtx = {
 type OperatorSessionCommandOptions = {
 	onInteractiveReady?: () => void;
 	session?: OperatorSessionStartOpts;
-};
-
-type ServeLifecycleOptions = {
-	commandName: "serve" | "run" | "session";
-	port: number;
-	operatorProvider?: string;
-	operatorModel?: string;
-	operatorThinking?: string;
-	operatorSession?: OperatorSessionStartOpts;
-	beforeOperatorSession?: (opts: { serverUrl: string; deps: ServeDeps; io: CliIO | undefined }) => Promise<void>;
 };
 
 function hasAnsiSequences(text: string): boolean {
@@ -953,303 +896,52 @@ async function requestServerJson<T>(opts: {
 	});
 }
 
-function resolveServerCliPath(): string {
-	// Resolve the mu-server CLI entry point from the @femtomc/mu-server package.
-	// In the workspace, the source entry is src/cli.ts; in a dist build, dist/cli.js.
-	const pkgDir = dirname(require.resolve("@femtomc/mu-server/package.json"));
-	const srcCli = join(pkgDir, "src", "cli.ts");
-	if (existsSync(srcCli)) return srcCli;
-	return join(pkgDir, "dist", "cli.js");
-}
-
-async function pollUntilHealthy(url: string, timeoutMs: number, intervalMs: number): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		try {
-			const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(2_000) });
-			if (res.ok) return;
-		} catch {
-			// not ready yet
-		}
-		await delayMs(intervalMs);
-	}
-	throw new Error(
-		`server at ${url} did not become healthy within ${timeoutMs}ms — check the workspace control-plane server log`,
-	);
-}
-
 function buildServeDeps(ctx: CliCtx): ServeDeps {
-	const defaults: ServeDeps = {
-		startServer: async ({ repoRoot, port }) => {
-			const { composeServerRuntime, createServerFromRuntime } = await import("@femtomc/mu-server");
-			const runtime = await composeServerRuntime({ repoRoot });
-			const serverConfig = createServerFromRuntime(runtime, { port });
-
-			let server: ReturnType<typeof Bun.serve>;
-			try {
-				server = Bun.serve(serverConfig);
-			} catch (err) {
-				try {
-					await runtime.controlPlane?.stop();
-				} catch {
-					// Best effort cleanup. Preserve the original startup error.
-				}
-				throw err;
-			}
-
-			const discoveryPath = storePathForRepoRoot(repoRoot, "control-plane", "server.json");
-			await mkdir(dirname(discoveryPath), { recursive: true });
-			await Bun.write(
-				discoveryPath,
-				JSON.stringify({ pid: process.pid, port, url: `http://localhost:${port}` }) + "\n",
-			);
-
-			return {
-				activeAdapters: runtime.controlPlane?.activeAdapters ?? [],
-				stop: async () => {
-					try {
-						rmSync(discoveryPath, { force: true });
-					} catch {
-						// best-effort
-					}
-					await runtime.controlPlane?.stop();
-					server.stop();
-				},
-			};
-		},
-		spawnBackgroundServer: async ({ repoRoot, port }) => {
-			const serverCliPath = resolveServerCliPath();
-			const logDir = storePathForRepoRoot(repoRoot, "control-plane");
-			await mkdir(logDir, { recursive: true });
-			const logFile = join(logDir, "server.log");
-			const logFd = openSync(logFile, "w");
-
-			const proc = Bun.spawn({
-				cmd: [process.execPath, serverCliPath, "--port", String(port), "--repo-root", repoRoot],
-				cwd: repoRoot,
-				stdin: "ignore",
-				stdout: logFd,
-				stderr: logFd,
-			});
-			proc.unref();
-
-			const url = `http://localhost:${port}`;
-			await pollUntilHealthy(url, 15_000, 200);
-			return { pid: proc.pid, url };
-		},
-		requestServerShutdown: async ({ serverUrl }) => {
-			try {
-				const res = await fetch(`${serverUrl}/api/server/shutdown`, {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: "{}",
-					signal: AbortSignal.timeout(5_000),
-				});
-				if (res.ok) return { ok: true };
-				return { ok: false };
-			} catch {
-				return { ok: false };
-			}
-		},
-		runOperatorSession: async ({ onReady, provider, model, thinking, sessionMode, sessionDir, sessionFile }) => {
+	return buildServeDepsRuntime(ctx, {
+		defaultOperatorSessionStart,
+		runOperatorSession: async (runtimeCtx, opts) => {
 			const { operatorExtensionPaths } = await import("@femtomc/mu-agent");
 			const operatorArgv: string[] = [];
-			if (provider) {
-				operatorArgv.push("--provider", provider);
+			if (opts.provider) {
+				operatorArgv.push("--provider", opts.provider);
 			}
-			if (model) {
-				operatorArgv.push("--model", model);
+			if (opts.model) {
+				operatorArgv.push("--model", opts.model);
 			}
-			if (thinking) {
-				operatorArgv.push("--thinking", thinking);
+			if (opts.thinking) {
+				operatorArgv.push("--thinking", opts.thinking);
 			}
-			const requestedSession: OperatorSessionStartOpts = sessionMode
+			const requestedSession: OperatorSessionStartOpts = opts.sessionMode
 				? {
-						mode: sessionMode,
-						sessionDir,
-						sessionFile,
+						mode: opts.sessionMode,
+						sessionDir: opts.sessionDir,
+						sessionFile: opts.sessionFile,
 					}
-				: defaultOperatorSessionStart(ctx.repoRoot);
+				: defaultOperatorSessionStart(runtimeCtx.repoRoot);
 			return await cmdOperatorSession(
 				operatorArgv,
-				{ ...ctx, serveExtensionPaths: ctx.serveExtensionPaths ?? operatorExtensionPaths },
+				{ ...runtimeCtx, serveExtensionPaths: runtimeCtx.serveExtensionPaths ?? operatorExtensionPaths },
 				{
-					onInteractiveReady: onReady,
+					onInteractiveReady: opts.onReady,
 					session: requestedSession,
 				},
 			);
 		},
-		queueRun: async ({ serverUrl, prompt, maxSteps, provider, model, reasoning }) => {
-			const response = await fetch(`${serverUrl}/api/control-plane/runs/start`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					prompt,
-					max_steps: maxSteps,
-					provider: provider ?? null,
-					model: model ?? null,
-					reasoning: reasoning ?? null,
-				}),
-			});
-			let payload: unknown = null;
-			try {
-				payload = await response.json();
-			} catch {
-				// handled below via status check + normalizeQueuedRun guard
-			}
-			if (!response.ok) {
-				const detail = await readApiError(response, payload);
-				throw new Error(`run queue request failed: ${detail}`);
-			}
-			const run = normalizeQueuedRun(asRecord(payload)?.run);
-			if (!run) {
-				throw new Error("run queue response missing run snapshot");
-			}
-			return run;
-		},
-		registerSignalHandler: (signal, handler) => {
-			process.on(signal, handler);
-			return () => {
-				if (typeof process.off === "function") {
-					process.off(signal, handler);
-					return;
-				}
-				process.removeListener(signal, handler);
-			};
-		},
-		registerProcessExitHandler: (handler) => {
-			process.on("exit", handler);
-			return () => {
-				if (typeof process.off === "function") {
-					process.off("exit", handler);
-					return;
-				}
-				process.removeListener("exit", handler);
-			};
-		},
-	};
-	return { ...defaults, ...ctx.serveDeps };
+	});
 }
 
 async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Promise<RunResult> {
-	await ensureStoreInitialized(ctx);
-	const operatorDefaults = await readServeOperatorDefaults(ctx.repoRoot);
-	const operatorProvider = opts.operatorProvider ?? operatorDefaults.provider;
-	const operatorModel =
-		opts.operatorModel ??
-		(opts.operatorProvider != null && opts.operatorProvider.length > 0 ? undefined : operatorDefaults.model);
-	const operatorThinking = opts.operatorThinking ?? operatorDefaults.thinking;
-	const operatorSession = opts.operatorSession ?? defaultOperatorSessionStart(ctx.repoRoot);
-
-	const io = ctx.io;
-	const deps = buildServeDeps(ctx);
-
-	// Step 1: Discover or spawn a background server
-	let serverUrl: string;
-	const existingServer = await detectRunningServer(ctx.repoRoot);
-	if (existingServer) {
-		serverUrl = existingServer.url;
-		io?.stderr?.write(`mu: connecting to existing server at ${serverUrl} (pid ${existingServer.pid})\n`);
-	} else {
-		// Spawn server as a detached background process
-		try {
-			const spawned = await deps.spawnBackgroundServer({ repoRoot: ctx.repoRoot, port: opts.port });
-			serverUrl = spawned.url;
-			io?.stderr?.write(`mu: started background server at ${serverUrl} (pid ${spawned.pid})\n`);
-		} catch (err) {
-			return jsonError(`failed to start server: ${describeError(err)}`, {
-				recovery: [
-					`mu ${opts.commandName} --port 3000`,
-					`mu ${opts.commandName} --help`,
-					"check workspace control-plane server.log",
-				],
-			});
-		}
-	}
-
-	Bun.env.MU_SERVER_URL = serverUrl;
-
-	// Step 2: Run pre-operator hooks (mu run: queue work before operator attach)
-	if (opts.beforeOperatorSession) {
-		try {
-			await opts.beforeOperatorSession({ serverUrl, deps, io });
-		} catch (err) {
-			return jsonError(`failed to prepare run lifecycle: ${describeError(err)}`, {
-				recovery: [`mu ${opts.commandName} --help`, "mu serve --help", "mu run --help"],
-			});
-		}
-	}
-
-	// Step 3: Run operator TUI (blocks until Ctrl+D / exit)
-	let operatorConnected = false;
-	const onOperatorReady = (): void => {
-		if (operatorConnected) return;
-		operatorConnected = true;
-	};
-
-	let resolveSignal: ((signal: NodeJS.Signals) => void) | null = null;
-	const signalPromise = new Promise<NodeJS.Signals>((resolve) => {
-		resolveSignal = resolve;
+	return await runServeLifecycleRuntime(ctx, opts, {
+		ensureStoreInitialized,
+		readServeOperatorDefaults,
+		defaultOperatorSessionStart,
+		buildServeDeps,
+		detectRunningServer,
+		jsonError,
+		describeError,
+		signalExitCode,
+		delayMs,
 	});
-	let receivedSignal: NodeJS.Signals | null = null;
-	const onSignal = (signal: NodeJS.Signals): void => {
-		if (receivedSignal != null) return;
-		receivedSignal = signal;
-		resolveSignal?.(signal);
-	};
-	const removeSignalHandlers = [
-		deps.registerSignalHandler("SIGINT", () => onSignal("SIGINT")),
-		deps.registerSignalHandler("SIGTERM", () => onSignal("SIGTERM")),
-	];
-	const unregisterSignals = () => {
-		for (const remove of removeSignalHandlers) {
-			try {
-				remove();
-			} catch {
-				/* no-op */
-			}
-		}
-	};
-
-	let result: RunResult;
-	try {
-		const operatorPromise = deps
-			.runOperatorSession({
-				onReady: onOperatorReady,
-				provider: operatorProvider,
-				model: operatorModel,
-				thinking: operatorThinking,
-				sessionMode: operatorSession.mode,
-				sessionDir: operatorSession.sessionDir,
-				sessionFile: operatorSession.sessionFile,
-			})
-			.catch((err) =>
-				jsonError(`operator session crashed: ${describeError(err)}`, {
-					recovery: [`mu ${opts.commandName} --help`, "mu serve --help"],
-				}),
-			);
-
-		const winner = await Promise.race([
-			operatorPromise.then((operatorResult) => ({ kind: "operator" as const, operatorResult })),
-			signalPromise.then((signal) => ({ kind: "signal" as const, signal })),
-		]);
-
-		if (winner.kind === "signal") {
-			await Promise.race([operatorPromise, delayMs(1_000)]);
-			result = { stdout: "", stderr: "", exitCode: signalExitCode(winner.signal) };
-		} else {
-			if (winner.operatorResult.exitCode !== 0 && !operatorConnected) {
-				io?.stderr?.write("mu: operator terminal failed to connect.\n");
-			}
-			result = winner.operatorResult;
-		}
-	} finally {
-		unregisterSignals();
-		// TUI exits — server keeps running in the background.
-		// No stopServer(), no lock cleanup.
-	}
-
-	return result;
 }
 
 function serveCommandDeps() {

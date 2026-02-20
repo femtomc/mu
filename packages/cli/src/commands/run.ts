@@ -1,37 +1,9 @@
+import type { ServeLifecycleOptions } from "../serve_runtime.js";
+
 export type RunCommandRunResult = {
 	stdout: string;
 	stderr: string;
 	exitCode: number;
-};
-
-type RunQueueSnapshot = {
-	job_id: string;
-	root_issue_id: string | null;
-	max_steps: number;
-};
-
-type RunServeDeps = {
-	queueRun: (opts: {
-		serverUrl: string;
-		prompt: string;
-		maxSteps: number;
-		provider?: string;
-		model?: string;
-		reasoning?: string;
-	}) => Promise<RunQueueSnapshot>;
-};
-
-type RunServeLifecycleOpts = {
-	commandName: "session" | "run" | "serve";
-	port: number;
-	operatorProvider?: string;
-	operatorModel?: string;
-	operatorThinking?: string;
-	beforeOperatorSession?: (opts: {
-		serverUrl: string;
-		deps: RunServeDeps;
-		io: { stderr?: { write: (chunk: string) => void } } | undefined;
-	}) => Promise<void>;
 };
 
 export type RunCommandDeps<Ctx> = {
@@ -39,7 +11,7 @@ export type RunCommandDeps<Ctx> = {
 	ensureInt: (value: string, opts: { name: string; min?: number; max?: number }) => number | null;
 	jsonError: (msg: string, opts?: { pretty?: boolean; recovery?: readonly string[] }) => RunCommandRunResult;
 	ok: (stdout?: string, exitCode?: number) => RunCommandRunResult;
-	runServeLifecycle: (ctx: Ctx, opts: any) => Promise<RunCommandRunResult>;
+	runServeLifecycle: (ctx: Ctx, opts: ServeLifecycleOptions) => Promise<RunCommandRunResult>;
 };
 
 export async function cmdRun<Ctx>(argv: string[], ctx: Ctx, deps: RunCommandDeps<Ctx>): Promise<RunCommandRunResult> {
@@ -219,15 +191,7 @@ export async function cmdRun<Ctx>(argv: string[], ctx: Ctx, deps: RunCommandDeps
 		operatorProvider: provider,
 		operatorModel: model,
 		operatorThinking: reasoning,
-		beforeOperatorSession: async ({
-			serverUrl,
-			deps,
-			io,
-		}: {
-			serverUrl: string;
-			deps: RunServeDeps;
-			io: { stderr?: { write: (chunk: string) => void } } | undefined;
-		}) => {
+		beforeOperatorSession: async ({ serverUrl, deps, io }) => {
 			const queued = await deps.queueRun({
 				serverUrl,
 				prompt: promptText,
