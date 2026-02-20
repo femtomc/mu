@@ -1,3 +1,4 @@
+import { getStorePaths } from "@femtomc/mu-core/node";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
@@ -101,19 +102,20 @@ function resolveRepoPath(repoRoot: string, candidate: string): string {
 }
 
 function defaultSessionDirForKind(repoRoot: string, sessionKind: string | null): string {
+	const storeDir = getStorePaths(repoRoot).storeDir;
 	switch (sessionKind) {
 		case "operator":
-			return join(repoRoot, ".mu", "operator", "sessions");
+			return join(storeDir, "operator", "sessions");
 		case "cp_operator":
-			return join(repoRoot, ".mu", "control-plane", "operator-sessions");
+			return join(storeDir, "control-plane", "operator-sessions");
 		case "orchestrator":
-			return join(repoRoot, ".mu", "orchestrator", "sessions");
+			return join(storeDir, "orchestrator", "sessions");
 		case "worker":
-			return join(repoRoot, ".mu", "worker", "sessions");
+			return join(storeDir, "worker", "sessions");
 		case "reviewer":
-			return join(repoRoot, ".mu", "reviewer", "sessions");
+			return join(storeDir, "reviewer", "sessions");
 		default:
-			return join(repoRoot, ".mu", "control-plane", "operator-sessions");
+			return join(storeDir, "control-plane", "operator-sessions");
 	}
 }
 

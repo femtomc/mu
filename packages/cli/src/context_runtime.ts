@@ -1226,7 +1226,7 @@ async function collectContextItems(repoRoot: string, requestedSources: Set<Conte
 		tasks.push(
 			collectSessionMessages({
 				repoRoot,
-				dir: join(repoRoot, ".mu", "operator", "sessions"),
+				dir: join(paths.storeDir, "operator", "sessions"),
 				sourceKind: "operator_sessions",
 			}),
 		);

@@ -1178,7 +1178,8 @@ describe("bootstrapControlPlane operator wiring", () => {
 
 	test("bootstrap cleanup releases writer lock when startup fails", async () => {
 		const repoRoot = await mkRepoRoot();
-		const identitiesPath = join(repoRoot, ".mu", "control-plane", "identities.jsonl");
+		const paths = getControlPlanePaths(repoRoot);
+		const identitiesPath = paths.identitiesPath;
 		await mkdir(identitiesPath, { recursive: true });
 
 		await expect(
@@ -1190,7 +1191,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			}),
 		).rejects.toThrow();
 
-		const writerLockPath = join(repoRoot, ".mu", "control-plane", "writer.lock");
+		const writerLockPath = paths.writerLockPath;
 		expect(await Bun.file(writerLockPath).exists()).toBe(false);
 	});
 });

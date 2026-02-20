@@ -144,8 +144,7 @@ end
 local function find_repo_root(start_path)
 	local cursor = start_path
 	while cursor and #cursor > 0 do
-		local discovery_path = path_join(cursor, ".mu/control-plane/server.json")
-		if file_exists(discovery_path) then
+		if file_exists(path_join(cursor, ".git")) then
 			return cursor
 		end
 		local parent = dirname(cursor)
@@ -155,6 +154,45 @@ local function find_repo_root(start_path)
 		cursor = parent
 	end
 	return nil
+end
+
+local function resolve_mu_home()
+	local from_env = trim(vim.env.MU_HOME)
+	if #from_env > 0 then
+		return from_env
+	end
+	if uv.os_homedir then
+		local home = trim(uv.os_homedir() or "")
+		if #home > 0 then
+			return path_join(home, ".mu")
+		end
+	end
+	return path_join(vim.fn.expand("~"), ".mu")
+end
+
+local function normalize_repo_root_for_store(repo_root)
+	local absolute = vim.fn.fnamemodify(repo_root, ":p")
+	absolute = absolute:gsub("/+$/, "")
+	if #absolute == 0 then
+		return repo_root
+	end
+	return absolute
+end
+
+local function safe_workspace_slug(name)
+	local slug = name:lower():gsub("[^a-z0-9._-]+", "-")
+	slug = slug:gsub("-+", "-"):gsub("^-+", ""):gsub("-+$", "")
+	if #slug == 0 then
+		return "workspace"
+	end
+	return slug
+end
+
+local function workspace_store_dir(repo_root)
+	local normalized_root = normalize_repo_root_for_store(repo_root)
+	local base = safe_workspace_slug(basename(normalized_root))
+	local hash = vim.fn.sha256(normalized_root):sub(1, 16)
+	return path_join(path_join(resolve_mu_home(), "workspaces"), base .. "-" .. hash)
 end
 
 local function resolve_repo_root()
@@ -168,7 +206,7 @@ local function resolve_repo_root()
 end
 
 local function read_server_discovery(repo_root)
-	local path = path_join(repo_root, ".mu/control-plane/server.json")
+	local path = path_join(workspace_store_dir(repo_root), "control-plane/server.json")
 	local raw = read_file(path)
 	if not raw or #trim(raw) == 0 then
 		return nil
@@ -273,7 +311,7 @@ local function resolve_channel_context(opts)
 	local repo_root = resolve_repo_root()
 	local server_url = resolve_server_url(repo_root)
 	if not server_url then
-		return nil, "unable to discover mu server URL (.mu/control-plane/server.json missing and server_url unset)"
+		return nil, "unable to discover mu server URL (workspace discovery file missing and server_url unset)"
 	end
 	local tenant_id = resolve_tenant_id(repo_root)
 	local conversation_id = resolve_conversation_id(tenant_id)

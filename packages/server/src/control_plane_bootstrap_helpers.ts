@@ -7,14 +7,15 @@ import {
 	operatorExtensionPaths,
 	PiMessagingOperatorBackend,
 } from "@femtomc/mu-agent";
-import { join } from "node:path";
 import {
 	ControlPlaneOutbox,
 	ControlPlaneOutboxDispatcher,
+	getControlPlanePaths,
 	type OutboxDeliveryHandlerResult,
 	type OutboxDispatchOutcome,
 	type OutboxRecord,
 } from "@femtomc/mu-control-plane";
+import { join } from "node:path";
 import type { ControlPlaneConfig } from "./control_plane_contract.js";
 
 const OUTBOX_DRAIN_INTERVAL_MS = 500;
@@ -33,10 +34,11 @@ export function buildMessagingOperatorRuntime(opts: {
 		new PiMessagingOperatorBackend({
 			provider: opts.config.operator.provider ?? undefined,
 			model: opts.config.operator.model ?? undefined,
+			thinking: opts.config.operator.thinking ?? undefined,
 			extensionPaths: operatorExtensionPaths,
 		});
 	const conversationSessionStore = new JsonFileConversationSessionStore(
-		join(opts.repoRoot, ".mu", "control-plane", "operator_conversations.json"),
+		join(getControlPlanePaths(opts.repoRoot).controlPlaneDir, "operator_conversations.json"),
 	);
 
 	return new MessagingOperatorRuntime({

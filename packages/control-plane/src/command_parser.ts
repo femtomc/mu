@@ -31,6 +31,11 @@ const KNOWN_THREE_TOKEN_COMMANDS = new Set([
 	"issue dep remove",
 	"kill-switch set",
 	"rate-limit override",
+	"operator config get",
+	"operator model list",
+	"operator thinking list",
+	"operator model set",
+	"operator thinking set",
 ]);
 
 const KNOWN_TWO_TOKEN_COMMANDS = new Set([

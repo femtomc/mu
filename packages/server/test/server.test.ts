@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { getStorePaths } from "@femtomc/mu-core/node";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,11 +45,11 @@ describe("mu-server", () => {
 		// Create a temporary directory for test data
 		tempDir = await mkdtemp(join(tmpdir(), "mu-server-test-"));
 
-		// Create .mu directory structure
-		const muDir = join(tempDir, ".mu");
-		await Bun.write(join(muDir, "issues.jsonl"), "");
-		await Bun.write(join(muDir, "forum.jsonl"), "");
-		await Bun.write(join(muDir, "events.jsonl"), "");
+		// Create workspace store structure
+		const storeDir = getStorePaths(tempDir).storeDir;
+		await Bun.write(join(storeDir, "issues.jsonl"), "");
+		await Bun.write(join(storeDir, "forum.jsonl"), "");
+		await Bun.write(join(storeDir, "events.jsonl"), "");
 
 		// Create server instance
 		server = await createServerForTest({ repoRoot: tempDir });
@@ -160,14 +161,14 @@ describe("mu-server", () => {
 				};
 			};
 		};
-		expect(payload.config_path).toBe(join(tempDir, ".mu", "config.json"));
+		expect(payload.config_path).toBe(join(getStorePaths(tempDir).storeDir, "config.json"));
 		expect(payload.config.control_plane.adapters.slack.signing_secret).toBeNull();
 		expect(payload.config.control_plane.operator.enabled).toBe(true);
 		expect(payload.config.control_plane.operator.run_triggers_enabled).toBe(true);
 		expect(payload.presence.control_plane.adapters.slack.signing_secret).toBe(false);
 	});
 
-	test("config endpoint applies patch and persists to .mu/config.json", async () => {
+	test("config endpoint applies patch and persists to workspace config.json", async () => {
 		const response = await server.fetch(
 			new Request("http://localhost/api/control-plane/config", {
 				method: "POST",
@@ -620,7 +621,7 @@ describe("mu-server", () => {
 	});
 
 	test("events API supports issue_id/run_id/contains query filters", async () => {
-		const eventsPath = join(tempDir, ".mu", "events.jsonl");
+		const eventsPath = getStorePaths(tempDir).eventsPath;
 		const rows = [
 			{
 				v: 1,
@@ -1319,7 +1320,7 @@ describe("mu-server", () => {
 		expect(completed.activity.final_message).toBe("Index complete");
 	});
 
-	test("heartbeat program APIs persist runtime-programmed schedules in .mu/heartbeats.jsonl", async () => {
+	test("heartbeat program APIs persist runtime-programmed schedules in workspace heartbeats.jsonl", async () => {
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
@@ -1377,7 +1378,7 @@ describe("mu-server", () => {
 		expect(triggerPayload.program.program_id).toBe(programId);
 		expect(triggerPayload.program.last_result).toBe("ok");
 
-		const heartbeatsPath = join(tempDir, ".mu", "heartbeats.jsonl");
+		const heartbeatsPath = join(getStorePaths(tempDir).storeDir, "heartbeats.jsonl");
 		const lines = (await readFile(heartbeatsPath, "utf8"))
 			.split("\n")
 			.map((line) => line.trim())
@@ -1466,7 +1467,7 @@ describe("mu-server", () => {
 		expect(events.some((event) => event.type === "cron_program.lifecycle")).toBe(true);
 		expect(events.some((event) => event.type === "cron_program.tick")).toBe(true);
 
-		const cronPath = join(tempDir, ".mu", "cron.jsonl");
+		const cronPath = join(getStorePaths(tempDir).storeDir, "cron.jsonl");
 		const diskRows = (await readFile(cronPath, "utf8"))
 			.split("\n")
 			.map((line) => line.trim())

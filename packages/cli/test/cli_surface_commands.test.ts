@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { getStorePaths } from "@femtomc/mu-core/node";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +8,7 @@ import { run } from "@femtomc/mu";
 async function mkTempRepo(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "mu-cli-surface-"));
 	await mkdir(join(dir, ".git"), { recursive: true });
-	await mkdir(join(dir, ".mu", "control-plane"), { recursive: true });
+	await mkdir(join(getStorePaths(dir).storeDir, "control-plane"), { recursive: true });
 	return dir;
 }
 
@@ -42,7 +43,7 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 		},
 	});
 
-	const discovery = join(dir, ".mu", "control-plane", "server.json");
+	const discovery = join(getStorePaths(dir).storeDir, "control-plane", "server.json");
 	await writeFile(
 		discovery,
 		`${JSON.stringify({ pid: process.pid, port: server.port, url: `http://localhost:${server.port}` })}\n`,
@@ -81,9 +82,10 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 test("context search/timeline/stats use direct CLI runtime even when legacy /api/context routes 404", async () => {
 	const dir = await mkTempRepo();
 	const seen: string[] = [];
+	const storeDir = getStorePaths(dir).storeDir;
 
 	await writeFile(
-		join(dir, ".mu", "issues.jsonl"),
+		join(storeDir, "issues.jsonl"),
 		`${JSON.stringify({
 			id: "mu-ctx-1",
 			title: "Fix reload failure",
@@ -97,7 +99,7 @@ test("context search/timeline/stats use direct CLI runtime even when legacy /api
 		"utf8",
 	);
 	await writeFile(
-		join(dir, ".mu", "forum.jsonl"),
+		join(storeDir, "forum.jsonl"),
 		`${JSON.stringify({
 			topic: "issue:mu-ctx-1",
 			author: "worker",
@@ -107,7 +109,7 @@ test("context search/timeline/stats use direct CLI runtime even when legacy /api
 		"utf8",
 	);
 	await writeFile(
-		join(dir, ".mu", "events.jsonl"),
+		join(storeDir, "events.jsonl"),
 		`${JSON.stringify({
 			type: "control_plane.reload",
 			source: "control-plane",
@@ -134,7 +136,7 @@ test("context search/timeline/stats use direct CLI runtime even when legacy /api
 		},
 	});
 
-	const discovery = join(dir, ".mu", "control-plane", "server.json");
+	const discovery = join(getStorePaths(dir).storeDir, "control-plane", "server.json");
 	await writeFile(
 		discovery,
 		`${JSON.stringify({ pid: process.pid, port: server.port, url: `http://localhost:${server.port}` })}\n`,
@@ -203,7 +205,7 @@ test("direct CLI surfaces return deterministic failure payloads when dedicated e
 		},
 	});
 
-	const discovery = join(dir, ".mu", "control-plane", "server.json");
+	const discovery = join(getStorePaths(dir).storeDir, "control-plane", "server.json");
 	await writeFile(
 		discovery,
 		`${JSON.stringify({ pid: process.pid, port: server.port, url: `http://localhost:${server.port}` })}\n`,

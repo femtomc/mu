@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { JsonlStore } from "@femtomc/mu-core";
-import { FsJsonlStore } from "@femtomc/mu-core/node";
+import { FsJsonlStore, getStorePaths } from "@femtomc/mu-core/node";
 import { type CronProgramSchedule, computeNextScheduleRunAtMs, normalizeCronSchedule } from "./cron_schedule.js";
 import { CronTimerRegistry } from "./cron_timer.js";
 import type { ActivityHeartbeatScheduler, HeartbeatRunResult } from "./heartbeat_scheduler.js";
@@ -181,7 +181,8 @@ export class CronProgramRegistry {
 		this.#nowMs = opts.nowMs ?? defaultNowMs;
 		this.#timer = opts.timer ?? new CronTimerRegistry({ nowMs: this.#nowMs });
 		this.#store =
-			opts.store ?? new FsJsonlStore<CronProgramSnapshot>(join(opts.repoRoot, ".mu", CRON_PROGRAMS_FILENAME));
+			opts.store ??
+			new FsJsonlStore<CronProgramSnapshot>(join(getStorePaths(opts.repoRoot).storeDir, CRON_PROGRAMS_FILENAME));
 		void this.#ensureLoaded().catch(() => {
 			// Best effort eager load for startup re-arming.
 		});

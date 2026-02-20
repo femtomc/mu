@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { JsonlStore } from "@femtomc/mu-core";
-import { FsJsonlStore } from "@femtomc/mu-core/node";
+import { FsJsonlStore, getStorePaths } from "@femtomc/mu-core/node";
 import type { ActivityHeartbeatScheduler, HeartbeatRunResult } from "./heartbeat_scheduler.js";
 
 export type HeartbeatProgramSnapshot = {
@@ -136,7 +136,7 @@ export class HeartbeatProgramRegistry {
 		this.#nowMs = opts.nowMs ?? defaultNowMs;
 		this.#store =
 			opts.store ??
-			new FsJsonlStore<HeartbeatProgramSnapshot>(join(opts.repoRoot, ".mu", HEARTBEAT_PROGRAMS_FILENAME));
+			new FsJsonlStore<HeartbeatProgramSnapshot>(join(getStorePaths(opts.repoRoot).storeDir, HEARTBEAT_PROGRAMS_FILENAME));
 	}
 
 	#scheduleId(programId: string): string {

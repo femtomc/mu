@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { JsonlStore } from "@femtomc/mu-core";
-import { FsJsonlStore } from "@femtomc/mu-core/node";
+import { FsJsonlStore, getStorePaths } from "@femtomc/mu-core/node";
 import {
 	INTER_ROOT_QUEUE_RECONCILE_INVARIANTS,
 	ORCHESTRATION_QUEUE_ALLOWED_TRANSITIONS,
@@ -300,7 +300,7 @@ export function reconcileRunQueue(
 }
 
 export function runQueuePath(repoRoot: string): string {
-	return join(repoRoot, ".mu", "control-plane", RUN_QUEUE_FILENAME);
+	return join(getStorePaths(repoRoot).storeDir, "control-plane", RUN_QUEUE_FILENAME);
 }
 
 function stableCompare(a: DurableRunQueueSnapshot, b: DurableRunQueueSnapshot): number {

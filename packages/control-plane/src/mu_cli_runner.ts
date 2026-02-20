@@ -14,6 +14,11 @@ export const MuCliCommandKindSchema = z.enum([
 	"run_start",
 	"run_resume",
 	"run_interrupt",
+	"operator_config_get",
+	"operator_model_list",
+	"operator_thinking_list",
+	"operator_model_set",
+	"operator_thinking_set",
 ]);
 export type MuCliCommandKind = z.infer<typeof MuCliCommandKindSchema>;
 
@@ -31,6 +36,11 @@ const KNOWN_COMMAND_KEYS = new Set<string>([
 	"run start",
 	"run resume",
 	"run interrupt",
+	"operator config get",
+	"operator model list",
+	"operator thinking list",
+	"operator model set",
+	"operator thinking set",
 ]);
 
 export type MuCliInvocationPlan = {
@@ -101,6 +111,29 @@ function resolveTopic(value: string | undefined): string | null {
 		return null;
 	}
 	if (!TOPIC_RE.test(value)) {
+		return null;
+	}
+	return value;
+}
+
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+
+function resolveThinkingLevel(value: string | undefined): string | null {
+	if (!value) {
+		return null;
+	}
+	const normalized = value.trim().toLowerCase();
+	if (!THINKING_LEVELS.has(normalized)) {
+		return null;
+	}
+	return normalized;
+}
+
+function resolveSafeToken(value: string | undefined): string | null {
+	if (!value) {
+		return null;
+	}
+	if (!/^(?!-)[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value)) {
 		return null;
 	}
 	return value;
@@ -288,6 +321,134 @@ export class MuCliCommandSurface {
 						argv: [this.#muBinary, "runs", "interrupt", rootId],
 						timeoutMs: this.#runTimeoutMs,
 						runRootId: rootId,
+						mutating: true,
+					},
+				};
+			}
+			case "operator config get": {
+				if (args.length > 0) {
+					return reject("cli_validation_failed", "operator config get does not accept arguments");
+				}
+				return {
+					kind: "ok",
+					plan: {
+						invocationId,
+						commandKind: "operator_config_get",
+						argv: [this.#muBinary, "control", "operator", "get", "--json"],
+						timeoutMs: this.#readTimeoutMs,
+						runRootId: null,
+						mutating: false,
+					},
+				};
+			}
+			case "operator model list": {
+				if (args.length > 1) {
+					return reject("cli_validation_failed", "operator model list expects [provider]");
+				}
+				const provider = resolveSafeToken(args[0]);
+				if (args[0] != null && !provider) {
+					return reject("cli_validation_failed", "invalid provider id");
+				}
+				return {
+					kind: "ok",
+					plan: {
+						invocationId,
+						commandKind: "operator_model_list",
+						argv: [this.#muBinary, "control", "operator", "models", ...(provider ? [provider] : []), "--json"],
+						timeoutMs: this.#readTimeoutMs,
+						runRootId: null,
+						mutating: false,
+					},
+				};
+			}
+			case "operator thinking list": {
+				if (args.length > 2) {
+					return reject("cli_validation_failed", "operator thinking list expects [provider] [model]");
+				}
+				const provider = resolveSafeToken(args[0]);
+				if (args[0] != null && !provider) {
+					return reject("cli_validation_failed", "invalid provider id");
+				}
+				const model = resolveSafeToken(args[1]);
+				if (args[1] != null && !model) {
+					return reject("cli_validation_failed", "invalid model id");
+				}
+				if (!provider && model) {
+					return reject("cli_validation_failed", "model requires provider context");
+				}
+				return {
+					kind: "ok",
+					plan: {
+						invocationId,
+						commandKind: "operator_thinking_list",
+						argv: [
+							this.#muBinary,
+							"control",
+							"operator",
+							"thinking",
+							...(provider ? [provider] : []),
+							...(model ? [model] : []),
+							"--json",
+						],
+						timeoutMs: this.#readTimeoutMs,
+						runRootId: null,
+						mutating: false,
+					},
+				};
+			}
+			case "operator model set": {
+				if (args.length < 2 || args.length > 3) {
+					return reject("cli_validation_failed", "operator model set expects <provider> <model> [thinking]");
+				}
+				const provider = resolveSafeToken(args[0]);
+				if (!provider) {
+					return reject("cli_validation_failed", "invalid provider id");
+				}
+				const model = resolveSafeToken(args[1]);
+				if (!model) {
+					return reject("cli_validation_failed", "invalid model id");
+				}
+				const thinking = args[2] != null ? resolveThinkingLevel(args[2]) : null;
+				if (args[2] != null && !thinking) {
+					return reject("cli_validation_failed", "invalid thinking level");
+				}
+				return {
+					kind: "ok",
+					plan: {
+						invocationId,
+						commandKind: "operator_model_set",
+						argv: [
+							this.#muBinary,
+							"control",
+							"operator",
+							"set",
+							provider,
+							model,
+							...(thinking ? [thinking] : []),
+							"--json",
+						],
+						timeoutMs: this.#runTimeoutMs,
+						runRootId: null,
+						mutating: true,
+					},
+				};
+			}
+			case "operator thinking set": {
+				if (args.length !== 1) {
+					return reject("cli_validation_failed", "operator thinking set expects <thinking>");
+				}
+				const thinking = resolveThinkingLevel(args[0]);
+				if (!thinking) {
+					return reject("cli_validation_failed", "invalid thinking level");
+				}
+				return {
+					kind: "ok",
+					plan: {
+						invocationId,
+						commandKind: "operator_thinking_set",
+						argv: [this.#muBinary, "control", "operator", "thinking-set", thinking, "--json"],
+						timeoutMs: this.#runTimeoutMs,
+						runRootId: null,
 						mutating: true,
 					},
 				};

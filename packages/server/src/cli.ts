@@ -2,7 +2,7 @@
 
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { findRepoRoot } from "@femtomc/mu-core/node";
+import { findRepoRoot, getStorePaths } from "@femtomc/mu-core/node";
 import { composeServerRuntime, createServerFromRuntime } from "./server.js";
 
 // Parse CLI flags: --port N, --repo-root PATH
@@ -32,12 +32,12 @@ let repoRoot: string;
 try {
 	repoRoot = args.repoRoot ?? findRepoRoot();
 } catch {
-	console.error("Error: Could not find .mu directory. Run 'mu serve' or 'mu run' once to initialize it.");
+	console.error("Error: Could not resolve a repository root for mu server startup.");
 	process.exit(1);
 }
 
 const port = args.port;
-const discoveryPath = join(repoRoot, ".mu", "control-plane", "server.json");
+const discoveryPath = join(getStorePaths(repoRoot).storeDir, "control-plane", "server.json");
 
 console.log(`Starting mu-server on port ${port}...`);
 console.log(`Repository root: ${repoRoot}`);

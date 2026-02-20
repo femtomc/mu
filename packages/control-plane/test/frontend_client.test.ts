@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
 	bootstrapFrontendChannel,
 	createSessionTurn,
+	getControlPlanePaths,
 	readMuServerDiscovery,
 	submitFrontendIngress,
 } from "@femtomc/mu-control-plane";
@@ -22,7 +23,7 @@ describe("frontend client bootstrap", () => {
 
 	test("bootstrapFrontendChannel resolves server discovery, channel capabilities, and identity link", async () => {
 		const repoRoot = await mkdtemp(join(tmpdir(), "mu-frontend-client-"));
-		const cpDir = join(repoRoot, ".mu", "control-plane");
+		const cpDir = getControlPlanePaths(repoRoot).controlPlaneDir;
 		await mkdir(cpDir, { recursive: true });
 		await writeFile(
 			join(cpDir, "server.json"),
@@ -98,9 +99,9 @@ describe("frontend client bootstrap", () => {
 
 	test("submitFrontendIngress sends shared-secret header and parses structured response", async () => {
 		const originalFetch = globalThis.fetch;
-		let seenSecret: string | null = null;
+		let seenSecret = "";
 		globalThis.fetch = (async (_input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			seenSecret = (init?.headers as Record<string, string>)?.["x-mu-neovim-secret"] ?? null;
+			seenSecret = (init?.headers as Record<string, string>)?.["x-mu-neovim-secret"] ?? "";
 			return Response.json({
 				ok: true,
 				accepted: true,
@@ -138,10 +139,10 @@ describe("frontend client bootstrap", () => {
 		const originalFetch = globalThis.fetch;
 		let seenBody: Record<string, unknown> | null = null;
 		let seenUrl = "";
-		let seenSecret: string | null = null;
+		let seenSecret = "";
 		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
 			seenUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			seenSecret = (init?.headers as Record<string, string>)?.["x-mu-neovim-secret"] ?? null;
+			seenSecret = (init?.headers as Record<string, string>)?.["x-mu-neovim-secret"] ?? "";
 			const rawBody = init?.body as unknown;
 			seenBody = typeof rawBody === "string" ? (JSON.parse(rawBody) as Record<string, unknown>) : null;
 			return Response.json({

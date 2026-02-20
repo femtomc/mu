@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { getStorePaths } from "@femtomc/mu-core/node";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,9 +11,19 @@ async function mkTempRepo(): Promise<string> {
 	return dir;
 }
 
-async function writeConfigWithOperatorDefaults(dir: string, provider: string, model: string): Promise<void> {
-	const configPath = join(dir, ".mu", "config.json");
-	await mkdir(join(dir, ".mu"), { recursive: true });
+function workspaceStoreDir(repoRoot: string): string {
+	return getStorePaths(repoRoot).storeDir;
+}
+
+async function writeConfigWithOperatorDefaults(
+	dir: string,
+	provider: string,
+	model: string,
+	thinking?: string,
+): Promise<void> {
+	const storeDir = workspaceStoreDir(dir);
+	const configPath = join(storeDir, "config.json");
+	await mkdir(storeDir, { recursive: true });
 	await writeFile(
 		configPath,
 		`${JSON.stringify(
@@ -30,6 +41,7 @@ async function writeConfigWithOperatorDefaults(dir: string, provider: string, mo
 						run_triggers_enabled: true,
 						provider,
 						model,
+						thinking: thinking ?? null,
 					},
 				},
 			},
@@ -44,7 +56,7 @@ async function writeOperatorSessionFile(
 	dir: string,
 	opts: { id: string; timestamp: string; message?: string },
 ): Promise<{ id: string; path: string }> {
-	const sessionDir = join(dir, ".mu", "operator", "sessions");
+	const sessionDir = join(workspaceStoreDir(dir), "operator", "sessions");
 	await mkdir(sessionDir, { recursive: true });
 	const filename = `${opts.timestamp.replace(/[:.]/g, "-")}_${opts.id}.jsonl`;
 	const path = join(sessionDir, filename);
@@ -74,15 +86,16 @@ async function writeOperatorSessionFile(
 }
 
 async function expectStoreBootstrapped(dir: string): Promise<void> {
+	const storeDir = workspaceStoreDir(dir);
 	for (const relPath of ["issues.jsonl", "forum.jsonl", "events.jsonl"] as const) {
-		await readFile(join(dir, ".mu", relPath), "utf8");
+		await readFile(join(storeDir, relPath), "utf8");
 	}
 
-	const gitignore = await readFile(join(dir, ".mu", ".gitignore"), "utf8");
+	const gitignore = await readFile(join(storeDir, ".gitignore"), "utf8");
 	expect(gitignore).toContain("*");
 	expect(gitignore).toContain("!.gitignore");
-	expect(await Bun.file(join(dir, ".mu", "roles", "orchestrator.md")).exists()).toBe(false);
-	expect(await Bun.file(join(dir, ".mu", "roles", "worker.md")).exists()).toBe(false);
+	expect(await Bun.file(join(storeDir, "roles", "orchestrator.md")).exists()).toBe(false);
+	expect(await Bun.file(join(storeDir, "roles", "worker.md")).exists()).toBe(false);
 }
 
 test("mu --help", async () => {
@@ -104,19 +117,20 @@ test("mu guide", async () => {
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.includes("Quickstart")).toBe(true);
 	expect(result.stdout.includes("Command Overview")).toBe(true);
-	expect(result.stdout.includes(".mu Store Layout")).toBe(true);
-	expect(result.stdout.includes(".mu/")).toBe(true);
+	expect(result.stdout.includes("Workspace Store Layout")).toBe(true);
+	expect(result.stdout.includes("~/.mu/workspaces/")).toBe(true);
 	expect(result.stdout.includes("mu store <subcmd>")).toBe(true);
 	expect(result.stdout.includes("mu control diagnose-operator")).toBe(true);
 	expect(result.stdout).toContain("Use direct CLI commands in chat (for example: mu control status, mu session list)");
 	expect(result.stdout).not.toContain("/mu-setup");
 });
 
-test("mu store paths/ls/tail provide .mu navigation tools", async () => {
+test("mu store paths/ls/tail provide workspace-store navigation tools", async () => {
 	const dir = await mkTempRepo();
-	await mkdir(join(dir, ".mu", "control-plane"), { recursive: true });
+	const storeDir = workspaceStoreDir(dir);
+	await mkdir(join(storeDir, "control-plane"), { recursive: true });
 	await writeFile(
-		join(dir, ".mu", "control-plane", "operator_turns.jsonl"),
+		join(storeDir, "control-plane", "operator_turns.jsonl"),
 		`${JSON.stringify({
 			kind: "operator.turn",
 			ts_ms: 123,
@@ -169,6 +183,55 @@ test("mu control diagnose-operator reports missing audit with actionable hints",
 	};
 	expect(payload.operator_turn_audit.exists).toBe(false);
 	expect(payload.hints.some((hint) => hint.includes("operator_turns.jsonl is missing"))).toBe(true);
+});
+
+test("mu control operator set persists config and reports live reload status", async () => {
+	const dir = await mkTempRepo();
+
+	const modelsResult = await run(["control", "operator", "models", "--json", "--pretty"], { cwd: dir });
+	expect(modelsResult.exitCode).toBe(0);
+	const catalog = JSON.parse(modelsResult.stdout) as {
+		providers: Array<{
+			provider: string;
+			models: Array<{ id: string; thinking_levels: string[] }>;
+		}>;
+	};
+	const providerEntry = catalog.providers.find((entry) => entry.models.length > 0);
+	expect(providerEntry).toBeTruthy();
+	if (!providerEntry) {
+		throw new Error("expected at least one provider with models");
+	}
+	const modelEntry = providerEntry.models[0]!;
+	const thinking =
+		modelEntry.thinking_levels.find((level) => level === "xhigh") ??
+		modelEntry.thinking_levels.find((level) => level === "high") ??
+		modelEntry.thinking_levels[modelEntry.thinking_levels.length - 1] ??
+		"minimal";
+
+	const setResult = await run(
+		["control", "operator", "set", providerEntry.provider, modelEntry.id, thinking, "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(setResult.exitCode).toBe(0);
+	const payload = JSON.parse(setResult.stdout) as {
+		ok: boolean;
+		operator: { provider: string | null; model: string | null; thinking: string | null };
+		reload: { attempted: boolean; ok: boolean; message: string };
+	};
+	expect(payload.ok).toBe(true);
+	expect(payload.operator.provider).toBe(providerEntry.provider);
+	expect(payload.operator.model).toBe(modelEntry.id);
+	expect(payload.operator.thinking).toBe(thinking);
+	expect(payload.reload.attempted).toBe(false);
+
+	const config = JSON.parse(await readFile(join(workspaceStoreDir(dir), "config.json"), "utf8")) as {
+		control_plane: {
+			operator: { provider: string | null; model: string | null; thinking: string | null };
+		};
+	};
+	expect(config.control_plane.operator.provider).toBe(providerEntry.provider);
+	expect(config.control_plane.operator.model).toBe(modelEntry.id);
+	expect(config.control_plane.operator.thinking).toBe(thinking);
 });
 
 test("mu init is disabled", async () => {
@@ -272,12 +335,12 @@ test("mu session list reports persisted operator sessions", async () => {
 		total: number;
 		sessions: Array<{ id: string; rel_path: string }>;
 	};
-	expect(payload.session_dir).toContain(".mu/operator/sessions");
+	expect(payload.session_dir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
 	expect(payload.total).toBe(2);
 	expect(payload.sessions.length).toBe(2);
 	expect(payload.sessions.some((session) => session.id === "sess-alpha-11111111")).toBe(true);
 	expect(payload.sessions.some((session) => session.id === "sess-beta-22222222")).toBe(true);
-	expect(payload.sessions[0]?.rel_path).toContain(".mu/operator/sessions/");
+	expect(payload.sessions[0]?.rel_path).toContain("operator/sessions/");
 });
 
 test("mu session defaults to reconnecting most recent persisted operator session", async () => {
@@ -302,7 +365,7 @@ test("mu session defaults to reconnecting most recent persisted operator session
 
 	expect(result.exitCode).toBe(0);
 	expect(seenSessionMode).toBe("continue-recent");
-	expect(seenSessionDir).toContain(".mu/operator/sessions");
+	expect(seenSessionDir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
 	expect(seenSessionFile).toBeUndefined();
 });
 
@@ -364,7 +427,7 @@ test("mu run auto-initializes store layout", async () => {
 	});
 	expect(result.exitCode).toBe(0);
 	expect(seenSessionMode).toBe("continue-recent");
-	expect(seenSessionDir).toContain(".mu/operator/sessions");
+	expect(seenSessionDir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
 	expect(seenSessionFile).toBeUndefined();
 	await expectStoreBootstrapped(dir);
 });
@@ -521,7 +584,7 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	expect(issue.title).toBe("Hello");
 	expect(issue.tags.includes("node:agent")).toBe(true);
 
-	const text = await readFile(join(dir, ".mu", "issues.jsonl"), "utf8");
+	const text = await readFile(join(workspaceStoreDir(dir), "issues.jsonl"), "utf8");
 	const rows = text
 		.split("\n")
 		.map((l) => l.trim())
@@ -536,7 +599,7 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	const msg = JSON.parse(posted.stdout) as any;
 	expect(msg).toMatchObject({ topic: `issue:${issue.id}`, body: "hello", author: "worker" });
 
-	const forumText = await readFile(join(dir, ".mu", "forum.jsonl"), "utf8");
+	const forumText = await readFile(join(workspaceStoreDir(dir), "forum.jsonl"), "utf8");
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
 });
 
@@ -636,24 +699,26 @@ test("mu serve spawns background server, attaches TUI, and leaves server running
 	// Server is NOT stopped when TUI exits — it's a background process
 	expect(events).toEqual(["server:spawn:3300", "operator:start", "operator:end"]);
 	expect(seenSessionMode).toBe("continue-recent");
-	expect(seenSessionDir).toContain(".mu/operator/sessions");
+	expect(seenSessionDir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
 	expect(seenSessionFile).toBeUndefined();
 	expect(chunks.stderr).toContain("started background server");
 });
 
-test("mu serve passes operator provider/model defaults from .mu/config.json to terminal operator session", async () => {
+test("mu serve passes operator provider/model/thinking defaults from workspace config.json to terminal operator session", async () => {
 	const dir = await mkTempRepo();
-	await writeConfigWithOperatorDefaults(dir, "openai-codex", "gpt-5.3-codex");
+	await writeConfigWithOperatorDefaults(dir, "openai-codex", "gpt-5.3-codex", "xhigh");
 
 	let seenProvider: string | undefined;
 	let seenModel: string | undefined;
+	let seenThinking: string | undefined;
 	const result = await run(["serve", "--port", "3301"], {
 		cwd: dir,
 		serveDeps: {
 			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
-			runOperatorSession: async ({ onReady, provider, model }) => {
+			runOperatorSession: async ({ onReady, provider, model, thinking }) => {
 				seenProvider = provider;
 				seenModel = model;
+				seenThinking = thinking;
 				onReady();
 				return { stdout: "", stderr: "", exitCode: 0 };
 			},
@@ -664,6 +729,7 @@ test("mu serve passes operator provider/model defaults from .mu/config.json to t
 	expect(result.exitCode).toBe(0);
 	expect(seenProvider).toBe("openai-codex");
 	expect(seenModel).toBe("gpt-5.3-codex");
+	expect(seenThinking).toBe("xhigh");
 });
 
 test("mu serve surfaces operator-session startup failure (server keeps running)", async () => {
@@ -763,10 +829,10 @@ test("mu serve reports startup failure when background server fails to spawn", a
 
 test("mu serve connects to existing server instead of spawning new one", async () => {
 	const dir = await mkTempRepo();
-	await mkdir(join(dir, ".mu", "control-plane"), { recursive: true });
+	await mkdir(join(workspaceStoreDir(dir), "control-plane"), { recursive: true });
 	// Write a server.json pointing to current PID (so process.kill(pid,0) succeeds)
 	await writeFile(
-		join(dir, ".mu", "control-plane", "server.json"),
+		join(workspaceStoreDir(dir), "control-plane", "server.json"),
 		`${JSON.stringify({ pid: process.pid, port: 23456, url: "http://localhost:23456" })}\n`,
 		"utf8",
 	);

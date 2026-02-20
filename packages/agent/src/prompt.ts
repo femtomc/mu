@@ -1,3 +1,4 @@
+import { getStorePaths } from "@femtomc/mu-core/node";
 import { readdir } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import type { Issue } from "@femtomc/mu-core";
@@ -108,7 +109,7 @@ function toPosixPath(path: string): string {
 }
 
 export async function buildRoleCatalog(repoRoot: string): Promise<string> {
-	const rolesDir = join(repoRoot, ".mu", "roles");
+	const rolesDir = join(getStorePaths(repoRoot).storeDir, "roles");
 	let entries: string[];
 	try {
 		entries = await readdir(rolesDir);

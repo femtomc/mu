@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { getStorePaths } from "@femtomc/mu-core/node";
 import type { CommandRecord } from "@femtomc/mu-control-plane";
 
 export type ControlPlaneRunMode = "run_start" | "run_resume";
@@ -500,7 +501,7 @@ export class ControlPlaneRunSupervisor {
 		const rootIssueId = job.snapshot.root_issue_id;
 		const traceFiles: string[] = [];
 		if (rootIssueId) {
-			const rootLogsDir = join(this.#repoRoot, ".mu", "logs", rootIssueId);
+			const rootLogsDir = join(getStorePaths(this.#repoRoot).logsDir, rootIssueId);
 			try {
 				const entries = await readdir(rootLogsDir, { withFileTypes: true });
 				for (const entry of entries) {

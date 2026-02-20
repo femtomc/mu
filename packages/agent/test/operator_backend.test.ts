@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { getStorePaths } from "@femtomc/mu-core/node";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,8 +168,9 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(seenSessionOpts.length).toBe(1);
 		const session = seenSessionOpts[0]?.session as Record<string, unknown> | undefined;
 		expect(session?.mode).toBe("open");
-		expect(session?.sessionDir).toBe("/repo/.mu/control-plane/operator-sessions");
-		expect(session?.sessionFile).toBe("/repo/.mu/control-plane/operator-sessions/session-persist.jsonl");
+		const storeDir = getStorePaths("/repo").storeDir;
+		expect(session?.sessionDir).toBe(`${storeDir}/control-plane/operator-sessions`);
+		expect(session?.sessionFile).toBe(`${storeDir}/control-plane/operator-sessions/session-persist.jsonl`);
 	});
 
 	test("command tool call produces approved command payload", async () => {
@@ -301,8 +303,9 @@ describe("PiMessagingOperatorBackend", () => {
 
 	test("runtime injects pending session flash messages and marks them delivered", async () => {
 		const repoRoot = await mkdtemp(join(tmpdir(), "mu-operator-flash-"));
-		const flashPath = join(repoRoot, ".mu", "control-plane", "session_flash.jsonl");
-		await mkdir(join(repoRoot, ".mu", "control-plane"), { recursive: true });
+		const storeDir = getStorePaths(repoRoot).storeDir;
+		const flashPath = join(storeDir, "control-plane", "session_flash.jsonl");
+		await mkdir(join(storeDir, "control-plane"), { recursive: true });
 		await Bun.write(
 			flashPath,
 			[

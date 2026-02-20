@@ -564,7 +564,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 				deliver: async (record: OutboxRecord): Promise<OutboxDeliveryHandlerResult> => {
 					const telegramBotToken = telegramManager.activeBotToken();
 					if (!telegramBotToken) {
-						return { kind: "retry", error: "telegram bot token not configured in .mu/config.json" };
+						return { kind: "retry", error: "telegram bot token not configured in mu workspace config" };
 					}
 
 					const richPayload = buildTelegramSendMessagePayload({

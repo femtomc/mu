@@ -83,6 +83,15 @@ describe("parseSeriousWorkCommand", () => {
 			commandKey: "update",
 			args: [],
 		});
+
+		const operatorModelSet = parseSeriousWorkCommand("/mu operator model set openai-codex gpt-5.3-codex xhigh");
+		expect(operatorModelSet).toMatchObject({
+			kind: "command",
+			invocation: "slash",
+			requestedMode: "auto",
+			commandKey: "operator model set",
+			args: ["openai-codex", "gpt-5.3-codex", "xhigh"],
+		});
 	});
 
 	test("parses confirm/cancel commands", () => {

@@ -1,3 +1,4 @@
+import { getStorePaths } from "@femtomc/mu-core/node";
 import { chmod, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -25,6 +26,7 @@ export type MuConfig = {
 			run_triggers_enabled: boolean;
 			provider: string | null;
 			model: string | null;
+			thinking: string | null;
 		};
 	};
 };
@@ -52,6 +54,7 @@ export type MuConfigPatch = {
 			run_triggers_enabled?: boolean;
 			provider?: string | null;
 			model?: string | null;
+			thinking?: string | null;
 		};
 	};
 };
@@ -84,6 +87,7 @@ export type MuConfigPresence = {
 			run_triggers_enabled: boolean;
 			provider: boolean;
 			model: boolean;
+			thinking: boolean;
 		};
 	};
 };
@@ -112,6 +116,7 @@ export const DEFAULT_MU_CONFIG: MuConfig = {
 			run_triggers_enabled: true,
 			provider: null,
 			model: null,
+			thinking: null,
 		},
 	},
 };
@@ -181,16 +186,12 @@ export function normalizeMuConfig(input: unknown): MuConfig {
 		if (neovim && "shared_secret" in neovim) {
 			next.control_plane.adapters.neovim.shared_secret = normalizeNullableString(neovim.shared_secret);
 		}
-
 	}
 
 	const operator = asRecord(controlPlane.operator);
 	if (operator) {
 		if ("enabled" in operator) {
-			next.control_plane.operator.enabled = normalizeBoolean(
-				operator.enabled,
-				next.control_plane.operator.enabled,
-			);
+			next.control_plane.operator.enabled = normalizeBoolean(operator.enabled, next.control_plane.operator.enabled);
 		}
 		if ("run_triggers_enabled" in operator) {
 			next.control_plane.operator.run_triggers_enabled = normalizeBoolean(
@@ -203,6 +204,9 @@ export function normalizeMuConfig(input: unknown): MuConfig {
 		}
 		if ("model" in operator) {
 			next.control_plane.operator.model = normalizeNullableString(operator.model);
+		}
+		if ("thinking" in operator) {
+			next.control_plane.operator.thinking = normalizeNullableString(operator.thinking);
 		}
 	}
 
@@ -264,7 +268,6 @@ function normalizeMuConfigPatch(input: unknown): MuConfigPatch {
 				patch.control_plane.adapters.neovim = neovimPatch;
 			}
 		}
-
 	}
 
 	const operator = asRecord(controlPlane.operator);
@@ -287,6 +290,9 @@ function normalizeMuConfigPatch(input: unknown): MuConfigPatch {
 		}
 		if ("model" in operator) {
 			patch.control_plane.operator.model = normalizeNullableString(operator.model);
+		}
+		if ("thinking" in operator) {
+			patch.control_plane.operator.thinking = normalizeNullableString(operator.thinking);
 		}
 		if (Object.keys(patch.control_plane.operator).length === 0) {
 			delete patch.control_plane.operator;
@@ -349,13 +355,16 @@ export function applyMuConfigPatch(base: MuConfig, patchInput: unknown): MuConfi
 		if ("model" in operator) {
 			next.control_plane.operator.model = operator.model ?? null;
 		}
+		if ("thinking" in operator) {
+			next.control_plane.operator.thinking = operator.thinking ?? null;
+		}
 	}
 
 	return next;
 }
 
 export function getMuConfigPath(repoRoot: string): string {
-	return join(repoRoot, ".mu", "config.json");
+	return join(getStorePaths(repoRoot).storeDir, "config.json");
 }
 
 export async function readMuConfigFile(repoRoot: string): Promise<MuConfig> {
@@ -428,6 +437,7 @@ export function muConfigPresence(config: MuConfig): MuConfigPresence {
 				run_triggers_enabled: config.control_plane.operator.run_triggers_enabled,
 				provider: isPresent(config.control_plane.operator.provider),
 				model: isPresent(config.control_plane.operator.model),
+				thinking: isPresent(config.control_plane.operator.thinking),
 			},
 		},
 	};

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultWebhookRouteForChannel } from "./adapter_contract.js";
+import { getControlPlanePaths } from "./paths.js";
 import {
 	ControlPlaneChannelsResponseSchema,
 	frontendChannelCapabilitiesFromResponse,
@@ -64,7 +65,7 @@ async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
 }
 
 export async function readMuServerDiscovery(repoRoot: string): Promise<MuServerDiscovery | null> {
-	const path = join(repoRoot, ".mu", "control-plane", "server.json");
+	const path = join(getControlPlanePaths(repoRoot).controlPlaneDir, "server.json");
 	let raw: string;
 	try {
 		raw = await readFile(path, "utf8");
@@ -213,7 +214,7 @@ export async function bootstrapFrontendChannel(opts: {
 		explicitUrl: opts.serverUrl,
 	});
 	if (!serverUrl) {
-		throw new Error("mu server discovery failed (no explicit serverUrl and no .mu/control-plane/server.json)");
+		throw new Error("mu server discovery failed (no explicit serverUrl and no workspace discovery file)");
 	}
 	const channels = await fetchFrontendChannels(serverUrl);
 	const channel = channels.find((entry) => entry.channel === opts.channel);

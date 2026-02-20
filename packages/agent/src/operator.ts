@@ -1,4 +1,4 @@
-import { appendJsonl, readJsonl } from "@femtomc/mu-core/node";
+import { appendJsonl, getStorePaths, readJsonl } from "@femtomc/mu-core/node";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -54,6 +54,26 @@ export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 	}),
 	z.object({ kind: z.literal("reload") }),
 	z.object({ kind: z.literal("update") }),
+	z.object({ kind: z.literal("operator_config_get") }),
+	z.object({
+		kind: z.literal("operator_model_list"),
+		provider: z.string().trim().min(1).optional(),
+	}),
+	z.object({
+		kind: z.literal("operator_thinking_list"),
+		provider: z.string().trim().min(1).optional(),
+		model: z.string().trim().min(1).optional(),
+	}),
+	z.object({
+		kind: z.literal("operator_model_set"),
+		provider: z.string().trim().min(1),
+		model: z.string().trim().min(1),
+		thinking: z.string().trim().min(1).optional(),
+	}),
+	z.object({
+		kind: z.literal("operator_thinking_set"),
+		thinking: z.string().trim().min(1),
+	}),
 	z.object({
 		kind: z.literal("run_start"),
 		prompt: z.string().trim().min(1),
@@ -225,6 +245,43 @@ export class ApprovedCommandBroker {
 				args = [];
 				break;
 			}
+			case "operator_config_get": {
+				commandKey = "operator config get";
+				args = [];
+				break;
+			}
+			case "operator_model_list": {
+				commandKey = "operator model list";
+				args = [];
+				if (opts.proposal.provider) {
+					args.push(normalizeArg(opts.proposal.provider));
+				}
+				break;
+			}
+			case "operator_thinking_list": {
+				commandKey = "operator thinking list";
+				args = [];
+				if (opts.proposal.provider) {
+					args.push(normalizeArg(opts.proposal.provider));
+				}
+				if (opts.proposal.model) {
+					args.push(normalizeArg(opts.proposal.model));
+				}
+				break;
+			}
+			case "operator_model_set": {
+				commandKey = "operator model set";
+				args = [normalizeArg(opts.proposal.provider), normalizeArg(opts.proposal.model)];
+				if (opts.proposal.thinking) {
+					args.push(normalizeArg(opts.proposal.thinking));
+				}
+				break;
+			}
+			case "operator_thinking_set": {
+				commandKey = "operator thinking set";
+				args = [normalizeArg(opts.proposal.thinking)];
+				break;
+			}
 			case "run_start": {
 				if (!this.#runTriggersEnabled) {
 					return { kind: "reject", reason: "operator_action_disallowed", details: "run triggers disabled" };
@@ -366,7 +423,7 @@ function stringList(value: unknown): string[] {
 }
 
 function sessionFlashPath(repoRoot: string): string {
-	return join(repoRoot, ".mu", "control-plane", "session_flash.jsonl");
+	return join(getStorePaths(repoRoot).storeDir, "control-plane", "session_flash.jsonl");
 }
 
 async function loadPendingSessionFlashes(opts: {
@@ -622,7 +679,7 @@ export class MessagingOperatorRuntime {
 							...opts.inbound.metadata,
 							session_flash_messages: pendingFlashes,
 						},
-				  }
+					}
 				: opts.inbound;
 
 		let backendResult: OperatorBackendTurnResult;
@@ -894,7 +951,8 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		this.#auditTurns = opts.auditTurns ?? true;
 		this.#persistSessions = opts.persistSessions ?? true;
 		this.#sessionDirForRepoRoot =
-			opts.sessionDirForRepoRoot ?? ((repoRoot) => join(repoRoot, ".mu", "control-plane", "operator-sessions"));
+			opts.sessionDirForRepoRoot ??
+			((repoRoot) => join(getStorePaths(repoRoot).storeDir, "control-plane", "operator-sessions"));
 
 		// Operator turns can emit structured command proposals captured from tool events.
 	}
@@ -1019,7 +1077,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			command: opts.command ?? null,
 		};
 		try {
-			const path = join(input.inbound.repo_root, ".mu", "control-plane", "operator_turns.jsonl");
+			const path = join(getStorePaths(input.inbound.repo_root).storeDir, "control-plane", "operator_turns.jsonl");
 			await appendJsonl(path, entry);
 		} catch {
 			// best effort audit

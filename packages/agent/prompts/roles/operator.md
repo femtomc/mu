@@ -25,10 +25,12 @@ Example invocation patterns:
 - `bash("mu runs start \"ship release\" --max-steps 25 --pretty")`
 - `bash("mu issues close mu-abc123 --outcome success --pretty")`
 - `bash("mu forum post issue:mu-abc123 -m \"done\" --author operator --pretty")`
+- `bash("mu control operator set openai-codex gpt-5.3-codex xhigh --pretty")`
+- `bash("mu control operator thinking-set high --pretty")`
 - `bash("mu control reload --pretty")`
 
 Guardrails:
-- Never hand-edit `.mu/*.jsonl` for normal lifecycle actions; use `mu` CLI commands.
+- Never hand-edit workspace-store `*.jsonl` files for normal lifecycle actions; use `mu` CLI commands.
 - Prefer bounded retrieval (`--limit`, scoped filters) before broad scans.
 - Do NOT pre-fetch status/issues/events/runs at conversation start.
 - Fetch only what the user request requires.

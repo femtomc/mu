@@ -9,7 +9,7 @@ export {
 } from "./jsonl.js";
 export { currentRunId, runContext } from "./run_context.js";
 export type { StorePaths } from "./store.js";
-export { findRepoRoot, getStorePaths } from "./store.js";
+export { findRepoRoot, getMuHomeDir, getStorePaths, workspaceIdForRepoRoot } from "./store.js";
 
 import { EventLog, JsonlEventSink } from "../events.js";
 import { FsJsonlStore } from "./jsonl.js";

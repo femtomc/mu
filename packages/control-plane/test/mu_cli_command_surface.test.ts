@@ -60,6 +60,48 @@ describe("MuCliCommandSurface", () => {
 		expect(interrupt.plan.commandKind).toBe("run_interrupt");
 		expect(interrupt.plan.argv).toEqual(["mu", "runs", "interrupt", "mu-abcd1234"]);
 
+		const operatorSet = surface.build({
+			commandKey: "operator model set",
+			args: ["openai-codex", "gpt-5.3-codex", "xhigh"],
+			invocationId: "cli-op-1",
+		});
+		expect(operatorSet.kind).toBe("ok");
+		if (operatorSet.kind !== "ok") {
+			throw new Error(`expected ok, got ${operatorSet.kind}`);
+		}
+		expect(operatorSet.plan.commandKind).toBe("operator_model_set");
+		expect(operatorSet.plan.mutating).toBe(true);
+		expect(operatorSet.plan.argv).toEqual([
+			"mu",
+			"control",
+			"operator",
+			"set",
+			"openai-codex",
+			"gpt-5.3-codex",
+			"xhigh",
+			"--json",
+		]);
+
+		const operatorThinking = surface.build({
+			commandKey: "operator thinking list",
+			args: ["openai-codex", "gpt-5.3-codex"],
+			invocationId: "cli-op-2",
+		});
+		expect(operatorThinking.kind).toBe("ok");
+		if (operatorThinking.kind !== "ok") {
+			throw new Error(`expected ok, got ${operatorThinking.kind}`);
+		}
+		expect(operatorThinking.plan.commandKind).toBe("operator_thinking_list");
+		expect(operatorThinking.plan.argv).toEqual([
+			"mu",
+			"control",
+			"operator",
+			"thinking",
+			"openai-codex",
+			"gpt-5.3-codex",
+			"--json",
+		]);
+
 		const unknown = surface.build({
 			commandKey: "shell exec",
 			args: ["rm", "-rf", "/"],

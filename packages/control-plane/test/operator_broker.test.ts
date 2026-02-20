@@ -75,6 +75,20 @@ describe("ApprovedCommandBroker", () => {
 		});
 		expect(update).toEqual({ kind: "approved", commandText: "/mu update" });
 
+		const operatorSet = broker.approve({
+			proposal: {
+				kind: "operator_model_set",
+				provider: "openai-codex",
+				model: "gpt-5.3-codex",
+				thinking: "xhigh",
+			},
+			inbound: mkInbound(),
+		});
+		expect(operatorSet).toEqual({
+			kind: "approved",
+			commandText: "/mu operator model set openai-codex gpt-5.3-codex xhigh",
+		});
+
 		const invalidArg = broker.approve({
 			proposal: { kind: "run_resume", root_issue_id: "mu-abc12345 --raw-stream" },
 			inbound: mkInbound(),

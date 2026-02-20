@@ -1,3 +1,4 @@
+import { getStorePaths } from "@femtomc/mu-core/node";
 import { join } from "node:path";
 
 export type ControlPlanePaths = {
@@ -13,9 +14,10 @@ export type ControlPlanePaths = {
 };
 
 export function getControlPlanePaths(repoRoot: string): ControlPlanePaths {
-	const controlPlaneDir = join(repoRoot, ".mu", "control-plane");
+	const store = getStorePaths(repoRoot);
+	const controlPlaneDir = join(store.storeDir, "control-plane");
 	return {
-		repoRoot,
+		repoRoot: store.repoRoot,
 		controlPlaneDir,
 		commandsPath: join(controlPlaneDir, "commands.jsonl"),
 		idempotencyPath: join(controlPlaneDir, "idempotency.jsonl"),
