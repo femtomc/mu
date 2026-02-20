@@ -17,10 +17,10 @@ roles are all treated as **trusted-as-root** in the repository.
 `mu-server` is scoped to control-plane and channel/frontend infrastructure:
 
 - transport + webhook ingress (`/webhooks/*`)
-- session coordination (`/api/session-flash*`, `/api/session-turn`)
-- run/activity coordination + wake scheduling (`/api/runs*`, `/api/activities*`, `/api/heartbeats*`, `/api/cron*`)
-- config/control-plane lifecycle + discovery (`/api/config`, `/api/control-plane/*`, `/api/identities*`)
-- observability (`/api/events*`, `/api/status`)
+- session coordination (`/api/control-plane/turn`)
+- run/activity coordination + wake scheduling (`/api/control-plane/runs*`, `/api/control-plane/activities*`, `/api/heartbeats*`, `/api/cron*`)
+- config/control-plane lifecycle + discovery (`/api/control-plane/config`, `/api/control-plane/*`, `/api/control-plane/identities*`)
+- observability (`/api/control-plane/events*`, `/api/control-plane/status`)
 
 Heartbeats/cron remain server-owned runtime scheduling concerns because they
 require a long-lived timer loop and now dispatch operator wake turns
@@ -35,6 +35,8 @@ Removed gateway surfaces:
 - `/api/issues*`
 - `/api/forum*`
 - `/api/context*`
+- `/api/session-flash*`
+- `/api/session-turn` (re-homed under `/api/control-plane/turn`)
 
 ## 3) CLI-first command surfaces (replacement for query/command split)
 
@@ -58,7 +60,6 @@ Mutations are also direct CLI commands:
 - `mu runs start|resume|interrupt`
 - `mu heartbeats create|update|delete|trigger|enable|disable`
 - `mu cron create|update|delete|trigger|enable|disable`
-- `mu session-flash create|ack`
 - `mu turn --session-id ... --body ...`
 - `mu control link|unlink|reload|update`
 
@@ -93,5 +94,5 @@ Additional architecture-coverage additions:
    - Risk: prompt/operator mistakes can execute destructive commands unless disciplined by workflow and review.
 
 3. **Command-surface documentation drift**
-   - CLI grows quickly (`events/runs/activities/heartbeats/cron/context/session-flash/turn`).
+   - CLI grows quickly (`events/runs/activities/heartbeats/cron/context/turn`).
    - Risk: static docs become stale unless kept in lockstep with command help output/tests.

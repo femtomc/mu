@@ -33,7 +33,7 @@ function formatEventLine(event: EventEnvelope): string {
 async function fetchTail(n: number): Promise<EventEnvelope[]> {
 	if (!muServerUrl()) return [];
 	try {
-		return await fetchMuJson<EventEnvelope[]>(`/api/events/tail?n=${n}`, { timeoutMs: 6_000 });
+		return await fetchMuJson<EventEnvelope[]>(`/api/control-plane/events/tail?n=${n}`, { timeoutMs: 6_000 });
 	} catch {
 		return [];
 	}

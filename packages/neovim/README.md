@@ -9,7 +9,7 @@ It talks to the same control-plane channel pipeline as Slack/Discord/Telegram vi
 
 - Server discovery from `.mu/control-plane/server.json`
 - Capability discovery from `GET /api/control-plane/channels`
-- Identity bootstrap via `POST /api/identities/link`
+- Identity bootstrap via `POST /api/control-plane/identities/link`
 - Command ingress via `POST /webhooks/neovim`
 - Shared-secret auth (`x-mu-neovim-secret`)
 - Structured editor context handoff (`client_context`)
@@ -17,7 +17,7 @@ It talks to the same control-plane channel pipeline as Slack/Discord/Telegram vi
 - Persistent panel UI (`ui.mode = "panel"`) with `:Mu panel ...`
 - Async timeline polling (`:Mu tail on|off|once|status`)
 - Session turn injection (`:Mu turn <session_id> <message>`) for real in-session turns (reply + context cursor)
-- Legacy flash alias (`:Mu flash <session_id> <message>` -> `POST /api/session-turn`)
+- Legacy flash alias (`:Mu flash <session_id> <message>` -> `POST /api/control-plane/turn`)
 - `:Mu` command + optional lowercase `:mu` alias
 
 ## Install (local monorepo)
@@ -87,7 +87,7 @@ mu control reload
 - `:Mu link` — link Neovim actor identity
 - `:Mu panel [show|hide|clear]` — manage persistent panel window
 - `:Mu tail [on|off|once|status]` — background poll control
-- `:Mu turn <session_id> <message>` — run a real turn in target session (`POST /api/session-turn`)
+- `:Mu turn <session_id> <message>` — run a real turn in target session (`POST /api/control-plane/turn`)
 - `:Mu flash <session_id> <message>` — legacy alias of `:Mu turn`
 - `:Mu help` — help text
 

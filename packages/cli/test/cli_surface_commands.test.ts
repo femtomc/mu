@@ -32,7 +32,7 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 			if (url.pathname === "/healthz") {
 				return Response.json({ ok: true });
 			}
-			if (url.pathname === "/api/runs") {
+			if (url.pathname === "/api/control-plane/runs") {
 				return Response.json({ count: 1, runs: [{ job_id: "run-1", status: "running" }] });
 			}
 			if (url.pathname === "/api/heartbeats/create") {
@@ -66,7 +66,7 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 		expect(hbPayload.program.title).toBe("Run heartbeat");
 
 		expect(
-			seen.some((entry) => entry.path === "/api/runs" && entry.search.includes("status=running")),
+			seen.some((entry) => entry.path === "/api/control-plane/runs" && entry.search.includes("status=running")),
 		).toBe(true);
 		expect(seen.some((entry) => entry.path === "/api/heartbeats/create" && entry.method === "POST")).toBe(true);
 		expect(seen.some((entry) => entry.path.startsWith("/api/context"))).toBe(false);
@@ -196,7 +196,7 @@ test("direct CLI surfaces return deterministic failure payloads when dedicated e
 			if (url.pathname === "/healthz") {
 				return Response.json({ ok: true });
 			}
-			if (url.pathname === "/api/runs") {
+			if (url.pathname === "/api/control-plane/runs") {
 				return Response.json({ error: "runs unavailable" }, { status: 503 });
 			}
 			return Response.json({ error: "not found" }, { status: 404 });
@@ -215,7 +215,7 @@ test("direct CLI surfaces return deterministic failure payloads when dedicated e
 		expect(result.exitCode).toBe(1);
 		const payload = JSON.parse(result.stdout) as { error?: string };
 		expect(payload.error).toContain("request failed: runs unavailable (503 Service Unavailable)");
-		expect(seen.includes("/api/runs")).toBe(true);
+		expect(seen.includes("/api/control-plane/runs")).toBe(true);
 		expect(seen.includes("/api/query")).toBe(false);
 		expect(seen.includes("/api/commands/submit")).toBe(false);
 	} finally {

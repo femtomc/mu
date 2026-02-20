@@ -37,7 +37,7 @@ Bun.serve(server);
 
 ### Status
 
-- `GET /api/status` - Returns repository + control-plane runtime status
+- `GET /api/control-plane/status` - Returns repository + control-plane runtime status
   ```json
   {
     "repo_root": "/path/to/repo",
@@ -76,8 +76,8 @@ Bun.serve(server);
 
 ### Config + Control Plane Admin
 
-- `GET /api/config` - Read redacted `.mu/config.json` plus presence booleans
-- `POST /api/config` - Apply a partial patch to `.mu/config.json`
+- `GET /api/control-plane/config` - Read redacted `.mu/config.json` plus presence booleans
+- `POST /api/control-plane/config` - Apply a partial patch to `.mu/config.json`
   - Body:
   ```json
   {
@@ -101,26 +101,10 @@ Bun.serve(server);
 - `POST /api/control-plane/rollback` - Explicit rollback trigger (same pipeline, reason=`rollback`)
 - `GET /api/control-plane/channels` - Capability/discovery snapshot for mounted adapter channels (route, verification contract, configured/active/frontend flags)
 
-### Session Flash Inbox (cross-session context handoff)
+### Session Turn Injection (control-plane)
 
-- `POST /api/session-flash` - Create a session-targeted flash message
-  ```json
-  {
-    "session_id": "operator-abc123",
-    "session_kind": "cp_operator",
-    "body": "Use context id ctx-123 for this question",
-    "context_ids": ["ctx-123"],
-    "source": "neovim"
-  }
-  ```
-- `GET /api/session-flash` - List flash messages
-  - Query params: `session_id`, `session_kind`, `status=pending|delivered|all`, `contains`, `limit`
-- `GET /api/session-flash/:flash_id` - Get one flash message by id
-- `POST /api/session-flash/ack` - Mark a flash message delivered/acknowledged
-
-### Session Turn Injection (canonical transcript turn)
-
-- `POST /api/session-turn` - Run a real turn in an existing target session and return reply + new context cursor
+- `POST /api/control-plane/turn` - Run a real turn in an existing target session and return reply + new context cursor
+  - Requires Neovim frontend shared-secret header (`x-mu-neovim-secret`)
   ```json
   {
     "session_id": "operator-abc123",
@@ -135,24 +119,24 @@ Bun.serve(server);
 ### Control-plane Coordination Endpoints
 
 - Runs:
-  - `GET /api/runs`
-  - `POST /api/runs/start`
-  - `POST /api/runs/resume`
-  - `POST /api/runs/interrupt`
-  - `GET /api/runs/:id`
-  - `GET /api/runs/:id/trace`
+  - `GET /api/control-plane/runs`
+  - `POST /api/control-plane/runs/start`
+  - `POST /api/control-plane/runs/resume`
+  - `POST /api/control-plane/runs/interrupt`
+  - `GET /api/control-plane/runs/:id`
+  - `GET /api/control-plane/runs/:id/trace`
 - Scheduling + orchestration:
   - `GET|POST|PATCH|DELETE /api/heartbeats...`
   - `GET|POST|PATCH|DELETE /api/cron...`
-  - `GET|POST /api/activities...`
+  - `GET|POST /api/control-plane/activities...`
   - Heartbeat/cron ticks dispatch operator wake turns and broadcast the resulting operator reply.
 - Identity bindings:
-  - `GET /api/identities`
-  - `POST /api/identities/link`
-  - `POST /api/identities/unlink`
+  - `GET /api/control-plane/identities`
+  - `POST /api/control-plane/identities/link`
+  - `POST /api/control-plane/identities/unlink`
 - Observability:
-  - `GET /api/events`
-  - `GET /api/events/tail`
+  - `GET /api/control-plane/events`
+  - `GET /api/control-plane/events/tail`
 
 ## Running the Server
 

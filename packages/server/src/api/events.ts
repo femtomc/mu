@@ -89,7 +89,11 @@ function parseSinceMs(value: string | null): number | null {
 
 export async function eventRoutes(request: Request, context: ServerContext): Promise<Response> {
 	const url = new URL(request.url);
-	const path = url.pathname.replace("/api/events", "") || "/";
+	const pathname = url.pathname;
+	if (!pathname.startsWith("/api/control-plane/events")) {
+		return new Response("Not Found", { status: 404 });
+	}
+	const path = pathname.slice("/api/control-plane/events".length) || "/";
 	const method = request.method;
 
 	if (method !== "GET") {
@@ -107,14 +111,14 @@ export async function eventRoutes(request: Request, context: ServerContext): Pro
 			contains: trimOrNull(url.searchParams.get("contains")),
 		};
 
-		// Tail - GET /api/events/tail?n=50
+		// Tail - GET /api/control-plane/events/tail?n=50
 		if (path === "/tail") {
 			const n = Math.min(Math.max(1, parseInt(url.searchParams.get("n") ?? "50", 10) || 50), 500);
 			const filtered = applyEventFilters(allEvents, filters);
 			return Response.json(filtered.slice(-n));
 		}
 
-		// Query - GET /api/events?type=...&source=...&issue_id=...&run_id=...&since=...&contains=...&limit=50
+		// Query - GET /api/control-plane/events?type=...&source=...&issue_id=...&run_id=...&since=...&contains=...&limit=50
 		if (path === "/") {
 			const limit = Math.min(Math.max(1, parseInt(url.searchParams.get("limit") ?? "50", 10) || 50), 500);
 			const filtered = applyEventFilters(allEvents, filters);

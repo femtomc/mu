@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-02-17
-- **Related endpoints:** `/api/control-plane/reload`, `/api/control-plane/rollback`, `/api/status`
+- **Related endpoints:** `/api/control-plane/reload`, `/api/control-plane/rollback`, `/api/control-plane/status`
 
 ## Context
 
@@ -50,7 +50,7 @@ Returns generation-scoped outcome metadata:
 - `telegram_generation`: warmup/cutover/drain/rollback detail when telegram
   generation handling is active.
 
-### `/api/status`
+### `/api/control-plane/status`
 
 `control_plane` now includes:
 
@@ -78,6 +78,6 @@ parsing logs.
 ## Guardrail
 
 Generation-scoped control-plane metadata is now part of the required contract
-for both `/api/control-plane/reload` and `/api/status`. Operator/agent clients
+for both `/api/control-plane/reload` and `/api/control-plane/status`. Operator/agent clients
 must treat missing generation fields as a protocol error instead of silently
 continuing with incomplete status payloads.

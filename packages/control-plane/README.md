@@ -74,10 +74,9 @@ Unsafe or ambiguous requests are rejected with explicit reasons (`context_missin
 
 - server discovery (`.mu/control-plane/server.json`)
 - channel capability fetch (`/api/control-plane/channels`)
-- identity link bootstrap (`/api/identities/link`)
+- identity link bootstrap (`/api/control-plane/identities/link`)
 - frontend ingress submission (`/webhooks/neovim`)
-- session flash inbox writes (`/api/session-flash`)
-- session turn injection (`/api/session-turn`) for real in-session turns with reply + context cursor
+- session turn injection (`/api/control-plane/turn`) for real in-session turns with reply + context cursor
 
 These helpers are intended to keep Neovim integration clients aligned with control-plane channel contracts.
 

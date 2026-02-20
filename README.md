@@ -164,12 +164,11 @@ or `mu session <session-id>` to reopen a specific one.
 Control-plane runtime configuration is file-based:
 
 - Source of truth: `.mu/config.json`
-- Live config API: `GET /api/config`, `POST /api/config` (patch)
+- Live config API: `GET /api/control-plane/config`, `POST /api/control-plane/config` (patch)
 - Runtime remount: `POST /api/control-plane/reload`
 - Explicit rollback trigger: `POST /api/control-plane/rollback`
 - Channel capability discovery: `GET /api/control-plane/channels`
-- Session flash inbox: `POST /api/session-flash`, `GET /api/session-flash`
-- Session turn injection: `POST /api/session-turn` (run real turn in target session, return reply + context cursor)
+- Session turn injection: `POST /api/control-plane/turn` (run real turn in target session, return reply + context cursor)
 
 Slack example:
 
@@ -206,7 +205,7 @@ Operator terminal: connecting...
 Operator terminal: connected
 ```
 
-`/api/status` includes `control_plane` runtime state (active adapters/routes, generation supervisor snapshot, and reload observability counters).
+`/api/control-plane/status` includes `control_plane` runtime state (active adapters/routes, generation supervisor snapshot, and reload observability counters).
 
 Business state reads/mutations are CLI-first (`mu issues ...`, `mu forum ...`, `mu context ...`).
 

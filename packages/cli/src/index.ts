@@ -3,7 +3,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import chalk from "chalk";
-import type { BackendRunner } from "@femtomc/mu-agent";
+import { executeSessionTurn, SessionTurnError, type BackendRunner, type SessionTurnRequest } from "@femtomc/mu-agent";
 import type { Issue } from "@femtomc/mu-core";
 import type { EventLog, StorePaths } from "@femtomc/mu-core/node";
 import type { ForumTopicSummary } from "@femtomc/mu-forum";
@@ -494,7 +494,6 @@ function mainHelp(): string {
 		`  ${cmd("heartbeats")} ${dim("<subcmd>")}                   Heartbeat program lifecycle`,
 		`  ${cmd("cron")} ${dim("<subcmd>")}                         Cron program lifecycle`,
 		`  ${cmd("context")} ${dim("<subcmd>")}                      Cross-store context search/timeline/stats`,
-		`  ${cmd("session-flash")} ${dim("<subcmd>")}                Session flash inbox lifecycle`,
 		`  ${cmd("turn")} ${dim("[opts]")}                            Inject a prompt into an existing session`,
 		`  ${cmd("run")} ${dim("<prompt...>")}                       Queue a run and attach operator session`,
 		`  ${cmd("resume")} ${dim("<root-id>")}                      Resume a run`,
@@ -580,8 +579,6 @@ export async function run(
 			return await cmdCron(rest, ctx);
 		case "context":
 			return await cmdContext(rest, ctx);
-		case "session-flash":
-			return await cmdSessionFlash(rest, ctx);
 		case "turn":
 			return await cmdTurn(rest, ctx);
 		case "run":
@@ -2086,7 +2083,7 @@ async function runsList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<R
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
 		pretty,
-		path: `/api/runs${suffix}`,
+		path: `/api/control-plane/runs${suffix}`,
 		recoveryCommand: "mu runs list",
 	});
 	if (!req.ok) {
@@ -2103,7 +2100,7 @@ async function runsGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<Ru
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
 		pretty,
-		path: `/api/runs/${encodeURIComponent(id)}`,
+		path: `/api/control-plane/runs/${encodeURIComponent(id)}`,
 		recoveryCommand: `mu runs get ${id}`,
 	});
 	if (!req.ok) {
@@ -2131,7 +2128,7 @@ async function runsTrace(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
 		pretty,
-		path: `/api/runs/${encodeURIComponent(id)}/trace?limit=${limit}`,
+		path: `/api/control-plane/runs/${encodeURIComponent(id)}/trace?limit=${limit}`,
 		recoveryCommand: `mu runs trace ${id}`,
 	});
 	if (!req.ok) {
@@ -2158,7 +2155,7 @@ async function runsStart(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 		ctx,
 		pretty,
 		method: "POST",
-		path: "/api/runs/start",
+		path: "/api/control-plane/runs/start",
 		body: {
 			prompt,
 			max_steps: maxSteps,
@@ -2191,7 +2188,7 @@ async function runsResume(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 		ctx,
 		pretty,
 		method: "POST",
-		path: "/api/runs/resume",
+		path: "/api/control-plane/runs/resume",
 		body: {
 			root_issue_id: rootIssueId,
 			max_steps: maxSteps,
@@ -2227,7 +2224,7 @@ async function runsInterrupt(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 		ctx,
 		pretty,
 		method: "POST",
-		path: "/api/runs/interrupt",
+		path: "/api/control-plane/runs/interrupt",
 		body: {
 			root_issue_id: rootIssueId,
 			job_id: jobId ?? null,
@@ -2293,7 +2290,7 @@ async function activitiesList(argv: string[], ctx: CliCtx, pretty: boolean): Pro
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
 		pretty,
-		path: `/api/activities?${search.toString()}`,
+		path: `/api/control-plane/activities?${search.toString()}`,
 		recoveryCommand: "mu activities list",
 	});
 	if (!req.ok) {
@@ -2310,7 +2307,7 @@ async function activitiesGet(argv: string[], ctx: CliCtx, pretty: boolean): Prom
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
 		pretty,
-		path: `/api/activities/${encodeURIComponent(id)}`,
+		path: `/api/control-plane/activities/${encodeURIComponent(id)}`,
 		recoveryCommand: `mu activities get ${id}`,
 	});
 	if (!req.ok) {
@@ -2338,7 +2335,7 @@ async function activitiesTrace(argv: string[], ctx: CliCtx, pretty: boolean): Pr
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
 		pretty,
-		path: `/api/activities/${encodeURIComponent(id)}/events?limit=${limit}`,
+		path: `/api/control-plane/activities/${encodeURIComponent(id)}/events?limit=${limit}`,
 		recoveryCommand: `mu activities trace ${id}`,
 	});
 	if (!req.ok) {
@@ -3009,162 +3006,6 @@ async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 }
 
-async function cmdSessionFlash(argv: string[], ctx: CliCtx): Promise<RunResult> {
-	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-	if (argv0.length === 0 || hasHelpFlag(argv0)) {
-		return ok(
-			[
-				"mu session-flash - session-targeted flash inbox lifecycle",
-				"",
-				"Usage:",
-				"  mu session-flash <list|get|create|ack> [args...] [--pretty]",
-			].join("\n") + "\n",
-		);
-	}
-	const sub = argv0[0]!;
-	const rest = argv0.slice(1);
-	switch (sub) {
-		case "list":
-			return await sessionFlashList(rest, ctx, pretty);
-		case "get":
-			return await sessionFlashGet(rest, ctx, pretty);
-		case "create":
-			return await sessionFlashCreate(rest, ctx, pretty);
-		case "ack":
-			return await sessionFlashAck(rest, ctx, pretty);
-		default:
-			return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu session-flash --help"] });
-	}
-}
-
-async function sessionFlashList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	const { value: sessionId, rest: argv0 } = getFlagValue(argv, "--session-id");
-	const { value: sessionKind, rest: argv1 } = getFlagValue(argv0, "--session-kind");
-	const { value: status, rest: argv2 } = getFlagValue(argv1, "--status");
-	const { value: contains, rest: argv3 } = getFlagValue(argv2, "--contains");
-	const { value: limitRaw, rest } = getFlagValue(argv3, "--limit");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu session-flash --help"] });
-	}
-	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
-	if (limit == null) {
-		return jsonError("--limit must be an integer between 1 and 500", {
-			pretty,
-			recovery: ["mu session-flash list --limit 20"],
-		});
-	}
-	const search = new URLSearchParams();
-	setSearchParamIfPresent(search, "session_id", sessionId ?? null);
-	setSearchParamIfPresent(search, "session_kind", sessionKind ?? null);
-	setSearchParamIfPresent(search, "status", status ?? null);
-	setSearchParamIfPresent(search, "contains", contains ?? null);
-	search.set("limit", String(limit));
-	const req = await requestServerJson<Record<string, unknown>>({
-		ctx,
-		pretty,
-		path: `/api/session-flash?${search.toString()}`,
-		recoveryCommand: "mu session-flash list",
-	});
-	if (!req.ok) return req.result;
-	return ok(jsonText(req.payload, pretty));
-}
-
-async function sessionFlashGet(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	const flashId = argv[0];
-	if (!flashId) {
-		return jsonError("missing flash id", { pretty, recovery: ["mu session-flash get <flash-id>"] });
-	}
-	const req = await requestServerJson<Record<string, unknown>>({
-		ctx,
-		pretty,
-		path: `/api/session-flash/${encodeURIComponent(flashId)}`,
-		recoveryCommand: `mu session-flash get ${flashId}`,
-	});
-	if (!req.ok) return req.result;
-	return ok(jsonText(req.payload, pretty));
-}
-
-async function sessionFlashCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	const { value: sessionId, rest: argv0 } = getFlagValue(argv, "--session-id");
-	const { value: sessionKind, rest: argv1 } = getFlagValue(argv0, "--session-kind");
-	const { value: body, rest: argv2 } = getFlagValue(argv1, "--body");
-	const { value: source, rest: argv3 } = getFlagValue(argv2, "--source");
-	const { value: contextIdsRaw, rest } = getFlagValue(argv3, "--context-ids");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu session-flash create --help"] });
-	}
-	if (!sessionId) {
-		return jsonError("missing --session-id", {
-			pretty,
-			recovery: ["mu session-flash create --session-id <id> --body <text>"],
-		});
-	}
-	if (!body) {
-		return jsonError("missing --body", {
-			pretty,
-			recovery: ["mu session-flash create --session-id <id> --body <text>"],
-		});
-	}
-	const contextIds = (contextIdsRaw ?? "")
-		.split(",")
-		.map((p) => p.trim())
-		.filter((p) => p.length > 0);
-	const req = await requestServerJson<Record<string, unknown>>({
-		ctx,
-		pretty,
-		method: "POST",
-		path: "/api/session-flash",
-		body: {
-			session_id: sessionId,
-			session_kind: sessionKind ?? null,
-			body,
-			source: source ?? null,
-			context_ids: contextIds,
-		},
-		recoveryCommand: "mu session-flash create --session-id <id> --body <text>",
-	});
-	if (!req.ok) return req.result;
-	return ok(jsonText(req.payload, pretty));
-}
-
-async function sessionFlashAck(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
-	let positionalFlashId: string | null = null;
-	let args = argv;
-	if (args[0] && !args[0].startsWith("-")) {
-		positionalFlashId = args[0];
-		args = args.slice(1);
-	}
-	const { value: flashIdFlag, rest: argv0 } = getFlagValue(args, "--flash-id");
-	const flashId = flashIdFlag ?? positionalFlashId;
-	const { value: sessionId, rest: argv1 } = getFlagValue(argv0, "--session-id");
-	const { value: deliveredBy, rest: argv2 } = getFlagValue(argv1, "--delivered-by");
-	const { value: note, rest } = getFlagValue(argv2, "--note");
-	if (rest.length > 0) {
-		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu session-flash ack --help"] });
-	}
-	if (!flashId) {
-		return jsonError("missing flash id", {
-			pretty,
-			recovery: ["mu session-flash ack --flash-id <flash-id>"],
-		});
-	}
-	const req = await requestServerJson<Record<string, unknown>>({
-		ctx,
-		pretty,
-		method: "POST",
-		path: "/api/session-flash/ack",
-		body: {
-			flash_id: flashId,
-			session_id: sessionId ?? null,
-			delivered_by: deliveredBy ?? null,
-			note: note ?? null,
-		},
-		recoveryCommand: `mu session-flash ack --flash-id ${flashId}`,
-	});
-	if (!req.ok) return req.result;
-	return ok(jsonText(req.payload, pretty));
-}
-
 async function cmdTurn(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
 	if (hasHelpFlag(argv0)) {
@@ -3204,27 +3045,37 @@ async function cmdTurn(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		});
 	}
 
-	const req = await requestServerJson<Record<string, unknown>>({
-		ctx,
-		pretty,
-		method: "POST",
-		path: "/api/session-turn",
-		body: {
-			session_id: sessionId,
-			session_kind: sessionKind ?? null,
-			body,
-			source: source ?? null,
-			provider: provider ?? null,
-			model: model ?? null,
-			thinking: thinking ?? null,
-			session_file: sessionFile ?? null,
-			session_dir: sessionDir ?? null,
-			extension_profile: extensionProfile ?? null,
-		},
-		recoveryCommand: "mu turn --session-id <id> --body <text>",
-	});
-	if (!req.ok) return req.result;
-	return ok(jsonText(req.payload, pretty));
+	const request: SessionTurnRequest = {
+		session_id: sessionId,
+		session_kind: sessionKind ?? null,
+		body,
+		source: source ?? null,
+		provider: provider ?? null,
+		model: model ?? null,
+		thinking: thinking ?? null,
+		session_file: sessionFile ?? null,
+		session_dir: sessionDir ?? null,
+		extension_profile: extensionProfile ?? null,
+	};
+
+	try {
+		const turn = await executeSessionTurn({
+			repoRoot: ctx.repoRoot,
+			request,
+		});
+		return ok(jsonText({ ok: true, turn }, pretty));
+	} catch (err) {
+		if (err instanceof SessionTurnError) {
+			return jsonError(err.message, {
+				pretty,
+				recovery: ["mu turn --session-id <id> --body <text>"],
+			});
+		}
+		return jsonError(`session turn failed: ${describeError(err)}`, {
+			pretty,
+			recovery: ["mu turn --session-id <id> --body <text>"],
+		});
+	}
 }
 
 function oneLine(text: string): string {
@@ -3262,7 +3113,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 				"",
 				"Legacy note:",
 				"  --json and --raw-stream are no longer supported on mu run.",
-				"  Use `mu serve` + /api/runs/* for machine integration, or `mu resume --json` for direct run state.",
+				"  Use `mu serve` + /api/control-plane/runs/* for machine integration, or `mu resume --json` for direct run state.",
 				"",
 				"See also: `mu serve --help`, `mu guide`",
 			].join("\n") + "\n",
@@ -3284,7 +3135,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		}
 		if (a === "--json") {
 			return jsonError(
-				"`mu run --json` has been removed. Use `mu serve` + /api/runs/* for machine integration, or `mu resume <root-id> --json` for direct run output.",
+				"`mu run --json` has been removed. Use `mu serve` + /api/control-plane/runs/* for machine integration, or `mu resume <root-id> --json` for direct run output.",
 				{
 					recovery: ['mu run "Break down and execute this goal"', "mu serve --help", "mu resume <root-id> --json"],
 				},
@@ -3292,7 +3143,7 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 		}
 		if (a === "--raw-stream") {
 			return jsonError(
-				"`mu run --raw-stream` has been removed. Use `mu serve` + /api/runs/* for queued runs, or `mu resume <root-id> --raw-stream` for direct runner streaming.",
+				"`mu run --raw-stream` has been removed. Use `mu serve` + /api/control-plane/runs/* for queued runs, or `mu resume <root-id> --raw-stream` for direct runner streaming.",
 				{
 					recovery: [
 						'mu run "Break down and execute this goal"',
@@ -4945,7 +4796,7 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 			);
 		},
 		queueRun: async ({ serverUrl, prompt, maxSteps, provider, model, reasoning }) => {
-			const response = await fetch(`${serverUrl}/api/runs/start`, {
+			const response = await fetch(`${serverUrl}/api/control-plane/runs/start`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({

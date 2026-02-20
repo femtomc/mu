@@ -1,6 +1,12 @@
 import { CONTROL_PLANE_CHANNEL_ADAPTER_SPECS } from "@femtomc/mu-control-plane";
 import type { MuConfig } from "../config.js";
 import type { ServerRoutingDependencies } from "../server_routing.js";
+import { activityRoutes } from "./activities.js";
+import { configRoutes } from "./config.js";
+import { eventRoutes } from "./events.js";
+import { identityRoutes } from "./identities.js";
+import { runRoutes } from "./runs.js";
+import { sessionTurnRoutes } from "./session_turn.js";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -43,6 +49,39 @@ export async function controlPlaneRoutes(
 	headers: Headers,
 ): Promise<Response> {
 	const path = url.pathname;
+
+	if (path === "/api/control-plane" || path === "/api/control-plane/status") {
+		if (request.method !== "GET") {
+			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+		}
+		return Response.json(
+			{
+				repo_root: deps.context.repoRoot,
+				control_plane: deps.getControlPlaneStatus(),
+			},
+			{ headers },
+		);
+	}
+
+	if (path === "/api/control-plane/config") {
+		return configRoutes(request, url, deps, headers);
+	}
+
+	if (
+		path === "/api/control-plane/identities" ||
+		path === "/api/control-plane/identities/link" ||
+		path === "/api/control-plane/identities/unlink"
+	) {
+		return identityRoutes(request, url, deps, headers);
+	}
+
+	if (path.startsWith("/api/control-plane/events")) {
+		const response = await eventRoutes(request, deps.context);
+		headers.forEach((value, key) => {
+			response.headers.set(key, value);
+		});
+		return response;
+	}
 
 	if (path === "/api/control-plane/reload") {
 		if (request.method !== "POST") {
@@ -98,6 +137,18 @@ export async function controlPlaneRoutes(
 			},
 			{ headers },
 		);
+	}
+
+	if (path === "/api/control-plane/runs" || path.startsWith("/api/control-plane/runs/")) {
+		return runRoutes(request, url, deps, headers);
+	}
+
+	if (path === "/api/control-plane/activities" || path.startsWith("/api/control-plane/activities/")) {
+		return activityRoutes(request, url, deps, headers);
+	}
+
+	if (path === "/api/control-plane/turn") {
+		return sessionTurnRoutes(request, url, deps, headers);
 	}
 
 	return Response.json({ error: "Not Found" }, { status: 404, headers });

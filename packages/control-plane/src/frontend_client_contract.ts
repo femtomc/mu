@@ -74,60 +74,6 @@ export function frontendChannelCapabilitiesFromResponse(
 	return out;
 }
 
-export const SessionFlashRecordSchema = z.object({
-	flash_id: z.string().trim().min(1),
-	created_at_ms: z.number().int(),
-	session_id: z.string().trim().min(1),
-	session_kind: z.string().trim().min(1).nullable(),
-	body: z.string().trim().min(1),
-	context_ids: z.array(z.string().trim().min(1)),
-	source: z.string().trim().min(1).nullable(),
-	metadata: z.record(z.string(), z.unknown()),
-	from: z.object({
-		channel: z.string().trim().min(1).nullable(),
-		channel_tenant_id: z.string().trim().min(1).nullable(),
-		channel_conversation_id: z.string().trim().min(1).nullable(),
-		actor_binding_id: z.string().trim().min(1).nullable(),
-	}),
-	status: z.enum(["pending", "delivered"]),
-	delivered_at_ms: z.number().int().nullable(),
-	delivered_by: z.string().trim().min(1).nullable(),
-	delivery_note: z.string().trim().min(1).nullable(),
-});
-export type SessionFlashRecord = z.infer<typeof SessionFlashRecordSchema>;
-
-export const SessionFlashCreateRequestSchema = z.object({
-	session_id: z.string().trim().min(1),
-	session_kind: z.string().trim().min(1).optional(),
-	body: z.string().trim().min(1),
-	context_ids: z.array(z.string().trim().min(1)).optional(),
-	source: z.string().trim().min(1).optional(),
-	metadata: z.record(z.string(), z.unknown()).optional(),
-	from: z
-		.object({
-			channel: z.string().trim().min(1).optional(),
-			channel_tenant_id: z.string().trim().min(1).optional(),
-			channel_conversation_id: z.string().trim().min(1).optional(),
-			actor_binding_id: z.string().trim().min(1).optional(),
-		})
-		.optional(),
-});
-export type SessionFlashCreateRequest = z.infer<typeof SessionFlashCreateRequestSchema>;
-
-export const SessionFlashCreateResponseSchema = z.object({
-	ok: z.literal(true),
-	flash: SessionFlashRecordSchema,
-});
-export type SessionFlashCreateResponse = z.infer<typeof SessionFlashCreateResponseSchema>;
-
-export const SessionFlashListResponseSchema = z.object({
-	ok: z.literal(true),
-	count: z.number().int(),
-	status: z.enum(["pending", "delivered", "all"]),
-	flashes: z.array(SessionFlashRecordSchema),
-});
-export type SessionFlashListResponse = z.infer<typeof SessionFlashListResponseSchema>;
-
 export const SessionTurnRequestSchema = z.object({
 	session_id: z.string().trim().min(1),
 	session_kind: z.string().trim().min(1).optional(),

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	bootstrapFrontendChannel,
-	createSessionFlash,
 	createSessionTurn,
 	readMuServerDiscovery,
 	submitFrontendIngress,
@@ -69,7 +68,7 @@ describe("frontend client bootstrap", () => {
 					],
 				});
 			}
-			if (url.endsWith("/api/identities/link")) {
+			if (url.endsWith("/api/control-plane/identities/link")) {
 				return Response.json({ ok: true, kind: "linked", binding: { binding_id: "bind-1" } }, { status: 201 });
 			}
 			throw new Error(`unexpected fetch url: ${url}`);
@@ -86,7 +85,7 @@ describe("frontend client bootstrap", () => {
 			expect(result.server_url).toBe("http://localhost:3000");
 			expect(result.channel.channel).toBe("neovim");
 			expect(result.channel.route).toBe("/webhooks/neovim");
-			const linkCall = calls.find((entry) => entry.url.endsWith("/api/identities/link"));
+			const linkCall = calls.find((entry) => entry.url.endsWith("/api/control-plane/identities/link"));
 			expect(linkCall).toBeDefined();
 			const body = typeof linkCall?.init?.body === "string" ? JSON.parse(linkCall.init.body) : null;
 			expect(body?.channel).toBe("neovim");
@@ -135,60 +134,14 @@ describe("frontend client bootstrap", () => {
 		}
 	});
 
-	test("createSessionFlash posts typed payload and parses response", async () => {
-		const originalFetch = globalThis.fetch;
-		let seenBody: Record<string, unknown> | null = null;
-		globalThis.fetch = (async (_input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			const rawBody = init?.body as unknown;
-			seenBody = typeof rawBody === "string" ? (JSON.parse(rawBody) as Record<string, unknown>) : null;
-			return Response.json({
-				ok: true,
-				flash: {
-					flash_id: "flash-1",
-					created_at_ms: 1,
-					session_id: "operator-1",
-					session_kind: "cp_operator",
-					body: "ctx-123",
-					context_ids: ["ctx-123"],
-					source: "neovim",
-					metadata: {},
-					from: {
-						channel: "neovim",
-						channel_tenant_id: "workspace-1",
-						channel_conversation_id: "conv-1",
-						actor_binding_id: null,
-					},
-					status: "pending",
-					delivered_at_ms: null,
-					delivered_by: null,
-					delivery_note: null,
-				},
-			});
-		}) as typeof fetch;
-
-		try {
-			const flash = await createSessionFlash({
-				serverUrl: "http://localhost:3000",
-				request: {
-					session_id: "operator-1",
-					session_kind: "cp_operator",
-					body: "ctx-123",
-					context_ids: ["ctx-123"],
-					source: "neovim",
-				},
-			});
-			expect((seenBody as Record<string, unknown> | null)?.["session_id"]).toBe("operator-1");
-			expect(flash.flash_id).toBe("flash-1");
-			expect(flash.status).toBe("pending");
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
 	test("createSessionTurn posts payload and parses reply/context cursor", async () => {
 		const originalFetch = globalThis.fetch;
 		let seenBody: Record<string, unknown> | null = null;
-		globalThis.fetch = (async (_input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+		let seenUrl = "";
+		let seenSecret: string | null = null;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			seenUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			seenSecret = (init?.headers as Record<string, string>)?.["x-mu-neovim-secret"] ?? null;
 			const rawBody = init?.body as unknown;
 			seenBody = typeof rawBody === "string" ? (JSON.parse(rawBody) as Record<string, unknown>) : null;
 			return Response.json({
@@ -208,6 +161,8 @@ describe("frontend client bootstrap", () => {
 		try {
 			const turn = await createSessionTurn({
 				serverUrl: "http://localhost:3000",
+				channel: "neovim",
+				sharedSecret: "nvim-secret",
 				request: {
 					session_id: "operator-1",
 					session_kind: "cp_operator",
@@ -215,6 +170,8 @@ describe("frontend client bootstrap", () => {
 					source: "neovim",
 				},
 			});
+			expect(seenUrl).toBe("http://localhost:3000/api/control-plane/turn");
+			expect(seenSecret).toBe("nvim-secret");
 			expect((seenBody as Record<string, unknown> | null)?.["session_id"]).toBe("operator-1");
 			expect((seenBody as Record<string, unknown> | null)?.["body"]).toBe("Use the prior context and summarize.");
 			expect(turn.context_entry_id).toBe("entry-42");

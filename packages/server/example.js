@@ -19,7 +19,7 @@ setTimeout(async () => {
 	console.log("Health check:", await health.text());
 	
 	// Status
-	const status = await fetch(`http://localhost:${bunServer.port}/api/status`);
+	const status = await fetch(`http://localhost:${bunServer.port}/api/control-plane/status`);
 	console.log("Status:", await status.json());
 	
 	// Create issue

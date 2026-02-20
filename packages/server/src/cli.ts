@@ -95,7 +95,7 @@ if (runtime.controlPlane && runtime.controlPlane.activeAdapters.length > 0) {
 	}
 } else {
 	console.log(`Health check: http://localhost:${port}/healthz`);
-	console.log(`API Status: http://localhost:${port}/api/status`);
+	console.log(`API Status: http://localhost:${port}/api/control-plane/status`);
 }
 
 const cleanup = async () => {

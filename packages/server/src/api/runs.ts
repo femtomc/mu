@@ -8,7 +8,7 @@ export async function runRoutes(
 ): Promise<Response> {
 	const path = url.pathname;
 
-	if (path === "/api/runs") {
+	if (path === "/api/control-plane/runs") {
 		if (request.method !== "GET") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -20,7 +20,7 @@ export async function runRoutes(
 		return Response.json({ count: runs?.length ?? 0, runs: runs ?? [] }, { headers });
 	}
 
-	if (path === "/api/runs/start") {
+	if (path === "/api/control-plane/runs/start") {
 		if (request.method !== "POST") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -49,7 +49,7 @@ export async function runRoutes(
 		}
 	}
 
-	if (path === "/api/runs/resume") {
+	if (path === "/api/control-plane/runs/resume") {
 		if (request.method !== "POST") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -78,7 +78,7 @@ export async function runRoutes(
 		}
 	}
 
-	if (path === "/api/runs/interrupt") {
+	if (path === "/api/control-plane/runs/interrupt") {
 		if (request.method !== "POST") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -100,8 +100,8 @@ export async function runRoutes(
 		return Response.json(result, { status: result.ok ? 200 : 404, headers });
 	}
 
-	if (path.startsWith("/api/runs/")) {
-		const rest = path.slice("/api/runs/".length);
+	if (path.startsWith("/api/control-plane/runs/")) {
+		const rest = path.slice("/api/control-plane/runs/".length);
 		const [rawId, maybeSub] = rest.split("/");
 		const idOrRoot = decodeURIComponent(rawId ?? "").trim();
 		if (idOrRoot.length === 0) {

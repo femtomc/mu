@@ -1,14 +1,7 @@
 import type { ControlPlaneActivitySupervisor } from "./activity_supervisor.js";
-import { activityRoutes } from "./api/activities.js";
-import { configRoutes } from "./api/config.js";
 import { controlPlaneRoutes } from "./api/control_plane.js";
 import { cronRoutes } from "./api/cron.js";
-import { eventRoutes } from "./api/events.js";
 import { heartbeatRoutes } from "./api/heartbeats.js";
-import { identityRoutes } from "./api/identities.js";
-import { runRoutes } from "./api/runs.js";
-import { sessionFlashRoutes } from "./api/session_flash.js";
-import { sessionTurnRoutes } from "./api/session_turn.js";
 import type { MuConfig } from "./config.js";
 import type { ControlPlaneHandle } from "./control_plane_contract.js";
 import type { CronProgramRegistry } from "./cron_programs.js";
@@ -62,42 +55,8 @@ export function createServerRequestHandler(deps: ServerRoutingDependencies) {
 			return Response.json({ ok: true, message: "shutdown initiated" }, { headers });
 		}
 
-		if (path === "/api/config") {
-			return configRoutes(request, url, deps, headers);
-		}
-
-		if (
-			path === "/api/control-plane/reload" ||
-			path === "/api/control-plane/rollback" ||
-			path === "/api/control-plane/channels"
-		) {
+		if (path === "/api/control-plane" || path.startsWith("/api/control-plane/")) {
 			return controlPlaneRoutes(request, url, deps, headers);
-		}
-
-		if (path === "/api/status") {
-			return Response.json(
-				{
-					repo_root: deps.context.repoRoot,
-					control_plane: deps.getControlPlaneStatus(),
-				},
-				{ headers },
-			);
-		}
-
-		if (
-			path === "/api/session-flash" ||
-			path === "/api/session-flash/ack" ||
-			path.startsWith("/api/session-flash/")
-		) {
-			return sessionFlashRoutes(request, url, deps, headers);
-		}
-
-		if (path === "/api/session-turn") {
-			return sessionTurnRoutes(request, url, deps, headers);
-		}
-
-		if (path === "/api/runs" || path.startsWith("/api/runs/")) {
-			return runRoutes(request, url, deps, headers);
 		}
 
 		if (path === "/api/cron" || path.startsWith("/api/cron/")) {
@@ -106,22 +65,6 @@ export function createServerRequestHandler(deps: ServerRoutingDependencies) {
 
 		if (path === "/api/heartbeats" || path.startsWith("/api/heartbeats/")) {
 			return heartbeatRoutes(request, url, deps, headers);
-		}
-
-		if (path === "/api/activities" || path.startsWith("/api/activities/")) {
-			return activityRoutes(request, url, deps, headers);
-		}
-
-		if (path === "/api/identities" || path === "/api/identities/link" || path === "/api/identities/unlink") {
-			return identityRoutes(request, url, deps, headers);
-		}
-
-		if (path.startsWith("/api/events")) {
-			const response = await eventRoutes(request, deps.context);
-			headers.forEach((value, key) => {
-				response.headers.set(key, value);
-			});
-			return response;
 		}
 
 		if (path.startsWith("/webhooks/")) {

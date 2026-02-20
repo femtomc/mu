@@ -641,7 +641,7 @@ local function link_identity(callback)
 
 	http_json_request({
 		method = "POST",
-		url = ctx.server_url .. "/api/identities/link",
+		url = ctx.server_url .. "/api/control-plane/identities/link",
 		headers = {
 			["content-type"] = "application/json",
 			accept = "application/json",
@@ -1047,7 +1047,7 @@ local function session_turn(args, cmd)
 		return true
 	end
 
-	local ctx, err = resolve_channel_context({ require_secret = false })
+	local ctx, err = resolve_channel_context({ require_secret = true })
 	if err then
 		notify(err, vim.log.levels.ERROR)
 		return true
@@ -1084,45 +1084,72 @@ local function session_turn(args, cmd)
 		return true
 	end
 
-	http_json_request({
-		method = "POST",
-		url = ctx.server_url .. "/api/session-turn",
-		headers = {
-			["content-type"] = "application/json",
-			accept = "application/json",
-		},
-		body = encoded,
-	}, function(response)
-		if response.exit_code ~= 0 then
-			notify(string.format("session turn request failed: %s", trim(response.stderr)), vim.log.levels.ERROR)
-			return
-		end
-		if (response.status or 0) < 200 or (response.status or 0) >= 300 then
-			notify(
-				string.format("session turn rejected (HTTP %s): %s", response.status or "?", trim(response.body)),
-				vim.log.levels.ERROR
-			)
+	fetch_channel_capability(ctx.server_url, function(capability, capability_err)
+		if capability_err then
+			notify(capability_err, vim.log.levels.ERROR)
 			return
 		end
 
-		if type(response.json) == "table" and type(response.json.turn) == "table" then
-			local turn = response.json.turn
-			local reply = trim(turn.reply or "")
-			if #reply == 0 then
-				reply = "(no assistant reply)"
-			end
-			local cursor = trim(turn.context_entry_id or "")
-			local lines = {
-				string.format("session: %s", session_id),
-				cursor ~= "" and string.format("context_entry_id: %s", cursor) or "context_entry_id: (none)",
-				"",
-				reply,
-			}
-			render_output("mu turn", table.concat(lines, "\n"), vim.log.levels.INFO)
+		local secret_header = "x-mu-neovim-secret"
+		if type(capability.verification) == "table" and capability.verification.kind == "shared_secret_header" then
+			secret_header = capability.verification.secret_header or secret_header
+		end
+
+		local proceed = function()
+			http_json_request({
+				method = "POST",
+				url = ctx.server_url .. "/api/control-plane/turn",
+				headers = {
+					["content-type"] = "application/json",
+					accept = "application/json",
+					[secret_header] = ctx.shared_secret,
+				},
+				body = encoded,
+			}, function(response)
+				if response.exit_code ~= 0 then
+					notify(string.format("session turn request failed: %s", trim(response.stderr)), vim.log.levels.ERROR)
+					return
+				end
+				if (response.status or 0) < 200 or (response.status or 0) >= 300 then
+					notify(
+						string.format("session turn rejected (HTTP %s): %s", response.status or "?", trim(response.body)),
+						vim.log.levels.ERROR
+					)
+					return
+				end
+
+				if type(response.json) == "table" and type(response.json.turn) == "table" then
+					local turn = response.json.turn
+					local reply = trim(turn.reply or "")
+					if #reply == 0 then
+						reply = "(no assistant reply)"
+					end
+					local cursor = trim(turn.context_entry_id or "")
+					local lines = {
+						string.format("session: %s", session_id),
+						cursor ~= "" and string.format("context_entry_id: %s", cursor) or "context_entry_id: (none)",
+						"",
+						reply,
+					}
+					render_output("mu turn", table.concat(lines, "\n"), vim.log.levels.INFO)
+					return
+				end
+
+				render_output("mu turn", response.body, vim.log.levels.INFO)
+			end)
+		end
+
+		if state.opts.auto_link_identity and not state.linked then
+			link_identity(function(_, link_err)
+				if link_err then
+					notify("identity bootstrap failed: " .. link_err, vim.log.levels.WARN)
+				end
+				proceed()
+			end)
 			return
 		end
 
-		render_output("mu turn", response.body, vim.log.levels.INFO)
+		proceed()
 	end)
 	return true
 end

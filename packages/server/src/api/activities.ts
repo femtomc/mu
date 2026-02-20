@@ -9,7 +9,7 @@ export async function activityRoutes(
 ): Promise<Response> {
 	const path = url.pathname;
 
-	if (path === "/api/activities") {
+	if (path === "/api/control-plane/activities") {
 		if (request.method !== "GET") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -26,7 +26,7 @@ export async function activityRoutes(
 		return Response.json({ count: activities.length, activities }, { headers });
 	}
 
-	if (path === "/api/activities/start") {
+	if (path === "/api/control-plane/activities/start") {
 		if (request.method !== "POST") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -73,7 +73,7 @@ export async function activityRoutes(
 		}
 	}
 
-	if (path === "/api/activities/progress") {
+	if (path === "/api/control-plane/activities/progress") {
 		if (request.method !== "POST") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -99,7 +99,7 @@ export async function activityRoutes(
 		return Response.json(result, { status: 404, headers });
 	}
 
-	if (path === "/api/activities/heartbeat") {
+	if (path === "/api/control-plane/activities/heartbeat") {
 		if (request.method !== "POST") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -125,7 +125,7 @@ export async function activityRoutes(
 		return Response.json(result, { status: 404, headers });
 	}
 
-	if (path === "/api/activities/complete" || path === "/api/activities/fail" || path === "/api/activities/cancel") {
+	if (path === "/api/control-plane/activities/complete" || path === "/api/control-plane/activities/fail" || path === "/api/control-plane/activities/cancel") {
 		if (request.method !== "POST") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -138,9 +138,9 @@ export async function activityRoutes(
 		const activityId = typeof body.activity_id === "string" ? body.activity_id : null;
 		const message = typeof body.message === "string" ? body.message : null;
 		const result =
-			path === "/api/activities/complete"
+			path === "/api/control-plane/activities/complete"
 				? deps.activitySupervisor.complete({ activityId, message })
-				: path === "/api/activities/fail"
+				: path === "/api/control-plane/activities/fail"
 					? deps.activitySupervisor.fail({ activityId, message })
 					: deps.activitySupervisor.cancel({ activityId, message });
 		if (result.ok) {
@@ -155,11 +155,11 @@ export async function activityRoutes(
 		return Response.json(result, { status: 404, headers });
 	}
 
-	if (path.startsWith("/api/activities/")) {
+	if (path.startsWith("/api/control-plane/activities/")) {
 		if (request.method !== "GET") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
-		const rest = path.slice("/api/activities/".length);
+		const rest = path.slice("/api/control-plane/activities/".length);
 		const [rawId, maybeSub] = rest.split("/");
 		const activityId = decodeURIComponent(rawId ?? "").trim();
 		if (activityId.length === 0) {

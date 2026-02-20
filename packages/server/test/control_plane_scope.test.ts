@@ -33,8 +33,8 @@ describe("server control-plane-only route surface", () => {
 		await rm(tempDir, { recursive: true, force: true });
 	});
 
-	test("/api/status exposes control-plane status without issue/forum counters", async () => {
-		const response = await server.fetch(new Request("http://localhost/api/status"));
+	test("/api/control-plane/status exposes control-plane status without issue/forum counters", async () => {
+		const response = await server.fetch(new Request("http://localhost/api/control-plane/status"));
 		expect(response.status).toBe(200);
 		const payload = (await response.json()) as Record<string, unknown>;
 		expect(payload.repo_root).toBe(tempDir);
@@ -50,11 +50,14 @@ describe("server control-plane-only route surface", () => {
 		const cronStatus = await server.fetch(new Request("http://localhost/api/cron/status"));
 		expect(cronStatus.status).toBe(200);
 
-		const runsList = await server.fetch(new Request("http://localhost/api/runs?limit=1"));
+		const runsList = await server.fetch(new Request("http://localhost/api/control-plane/runs?limit=1"));
 		expect(runsList.status).toBe(200);
+
+		const activitiesList = await server.fetch(new Request("http://localhost/api/control-plane/activities?limit=1"));
+		expect(activitiesList.status).toBe(200);
 	});
 
-	test("legacy business gateway endpoints return 404", async () => {
+	test("legacy business/session gateway endpoints return 404", async () => {
 		const legacyEndpoints = [
 			new Request("http://localhost/api/commands/submit", {
 				method: "POST",
@@ -64,6 +67,14 @@ describe("server control-plane-only route surface", () => {
 			new Request("http://localhost/api/issues", { method: "GET" }),
 			new Request("http://localhost/api/forum/topics", { method: "GET" }),
 			new Request("http://localhost/api/context/search?query=test", { method: "GET" }),
+			new Request("http://localhost/api/status", { method: "GET" }),
+			new Request("http://localhost/api/config", { method: "GET" }),
+			new Request("http://localhost/api/identities", { method: "GET" }),
+			new Request("http://localhost/api/events?limit=1", { method: "GET" }),
+			new Request("http://localhost/api/runs?limit=1", { method: "GET" }),
+			new Request("http://localhost/api/activities?limit=1", { method: "GET" }),
+			new Request("http://localhost/api/session-flash", { method: "GET" }),
+			new Request("http://localhost/api/session-turn", { method: "POST", body: "{}" }),
 		];
 
 		for (const request of legacyEndpoints) {

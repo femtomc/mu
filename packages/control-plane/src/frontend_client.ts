@@ -7,10 +7,6 @@ import {
 	frontendSharedSecretHeaderForChannel,
 	FrontendIngressRequestSchema,
 	FrontendIngressResponseSchema,
-	SessionFlashCreateRequestSchema,
-	SessionFlashCreateResponseSchema,
-	SessionFlashListResponseSchema,
-	SessionFlashRecordSchema,
 	SessionTurnCreateResponseSchema,
 	SessionTurnRequestSchema,
 	type ControlPlaneChannelsResponse,
@@ -18,8 +14,6 @@ import {
 	type FrontendChannelCapability,
 	type FrontendIngressRequest,
 	type FrontendIngressResponse,
-	type SessionFlashCreateRequest,
-	type SessionFlashRecord,
 	type SessionTurnRequest,
 	type SessionTurnResult,
 } from "./frontend_client_contract.js";
@@ -136,7 +130,7 @@ export async function linkFrontendIdentity(opts: {
 	bindingId?: string;
 	operatorId?: string;
 }): Promise<unknown> {
-	const body = await fetchJson(`${normalizeBaseUrl(opts.serverUrl)}/api/identities/link`, {
+	const body = await fetchJson(`${normalizeBaseUrl(opts.serverUrl)}/api/control-plane/identities/link`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
@@ -240,95 +234,23 @@ export async function bootstrapFrontendChannel(opts: {
 	};
 }
 
-export async function createSessionFlash(opts: {
-	serverUrl: string;
-	request: SessionFlashCreateRequest;
-}): Promise<SessionFlashRecord> {
-	const request = SessionFlashCreateRequestSchema.parse(opts.request);
-	const body = await fetchJson(`${normalizeBaseUrl(opts.serverUrl)}/api/session-flash`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify(request),
-	});
-	const parsed = SessionFlashCreateResponseSchema.parse(body);
-	return parsed.flash;
-}
-
 export async function createSessionTurn(opts: {
 	serverUrl: string;
+	channel: FrontendChannel;
+	sharedSecret: string;
 	request: SessionTurnRequest;
+	channels?: readonly FrontendChannelCapability[];
 }): Promise<SessionTurnResult> {
 	const request = SessionTurnRequestSchema.parse(opts.request);
-	const body = await fetchJson(`${normalizeBaseUrl(opts.serverUrl)}/api/session-turn`, {
+	const secretHeader = resolveFrontendSecretHeader({ channel: opts.channel, channels: opts.channels });
+	const body = await fetchJson(`${normalizeBaseUrl(opts.serverUrl)}/api/control-plane/turn`, {
 		method: "POST",
-		headers: { "content-type": "application/json" },
+		headers: {
+			"content-type": "application/json",
+			[secretHeader]: opts.sharedSecret,
+		},
 		body: JSON.stringify(request),
 	});
 	const parsed = SessionTurnCreateResponseSchema.parse(body);
 	return parsed.turn;
-}
-
-export async function listSessionFlash(opts: {
-	serverUrl: string;
-	sessionId?: string | null;
-	sessionKind?: string | null;
-	status?: "pending" | "delivered" | "all";
-	contains?: string | null;
-	limit?: number;
-}): Promise<SessionFlashRecord[]> {
-	const search = new URLSearchParams();
-	if (trimmed(opts.sessionId)) {
-		search.set("session_id", trimmed(opts.sessionId)!);
-	}
-	if (trimmed(opts.sessionKind)) {
-		search.set("session_kind", trimmed(opts.sessionKind)!);
-	}
-	if (trimmed(opts.status)) {
-		search.set("status", trimmed(opts.status)!);
-	}
-	if (trimmed(opts.contains)) {
-		search.set("contains", trimmed(opts.contains)!);
-	}
-	if (opts.limit != null && Number.isFinite(opts.limit)) {
-		search.set("limit", String(Math.max(1, Math.trunc(opts.limit))));
-	}
-	const suffix = search.size > 0 ? `?${search.toString()}` : "";
-	const body = await fetchJson(`${normalizeBaseUrl(opts.serverUrl)}/api/session-flash${suffix}`);
-	const parsed = SessionFlashListResponseSchema.parse(body);
-	return parsed.flashes;
-}
-
-export async function getSessionFlash(opts: { serverUrl: string; flashId: string }): Promise<SessionFlashRecord> {
-	const flashId = trimmed(opts.flashId);
-	if (!flashId) {
-		throw new Error("flashId is required");
-	}
-	const body = await fetchJson(`${normalizeBaseUrl(opts.serverUrl)}/api/session-flash/${encodeURIComponent(flashId)}`);
-	const record = typeof body === "object" && body && "flash" in body ? (body as Record<string, unknown>).flash : body;
-	return SessionFlashRecordSchema.parse(record);
-}
-
-export async function ackSessionFlash(opts: {
-	serverUrl: string;
-	flashId: string;
-	sessionId?: string | null;
-	deliveredBy?: string | null;
-	note?: string | null;
-}): Promise<SessionFlashRecord> {
-	const flashId = trimmed(opts.flashId);
-	if (!flashId) {
-		throw new Error("flashId is required");
-	}
-	const body = await fetchJson(`${normalizeBaseUrl(opts.serverUrl)}/api/session-flash/ack`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({
-			flash_id: flashId,
-			session_id: trimmed(opts.sessionId),
-			delivered_by: trimmed(opts.deliveredBy),
-			note: trimmed(opts.note),
-		}),
-	});
-	const record = typeof body === "object" && body && "flash" in body ? (body as Record<string, unknown>).flash : body;
-	return SessionFlashRecordSchema.parse(record);
 }

@@ -66,7 +66,7 @@ describe("mu-server", () => {
 	});
 
 	test("status endpoint", async () => {
-		const response = await server.fetch(new Request("http://localhost/api/status"));
+		const response = await server.fetch(new Request("http://localhost/api/control-plane/status"));
 		expect(response.status).toBe(200);
 		const status = await response.json();
 		expect(status).toEqual({
@@ -140,7 +140,7 @@ describe("mu-server", () => {
 	});
 
 	test("config endpoint returns default config shape", async () => {
-		const response = await server.fetch(new Request("http://localhost/api/config"));
+		const response = await server.fetch(new Request("http://localhost/api/control-plane/config"));
 		expect(response.status).toBe(200);
 		const payload = (await response.json()) as {
 			config_path: string;
@@ -169,7 +169,7 @@ describe("mu-server", () => {
 
 	test("config endpoint applies patch and persists to .mu/config.json", async () => {
 		const response = await server.fetch(
-			new Request("http://localhost/api/config", {
+			new Request("http://localhost/api/control-plane/config", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -225,7 +225,7 @@ describe("mu-server", () => {
 			},
 		});
 
-		const response = await serverWithControlPlane.fetch(new Request("http://localhost/api/status"));
+		const response = await serverWithControlPlane.fetch(new Request("http://localhost/api/control-plane/status"));
 		expect(response.status).toBe(200);
 		const status = (await response.json()) as {
 			control_plane: {
@@ -256,7 +256,7 @@ describe("mu-server", () => {
 		});
 
 		const patchRes = await serverWithControlPlane.fetch(
-			new Request("http://localhost/api/config", {
+			new Request("http://localhost/api/control-plane/config", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -300,67 +300,74 @@ describe("mu-server", () => {
 		expect(byChannel.get("neovim")?.verification?.kind).toBe("shared_secret_header");
 	});
 
-	test("session flash API supports create/list/get/ack lifecycle", async () => {
-		const createRes = await server.fetch(
-			new Request("http://localhost/api/session-flash", {
+	test("control-plane turn endpoint requires a configured neovim shared secret", async () => {
+		const response = await server.fetch(
+			new Request("http://localhost/api/control-plane/turn", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ session_id: "operator-1", body: "hello" }),
+			}),
+		);
+		expect(response.status).toBe(503);
+		const payload = (await response.json()) as { error?: string };
+		expect(payload.error).toContain("shared secret");
+	});
+
+	test("control-plane turn endpoint requires shared-secret header when configured", async () => {
+		const patchRes = await server.fetch(
+			new Request("http://localhost/api/control-plane/config", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
-					session_id: "operator-123",
-					session_kind: "cp_operator",
-					body: "Use context id ctx-123 when answering.",
-					context_ids: ["ctx-123"],
-					source: "neovim",
+					patch: {
+						control_plane: {
+							adapters: {
+								neovim: { shared_secret: "nvim-secret" },
+							},
+						},
+					},
 				}),
 			}),
 		);
-		expect(createRes.status).toBe(201);
-		const createPayload = (await createRes.json()) as {
-			ok: boolean;
-			flash: { flash_id: string; session_id: string; status: string; context_ids: string[] };
-		};
-		expect(createPayload.ok).toBe(true);
-		expect(createPayload.flash.session_id).toBe("operator-123");
-		expect(createPayload.flash.status).toBe("pending");
-		expect(createPayload.flash.context_ids).toEqual(["ctx-123"]);
+		expect(patchRes.status).toBe(200);
 
-		const listRes = await server.fetch(
-			new Request("http://localhost/api/session-flash?session_id=operator-123&status=pending"),
-		);
-		expect(listRes.status).toBe(200);
-		const listPayload = (await listRes.json()) as {
-			count: number;
-			flashes: Array<{ flash_id: string; status: string }>;
-		};
-		expect(listPayload.count).toBe(1);
-		expect(listPayload.flashes[0]?.flash_id).toBe(createPayload.flash.flash_id);
-		expect(listPayload.flashes[0]?.status).toBe("pending");
-
-		const ackRes = await server.fetch(
-			new Request("http://localhost/api/session-flash/ack", {
+		const response = await server.fetch(
+			new Request("http://localhost/api/control-plane/turn", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ flash_id: createPayload.flash.flash_id, delivered_by: "test" }),
+				body: JSON.stringify({ session_id: "operator-1", body: "hello" }),
 			}),
 		);
-		expect(ackRes.status).toBe(200);
-		const ackPayload = (await ackRes.json()) as { flash: { status: string; delivered_by: string | null } };
-		expect(ackPayload.flash.status).toBe("delivered");
-		expect(ackPayload.flash.delivered_by).toBe("test");
-
-		const getRes = await server.fetch(
-			new Request(`http://localhost/api/session-flash/${encodeURIComponent(createPayload.flash.flash_id)}`),
-		);
-		expect(getRes.status).toBe(200);
-		const getPayload = (await getRes.json()) as { flash: { status: string } };
-		expect(getPayload.flash.status).toBe("delivered");
+		expect(response.status).toBe(401);
+		const payload = (await response.json()) as { error?: string };
+		expect(payload.error).toContain("missing x-mu-neovim-secret");
 	});
 
-	test("session turn API validates required fields before execution", async () => {
-		const response = await server.fetch(
-			new Request("http://localhost/api/session-turn", {
+	test("control-plane turn endpoint validates required fields before execution", async () => {
+		const patchRes = await server.fetch(
+			new Request("http://localhost/api/control-plane/config", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					patch: {
+						control_plane: {
+							adapters: {
+								neovim: { shared_secret: "nvim-secret" },
+							},
+						},
+					},
+				}),
+			}),
+		);
+		expect(patchRes.status).toBe(200);
+
+		const response = await server.fetch(
+			new Request("http://localhost/api/control-plane/turn", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"x-mu-neovim-secret": "nvim-secret",
+				},
 				body: JSON.stringify({ body: "hello" }),
 			}),
 		);
@@ -425,7 +432,7 @@ describe("mu-server", () => {
 		expect(payload.telegram_generation).toBeUndefined();
 		expect(stopCalls).toBe(1);
 
-		const statusResponse = await serverWithReload.fetch(new Request("http://localhost/api/status"));
+		const statusResponse = await serverWithReload.fetch(new Request("http://localhost/api/control-plane/status"));
 		expect(statusResponse.status).toBe(200);
 		const status = (await statusResponse.json()) as {
 			control_plane: {
@@ -483,7 +490,7 @@ describe("mu-server", () => {
 		expect(payload.generation.active_generation?.generation_id).toBe("control-plane-gen-0");
 		expect(stopCalls).toBe(0);
 
-		const statusResponse = await serverWithReload.fetch(new Request("http://localhost/api/status"));
+		const statusResponse = await serverWithReload.fetch(new Request("http://localhost/api/control-plane/status"));
 		expect(statusResponse.status).toBe(200);
 		const status = (await statusResponse.json()) as {
 			control_plane: {
@@ -564,25 +571,25 @@ describe("mu-server", () => {
 		};
 		const serverWithRuns = await createServerForTest({ repoRoot: tempDir, controlPlane });
 
-		const listRes = await serverWithRuns.fetch(new Request("http://localhost/api/runs?limit=10"));
+		const listRes = await serverWithRuns.fetch(new Request("http://localhost/api/control-plane/runs?limit=10"));
 		expect(listRes.status).toBe(200);
 		const listPayload = (await listRes.json()) as { count: number; runs: Array<{ job_id: string }> };
 		expect(listPayload.count).toBe(1);
 		expect(listPayload.runs[0]?.job_id).toBe("run-job-1");
 
-		const getRes = await serverWithRuns.fetch(new Request("http://localhost/api/runs/mu-root1234"));
+		const getRes = await serverWithRuns.fetch(new Request("http://localhost/api/control-plane/runs/mu-root1234"));
 		expect(getRes.status).toBe(200);
 		const getPayload = (await getRes.json()) as { root_issue_id: string };
 		expect(getPayload.root_issue_id).toBe("mu-root1234");
 
-		const traceRes = await serverWithRuns.fetch(new Request("http://localhost/api/runs/run-job-1/trace?limit=10"));
+		const traceRes = await serverWithRuns.fetch(new Request("http://localhost/api/control-plane/runs/run-job-1/trace?limit=10"));
 		expect(traceRes.status).toBe(200);
 		const tracePayload = (await traceRes.json()) as { stdout: string[]; stderr: string[] };
 		expect(tracePayload.stdout).toEqual(["a"]);
 		expect(tracePayload.stderr).toEqual(["b"]);
 
 		const startRes = await serverWithRuns.fetch(
-			new Request("http://localhost/api/runs/start", {
+			new Request("http://localhost/api/control-plane/runs/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ prompt: "ship release", max_steps: 20 }),
@@ -591,7 +598,7 @@ describe("mu-server", () => {
 		expect(startRes.status).toBe(201);
 
 		const resumeRes = await serverWithRuns.fetch(
-			new Request("http://localhost/api/runs/resume", {
+			new Request("http://localhost/api/control-plane/runs/resume", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ root_issue_id: "mu-root1234", max_steps: 20 }),
@@ -600,7 +607,7 @@ describe("mu-server", () => {
 		expect(resumeRes.status).toBe(201);
 
 		const interruptRes = await serverWithRuns.fetch(
-			new Request("http://localhost/api/runs/interrupt", {
+			new Request("http://localhost/api/control-plane/runs/interrupt", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ root_issue_id: "mu-root1234" }),
@@ -638,7 +645,7 @@ describe("mu-server", () => {
 
 		const queryRes = await server.fetch(
 			new Request(
-				"http://localhost/api/events?type=backend.run.start&issue_id=mu-root-1&run_id=run-1&contains=alpha&limit=10",
+				"http://localhost/api/control-plane/events?type=backend.run.start&issue_id=mu-root-1&run_id=run-1&contains=alpha&limit=10",
 			),
 		);
 		expect(queryRes.status).toBe(200);
@@ -647,7 +654,7 @@ describe("mu-server", () => {
 		expect(queryEvents[0]?.run_id).toBe("run-1");
 		expect(queryEvents[0]?.issue_id).toBe("mu-root-1");
 
-		const tailRes = await server.fetch(new Request("http://localhost/api/events/tail?n=10&run_id=run-2"));
+		const tailRes = await server.fetch(new Request("http://localhost/api/control-plane/events/tail?n=10&run_id=run-2"));
 		expect(tailRes.status).toBe(200);
 		const tailEvents = (await tailRes.json()) as Array<{ run_id?: string }>;
 		expect(tailEvents).toHaveLength(1);
@@ -744,7 +751,7 @@ describe("mu-server", () => {
 		});
 
 		const activityStart = await wakeServer.fetch(
-			new Request("http://localhost/api/activities/start", {
+			new Request("http://localhost/api/control-plane/activities/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
@@ -781,7 +788,7 @@ describe("mu-server", () => {
 
 		const deliveryEvents = await waitFor(async () => {
 			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake.delivery&limit=50"),
+				new Request("http://localhost/api/control-plane/events?type=operator.wake.delivery&limit=50"),
 			);
 			if (response.status !== 200) {
 				return null;
@@ -804,7 +811,7 @@ describe("mu-server", () => {
 
 		const wakePayload = await waitFor(async () => {
 			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake&limit=50"),
+				new Request("http://localhost/api/control-plane/events?type=operator.wake&limit=50"),
 			);
 			if (response.status !== 200) {
 				return null;
@@ -842,7 +849,7 @@ describe("mu-server", () => {
 
 
 		const activityStart = await wakeServer.fetch(
-			new Request("http://localhost/api/activities/start", {
+			new Request("http://localhost/api/control-plane/activities/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
@@ -879,7 +886,7 @@ describe("mu-server", () => {
 
 		const decisionPayload = await waitFor(async () => {
 			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake.decision&limit=50"),
+				new Request("http://localhost/api/control-plane/events?type=operator.wake.decision&limit=50"),
 			);
 			if (response.status !== 200) {
 				return null;
@@ -914,7 +921,7 @@ describe("mu-server", () => {
 
 		const wakePayload = await waitFor(async () => {
 			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake&limit=50"),
+				new Request("http://localhost/api/control-plane/events?type=operator.wake&limit=50"),
 			);
 			if (response.status !== 200) {
 				return null;
@@ -1015,7 +1022,7 @@ describe("mu-server", () => {
 
 
 		const activityStart = await wakeServer.fetch(
-			new Request("http://localhost/api/activities/start", {
+			new Request("http://localhost/api/control-plane/activities/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
@@ -1061,7 +1068,7 @@ describe("mu-server", () => {
 
 		const decisionPayloads = await waitFor(async () => {
 			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake.decision&limit=50"),
+				new Request("http://localhost/api/control-plane/events?type=operator.wake.decision&limit=50"),
 			);
 			if (response.status !== 200) {
 				return null;
@@ -1080,7 +1087,7 @@ describe("mu-server", () => {
 
 		const wakePayloads = await waitFor(async () => {
 			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake&limit=50"),
+				new Request("http://localhost/api/control-plane/events?type=operator.wake&limit=50"),
 			);
 			if (response.status !== 200) {
 				return null;
@@ -1099,7 +1106,7 @@ describe("mu-server", () => {
 
 		const deliveryPayloads = await waitFor(async () => {
 			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake.delivery&limit=50"),
+				new Request("http://localhost/api/control-plane/events?type=operator.wake.delivery&limit=50"),
 			);
 			if (response.status !== 200) {
 				return null;
@@ -1149,7 +1156,7 @@ describe("mu-server", () => {
 
 
 		const activityStart = await wakeServer.fetch(
-			new Request("http://localhost/api/activities/start", {
+			new Request("http://localhost/api/control-plane/activities/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
@@ -1186,7 +1193,7 @@ describe("mu-server", () => {
 
 		const decisionPayload = await waitFor(async () => {
 			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake.decision&limit=50"),
+				new Request("http://localhost/api/control-plane/events?type=operator.wake.decision&limit=50"),
 			);
 			if (response.status !== 200) {
 				return null;
@@ -1205,7 +1212,7 @@ describe("mu-server", () => {
 
 		const wakePayload = await waitFor(async () => {
 			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake&limit=50"),
+				new Request("http://localhost/api/control-plane/events?type=operator.wake&limit=50"),
 			);
 			if (response.status !== 200) {
 				return null;
@@ -1225,7 +1232,7 @@ describe("mu-server", () => {
 
 	test("activity management APIs support generic long-running tasks", async () => {
 		const startRes = await server.fetch(
-			new Request("http://localhost/api/activities/start", {
+			new Request("http://localhost/api/control-plane/activities/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -1246,7 +1253,7 @@ describe("mu-server", () => {
 		expect(started.activity.status).toBe("running");
 		const activityId = started.activity.activity_id;
 
-		const listRes = await server.fetch(new Request("http://localhost/api/activities?status=running&limit=10"));
+		const listRes = await server.fetch(new Request("http://localhost/api/control-plane/activities?status=running&limit=10"));
 		expect(listRes.status).toBe(200);
 		const listPayload = (await listRes.json()) as {
 			count: number;
@@ -1256,7 +1263,7 @@ describe("mu-server", () => {
 		expect(listPayload.activities.some((activity) => activity.activity_id === activityId)).toBe(true);
 
 		const progressRes = await server.fetch(
-			new Request("http://localhost/api/activities/progress", {
+			new Request("http://localhost/api/control-plane/activities/progress", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -1268,7 +1275,7 @@ describe("mu-server", () => {
 		expect(progressRes.status).toBe(200);
 
 		const heartbeatRes = await server.fetch(
-			new Request("http://localhost/api/activities/heartbeat", {
+			new Request("http://localhost/api/control-plane/activities/heartbeat", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -1280,7 +1287,7 @@ describe("mu-server", () => {
 		expect(heartbeatRes.status).toBe(200);
 
 		const eventsRes = await server.fetch(
-			new Request(`http://localhost/api/activities/${activityId}/events?limit=20`),
+			new Request(`http://localhost/api/control-plane/activities/${activityId}/events?limit=20`),
 		);
 		expect(eventsRes.status).toBe(200);
 		const eventsPayload = (await eventsRes.json()) as {
@@ -1293,7 +1300,7 @@ describe("mu-server", () => {
 		expect(eventsPayload.events.some((event) => event.kind === "activity_heartbeat")).toBe(true);
 
 		const completeRes = await server.fetch(
-			new Request("http://localhost/api/activities/complete", {
+			new Request("http://localhost/api/control-plane/activities/complete", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -1453,7 +1460,7 @@ describe("mu-server", () => {
 		const firstTriggeredAt = tickedProgram.last_triggered_at_ms;
 		expect(typeof firstTriggeredAt).toBe("number");
 
-		const eventsRes = await cronServer.fetch(new Request("http://localhost/api/events/tail?n=100"));
+		const eventsRes = await cronServer.fetch(new Request("http://localhost/api/control-plane/events/tail?n=100"));
 		expect(eventsRes.status).toBe(200);
 		const events = (await eventsRes.json()) as Array<{ type: string }>;
 		expect(events.some((event) => event.type === "cron_program.lifecycle")).toBe(true);

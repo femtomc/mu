@@ -74,7 +74,7 @@ export function guideText(): string {
 		'      mu run "..." --provider openai-codex --model gpt-5.3-codex --reasoning high',
 		"",
 		"    Note: `mu run --json` and `mu run --raw-stream` were removed.",
-		"    For machine integration, use `mu serve` and call /api/runs/*.",
+		"    For machine integration, use `mu serve` and call /api/control-plane/runs/*.",
 		"",
 		"  Operator sessions",
 		"    mu session                   Reconnect to the latest operator session",

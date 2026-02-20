@@ -16,7 +16,7 @@ export async function identityRoutes(
 	const identityStore = new IdentityStore(cpPaths.identitiesPath);
 	await identityStore.load();
 
-	if (path === "/api/identities") {
+	if (path === "/api/control-plane/identities") {
 		if (request.method !== "GET") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -25,7 +25,7 @@ export async function identityRoutes(
 		return Response.json({ count: bindings.length, bindings }, { headers });
 	}
 
-	if (path === "/api/identities/link") {
+	if (path === "/api/control-plane/identities/link") {
 		if (request.method !== "POST") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}
@@ -104,7 +104,7 @@ export async function identityRoutes(
 		}
 	}
 
-	if (path === "/api/identities/unlink") {
+	if (path === "/api/control-plane/identities/unlink") {
 		if (request.method !== "POST") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}

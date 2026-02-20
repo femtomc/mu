@@ -100,16 +100,16 @@ export async function fetchMuJson<T>(
 function ensureGenerationScopedStatus(status: MuStatusResponse): MuStatusResponse {
 	const controlPlane = (status as { control_plane?: unknown }).control_plane;
 	if (!controlPlane || typeof controlPlane !== "object") {
-		throw new Error("mu server /api/status missing control_plane payload (expected generation-scoped contract)");
+		throw new Error("mu server /api/control-plane/status missing control_plane payload (expected generation-scoped contract)");
 	}
 
 	const controlPlaneRecord = controlPlane as Record<string, unknown>;
 	if (!("generation" in controlPlaneRecord) || !controlPlaneRecord.generation) {
-		throw new Error("mu server /api/status missing control_plane.generation (expected generation-scoped contract)");
+		throw new Error("mu server /api/control-plane/status missing control_plane.generation (expected generation-scoped contract)");
 	}
 	if (!("observability" in controlPlaneRecord) || !controlPlaneRecord.observability) {
 		throw new Error(
-			"mu server /api/status missing control_plane.observability (expected generation-scoped contract)",
+			"mu server /api/control-plane/status missing control_plane.observability (expected generation-scoped contract)",
 		);
 	}
 
@@ -121,7 +121,7 @@ function ensureGenerationScopedStatus(status: MuStatusResponse): MuStatusRespons
 		!(observability as Record<string, unknown>).counters
 	) {
 		throw new Error(
-			"mu server /api/status missing control_plane.observability.counters (expected generation-scoped contract)",
+			"mu server /api/control-plane/status missing control_plane.observability.counters (expected generation-scoped contract)",
 		);
 	}
 
@@ -129,6 +129,6 @@ function ensureGenerationScopedStatus(status: MuStatusResponse): MuStatusRespons
 }
 
 export async function fetchMuStatus(timeoutMs?: number): Promise<MuStatusResponse> {
-	const status = await fetchMuJson<MuStatusResponse>("/api/status", { timeoutMs });
+	const status = await fetchMuJson<MuStatusResponse>("/api/control-plane/status", { timeoutMs });
 	return ensureGenerationScopedStatus(status);
 }
