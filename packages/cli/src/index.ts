@@ -51,11 +51,6 @@ type QueuedRunSnapshot = {
 	source?: string;
 };
 
-type RunHeartbeatRegistration = {
-	program_id: string | null;
-	created: boolean;
-};
-
 type OperatorSessionStartMode = "in-memory" | "continue-recent" | "new" | "open";
 
 type OperatorSessionStartOpts = {
@@ -85,7 +80,6 @@ type ServeDeps = {
 		model?: string;
 		reasoning?: string;
 	}) => Promise<QueuedRunSnapshot>;
-	registerRunHeartbeat: (opts: { serverUrl: string; run: QueuedRunSnapshot }) => Promise<RunHeartbeatRegistration>;
 	registerSignalHandler: (signal: NodeJS.Signals, handler: () => void) => () => void;
 	registerProcessExitHandler: (handler: () => void) => () => void;
 };
@@ -2330,73 +2324,9 @@ async function cmdHeartbeats(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	}
 }
 
-function parseProgramTarget(argv: string[], opts: { pretty: boolean; kindName: "heartbeat" | "cron" }): {
-	target: Record<string, unknown> | null;
-	rest: string[];
-	error: RunResult | null;
-} {
-	const { value: targetKind, rest: argv0 } = getFlagValue(argv, "--target-kind");
-	if (!targetKind) {
-		return { target: null, rest: argv0, error: null };
-	}
-	if (targetKind !== "run" && targetKind !== "activity") {
-		return {
-			target: null,
-			rest: argv0,
-			error: jsonError("--target-kind must be run or activity", {
-				pretty: opts.pretty,
-				recovery: [`mu ${opts.kindName}s create --target-kind run --run-root-issue-id <root-id>`],
-			}),
-		};
-	}
-	const { value: runJobId, rest: argv1 } = getFlagValue(argv0, "--run-job-id");
-	const { value: runRootIssueId, rest: argv2 } = getFlagValue(argv1, "--run-root-issue-id");
-	const { value: activityId, rest: argv3 } = getFlagValue(argv2, "--activity-id");
-	if (targetKind === "run") {
-		if (!runJobId && !runRootIssueId) {
-			return {
-				target: null,
-				rest: argv3,
-				error: jsonError("run target requires --run-job-id or --run-root-issue-id", {
-					pretty: opts.pretty,
-					recovery: [`mu ${opts.kindName}s create --target-kind run --run-root-issue-id <root-id>`],
-				}),
-			};
-		}
-		return {
-			target: {
-				target_kind: "run",
-				run_job_id: runJobId ?? null,
-				run_root_issue_id: runRootIssueId ?? null,
-			},
-			rest: argv3,
-			error: null,
-		};
-	}
-	if (!activityId) {
-		return {
-			target: null,
-			rest: argv3,
-			error: jsonError("activity target requires --activity-id", {
-				pretty: opts.pretty,
-				recovery: [`mu ${opts.kindName}s create --target-kind activity --activity-id <activity-id>`],
-			}),
-		};
-	}
-	return {
-		target: {
-			target_kind: "activity",
-			activity_id: activityId,
-		},
-		rest: argv3,
-		error: null,
-	};
-}
-
 async function heartbeatsList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
 	const { value: enabledRaw, rest: argv0 } = getFlagValue(argv, "--enabled");
-	const { value: targetKind, rest: argv1 } = getFlagValue(argv0, "--target-kind");
-	const { value: limitRaw, rest } = getFlagValue(argv1, "--limit");
+	const { value: limitRaw, rest } = getFlagValue(argv0, "--limit");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats --help"] });
 	}
@@ -2418,7 +2348,6 @@ async function heartbeatsList(argv: string[], ctx: CliCtx, pretty: boolean): Pro
 	if (enabled != null) {
 		search.set("enabled", String(enabled));
 	}
-	setSearchParamIfPresent(search, "target_kind", targetKind ?? null);
 	search.set("limit", String(limit));
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
@@ -2461,23 +2390,12 @@ async function heartbeatsCreate(argv: string[], ctx: CliCtx, pretty: boolean): P
 	if (!title) {
 		return jsonError("missing title", {
 			pretty,
-			recovery: ['mu heartbeats create --title "Run heartbeat" --target-kind run --run-root-issue-id <root-id>'],
+			recovery: ['mu heartbeats create --title "Wake heartbeat" --every-ms 15000'],
 		});
 	}
-	const targetParsed = parseProgramTarget(argv0, { pretty, kindName: "heartbeat" });
-	if (targetParsed.error) {
-		return targetParsed.error;
-	}
-	if (!targetParsed.target) {
-		return jsonError("missing target (--target-kind run|activity ...)", {
-			pretty,
-			recovery: ["mu heartbeats create --target-kind run --run-root-issue-id <root-id>"],
-		});
-	}
-	const { value: everyMsRaw, rest: argv1 } = getFlagValue(targetParsed.rest, "--every-ms");
+	const { value: everyMsRaw, rest: argv1 } = getFlagValue(argv0, "--every-ms");
 	const { value: reason, rest: argv2 } = getFlagValue(argv1, "--reason");
-	const { value: wakeMode, rest: argv3 } = getFlagValue(argv2, "--wake-mode");
-	const { value: enabledRaw, rest } = getFlagValue(argv3, "--enabled");
+	const { value: enabledRaw, rest } = getFlagValue(argv2, "--enabled");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats create --help"] });
 	}
@@ -2499,13 +2417,11 @@ async function heartbeatsCreate(argv: string[], ctx: CliCtx, pretty: boolean): P
 		path: "/api/heartbeats/create",
 		body: {
 			title,
-			...targetParsed.target,
 			every_ms: everyMs,
 			reason: reason ?? null,
-			wake_mode: wakeMode ?? null,
 			enabled,
 		},
-		recoveryCommand: "mu heartbeats create --title <title> --target-kind run --run-root-issue-id <root-id>",
+		recoveryCommand: "mu heartbeats create --title <title> --every-ms 15000",
 	});
 	if (!req.ok) {
 		return req.result;
@@ -2526,14 +2442,9 @@ async function heartbeatsUpdate(argv: string[], ctx: CliCtx, pretty: boolean): P
 		return jsonError("missing program id", { pretty, recovery: ["mu heartbeats update --program-id <id>"] });
 	}
 	const { value: title, rest: argv1 } = getFlagValue(argv0, "--title");
-	const targetParsed = parseProgramTarget(argv1, { pretty, kindName: "heartbeat" });
-	if (targetParsed.error) {
-		return targetParsed.error;
-	}
-	const { value: everyMsRaw, rest: argv2 } = getFlagValue(targetParsed.rest, "--every-ms");
+	const { value: everyMsRaw, rest: argv2 } = getFlagValue(argv1, "--every-ms");
 	const { value: reason, rest: argv3 } = getFlagValue(argv2, "--reason");
-	const { value: wakeMode, rest: argv4 } = getFlagValue(argv3, "--wake-mode");
-	const { value: enabledRaw, rest } = getFlagValue(argv4, "--enabled");
+	const { value: enabledRaw, rest } = getFlagValue(argv3, "--enabled");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats update --help"] });
 	}
@@ -2549,10 +2460,8 @@ async function heartbeatsUpdate(argv: string[], ctx: CliCtx, pretty: boolean): P
 		program_id: programId,
 	};
 	if (title != null) body.title = title;
-	if (targetParsed.target != null) Object.assign(body, targetParsed.target);
 	if (everyMs != null) body.every_ms = everyMs;
 	if (reason != null) body.reason = reason;
-	if (wakeMode != null) body.wake_mode = wakeMode;
 	if (enabled != null) body.enabled = enabled;
 	const req = await requestServerJson<Record<string, unknown>>({
 		ctx,
@@ -2691,9 +2600,8 @@ async function cronStats(argv: string[], ctx: CliCtx, pretty: boolean): Promise<
 
 async function cronList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
 	const { value: enabledRaw, rest: argv0 } = getFlagValue(argv, "--enabled");
-	const { value: targetKind, rest: argv1 } = getFlagValue(argv0, "--target-kind");
-	const { value: scheduleKind, rest: argv2 } = getFlagValue(argv1, "--schedule-kind");
-	const { value: limitRaw, rest } = getFlagValue(argv2, "--limit");
+	const { value: scheduleKind, rest: argv1 } = getFlagValue(argv0, "--schedule-kind");
+	const { value: limitRaw, rest } = getFlagValue(argv1, "--limit");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron --help"] });
 	}
@@ -2710,7 +2618,6 @@ async function cronList(argv: string[], ctx: CliCtx, pretty: boolean): Promise<R
 	}
 	const search = new URLSearchParams();
 	if (enabled != null) search.set("enabled", String(enabled));
-	setSearchParamIfPresent(search, "target_kind", targetKind ?? null);
 	setSearchParamIfPresent(search, "schedule_kind", scheduleKind ?? null);
 	search.set("limit", String(limit));
 	const req = await requestServerJson<Record<string, unknown>>({
@@ -2813,18 +2720,10 @@ async function cronCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 	if (!title) {
 		return jsonError("missing title", {
 			pretty,
-			recovery: ['mu cron create --title "Nightly run" --target-kind run --run-root-issue-id <root-id> --schedule-kind cron --expr "0 2 * * *" --tz UTC'],
+			recovery: ['mu cron create --title "Nightly wake" --schedule-kind cron --expr "0 2 * * *" --tz UTC'],
 		});
 	}
-	const targetParsed = parseProgramTarget(argv0, { pretty, kindName: "cron" });
-	if (targetParsed.error) return targetParsed.error;
-	if (!targetParsed.target) {
-		return jsonError("missing target (--target-kind run|activity ...)", {
-			pretty,
-			recovery: ["mu cron create --target-kind run --run-root-issue-id <root-id>"],
-		});
-	}
-	const scheduleParsed = parseCronScheduleFlags(targetParsed.rest, pretty);
+	const scheduleParsed = parseCronScheduleFlags(argv0, pretty);
 	if (scheduleParsed.error) return scheduleParsed.error;
 	if (!scheduleParsed.schedule) {
 		return jsonError("missing schedule (--schedule-kind/--expr/--at/--every-ms)", {
@@ -2833,8 +2732,7 @@ async function cronCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 		});
 	}
 	const { value: reason, rest: argv1 } = getFlagValue(scheduleParsed.rest, "--reason");
-	const { value: wakeMode, rest: argv2 } = getFlagValue(argv1, "--wake-mode");
-	const { value: enabledRaw, rest } = getFlagValue(argv2, "--enabled");
+	const { value: enabledRaw, rest } = getFlagValue(argv1, "--enabled");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron create --help"] });
 	}
@@ -2849,13 +2747,11 @@ async function cronCreate(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 		path: "/api/cron/create",
 		body: {
 			title,
-			...targetParsed.target,
 			...scheduleParsed.schedule,
 			reason: reason ?? null,
-			wake_mode: wakeMode ?? null,
 			enabled,
 		},
-		recoveryCommand: "mu cron create --title <title> --target-kind run --run-root-issue-id <root-id> --schedule-kind cron --expr '0 2 * * *'",
+		recoveryCommand: "mu cron create --title <title> --schedule-kind cron --expr '0 2 * * *'",
 	});
 	if (!req.ok) return req.result;
 	return ok(jsonText(req.payload, pretty));
@@ -2874,13 +2770,10 @@ async function cronUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 		return jsonError("missing program id", { pretty, recovery: ["mu cron update --program-id <id>"] });
 	}
 	const { value: title, rest: argv1 } = getFlagValue(argv0, "--title");
-	const targetParsed = parseProgramTarget(argv1, { pretty, kindName: "cron" });
-	if (targetParsed.error) return targetParsed.error;
-	const scheduleParsed = parseCronScheduleFlags(targetParsed.rest, pretty);
+	const scheduleParsed = parseCronScheduleFlags(argv1, pretty);
 	if (scheduleParsed.error) return scheduleParsed.error;
 	const { value: reason, rest: argv2 } = getFlagValue(scheduleParsed.rest, "--reason");
-	const { value: wakeMode, rest: argv3 } = getFlagValue(argv2, "--wake-mode");
-	const { value: enabledRaw, rest } = getFlagValue(argv3, "--enabled");
+	const { value: enabledRaw, rest } = getFlagValue(argv2, "--enabled");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu cron update --help"] });
 	}
@@ -2890,10 +2783,8 @@ async function cronUpdate(argv: string[], ctx: CliCtx, pretty: boolean): Promise
 	}
 	const body: Record<string, unknown> = { program_id: programId };
 	if (title != null) body.title = title;
-	if (targetParsed.target != null) Object.assign(body, targetParsed.target);
 	if (scheduleParsed.schedule != null) Object.assign(body, scheduleParsed.schedule);
 	if (reason != null) body.reason = reason;
-	if (wakeMode != null) body.wake_mode = wakeMode;
 	if (enabled != null) body.enabled = enabled;
 
 	const req = await requestServerJson<Record<string, unknown>>({
@@ -3478,11 +3369,6 @@ async function cmdRun(argv: string[], ctx: CliCtx): Promise<RunResult> {
 			});
 			const rootText = queued.root_issue_id ? ` root=${queued.root_issue_id}` : "";
 			io?.stderr?.write(`Queued run: ${queued.job_id}${rootText} max_steps=${queued.max_steps}\n`);
-
-			const heartbeat = await deps.registerRunHeartbeat({ serverUrl, run: queued });
-			const action = heartbeat.created ? "registered" : "confirmed";
-			const idSuffix = heartbeat.program_id ? ` (${heartbeat.program_id})` : "";
-			io?.stderr?.write(`Run heartbeat: ${action}${idSuffix}\n`);
 		},
 	});
 }
@@ -4758,28 +4644,6 @@ function normalizeQueuedRun(value: unknown): QueuedRunSnapshot | null {
 	};
 }
 
-function heartbeatProgramMatchesRun(program: Record<string, unknown>, run: QueuedRunSnapshot): boolean {
-	const metadata = asRecord(program.metadata);
-	if (typeof metadata?.auto_run_job_id === "string" && metadata.auto_run_job_id === run.job_id) {
-		return true;
-	}
-	const target = asRecord(program.target);
-	if (!target || target.kind !== "run") {
-		return false;
-	}
-	if (typeof target.job_id === "string" && target.job_id.trim() === run.job_id) {
-		return true;
-	}
-	if (
-		run.root_issue_id &&
-		typeof target.root_issue_id === "string" &&
-		target.root_issue_id.trim() === run.root_issue_id
-	) {
-		return true;
-	}
-	return false;
-}
-
 async function detectRunningServer(repoRoot: string): Promise<{ url: string; port: number; pid: number } | null> {
 	const discoveryPath = join(repoRoot, ".mu", "control-plane", "server.json");
 	try {
@@ -5046,65 +4910,6 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 			}
 			return run;
 		},
-		registerRunHeartbeat: async ({ serverUrl, run }) => {
-			const listRes = await fetch(`${serverUrl}/api/heartbeats?target_kind=run&limit=500`);
-			let listPayload: unknown = null;
-			try {
-				listPayload = await listRes.json();
-			} catch {
-				// handled below via status + shape checks
-			}
-			if (!listRes.ok) {
-				throw new Error(`heartbeat listing failed: ${await readApiError(listRes, listPayload)}`);
-			}
-			const programsRaw = asRecord(listPayload)?.programs;
-			const programs = Array.isArray(programsRaw)
-				? programsRaw.map(asRecord).filter((p): p is Record<string, unknown> => p != null)
-				: [];
-			for (const program of programs) {
-				if (!heartbeatProgramMatchesRun(program, run)) {
-					continue;
-				}
-				const programId = typeof program.program_id === "string" ? program.program_id : null;
-				return { program_id: programId, created: false };
-			}
-
-			const createRes = await fetch(`${serverUrl}/api/heartbeats/create`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					title: `Run heartbeat: ${run.root_issue_id ?? run.job_id}`,
-					target_kind: "run",
-					run_job_id: run.job_id,
-					run_root_issue_id: run.root_issue_id,
-					every_ms: 15_000,
-					reason: "auto-run-heartbeat",
-					wake_mode: "next_heartbeat",
-					enabled: true,
-					metadata: {
-						auto_run_heartbeat: true,
-						auto_run_job_id: run.job_id,
-						auto_run_root_issue_id: run.root_issue_id,
-						auto_disable_on_terminal: true,
-						run_mode: run.mode ?? null,
-						run_source: run.source ?? "api",
-					},
-				}),
-			});
-			let createPayload: unknown = null;
-			try {
-				createPayload = await createRes.json();
-			} catch {
-				// handled below via status + guards
-			}
-			if (!createRes.ok) {
-				throw new Error(`heartbeat registration failed: ${await readApiError(createRes, createPayload)}`);
-			}
-			const createdProgram = asRecord(asRecord(createPayload)?.program);
-			const createdProgramId =
-				createdProgram && typeof createdProgram.program_id === "string" ? createdProgram.program_id : null;
-			return { program_id: createdProgramId, created: true };
-		},
 		registerSignalHandler: (signal, handler) => {
 			process.on(signal, handler);
 			return () => {
@@ -5166,7 +4971,7 @@ async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Prom
 
 	Bun.env.MU_SERVER_URL = serverUrl;
 
-	// Step 2: Run pre-operator hooks (mu run: queue + heartbeat)
+	// Step 2: Run pre-operator hooks (mu run: queue work before operator attach)
 	if (opts.beforeOperatorSession) {
 		try {
 			await opts.beforeOperatorSession({ serverUrl, deps, io });

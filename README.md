@@ -55,6 +55,24 @@ unresolved blockers or open children), dispatches them to the agent backend, and
 manages the lifecycle — claim, execute, close/expand, repeat — until the
 root issue is terminal.
 
+## Architecture note (post-refactor)
+
+mu uses an explicit **trusted-as-root** model for all agent roles (`operator`,
+`orchestrator`, `worker`, `reviewer`). Role prompts are workflow contracts,
+not security boundaries.
+
+- Agent sessions use generic tools (`bash`, `read`, `write`, `edit`) and invoke
+  `mu` CLI directly for reads and mutations.
+- There is no dedicated `query(...)` vs `command(...)` tool boundary.
+- `mu-server` is control-plane runtime infrastructure (transport/session/realtime
+  plus heartbeat/cron wake scheduling that runs operator turns and broadcasts replies),
+  not a privileged business-logic gateway.
+
+Legacy gateway routes (`/api/commands/submit`, `/api/query`, `/api/issues*`,
+`/api/forum*`, `/api/context*`) are removed.
+
+For the concise removed-vs-added module summary and follow-up risk list, see
+[`docs/architecture-trust-model-cli-first.md`](docs/architecture-trust-model-cli-first.md).
 ## mu builds on pi
 
 mu uses [`pi`](https://github.com/badlogic/pi-mono) directly -- `pi` is a great agent framework, 
@@ -203,7 +221,7 @@ Business state reads/mutations are CLI-first (`mu issues ...`, `mu forum ...`, `
 | [`@femtomc/mu-forum`](packages/forum/README.md) | Forum store — topic-keyed messages with read filtering and event emission. |
 | [`@femtomc/mu-orchestrator`](packages/orchestrator/README.md) | DAG runner — walks the issue tree, dispatches to LLM backends, manages run lifecycle. |
 | [`@femtomc/mu`](packages/cli/README.md) | Bun CLI wrapping the above into `mu` commands. |
-| [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — control-plane transport/session/realtime plus run/activity/heartbeat/cron coordination for `mu serve` and channel adapters. |
+| [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — control-plane transport/session/realtime plus run/activity coordination and heartbeat/cron operator-wake scheduling for `mu serve` and channel adapters. |
 | [`mu.nvim`](packages/neovim/README.md) | First-party Neovim frontend channel (`:Mu`, optional `:mu` alias) for control-plane ingress. |
 
 ## Development

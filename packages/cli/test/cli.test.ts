@@ -352,7 +352,6 @@ test("mu run auto-initializes store layout", async () => {
 				status: "running",
 				source: "api",
 			}),
-			registerRunHeartbeat: async () => ({ program_id: "hb-init", created: true }),
 			runOperatorSession: async ({ onReady, sessionMode, sessionDir, sessionFile }) => {
 				seenSessionMode = sessionMode;
 				seenSessionDir = sessionDir;
@@ -370,7 +369,7 @@ test("mu run auto-initializes store layout", async () => {
 	await expectStoreBootstrapped(dir);
 });
 
-test("mu run uses shared serve lifecycle and queues run + heartbeat before operator attach", async () => {
+test("mu run uses shared serve lifecycle and queues run before operator attach", async () => {
 	const dir = await mkTempRepo();
 	const events: string[] = [];
 	let queuedArgs: {
@@ -381,7 +380,6 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 		model?: string;
 		reasoning?: string;
 	} | null = null;
-	let heartbeatRun: { job_id: string; root_issue_id: string | null; max_steps: number } | null = null;
 	let seenOperator: { provider?: string; model?: string; thinking?: string } | null = null;
 	const { io, chunks } = mkCaptureIo();
 
@@ -421,11 +419,6 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 						source: "api",
 					};
 				},
-				registerRunHeartbeat: async ({ run }) => {
-					events.push("run:heartbeat");
-					heartbeatRun = run;
-					return { program_id: "hb-1", created: true };
-				},
 				runOperatorSession: async ({ onReady, provider, model, thinking }) => {
 					events.push("operator:start");
 					seenOperator = { provider, model, thinking };
@@ -440,7 +433,7 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 
 	expect(result.exitCode).toBe(0);
 	// Server is NOT stopped — it runs in the background
-	expect(events).toEqual(["server:spawn:3311", "run:queue", "run:heartbeat", "operator:start", "operator:end"]);
+	expect(events).toEqual(["server:spawn:3311", "run:queue", "operator:start", "operator:end"]);
 	expect(queuedArgs).toMatchObject({
 		serverUrl: "http://localhost:3311",
 		prompt: "Ship release",
@@ -449,18 +442,12 @@ test("mu run uses shared serve lifecycle and queues run + heartbeat before opera
 		model: "gpt-5.3-codex",
 		reasoning: "high",
 	});
-	expect(heartbeatRun).toMatchObject({
-		job_id: "run-job-1",
-		root_issue_id: "mu-root1234",
-		max_steps: 7,
-	});
 	expect(seenOperator!).toEqual({
 		provider: "openai-codex",
 		model: "gpt-5.3-codex",
 		thinking: "high",
 	});
 	expect(chunks.stderr).toContain("Queued run: run-job-1 root=mu-root1234 max_steps=7");
-	expect(chunks.stderr).toContain("Run heartbeat: registered (hb-1)");
 });
 
 test("mu run rejects removed --json/--raw-stream flows with recovery guidance", async () => {

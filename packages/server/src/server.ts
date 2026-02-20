@@ -1,4 +1,8 @@
-import { GenerationTelemetryRecorder } from "@femtomc/mu-control-plane";
+import {
+	GenerationTelemetryRecorder,
+	presentPipelineResultMessage,
+	type CommandPipelineResult,
+} from "@femtomc/mu-control-plane";
 import type { EventEnvelope, JsonlStore } from "@femtomc/mu-core";
 import { currentRunId, EventLog, FsJsonlStore, getStorePaths, JsonlEventSink } from "@femtomc/mu-core/node";
 import { ControlPlaneActivitySupervisor } from "./activity_supervisor.js";
@@ -32,7 +36,6 @@ import type { ServerRuntime } from "./server_runtime.js";
 import { toNonNegativeInt } from "./server_types.js";
 
 const DEFAULT_OPERATOR_WAKE_COALESCE_MS = 2_000;
-const DEFAULT_AUTO_RUN_HEARTBEAT_EVERY_MS = 15_000;
 
 export { createProcessSessionLifecycle };
 
@@ -53,7 +56,6 @@ export type ServerOptions = {
 	controlPlaneReloader?: ControlPlaneReloader;
 	generationTelemetry?: GenerationTelemetryRecorder;
 	operatorWakeCoalesceMs?: number;
-	autoRunHeartbeatEveryMs?: number;
 	config?: MuConfig;
 	configReader?: ConfigReader;
 	configWriter?: ConfigWriter;
@@ -83,9 +85,9 @@ type WakeDecision = {
 	outcome: WakeDecisionOutcome;
 	reason: string;
 	wakeTurnMode: WakeTurnMode;
-	selectedWakeMode: string | null;
 	turnRequestId: string | null;
 	turnResultKind: string | null;
+	turnReply: string | null;
 	error: string | null;
 };
 
@@ -129,20 +131,37 @@ function numberField(payload: Record<string, unknown>, key: string): number | nu
 	return Math.trunc(value);
 }
 
+function stablePayloadSnapshot(payload: Record<string, unknown>): string {
+	try {
+		return JSON.stringify(payload) ?? "{}";
+	} catch {
+		return "[unserializable]";
+	}
+}
+
 function computeWakeId(opts: { dedupeKey: string; payload: Record<string, unknown> }): string {
 	const source = stringField(opts.payload, "wake_source") ?? "unknown";
 	const programId = stringField(opts.payload, "program_id") ?? "unknown";
 	const sourceTsMs = numberField(opts.payload, "source_ts_ms");
-	const target = Object.hasOwn(opts.payload, "target") ? opts.payload.target : null;
-	let targetFingerprint = "null";
-	try {
-		targetFingerprint = JSON.stringify(target) ?? "null";
-	} catch {
-		targetFingerprint = "[unserializable]";
-	}
+	const payloadSnapshot = stablePayloadSnapshot(opts.payload);
 	const hasher = new Bun.CryptoHasher("sha256");
-	hasher.update(`${source}|${programId}|${sourceTsMs ?? "na"}|${opts.dedupeKey}|${targetFingerprint}`);
+	hasher.update(`${source}|${programId}|${sourceTsMs ?? "na"}|${opts.dedupeKey}|${payloadSnapshot}`);
 	return hasher.digest("hex").slice(0, 16);
+}
+
+function extractWakeTurnReply(turnResult: CommandPipelineResult): string | null {
+	if (turnResult.kind === "operator_response") {
+		const message = turnResult.message.trim();
+		return message.length > 0 ? message : null;
+	}
+	const presented = presentPipelineResultMessage(turnResult);
+	const payload = presented.message.payload as Record<string, unknown>;
+	const payloadMessage = typeof payload.message === "string" ? payload.message.trim() : "";
+	if (payloadMessage.length > 0) {
+		return payloadMessage;
+	}
+	const compact = presented.compact.trim();
+	return compact.length > 0 ? compact : null;
 }
 
 function buildWakeTurnCommandText(opts: {
@@ -152,27 +171,18 @@ function buildWakeTurnCommandText(opts: {
 }): string {
 	const wakeSource = stringField(opts.payload, "wake_source") ?? "unknown";
 	const programId = stringField(opts.payload, "program_id") ?? "unknown";
-	const wakeMode = stringField(opts.payload, "wake_mode") ?? "immediate";
-	const targetKind = stringField(opts.payload, "target_kind") ?? "unknown";
 	const reason = stringField(opts.payload, "reason") ?? "scheduled";
-	let target = "null";
-	try {
-		target = JSON.stringify(Object.hasOwn(opts.payload, "target") ? opts.payload.target : null) ?? "null";
-	} catch {
-		target = "[unserializable]";
-	}
+	const payloadSnapshot = stablePayloadSnapshot(opts.payload);
 	return [
 		"Autonomous wake turn triggered by heartbeat/cron scheduler.",
 		`wake_id=${opts.wakeId}`,
 		`wake_source=${wakeSource}`,
 		`program_id=${programId}`,
-		`wake_mode=${wakeMode}`,
-		`target_kind=${targetKind}`,
 		`reason=${reason}`,
-		`message=${opts.message}`,
-		`target=${target}`,
+		`trigger_message=${opts.message}`,
+		`payload=${payloadSnapshot}`,
 		"",
-		"If an action is needed, produce exactly one `/mu ...` command. If no action is needed, provide a short operator response.",
+		"If action is needed, produce exactly one `/mu ...` command. If no action is needed, return a short operator response that can be broadcast verbatim.",
 	].join("\n");
 }
 
@@ -216,10 +226,6 @@ function createServer(options: ServerOptions = {}) {
 		});
 
 	const operatorWakeCoalesceMs = toNonNegativeInt(options.operatorWakeCoalesceMs, DEFAULT_OPERATOR_WAKE_COALESCE_MS);
-	const autoRunHeartbeatEveryMs = Math.max(
-		1_000,
-		toNonNegativeInt(options.autoRunHeartbeatEveryMs, DEFAULT_AUTO_RUN_HEARTBEAT_EVERY_MS),
-	);
 	const operatorWakeLastByKey = new Map<string, number>();
 	const sessionLifecycle = options.sessionLifecycle ?? createProcessSessionLifecycle({ repoRoot });
 
@@ -235,21 +241,20 @@ function createServer(options: ServerOptions = {}) {
 		message: string;
 		payload: Record<string, unknown>;
 		coalesceMs?: number;
-	}): Promise<boolean> => {
+	}): Promise<{ status: "dispatched" | "coalesced" | "failed"; reason: string }> => {
 		const dedupeKey = opts.dedupeKey.trim();
 		if (!dedupeKey) {
-			return false;
+			return { status: "failed", reason: "missing_dedupe_key" };
 		}
 		const nowMs = Date.now();
 		const coalesceMs = Math.max(0, Math.trunc(opts.coalesceMs ?? operatorWakeCoalesceMs));
 		const previous = operatorWakeLastByKey.get(dedupeKey);
 		if (typeof previous === "number" && nowMs - previous < coalesceMs) {
-			return false;
+			return { status: "coalesced", reason: "coalesced_window" };
 		}
 		operatorWakeLastByKey.set(dedupeKey, nowMs);
 
 		const wakeId = computeWakeId({ dedupeKey, payload: opts.payload });
-		const selectedWakeMode = stringField(opts.payload, "wake_mode");
 		const wakeSource = stringField(opts.payload, "wake_source");
 		const programId = stringField(opts.payload, "program_id");
 		const sourceTsMs = numberField(opts.payload, "source_ts_ms");
@@ -269,9 +274,9 @@ function createServer(options: ServerOptions = {}) {
 				outcome: "skipped",
 				reason: "feature_disabled",
 				wakeTurnMode,
-				selectedWakeMode,
 				turnRequestId: null,
 				turnResultKind: null,
+				turnReply: null,
 				error: configReadError,
 			};
 		} else if (wakeTurnMode === "shadow") {
@@ -279,9 +284,9 @@ function createServer(options: ServerOptions = {}) {
 				outcome: "skipped",
 				reason: "shadow_mode",
 				wakeTurnMode,
-				selectedWakeMode,
 				turnRequestId: null,
 				turnResultKind: null,
+				turnReply: null,
 				error: configReadError,
 			};
 		} else if (typeof controlPlaneProxy.submitTerminalCommand !== "function") {
@@ -289,9 +294,9 @@ function createServer(options: ServerOptions = {}) {
 				outcome: "fallback",
 				reason: "control_plane_unavailable",
 				wakeTurnMode,
-				selectedWakeMode,
 				turnRequestId: null,
 				turnResultKind: null,
+				turnReply: null,
 				error: configReadError,
 			};
 		} else {
@@ -311,21 +316,34 @@ function createServer(options: ServerOptions = {}) {
 						outcome: "fallback",
 						reason: `turn_result_${turnResult.kind}`,
 						wakeTurnMode,
-						selectedWakeMode,
 						turnRequestId,
 						turnResultKind: turnResult.kind,
+						turnReply: null,
 						error: configReadError,
 					};
 				} else {
-					decision = {
-						outcome: "triggered",
-						reason: "turn_invoked",
-						wakeTurnMode,
-						selectedWakeMode,
-						turnRequestId,
-						turnResultKind: turnResult.kind,
-						error: configReadError,
-					};
+					const turnReply = extractWakeTurnReply(turnResult);
+					if (!turnReply) {
+						decision = {
+							outcome: "fallback",
+							reason: "turn_reply_empty",
+							wakeTurnMode,
+							turnRequestId,
+							turnResultKind: turnResult.kind,
+							turnReply: null,
+							error: configReadError,
+						};
+					} else {
+						decision = {
+							outcome: "triggered",
+							reason: "turn_invoked",
+							wakeTurnMode,
+							turnRequestId,
+							turnResultKind: turnResult.kind,
+							turnReply,
+							error: configReadError,
+						};
+					}
 				}
 			} catch (err) {
 				const error = describeError(err);
@@ -333,9 +351,9 @@ function createServer(options: ServerOptions = {}) {
 					outcome: "fallback",
 					reason: error === "control_plane_unavailable" ? "control_plane_unavailable" : "turn_execution_failed",
 					wakeTurnMode,
-					selectedWakeMode,
 					turnRequestId,
 					turnResultKind: null,
+					turnReply: null,
 					error,
 				};
 			}
@@ -349,23 +367,28 @@ function createServer(options: ServerOptions = {}) {
 				wake_source: wakeSource,
 				program_id: programId,
 				source_ts_ms: sourceTsMs,
-				selected_wake_mode: selectedWakeMode,
 				wake_turn_mode: decision.wakeTurnMode,
 				wake_turn_feature_enabled: decision.wakeTurnMode === "active",
 				outcome: decision.outcome,
 				reason: decision.reason,
 				turn_request_id: decision.turnRequestId,
 				turn_result_kind: decision.turnResultKind,
+				turn_reply_present: decision.turnReply != null,
 				error: decision.error,
 			},
 		});
 
 		let notifyResult = emptyNotifyOperatorsResult();
 		let notifyError: string | null = null;
-		if (typeof controlPlaneProxy.notifyOperators === "function") {
+		let deliverySkippedReason: string | null = null;
+		if (!decision.turnReply) {
+			deliverySkippedReason = "no_turn_reply";
+		} else if (typeof controlPlaneProxy.notifyOperators !== "function") {
+			deliverySkippedReason = "notify_operators_unavailable";
+		} else {
 			try {
 				notifyResult = await controlPlaneProxy.notifyOperators({
-					message: opts.message,
+					message: decision.turnReply,
 					dedupeKey,
 					wake: {
 						wakeId,
@@ -377,6 +400,7 @@ function createServer(options: ServerOptions = {}) {
 						wake_delivery_reason: "heartbeat_cron_wake",
 						wake_turn_outcome: decision.outcome,
 						wake_turn_reason: decision.reason,
+						wake_turn_result_kind: decision.turnResultKind,
 					},
 				});
 			} catch (err) {
@@ -404,7 +428,9 @@ function createServer(options: ServerOptions = {}) {
 		await context.eventLog.emit("operator.wake", {
 			source: "mu-server.operator-wake",
 			payload: {
-				message: opts.message,
+				trigger_message: opts.message,
+				broadcast_message: decision.turnReply,
+				broadcast_message_present: decision.turnReply != null,
 				dedupe_key: dedupeKey,
 				coalesce_ms: coalesceMs,
 				...opts.payload,
@@ -412,7 +438,6 @@ function createServer(options: ServerOptions = {}) {
 				decision_outcome: decision.outcome,
 				decision_reason: decision.reason,
 				wake_turn_mode: decision.wakeTurnMode,
-				selected_wake_mode: decision.selectedWakeMode,
 				wake_turn_feature_enabled: decision.wakeTurnMode === "active",
 				turn_request_id: decision.turnRequestId,
 				turn_result_kind: decision.turnResultKind,
@@ -428,10 +453,24 @@ function createServer(options: ServerOptions = {}) {
 					skipped: notifyResult.skipped,
 					total: notifyResult.decisions.length,
 				},
+				delivery_skipped_reason: deliverySkippedReason,
 				delivery_error: notifyError,
 			},
 		});
-		return true;
+
+		if (decision.outcome !== "triggered") {
+			return { status: "failed", reason: decision.reason };
+		}
+		if (!decision.turnReply) {
+			return { status: "failed", reason: "no_turn_reply" };
+		}
+		if (notifyError) {
+			return { status: "failed", reason: "notify_failed" };
+		}
+		if (deliverySkippedReason === "notify_operators_unavailable") {
+			return { status: "failed", reason: deliverySkippedReason };
+		}
+		return { status: "dispatched", reason: "operator_reply_broadcast" };
 	};
 
 	const generationTelemetry = options.generationTelemetry ?? new GenerationTelemetryRecorder();
@@ -586,18 +625,10 @@ function createServer(options: ServerOptions = {}) {
 		},
 	};
 
-	const {
-		heartbeatPrograms,
-		cronPrograms,
-		registerAutoRunHeartbeatProgram,
-		disableAutoRunHeartbeatProgram,
-	} = createServerProgramOrchestration({
+	const { heartbeatPrograms, cronPrograms } = createServerProgramOrchestration({
 		repoRoot,
 		heartbeatScheduler,
-		controlPlaneProxy,
-		activitySupervisor,
 		eventLog: context.eventLog,
-		autoRunHeartbeatEveryMs,
 		emitOperatorWake,
 	});
 
@@ -611,8 +642,6 @@ function createServer(options: ServerOptions = {}) {
 		writeConfig,
 		reloadControlPlane,
 		getControlPlaneStatus: reloadManager.getControlPlaneStatus,
-		registerAutoRunHeartbeatProgram,
-		disableAutoRunHeartbeatProgram,
 		describeError,
 		initiateShutdown: options.initiateShutdown,
 	});

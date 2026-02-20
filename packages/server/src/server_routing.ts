@@ -13,7 +13,6 @@ import type { MuConfig } from "./config.js";
 import type { ControlPlaneHandle } from "./control_plane_contract.js";
 import type { CronProgramRegistry } from "./cron_programs.js";
 import type { HeartbeatProgramRegistry } from "./heartbeat_programs.js";
-import type { AutoHeartbeatRunSnapshot } from "./server_program_orchestration.js";
 import type { ServerContext } from "./server.js";
 
 export type ServerRoutingDependencies = {
@@ -26,8 +25,6 @@ export type ServerRoutingDependencies = {
 	writeConfig: (repoRoot: string, config: MuConfig) => Promise<string>;
 	reloadControlPlane: (reason: string) => Promise<{ ok: boolean }>;
 	getControlPlaneStatus: () => unknown;
-	registerAutoRunHeartbeatProgram: (run: AutoHeartbeatRunSnapshot) => Promise<void>;
-	disableAutoRunHeartbeatProgram: (opts: { jobId: string; status: string; reason: string }) => Promise<void>;
 	describeError: (error: unknown) => string;
 	initiateShutdown?: () => Promise<void>;
 };

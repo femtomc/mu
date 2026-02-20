@@ -59,15 +59,14 @@ export {
 } from "./run_queue.js";
 export { bootstrapControlPlane, detectAdapters } from "./control_plane.js";
 export type {
+	CronProgramDispatchResult,
 	CronProgramLifecycleAction,
 	CronProgramLifecycleEvent,
 	CronProgramOperationResult,
 	CronProgramRegistryOpts,
 	CronProgramSnapshot,
 	CronProgramStatusSnapshot,
-	CronProgramTarget,
 	CronProgramTickEvent,
-	CronProgramWakeMode,
 } from "./cron_programs.js";
 export { CronProgramRegistry } from "./cron_programs.js";
 export type { CronProgramSchedule as CronSchedule, CronProgramSchedule } from "./cron_schedule.js";
@@ -75,12 +74,11 @@ export { computeNextScheduleRunAtMs, normalizeCronSchedule } from "./cron_schedu
 export type { CronTimerRegistryOpts, CronTimerSnapshot } from "./cron_timer.js";
 export { CronTimerRegistry } from "./cron_timer.js";
 export type {
+	HeartbeatProgramDispatchResult,
 	HeartbeatProgramOperationResult,
 	HeartbeatProgramRegistryOpts,
 	HeartbeatProgramSnapshot,
-	HeartbeatProgramTarget,
 	HeartbeatProgramTickEvent,
-	HeartbeatProgramWakeMode,
 } from "./heartbeat_programs.js";
 export { HeartbeatProgramRegistry } from "./heartbeat_programs.js";
 export type {

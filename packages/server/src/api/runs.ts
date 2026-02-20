@@ -1,6 +1,4 @@
-import type { AutoHeartbeatRunSnapshot } from "../server_program_orchestration.js";
 import type { ServerRoutingDependencies } from "../server_routing.js";
-import { normalizeWakeMode } from "../server_types.js";
 
 export async function runRoutes(
 	request: Request,
@@ -45,16 +43,6 @@ export async function runRoutes(
 			if (!run) {
 				return Response.json({ error: "run supervisor unavailable" }, { status: 503, headers });
 			}
-			await deps.registerAutoRunHeartbeatProgram(run as AutoHeartbeatRunSnapshot).catch(async (error) => {
-				await deps.context.eventLog.emit("run.auto_heartbeat.lifecycle", {
-					source: "mu-server.runs",
-					payload: {
-						action: "register_failed",
-						run_job_id: run.job_id,
-						error: deps.describeError(error),
-					},
-				});
-			});
 			return Response.json({ ok: true, run }, { status: 201, headers });
 		} catch (err) {
 			return Response.json({ error: deps.describeError(err) }, { status: 500, headers });
@@ -84,16 +72,6 @@ export async function runRoutes(
 			if (!run) {
 				return Response.json({ error: "run supervisor unavailable" }, { status: 503, headers });
 			}
-			await deps.registerAutoRunHeartbeatProgram(run as AutoHeartbeatRunSnapshot).catch(async (error) => {
-				await deps.context.eventLog.emit("run.auto_heartbeat.lifecycle", {
-					source: "mu-server.runs",
-					payload: {
-						action: "register_failed",
-						run_job_id: run.job_id,
-						error: deps.describeError(error),
-					},
-				});
-			});
 			return Response.json({ ok: true, run }, { status: 201, headers });
 		} catch (err) {
 			return Response.json({ error: deps.describeError(err) }, { status: 500, headers });
@@ -119,65 +97,7 @@ export async function runRoutes(
 		if (!result) {
 			return Response.json({ error: "run supervisor unavailable" }, { status: 503, headers });
 		}
-		if (!result.ok && result.reason === "not_running" && result.run) {
-			await deps.disableAutoRunHeartbeatProgram({
-				jobId: result.run.job_id,
-				status: result.run.status,
-				reason: "interrupt_not_running",
-			}).catch(() => {
-				// best effort cleanup only
-			});
-		}
 		return Response.json(result, { status: result.ok ? 200 : 404, headers });
-	}
-
-	if (path === "/api/runs/heartbeat") {
-		if (request.method !== "POST") {
-			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
-		}
-		let body: { root_issue_id?: unknown; job_id?: unknown; reason?: unknown; wake_mode?: unknown };
-		try {
-			body = (await request.json()) as {
-				root_issue_id?: unknown;
-				job_id?: unknown;
-				reason?: unknown;
-				wake_mode?: unknown;
-			};
-		} catch {
-			return Response.json({ error: "invalid json body" }, { status: 400, headers });
-		}
-		const rootIssueId = typeof body.root_issue_id === "string" ? body.root_issue_id.trim() : null;
-		const jobId = typeof body.job_id === "string" ? body.job_id.trim() : null;
-		const reason = typeof body.reason === "string" ? body.reason.trim() : null;
-		const wakeMode = normalizeWakeMode(body.wake_mode);
-		const result = await deps.controlPlaneProxy.heartbeatRun?.({
-			rootIssueId,
-			jobId,
-			reason,
-			wakeMode,
-		});
-		if (!result) {
-			return Response.json({ error: "run supervisor unavailable" }, { status: 503, headers });
-		}
-		if (!result.ok && result.reason === "not_running" && result.run) {
-			await deps.disableAutoRunHeartbeatProgram({
-				jobId: result.run.job_id,
-				status: result.run.status,
-				reason: "run_not_running",
-			}).catch(() => {
-				// best effort cleanup only
-			});
-		}
-		if (result.ok) {
-			return Response.json(result, { status: 200, headers });
-		}
-		if (result.reason === "missing_target") {
-			return Response.json(result, { status: 400, headers });
-		}
-		if (result.reason === "not_running") {
-			return Response.json(result, { status: 409, headers });
-		}
-		return Response.json(result, { status: 404, headers });
 	}
 
 	if (path.startsWith("/api/runs/")) {
@@ -208,15 +128,6 @@ export async function runRoutes(
 		const run = await deps.controlPlaneProxy.getRun?.(idOrRoot);
 		if (!run) {
 			return Response.json({ error: "run not found" }, { status: 404, headers });
-		}
-		if (run.status !== "running") {
-			await deps.disableAutoRunHeartbeatProgram({
-				jobId: run.job_id,
-				status: run.status,
-				reason: "run_terminal_snapshot",
-			}).catch(() => {
-				// best effort cleanup only
-			});
 		}
 		return Response.json(run, { headers });
 	}

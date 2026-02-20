@@ -611,16 +611,6 @@ describe("mu-server", () => {
 		const interruptPayload = (await interruptRes.json()) as { ok: boolean };
 		expect(interruptPayload.ok).toBe(true);
 
-		const heartbeatRes = await serverWithRuns.fetch(
-			new Request("http://localhost/api/runs/heartbeat", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ root_issue_id: "mu-root1234", reason: "manual" }),
-			}),
-		);
-		expect(heartbeatRes.status).toBe(200);
-		const heartbeatPayload = (await heartbeatRes.json()) as { ok: boolean };
-		expect(heartbeatPayload.ok).toBe(true);
 	});
 
 	test("events API supports issue_id/run_id/contains query filters", async () => {
@@ -665,151 +655,13 @@ describe("mu-server", () => {
 		expect(tailEvents[0]?.run_id).toBe("run-2");
 	});
 
-	test("cron/heartbeat wakes stay coalesced and skip autonomous turns when wake_turn_mode is off", async () => {
-		const wakeTurns: Array<{ commandText: string; requestId?: string }> = [];
-		const wakeControlPlane: ControlPlaneHandle = {
-			activeAdapters: [],
-			handleWebhook: async () => null,
-			submitTerminalCommand: async (turnOpts) => {
-				wakeTurns.push(turnOpts);
-				return { kind: "operator_response", message: "ack" };
-			},
-			stop: async () => {},
-		};
-		const wakeServer = await createServerForTest({
-			repoRoot: tempDir,
-			controlPlane: wakeControlPlane,
-			serverOptions: { operatorWakeCoalesceMs: 1_000 },
-		});
-
-		const activityStart = await wakeServer.fetch(
-			new Request("http://localhost/api/activities/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ title: "Wake target", kind: "wake-test", heartbeat_every_ms: 0 }),
-			}),
-		);
-		expect(activityStart.status).toBe(201);
-		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
-
-		const heartbeatCreate = await wakeServer.fetch(
-			new Request("http://localhost/api/heartbeats/create", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					title: "Wake heartbeat",
-					target_kind: "activity",
-					activity_id: activity.activity.activity_id,
-					every_ms: 0,
-					reason: "heartbeat-wake",
-					wake_mode: "immediate",
-				}),
-			}),
-		);
-		expect(heartbeatCreate.status).toBe(201);
-		const heartbeatPayload = (await heartbeatCreate.json()) as {
-			program: { program_id: string };
-		};
-		const heartbeatProgramId = heartbeatPayload.program.program_id;
-
-		const heartbeatTriggerBody = JSON.stringify({ program_id: heartbeatProgramId, reason: "manual" });
-		const heartbeatTrigger1 = await wakeServer.fetch(
-			new Request("http://localhost/api/heartbeats/trigger", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: heartbeatTriggerBody,
-			}),
-		);
-		expect(heartbeatTrigger1.status).toBe(200);
-		const heartbeatTrigger2 = await wakeServer.fetch(
-			new Request("http://localhost/api/heartbeats/trigger", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: heartbeatTriggerBody,
-			}),
-		);
-		expect(heartbeatTrigger2.status).toBe(200);
-
-		const cronCreate = await wakeServer.fetch(
-			new Request("http://localhost/api/cron/create", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					title: "Wake cron",
-					target_kind: "activity",
-					activity_id: activity.activity.activity_id,
-					schedule_kind: "at",
-					at_ms: Date.now() + 60_000,
-					wake_mode: "next_heartbeat",
-				}),
-			}),
-		);
-		expect(cronCreate.status).toBe(201);
-		const cronPayload = (await cronCreate.json()) as { program: { program_id: string } };
-		const cronProgramId = cronPayload.program.program_id;
-
-		const cronTrigger = await wakeServer.fetch(
-			new Request("http://localhost/api/cron/trigger", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ program_id: cronProgramId, reason: "manual" }),
-			}),
-		);
-		expect(cronTrigger.status).toBe(200);
-
-		const wakeEvents = await waitFor(async () => {
-			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake&limit=50"),
-			);
-			if (response.status !== 200) {
-				return null;
-			}
-			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
-			return events.length >= 2 ? events : null;
-		});
-		if (!wakeEvents) {
-			throw new Error("expected wake events");
-		}
-		const wakePayloads = wakeEvents.map((event) => event.payload ?? {});
-		expect(wakePayloads.some((payload) => payload.wake_source === "heartbeat_program")).toBe(true);
-		expect(wakePayloads.some((payload) => payload.wake_source === "cron_program")).toBe(true);
-		const heartbeatWakeEvents = wakePayloads.filter(
-			(payload) => payload.wake_source === "heartbeat_program" && payload.program_id === heartbeatProgramId,
-		);
-		expect(heartbeatWakeEvents).toHaveLength(1);
-		expect(wakePayloads.every((payload) => payload.decision_outcome === "skipped")).toBe(true);
-		expect(wakePayloads.every((payload) => payload.decision_reason === "feature_disabled")).toBe(true);
-
-		const decisionEvents = await waitFor(async () => {
-			const response = await wakeServer.fetch(
-				new Request("http://localhost/api/events?type=operator.wake.decision&limit=50"),
-			);
-			if (response.status !== 200) {
-				return null;
-			}
-			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
-			return events.length >= 2 ? events : null;
-		});
-		if (!decisionEvents) {
-			throw new Error("expected wake decision events");
-		}
-		const decisions = decisionEvents
-			.map((event) => event.payload ?? {})
-			.filter((payload) => payload.program_id === heartbeatProgramId || payload.program_id === cronProgramId);
-		expect(decisions).toHaveLength(2);
-		expect(decisions.every((payload) => payload.outcome === "skipped")).toBe(true);
-		expect(decisions.every((payload) => payload.reason === "feature_disabled")).toBe(true);
-		expect(decisions.every((payload) => payload.wake_turn_mode === "off")).toBe(true);
-		expect(decisions.every((payload) => payload.wake_turn_feature_enabled === false)).toBe(true);
-		expect(wakeTurns).toHaveLength(0);
-	});
-
 	test("operator wake delivery telemetry emits queued/duplicate/skipped/delivered/retried/dead-letter states", async () => {
 		let wakeDeliveryObserver: ((event: any) => void | Promise<void>) | null = null;
 
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
+			submitTerminalCommand: async () => ({ kind: "operator_response", message: "autonomous ack" }),
 			notifyOperators: async (notifyOpts) => {
 				const wakeId = notifyOpts.wake?.wakeId ?? "wake-unknown";
 				const dedupeKey = notifyOpts.dedupeKey;
@@ -908,11 +760,8 @@ describe("mu-server", () => {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					title: "Wake heartbeat",
-					target_kind: "activity",
-					activity_id: activity.activity.activity_id,
 					every_ms: 0,
 					reason: "heartbeat-wake",
-					wake_mode: "immediate",
 				}),
 			}),
 		);
@@ -983,6 +832,7 @@ describe("mu-server", () => {
 				wakeTurns.push(turnOpts);
 				return { kind: "operator_response", message: "autonomous ack" };
 			},
+			notifyOperators: async () => ({ queued: 0, duplicate: 0, skipped: 0, decisions: [] }),
 			stop: async () => {},
 		};
 		const wakeServer = await createServerForTest({
@@ -1024,11 +874,8 @@ describe("mu-server", () => {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					title: "Wake heartbeat",
-					target_kind: "activity",
-					activity_id: activity.activity.activity_id,
 					every_ms: 0,
 					reason: "heartbeat-wake",
-					wake_mode: "immediate",
 				}),
 			}),
 		);
@@ -1076,7 +923,6 @@ describe("mu-server", () => {
 		expect(wakeTurn?.commandText).toContain(`program_id=${heartbeatProgramId}`);
 
 		expect(decisionPayload.dedupe_key).toBe(`heartbeat-program:${heartbeatProgramId}`);
-		expect(decisionPayload.selected_wake_mode).toBe("immediate");
 		expect(decisionPayload.wake_turn_mode).toBe("active");
 		expect(decisionPayload.wake_turn_feature_enabled).toBe(true);
 		expect(decisionPayload.outcome).toBe("triggered");
@@ -1219,11 +1065,8 @@ describe("mu-server", () => {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					title: "Wake heartbeat",
-					target_kind: "activity",
-					activity_id: activity.activity.activity_id,
 					every_ms: 0,
 					reason: "heartbeat-wake",
-					wake_mode: "immediate",
 				}),
 			}),
 		);
@@ -1373,11 +1216,8 @@ describe("mu-server", () => {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					title: "Wake heartbeat",
-					target_kind: "activity",
-					activity_id: activity.activity.activity_id,
 					every_ms: 0,
 					reason: "heartbeat-wake",
-					wake_mode: "immediate",
 				}),
 			}),
 		);
@@ -1394,7 +1234,7 @@ describe("mu-server", () => {
 				body: JSON.stringify({ program_id: heartbeatProgramId, reason: "manual" }),
 			}),
 		);
-		expect(heartbeatTrigger.status).toBe(200);
+		expect(heartbeatTrigger.status).toBe(409);
 
 		const decisionPayload = await waitFor(async () => {
 			const response = await wakeServer.fetch(
@@ -1435,198 +1275,6 @@ describe("mu-server", () => {
 		}
 		expect(wakePayload.decision_outcome).toBe("fallback");
 		expect(wakePayload.decision_reason).toBe("control_plane_unavailable");
-	});
-
-	test("api run start/resume auto-register and auto-disable run heartbeat programs", async () => {
-		const runs = new Map<
-			string,
-			{
-				job_id: string;
-				mode: "run_start" | "run_resume";
-				status: "running" | "completed";
-				prompt: string | null;
-				root_issue_id: string | null;
-				max_steps: number;
-				command_id: string | null;
-				source: "command" | "api";
-				started_at_ms: number;
-				updated_at_ms: number;
-				finished_at_ms: number | null;
-				exit_code: number | null;
-				pid: number | null;
-				last_progress: string | null;
-			}
-		>();
-		const heartbeatCounts = new Map<string, number>();
-		const heartbeatWakeModes: Array<string | null> = [];
-
-		const makeRun = (opts: {
-			jobId: string;
-			mode: "run_start" | "run_resume";
-			rootIssueId: string;
-			prompt: string | null;
-			maxSteps: number;
-		}) => {
-			const now = Date.now();
-			return {
-				job_id: opts.jobId,
-				mode: opts.mode,
-				status: "running" as const,
-				prompt: opts.prompt,
-				root_issue_id: opts.rootIssueId,
-				max_steps: opts.maxSteps,
-				command_id: null,
-				source: "api" as const,
-				started_at_ms: now,
-				updated_at_ms: now,
-				finished_at_ms: null,
-				exit_code: null,
-				pid: 101,
-				last_progress: null,
-			};
-		};
-
-		const resolveRun = (opts: { jobId?: string | null; rootIssueId?: string | null }) => {
-			if (opts.jobId) {
-				return runs.get(opts.jobId) ?? null;
-			}
-			if (opts.rootIssueId) {
-				for (const run of runs.values()) {
-					if (run.root_issue_id === opts.rootIssueId) {
-						return run;
-					}
-				}
-			}
-			return null;
-		};
-
-		const controlPlane: ControlPlaneHandle = {
-			activeAdapters: [],
-			handleWebhook: async () => null,
-			startRun: async ({ prompt, maxSteps }) => {
-				const run = makeRun({
-					jobId: "run-job-start",
-					mode: "run_start",
-					rootIssueId: "mu-root-start",
-					prompt,
-					maxSteps: maxSteps ?? 20,
-				});
-				runs.set(run.job_id, run);
-				return { ...run };
-			},
-			resumeRun: async ({ rootIssueId, maxSteps }) => {
-				const run = makeRun({
-					jobId: "run-job-resume",
-					mode: "run_resume",
-					rootIssueId,
-					prompt: null,
-					maxSteps: maxSteps ?? 20,
-				});
-				runs.set(run.job_id, run);
-				return { ...run };
-			},
-			heartbeatRun: async ({ jobId, rootIssueId, wakeMode }) => {
-				heartbeatWakeModes.push(typeof wakeMode === "string" ? wakeMode : null);
-				const run = resolveRun({ jobId, rootIssueId });
-				if (!run) {
-					return { ok: false as const, reason: "not_found" as const, run: null };
-				}
-				const key = run.job_id;
-				const count = (heartbeatCounts.get(key) ?? 0) + 1;
-				heartbeatCounts.set(key, count);
-				if (count >= 2) {
-					run.status = "completed";
-					run.updated_at_ms = Date.now();
-					run.finished_at_ms = run.updated_at_ms;
-					run.exit_code = 0;
-					return { ok: false as const, reason: "not_running" as const, run: { ...run } };
-				}
-				return { ok: true as const, reason: null, run: { ...run } };
-			},
-			stop: async () => {},
-		};
-
-		const serverWithAuto = await createServerForTest({
-			repoRoot: tempDir,
-			controlPlane,
-			serverOptions: { autoRunHeartbeatEveryMs: 5_000 },
-		});
-
-		const startRes = await serverWithAuto.fetch(
-			new Request("http://localhost/api/runs/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "ship", max_steps: 12 }),
-			}),
-		);
-		expect(startRes.status).toBe(201);
-
-		const resumeRes = await serverWithAuto.fetch(
-			new Request("http://localhost/api/runs/resume", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ root_issue_id: "mu-root-resume", max_steps: 13 }),
-			}),
-		);
-		expect(resumeRes.status).toBe(201);
-
-		const listRes = await serverWithAuto.fetch(
-			new Request("http://localhost/api/heartbeats?target_kind=run&limit=20"),
-		);
-		expect(listRes.status).toBe(200);
-		const listPayload = (await listRes.json()) as {
-			programs: Array<{
-				program_id: string;
-				enabled: boolean;
-				wake_mode: string;
-				metadata: Record<string, unknown>;
-			}>;
-		};
-		const autoPrograms = listPayload.programs.filter((program) => program.metadata.auto_run_heartbeat === true);
-		expect(autoPrograms).toHaveLength(2);
-		for (const program of autoPrograms) {
-			expect(program.enabled).toBe(true);
-			expect(program.wake_mode).toBe("next_heartbeat");
-		}
-
-		for (const program of autoPrograms) {
-			const triggerBody = JSON.stringify({ program_id: program.program_id, reason: "manual" });
-			const trigger1 = await serverWithAuto.fetch(
-				new Request("http://localhost/api/heartbeats/trigger", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: triggerBody,
-				}),
-			);
-			expect(trigger1.status).toBe(200);
-			const trigger2 = await serverWithAuto.fetch(
-				new Request("http://localhost/api/heartbeats/trigger", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: triggerBody,
-				}),
-			);
-			expect(trigger2.status).toBe(200);
-
-			const getRes = await serverWithAuto.fetch(
-				new Request(`http://localhost/api/heartbeats/${encodeURIComponent(program.program_id)}`),
-			);
-			expect(getRes.status).toBe(200);
-			const latest = (await getRes.json()) as { enabled: boolean; every_ms: number; last_result: string | null };
-			expect(latest.enabled).toBe(false);
-			expect(latest.every_ms).toBe(0);
-			expect(latest.last_result).toBe("not_running");
-		}
-
-		expect(heartbeatWakeModes.filter((value) => value === "next_heartbeat").length).toBeGreaterThanOrEqual(2);
-
-		const lifecycleResponse = await serverWithAuto.fetch(
-			new Request("http://localhost/api/events?type=run.auto_heartbeat.lifecycle&limit=50"),
-		);
-		expect(lifecycleResponse.status).toBe(200);
-		const lifecycleEvents = (await lifecycleResponse.json()) as Array<{ payload?: Record<string, unknown> }>;
-		const actions = lifecycleEvents.map((event) => String(event.payload?.action ?? ""));
-		expect(actions.filter((action) => action === "registered").length).toBe(2);
 	});
 
 	test("activity management APIs support generic long-running tasks", async () => {
@@ -1719,31 +1367,21 @@ describe("mu-server", () => {
 	});
 
 	test("heartbeat program APIs persist runtime-programmed schedules in .mu/heartbeats.jsonl", async () => {
-		const activityStart = await server.fetch(
-			new Request("http://localhost/api/activities/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					title: "Watch indexing",
-					kind: "watcher",
-					heartbeat_every_ms: 0,
-				}),
-			}),
-		);
-		expect(activityStart.status).toBe(201);
-		const activityPayload = (await activityStart.json()) as {
-			activity: { activity_id: string };
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async () => ({ kind: "operator_response", message: "ack" }),
+			notifyOperators: async () => ({ queued: 0, duplicate: 0, skipped: 0, decisions: [] }),
+			stop: async () => {},
 		};
-		const activityId = activityPayload.activity.activity_id;
+		const wakeServer = await createServerForTest({ repoRoot: tempDir, controlPlane: wakeControlPlane });
 
-		const createRes = await server.fetch(
+		const createRes = await wakeServer.fetch(
 			new Request("http://localhost/api/heartbeats/create", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					title: "Watch indexing pulse",
-					target_kind: "activity",
-					activity_id: activityId,
 					every_ms: 0,
 					reason: "watchdog",
 					enabled: true,
@@ -1753,13 +1391,12 @@ describe("mu-server", () => {
 		expect(createRes.status).toBe(201);
 		const createPayload = (await createRes.json()) as {
 			ok: boolean;
-			program: { program_id: string; target: { kind: string } };
+			program: { program_id: string };
 		};
 		expect(createPayload.ok).toBe(true);
-		expect(createPayload.program.target.kind).toBe("activity");
 		const programId = createPayload.program.program_id;
 
-		const listRes = await server.fetch(new Request("http://localhost/api/heartbeats?limit=10"));
+		const listRes = await wakeServer.fetch(new Request("http://localhost/api/heartbeats?limit=10"));
 		expect(listRes.status).toBe(200);
 		const listPayload = (await listRes.json()) as {
 			count: number;
@@ -1768,7 +1405,7 @@ describe("mu-server", () => {
 		expect(listPayload.count).toBeGreaterThanOrEqual(1);
 		expect(listPayload.programs.some((program) => program.program_id === programId)).toBe(true);
 
-		const triggerRes = await server.fetch(
+		const triggerRes = await wakeServer.fetch(
 			new Request("http://localhost/api/heartbeats/trigger", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -1787,48 +1424,31 @@ describe("mu-server", () => {
 		expect(triggerPayload.program.program_id).toBe(programId);
 		expect(triggerPayload.program.last_result).toBe("ok");
 
-		const activityEventsRes = await server.fetch(
-			new Request(`http://localhost/api/activities/${activityId}/events?limit=20`),
-		);
-		expect(activityEventsRes.status).toBe(200);
-		const activityEvents = (await activityEventsRes.json()) as {
-			events: Array<{ kind: string }>;
-		};
-		expect(activityEvents.events.some((event) => event.kind === "activity_heartbeat")).toBe(true);
-
 		const heartbeatsPath = join(tempDir, ".mu", "heartbeats.jsonl");
 		const lines = (await readFile(heartbeatsPath, "utf8"))
 			.split("\n")
 			.map((line) => line.trim())
 			.filter((line) => line.length > 0)
-			.map((line) => JSON.parse(line) as { program_id?: string; target?: { kind?: string } });
-		expect(lines.some((row) => row.program_id === programId && row.target?.kind === "activity")).toBe(true);
+			.map((line) => JSON.parse(line) as { program_id?: string; reason?: string });
+		expect(lines.some((row) => row.program_id === programId && row.reason === "watchdog")).toBe(true);
 	});
 
 	test("cron program APIs persist schedules, emit events, and restore on startup", async () => {
-		const activityStart = await server.fetch(
-			new Request("http://localhost/api/activities/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					title: "Cron API target",
-					kind: "cron-test",
-					heartbeat_every_ms: 0,
-				}),
-			}),
-		);
-		expect(activityStart.status).toBe(201);
-		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
-		const activityId = activity.activity.activity_id;
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async () => ({ kind: "operator_response", message: "ack" }),
+			notifyOperators: async () => ({ queued: 0, duplicate: 0, skipped: 0, decisions: [] }),
+			stop: async () => {},
+		};
+		const cronServer = await createServerForTest({ repoRoot: tempDir, controlPlane: wakeControlPlane });
 
-		const createRes = await server.fetch(
+		const createRes = await cronServer.fetch(
 			new Request("http://localhost/api/cron/create", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					title: "Recurring cron pulse",
-					target_kind: "activity",
-					activity_id: activityId,
 					schedule_kind: "every",
 					every_ms: 50,
 					reason: "cron-scheduled",
@@ -1845,10 +1465,10 @@ describe("mu-server", () => {
 		expect(created.program.schedule.kind).toBe("every");
 		const programId = created.program.program_id;
 
-		const getRes = await server.fetch(new Request(`http://localhost/api/cron/${programId}`));
+		const getRes = await cronServer.fetch(new Request(`http://localhost/api/cron/${programId}`));
 		expect(getRes.status).toBe(200);
 
-		const listRes = await server.fetch(new Request("http://localhost/api/cron?limit=10&schedule_kind=every"));
+		const listRes = await cronServer.fetch(new Request("http://localhost/api/cron?limit=10&schedule_kind=every"));
 		expect(listRes.status).toBe(200);
 		const listPayload = (await listRes.json()) as {
 			count: number;
@@ -1858,7 +1478,7 @@ describe("mu-server", () => {
 		expect(listPayload.programs.some((program) => program.program_id === programId)).toBe(true);
 
 		await waitFor(async () => {
-			const statusRes = await server.fetch(new Request("http://localhost/api/cron/status"));
+			const statusRes = await cronServer.fetch(new Request("http://localhost/api/cron/status"));
 			if (statusRes.status !== 200) {
 				return null;
 			}
@@ -1867,7 +1487,7 @@ describe("mu-server", () => {
 		});
 
 		const tickedProgram = await waitFor(async () => {
-			const res = await server.fetch(new Request(`http://localhost/api/cron/${programId}`));
+			const res = await cronServer.fetch(new Request(`http://localhost/api/cron/${programId}`));
 			if (res.status !== 200) {
 				return null;
 			}
@@ -1887,7 +1507,7 @@ describe("mu-server", () => {
 		const firstTriggeredAt = tickedProgram.last_triggered_at_ms;
 		expect(typeof firstTriggeredAt).toBe("number");
 
-		const eventsRes = await server.fetch(new Request("http://localhost/api/events/tail?n=100"));
+		const eventsRes = await cronServer.fetch(new Request("http://localhost/api/events/tail?n=100"));
 		expect(eventsRes.status).toBe(200);
 		const events = (await eventsRes.json()) as Array<{ type: string }>;
 		expect(events.some((event) => event.type === "cron_program.lifecycle")).toBe(true);
@@ -1901,11 +1521,11 @@ describe("mu-server", () => {
 			.map((line) => JSON.parse(line) as { program_id?: string; schedule?: { kind?: string } });
 		expect(diskRows.some((row) => row.program_id === programId && row.schedule?.kind === "every")).toBe(true);
 
-		server.cronPrograms.stop();
-		server.heartbeatPrograms.stop();
-		server.activitySupervisor.stop();
+		cronServer.cronPrograms.stop();
+		cronServer.heartbeatPrograms.stop();
+		cronServer.activitySupervisor.stop();
 
-		const restarted = await createServerForTest({ repoRoot: tempDir });
+		const restarted = await createServerForTest({ repoRoot: tempDir, controlPlane: wakeControlPlane });
 		await Bun.sleep(180);
 		const restartedGetRes = await restarted.fetch(new Request(`http://localhost/api/cron/${programId}`));
 		expect(restartedGetRes.status).toBe(200);
@@ -1914,32 +1534,30 @@ describe("mu-server", () => {
 			last_result: string | null;
 		};
 		expect(restartedProgram.last_triggered_at_ms).toBeGreaterThan(firstTriggeredAt as number);
-		expect(restartedProgram.last_result).toBe("not_found");
+		expect(
+			restartedProgram.last_result === "ok" || restartedProgram.last_result === "coalesced",
+		).toBe(true);
 
 		restarted.cronPrograms.stop();
 		restarted.heartbeatPrograms.stop();
 		restarted.activitySupervisor.stop();
 	});
-
 	test("cron update/trigger/delete endpoints enforce lifecycle semantics", async () => {
-		const activityStart = await server.fetch(
-			new Request("http://localhost/api/activities/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ title: "Cron CRUD target", kind: "cron-crud", heartbeat_every_ms: 0 }),
-			}),
-		);
-		expect(activityStart.status).toBe(201);
-		const activity = (await activityStart.json()) as { activity: { activity_id: string } };
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			submitTerminalCommand: async () => ({ kind: "operator_response", message: "ack" }),
+			notifyOperators: async () => ({ queued: 0, duplicate: 0, skipped: 0, decisions: [] }),
+			stop: async () => {},
+		};
+		const cronServer = await createServerForTest({ repoRoot: tempDir, controlPlane: wakeControlPlane });
 
-		const createRes = await server.fetch(
+		const createRes = await cronServer.fetch(
 			new Request("http://localhost/api/cron/create", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					title: "CRUD cron",
-					target_kind: "activity",
-					activity_id: activity.activity.activity_id,
 					schedule_kind: "at",
 					at_ms: Date.now() + 60_000,
 				}),
@@ -1949,7 +1567,7 @@ describe("mu-server", () => {
 		const created = (await createRes.json()) as { program: { program_id: string } };
 		const programId = created.program.program_id;
 
-		const disableRes = await server.fetch(
+		const disableRes = await cronServer.fetch(
 			new Request("http://localhost/api/cron/update", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -1958,7 +1576,7 @@ describe("mu-server", () => {
 		);
 		expect(disableRes.status).toBe(200);
 
-		const blockedTriggerRes = await server.fetch(
+		const blockedTriggerRes = await cronServer.fetch(
 			new Request("http://localhost/api/cron/trigger", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -1967,7 +1585,7 @@ describe("mu-server", () => {
 		);
 		expect(blockedTriggerRes.status).toBe(409);
 
-		const enableRes = await server.fetch(
+		const enableRes = await cronServer.fetch(
 			new Request("http://localhost/api/cron/update", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -1976,7 +1594,7 @@ describe("mu-server", () => {
 		);
 		expect(enableRes.status).toBe(200);
 
-		const triggerRes = await server.fetch(
+		const triggerRes = await cronServer.fetch(
 			new Request("http://localhost/api/cron/trigger", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -1985,7 +1603,7 @@ describe("mu-server", () => {
 		);
 		expect(triggerRes.status).toBe(200);
 
-		const deleteRes = await server.fetch(
+		const deleteRes = await cronServer.fetch(
 			new Request("http://localhost/api/cron/delete", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -1994,7 +1612,7 @@ describe("mu-server", () => {
 		);
 		expect(deleteRes.status).toBe(200);
 
-		const missingRes = await server.fetch(new Request(`http://localhost/api/cron/${programId}`));
+		const missingRes = await cronServer.fetch(new Request(`http://localhost/api/cron/${programId}`));
 		expect(missingRes.status).toBe(404);
 	});
 

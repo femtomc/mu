@@ -18,12 +18,13 @@ roles are all treated as **trusted-as-root** in the repository.
 
 - transport + webhook ingress (`/webhooks/*`)
 - session coordination (`/api/session-flash*`, `/api/session-turn`)
-- run/activity/schedule coordination (`/api/runs*`, `/api/activities*`, `/api/heartbeats*`, `/api/cron*`)
+- run/activity coordination + wake scheduling (`/api/runs*`, `/api/activities*`, `/api/heartbeats*`, `/api/cron*`)
 - config/control-plane lifecycle + discovery (`/api/config`, `/api/control-plane/*`, `/api/identities*`)
 - observability (`/api/events*`, `/api/status`)
 
 Heartbeats/cron remain server-owned runtime scheduling concerns because they
-require a long-lived timer loop and coordination with run/activity supervisors.
+require a long-lived timer loop and now dispatch operator wake turns
+(context injection + broadcast of the resulting operator reply).
 
 It is **not** a privileged business-logic gateway for issue/forum/context stores.
 

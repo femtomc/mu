@@ -139,13 +139,13 @@ Bun.serve(server);
   - `POST /api/runs/start`
   - `POST /api/runs/resume`
   - `POST /api/runs/interrupt`
-  - `POST /api/runs/heartbeat`
   - `GET /api/runs/:id`
   - `GET /api/runs/:id/trace`
 - Scheduling + orchestration:
   - `GET|POST|PATCH|DELETE /api/heartbeats...`
   - `GET|POST|PATCH|DELETE /api/cron...`
   - `GET|POST /api/activities...`
+  - Heartbeat/cron ticks dispatch operator wake turns and broadcast the resulting operator reply.
 - Identity bindings:
   - `GET /api/identities`
   - `POST /api/identities/link`

@@ -20,37 +20,32 @@ async function waitFor<T>(fn: () => T, opts: { timeoutMs?: number; intervalMs?: 
 }
 
 describe("HeartbeatProgramRegistry", () => {
-	test("creates, triggers, and persists heartbeat programs", async () => {
+	test("creates, triggers, and persists wake heartbeat programs", async () => {
 		const store = new InMemoryJsonlStore<HeartbeatProgramSnapshot>([]);
 		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 10 });
-		const activityHeartbeatCalls: Array<{ activityId?: string | null; reason?: string | null }> = [];
+		const wakeCalls: Array<{ programId: string; reason: string }> = [];
 		const registry = new HeartbeatProgramRegistry({
 			repoRoot: "/repo",
 			heartbeatScheduler: scheduler,
 			store,
-			runHeartbeat: async () => ({ ok: false, reason: "not_found" }),
-			activityHeartbeat: async (opts) => {
-				activityHeartbeatCalls.push(opts);
-				return { ok: true, reason: null };
+			dispatchWake: async (opts) => {
+				wakeCalls.push({ programId: opts.programId, reason: opts.reason });
+				return { status: "ok" };
 			},
 		});
 
 		const program = await registry.create({
-			title: "Pulse activity",
-			target: {
-				kind: "activity",
-				activity_id: "activity-1",
-			},
+			title: "Wake pulse",
 			everyMs: 0,
 			reason: "scheduled",
 		});
-		expect(program.title).toBe("Pulse activity");
+		expect(program.title).toBe("Wake pulse");
 
 		const trigger = await registry.trigger({ programId: program.program_id, reason: "manual" });
 		expect(trigger.ok).toBe(true);
-		expect(activityHeartbeatCalls.length).toBe(1);
-		expect(activityHeartbeatCalls[0]?.activityId).toBe("activity-1");
-		expect(activityHeartbeatCalls[0]?.reason).toBe("manual");
+		expect(wakeCalls.length).toBe(1);
+		expect(wakeCalls[0]?.programId).toBe(program.program_id);
+		expect(wakeCalls[0]?.reason).toBe("manual");
 
 		const rows = await store.read();
 		expect(rows.length).toBe(1);
@@ -69,21 +64,14 @@ describe("HeartbeatProgramRegistry", () => {
 			repoRoot: "/repo",
 			heartbeatScheduler: scheduler,
 			store,
-			runHeartbeat: async (opts) => {
+			dispatchWake: async () => {
 				ticks += 1;
-				expect(opts.rootIssueId).toBe("mu-root1234");
-				return { ok: true, reason: null };
+				return { status: "ok" };
 			},
-			activityHeartbeat: async () => ({ ok: false, reason: "not_found" }),
 		});
 
 		await registry.create({
-			title: "Run pulse",
-			target: {
-				kind: "run",
-				job_id: null,
-				root_issue_id: "mu-root1234",
-			},
+			title: "Wake pulse",
 			everyMs: 40,
 			reason: "scheduled",
 		});
@@ -94,45 +82,25 @@ describe("HeartbeatProgramRegistry", () => {
 		scheduler.stop();
 	});
 
-	test("run-target wake mode forwards to run heartbeat and auto-disables on terminal result", async () => {
+	test("coalesced wake dispatch persists coalesced status", async () => {
 		const store = new InMemoryJsonlStore<HeartbeatProgramSnapshot>([]);
 		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 10 });
-		const wakeModes: Array<string | null | undefined> = [];
-		let runCalls = 0;
 		const registry = new HeartbeatProgramRegistry({
 			repoRoot: "/repo",
 			heartbeatScheduler: scheduler,
 			store,
-			runHeartbeat: async (opts) => {
-				runCalls += 1;
-				wakeModes.push(opts.wakeMode);
-				if (runCalls >= 2) {
-					return { ok: false, reason: "not_running" };
-				}
-				return { ok: true, reason: null };
-			},
-			activityHeartbeat: async () => ({ ok: false, reason: "not_found" }),
+			dispatchWake: async () => ({ status: "coalesced", reason: "coalesced" }),
 		});
 
 		const program = await registry.create({
-			title: "Auto disable run heartbeat",
-			target: { kind: "run", job_id: "run-job-1", root_issue_id: "mu-root-auto" },
+			title: "Coalesced pulse",
 			everyMs: 0,
-			reason: "scheduled",
-			wakeMode: "next_heartbeat",
-			metadata: { auto_disable_on_terminal: true },
 		});
 
-		const first = await registry.trigger({ programId: program.program_id, reason: "manual" });
-		expect(first.ok).toBe(true);
-		const second = await registry.trigger({ programId: program.program_id, reason: "manual" });
-		expect(second.ok).toBe(true);
-
+		const result = await registry.trigger({ programId: program.program_id, reason: "manual" });
+		expect(result.ok).toBe(true);
 		const refreshed = await registry.get(program.program_id);
-		expect(refreshed?.enabled).toBe(false);
-		expect(refreshed?.every_ms).toBe(0);
-		expect(refreshed?.last_result).toBe("not_running");
-		expect(wakeModes).toEqual(["next_heartbeat", "next_heartbeat"]);
+		expect(refreshed?.last_result).toBe("coalesced");
 
 		registry.stop();
 		scheduler.stop();
@@ -143,16 +111,10 @@ describe("HeartbeatProgramRegistry", () => {
 			{
 				v: 1,
 				program_id: "hb-preloaded-1",
-				title: "Preloaded run pulse",
+				title: "Preloaded wake pulse",
 				enabled: true,
 				every_ms: 40,
 				reason: "scheduled",
-				wake_mode: "immediate",
-				target: {
-					kind: "run",
-					job_id: null,
-					root_issue_id: "mu-root-preloaded",
-				},
 				metadata: {},
 				created_at_ms: Date.now(),
 				updated_at_ms: Date.now(),
@@ -167,12 +129,10 @@ describe("HeartbeatProgramRegistry", () => {
 			repoRoot: "/repo",
 			heartbeatScheduler: scheduler,
 			store,
-			runHeartbeat: async (opts) => {
+			dispatchWake: async () => {
 				ticks += 1;
-				expect(opts.rootIssueId).toBe("mu-root-preloaded");
-				return { ok: true, reason: null };
+				return { status: "ok" };
 			},
-			activityHeartbeat: async () => ({ ok: false, reason: "not_found" }),
 		});
 
 		const loaded = await registry.list({ limit: 10 });

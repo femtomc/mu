@@ -115,7 +115,7 @@ export const DEFAULT_MU_CONFIG: MuConfig = {
 		operator: {
 			enabled: true,
 			run_triggers_enabled: true,
-			wake_turn_mode: "off",
+			wake_turn_mode: "active",
 			provider: null,
 			model: null,
 		},

@@ -56,21 +56,9 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 		expect(runsPayload.count).toBe(1);
 		expect(runsPayload.runs[0]?.job_id).toBe("run-1");
 
-		const hb = await run(
-			[
-				"heartbeats",
-				"create",
-				"--title",
-				"Run heartbeat",
-				"--target-kind",
-				"run",
-				"--run-root-issue-id",
-				"mu-root-1",
-				"--every-ms",
-				"15000",
-			],
-			{ cwd: dir },
-		);
+		const hb = await run(["heartbeats", "create", "--title", "Run heartbeat", "--every-ms", "15000"], {
+			cwd: dir,
+		});
 		expect(hb.exitCode).toBe(0);
 		const hbPayload = JSON.parse(hb.stdout) as { ok: boolean; program: { program_id: string; title: string } };
 		expect(hbPayload.ok).toBe(true);

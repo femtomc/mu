@@ -28,22 +28,15 @@ describe("CronProgramRegistry", () => {
 			repoRoot: "/repo",
 			heartbeatScheduler: scheduler,
 			store,
-			runHeartbeat: async (opts) => {
+			dispatchWake: async () => {
 				calls += 1;
-				expect(opts.rootIssueId).toBe("mu-root-one-shot");
-				return { ok: true, reason: null };
+				return { status: "ok" };
 			},
-			activityHeartbeat: async () => ({ ok: false, reason: "not_found" }),
 		});
 
 		const atMs = Date.now() + 60;
 		const program = await registry.create({
-			title: "One-shot run wake",
-			target: {
-				kind: "run",
-				job_id: null,
-				root_issue_id: "mu-root-one-shot",
-			},
+			title: "One-shot wake",
 			schedule: {
 				kind: "at",
 				at_ms: atMs,
@@ -60,35 +53,25 @@ describe("CronProgramRegistry", () => {
 		scheduler.stop();
 	});
 
-	test("run-target wake mode forwards to run heartbeat", async () => {
+	test("coalesced manual trigger records coalesced result", async () => {
 		const store = new InMemoryJsonlStore<CronProgramSnapshot>([]);
 		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 1, retryMs: 30 });
-		const wakeModes: Array<string | undefined> = [];
 		const registry = new CronProgramRegistry({
 			repoRoot: "/repo",
 			heartbeatScheduler: scheduler,
 			store,
-			runHeartbeat: async (opts) => {
-				wakeModes.push(opts.wakeMode);
-				return { ok: true, reason: null };
-			},
-			activityHeartbeat: async () => ({ ok: false, reason: "not_found" }),
+			dispatchWake: async () => ({ status: "coalesced", reason: "coalesced" }),
 		});
 
 		const program = await registry.create({
-			title: "Wake mode cron",
-			target: {
-				kind: "run",
-				job_id: "run-job-wake",
-				root_issue_id: "mu-root-wake",
-			},
+			title: "Coalesced wake",
 			schedule: { kind: "at", at_ms: Date.now() + 60_000 },
-			wakeMode: "next_heartbeat",
 		});
 
 		const trigger = await registry.trigger({ programId: program.program_id, reason: "manual" });
 		expect(trigger.ok).toBe(true);
-		expect(wakeModes).toEqual(["next_heartbeat"]);
+		const refreshed = await registry.get(program.program_id);
+		expect(refreshed?.last_result).toBe("coalesced");
 
 		registry.stop();
 		scheduler.stop();
@@ -108,12 +91,6 @@ describe("CronProgramRegistry", () => {
 					anchor_ms: now,
 				},
 				reason: "scheduled",
-				wake_mode: "immediate",
-				target: {
-					kind: "run",
-					job_id: null,
-					root_issue_id: "mu-root-preloaded",
-				},
 				metadata: {},
 				created_at_ms: now,
 				updated_at_ms: now,
@@ -129,12 +106,10 @@ describe("CronProgramRegistry", () => {
 			repoRoot: "/repo",
 			heartbeatScheduler: scheduler,
 			store,
-			runHeartbeat: async (opts) => {
+			dispatchWake: async () => {
 				ticks += 1;
-				expect(opts.rootIssueId).toBe("mu-root-preloaded");
-				return { ok: true, reason: null };
+				return { status: "ok" };
 			},
-			activityHeartbeat: async () => ({ ok: false, reason: "not_found" }),
 		});
 
 		await waitFor(() => (ticks >= 1 ? true : null));

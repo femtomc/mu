@@ -5,19 +5,6 @@ import { type CronProgramSchedule, computeNextScheduleRunAtMs, normalizeCronSche
 import { CronTimerRegistry } from "./cron_timer.js";
 import type { ActivityHeartbeatScheduler, HeartbeatRunResult } from "./heartbeat_scheduler.js";
 
-export type CronProgramTarget =
-	| {
-			kind: "run";
-			job_id: string | null;
-			root_issue_id: string | null;
-	  }
-	| {
-			kind: "activity";
-			activity_id: string;
-	  };
-
-export type CronProgramWakeMode = "immediate" | "next_heartbeat";
-
 export type CronProgramSnapshot = {
 	v: 1;
 	program_id: string;
@@ -25,14 +12,12 @@ export type CronProgramSnapshot = {
 	enabled: boolean;
 	schedule: CronProgramSchedule;
 	reason: string;
-	wake_mode: CronProgramWakeMode;
-	target: CronProgramTarget;
 	metadata: Record<string, unknown>;
 	created_at_ms: number;
 	updated_at_ms: number;
 	next_run_at_ms: number | null;
 	last_triggered_at_ms: number | null;
-	last_result: "ok" | "not_found" | "not_running" | "failed" | null;
+	last_result: "ok" | "coalesced" | "failed" | null;
 	last_error: string | null;
 };
 
@@ -56,14 +41,14 @@ export type CronProgramTickEvent = {
 	ts_ms: number;
 	program_id: string;
 	message: string;
-	status: "ok" | "not_found" | "not_running" | "failed";
+	status: "ok" | "coalesced" | "failed";
 	reason: string | null;
 	program: CronProgramSnapshot;
 };
 
 export type CronProgramOperationResult = {
 	ok: boolean;
-	reason: "not_found" | "missing_target" | "invalid_target" | "invalid_schedule" | "not_running" | "failed" | null;
+	reason: "not_found" | "missing_target" | "invalid_schedule" | "not_running" | "failed" | null;
 	program: CronProgramSnapshot | null;
 };
 
@@ -77,22 +62,25 @@ export type CronProgramStatusSnapshot = {
 	}>;
 };
 
+export type CronProgramDispatchResult =
+	| { status: "ok"; reason?: string | null }
+	| { status: "coalesced"; reason?: string | null }
+	| { status: "failed"; reason: string };
+
 export type CronProgramRegistryOpts = {
 	repoRoot: string;
 	heartbeatScheduler: ActivityHeartbeatScheduler;
 	nowMs?: () => number;
 	timer?: CronTimerRegistry;
 	store?: JsonlStore<CronProgramSnapshot>;
-	runHeartbeat: (opts: {
-		jobId?: string | null;
-		rootIssueId?: string | null;
-		reason?: string | null;
-		wakeMode?: CronProgramWakeMode;
-	}) => Promise<{ ok: boolean; reason: "not_found" | "not_running" | "missing_target" | null }>;
-	activityHeartbeat: (opts: {
-		activityId?: string | null;
-		reason?: string | null;
-	}) => Promise<{ ok: boolean; reason: "not_found" | "not_running" | "missing_target" | null }>;
+	dispatchWake: (opts: {
+		programId: string;
+		title: string;
+		reason: string;
+		metadata: Record<string, unknown>;
+		triggeredAtMs: number;
+		schedule: CronProgramSchedule;
+	}) => Promise<CronProgramDispatchResult>;
 	onTickEvent?: (event: CronProgramTickEvent) => void | Promise<void>;
 	onLifecycleEvent?: (event: CronProgramLifecycleEvent) => void | Promise<void>;
 };
@@ -101,45 +89,6 @@ const CRON_PROGRAMS_FILENAME = "cron.jsonl";
 
 function defaultNowMs(): number {
 	return Date.now();
-}
-
-function normalizeTarget(input: unknown): CronProgramTarget | null {
-	if (!input || typeof input !== "object" || Array.isArray(input)) {
-		return null;
-	}
-	const record = input as Record<string, unknown>;
-	const kind = typeof record.kind === "string" ? record.kind.trim().toLowerCase() : "";
-	if (kind === "run") {
-		const jobId = typeof record.job_id === "string" ? record.job_id.trim() : "";
-		const rootIssueId = typeof record.root_issue_id === "string" ? record.root_issue_id.trim() : "";
-		if (!jobId && !rootIssueId) {
-			return null;
-		}
-		return {
-			kind: "run",
-			job_id: jobId || null,
-			root_issue_id: rootIssueId || null,
-		};
-	}
-	if (kind === "activity") {
-		const activityId = typeof record.activity_id === "string" ? record.activity_id.trim() : "";
-		if (!activityId) {
-			return null;
-		}
-		return {
-			kind: "activity",
-			activity_id: activityId,
-		};
-	}
-	return null;
-}
-
-function normalizeWakeMode(value: unknown): CronProgramWakeMode {
-	if (typeof value !== "string") {
-		return "immediate";
-	}
-	const normalized = value.trim().toLowerCase().replaceAll("-", "_");
-	return normalized === "next_heartbeat" ? "next_heartbeat" : "immediate";
 }
 
 function sanitizeMetadata(value: unknown): Record<string, unknown> {
@@ -156,7 +105,6 @@ function normalizeProgram(row: unknown): CronProgramSnapshot | null {
 	const record = row as Record<string, unknown>;
 	const programId = typeof record.program_id === "string" ? record.program_id.trim() : "";
 	const title = typeof record.title === "string" ? record.title.trim() : "";
-	const target = normalizeTarget(record.target);
 	const createdAt =
 		typeof record.created_at_ms === "number" && Number.isFinite(record.created_at_ms)
 			? Math.trunc(record.created_at_ms)
@@ -165,7 +113,7 @@ function normalizeProgram(row: unknown): CronProgramSnapshot | null {
 		nowMs: createdAt,
 		defaultEveryAnchorMs: createdAt,
 	});
-	if (!programId || !title || !target || !schedule) {
+	if (!programId || !title || !schedule) {
 		return null;
 	}
 	const updatedAt =
@@ -181,16 +129,9 @@ function normalizeProgram(row: unknown): CronProgramSnapshot | null {
 			? Math.trunc(record.last_triggered_at_ms)
 			: null;
 	const lastResultRaw = typeof record.last_result === "string" ? record.last_result.trim().toLowerCase() : null;
-	const lastResult =
-		lastResultRaw === "ok" ||
-		lastResultRaw === "not_found" ||
-		lastResultRaw === "not_running" ||
-		lastResultRaw === "failed"
-			? lastResultRaw
-			: null;
+	const lastResult = lastResultRaw === "ok" || lastResultRaw === "coalesced" || lastResultRaw === "failed" ? lastResultRaw : null;
 	const reason =
 		typeof record.reason === "string" && record.reason.trim().length > 0 ? record.reason.trim() : "scheduled";
-	const wakeMode = normalizeWakeMode(record.wake_mode);
 	return {
 		v: 1,
 		program_id: programId,
@@ -198,8 +139,6 @@ function normalizeProgram(row: unknown): CronProgramSnapshot | null {
 		enabled: record.enabled !== false,
 		schedule,
 		reason,
-		wake_mode: wakeMode,
-		target,
 		metadata: sanitizeMetadata(record.metadata),
 		created_at_ms: createdAt,
 		updated_at_ms: updatedAt,
@@ -220,18 +159,14 @@ function sortPrograms(programs: CronProgramSnapshot[]): CronProgramSnapshot[] {
 }
 
 function shouldRetry(result: HeartbeatRunResult): boolean {
-	if (result.status === "failed") {
-		return true;
-	}
-	return result.status === "skipped" && result.reason === "requests-in-flight";
+	return result.status === "failed";
 }
 
 export class CronProgramRegistry {
 	readonly #store: JsonlStore<CronProgramSnapshot>;
 	readonly #heartbeatScheduler: ActivityHeartbeatScheduler;
 	readonly #timer: CronTimerRegistry;
-	readonly #runHeartbeat: CronProgramRegistryOpts["runHeartbeat"];
-	readonly #activityHeartbeat: CronProgramRegistryOpts["activityHeartbeat"];
+	readonly #dispatchWake: CronProgramRegistryOpts["dispatchWake"];
 	readonly #onTickEvent: CronProgramRegistryOpts["onTickEvent"];
 	readonly #onLifecycleEvent: CronProgramRegistryOpts["onLifecycleEvent"];
 	readonly #nowMs: () => number;
@@ -240,8 +175,7 @@ export class CronProgramRegistry {
 
 	public constructor(opts: CronProgramRegistryOpts) {
 		this.#heartbeatScheduler = opts.heartbeatScheduler;
-		this.#runHeartbeat = opts.runHeartbeat;
-		this.#activityHeartbeat = opts.activityHeartbeat;
+		this.#dispatchWake = opts.dispatchWake;
 		this.#onTickEvent = opts.onTickEvent;
 		this.#onLifecycleEvent = opts.onLifecycleEvent;
 		this.#nowMs = opts.nowMs ?? defaultNowMs;
@@ -261,7 +195,6 @@ export class CronProgramRegistry {
 		return {
 			...program,
 			schedule: { ...program.schedule },
-			target: program.target.kind === "run" ? { ...program.target } : { ...program.target },
 			metadata: { ...program.metadata },
 		};
 	}
@@ -381,50 +314,39 @@ export class CronProgramRegistry {
 		program.last_triggered_at_ms = nowMs;
 		program.updated_at_ms = nowMs;
 
-		let heartbeatResult: HeartbeatRunResult;
+		let dispatchResult: HeartbeatRunResult;
 		let eventStatus: CronProgramTickEvent["status"] = "ok";
 		let eventReason: string | null = triggerReason;
-		let eventMessage = `cron program tick: ${program.title}`;
+		let eventMessage = `cron program dispatched wake: ${program.title}`;
 
 		try {
-			const executionResult =
-				program.target.kind === "run"
-					? await this.#runHeartbeat({
-							jobId: program.target.job_id,
-							rootIssueId: program.target.root_issue_id,
-							reason: triggerReason,
-							wakeMode: program.wake_mode,
-						})
-					: await this.#activityHeartbeat({
-							activityId: program.target.activity_id,
-							reason: triggerReason,
-						});
+			const executionResult = await this.#dispatchWake({
+				programId: program.program_id,
+				title: program.title,
+				reason: triggerReason,
+				metadata: { ...program.metadata },
+				triggeredAtMs: nowMs,
+				schedule: { ...program.schedule },
+			});
 
-			if (executionResult.ok) {
+			if (executionResult.status === "ok") {
 				program.last_result = "ok";
 				program.last_error = null;
-				heartbeatResult = { status: "ran" };
-			} else if (executionResult.reason === "not_running") {
-				program.last_result = "not_running";
+				dispatchResult = { status: "ran" };
+			} else if (executionResult.status === "coalesced") {
+				program.last_result = "coalesced";
 				program.last_error = null;
-				eventStatus = "not_running";
-				eventReason = executionResult.reason;
-				eventMessage = `cron program skipped (not running): ${program.title}`;
-				heartbeatResult = { status: "skipped", reason: "not_running" };
-			} else if (executionResult.reason === "not_found") {
-				program.last_result = "not_found";
-				program.last_error = null;
-				eventStatus = "not_found";
-				eventReason = executionResult.reason;
-				eventMessage = `cron program skipped (not found): ${program.title}`;
-				heartbeatResult = { status: "skipped", reason: "not_found" };
+				eventStatus = "coalesced";
+				eventReason = executionResult.reason ?? "coalesced";
+				eventMessage = `cron program coalesced wake: ${program.title}`;
+				dispatchResult = { status: "skipped", reason: "coalesced" };
 			} else {
 				program.last_result = "failed";
-				program.last_error = executionResult.reason ?? "cron_program_tick_failed";
+				program.last_error = executionResult.reason;
 				eventStatus = "failed";
-				eventReason = program.last_error;
+				eventReason = executionResult.reason;
 				eventMessage = `cron program failed: ${program.title}`;
-				heartbeatResult = { status: "failed", reason: program.last_error };
+				dispatchResult = { status: "failed", reason: executionResult.reason };
 			}
 		} catch (err) {
 			program.last_result = "failed";
@@ -432,10 +354,10 @@ export class CronProgramRegistry {
 			eventStatus = "failed";
 			eventReason = program.last_error;
 			eventMessage = `cron program failed: ${program.title}`;
-			heartbeatResult = { status: "failed", reason: program.last_error };
+			dispatchResult = { status: "failed", reason: program.last_error };
 		}
 
-		if (opts.advanceSchedule && !shouldRetry(heartbeatResult)) {
+		if (opts.advanceSchedule && !shouldRetry(dispatchResult)) {
 			if (program.schedule.kind === "at") {
 				program.enabled = false;
 				program.next_run_at_ms = null;
@@ -467,13 +389,12 @@ export class CronProgramRegistry {
 			// best effort only
 		});
 
-		return heartbeatResult;
+		return dispatchResult;
 	}
 
 	public async list(
 		opts: {
 			enabled?: boolean;
-			targetKind?: "run" | "activity";
 			scheduleKind?: "at" | "every" | "cron";
 			limit?: number;
 		} = {},
@@ -483,9 +404,6 @@ export class CronProgramRegistry {
 		return sortPrograms([...this.#programs.values()])
 			.filter((program) => {
 				if (typeof opts.enabled === "boolean" && program.enabled !== opts.enabled) {
-					return false;
-				}
-				if (opts.targetKind && program.target.kind !== opts.targetKind) {
 					return false;
 				}
 				if (opts.scheduleKind && program.schedule.kind !== opts.scheduleKind) {
@@ -517,10 +435,8 @@ export class CronProgramRegistry {
 
 	public async create(opts: {
 		title: string;
-		target: CronProgramTarget;
 		schedule: unknown;
 		reason?: string;
-		wakeMode?: CronProgramWakeMode;
 		enabled?: boolean;
 		metadata?: Record<string, unknown>;
 	}): Promise<CronProgramSnapshot> {
@@ -528,10 +444,6 @@ export class CronProgramRegistry {
 		const title = opts.title.trim();
 		if (!title) {
 			throw new Error("cron_program_title_required");
-		}
-		const target = normalizeTarget(opts.target);
-		if (!target) {
-			throw new Error("cron_program_invalid_target");
 		}
 		const nowMs = Math.trunc(this.#nowMs());
 		const schedule = normalizeCronSchedule(opts.schedule, {
@@ -548,8 +460,6 @@ export class CronProgramRegistry {
 			enabled: opts.enabled !== false,
 			schedule,
 			reason: opts.reason?.trim() || "scheduled",
-			wake_mode: normalizeWakeMode(opts.wakeMode),
-			target,
 			metadata: sanitizeMetadata(opts.metadata),
 			created_at_ms: nowMs,
 			updated_at_ms: nowMs,
@@ -577,9 +487,7 @@ export class CronProgramRegistry {
 		programId: string;
 		title?: string;
 		reason?: string;
-		wakeMode?: CronProgramWakeMode;
 		enabled?: boolean;
-		target?: CronProgramTarget;
 		schedule?: unknown;
 		metadata?: Record<string, unknown>;
 	}): Promise<CronProgramOperationResult> {
@@ -599,24 +507,14 @@ export class CronProgramRegistry {
 		if (typeof opts.reason === "string") {
 			program.reason = opts.reason.trim() || "scheduled";
 		}
-		if (typeof opts.wakeMode === "string") {
-			program.wake_mode = normalizeWakeMode(opts.wakeMode);
-		}
 		if (typeof opts.enabled === "boolean") {
 			program.enabled = opts.enabled;
 		}
-		if (opts.target) {
-			const target = normalizeTarget(opts.target);
-			if (!target) {
-				return { ok: false, reason: "invalid_target", program: this.#snapshot(program) };
-			}
-			program.target = target;
-		}
 		if (opts.schedule) {
+			const nowMs = Math.trunc(this.#nowMs());
 			const normalizedSchedule = normalizeCronSchedule(opts.schedule, {
-				nowMs: Math.trunc(this.#nowMs()),
-				defaultEveryAnchorMs:
-					program.schedule.kind === "every" ? program.schedule.anchor_ms : Math.trunc(this.#nowMs()),
+				nowMs,
+				defaultEveryAnchorMs: program.schedule.kind === "every" ? program.schedule.anchor_ms : nowMs,
 			});
 			if (!normalizedSchedule) {
 				return { ok: false, reason: "invalid_schedule", program: this.#snapshot(program) };

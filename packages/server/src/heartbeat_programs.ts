@@ -3,19 +3,6 @@ import type { JsonlStore } from "@femtomc/mu-core";
 import { FsJsonlStore } from "@femtomc/mu-core/node";
 import type { ActivityHeartbeatScheduler, HeartbeatRunResult } from "./heartbeat_scheduler.js";
 
-export type HeartbeatProgramTarget =
-	| {
-			kind: "run";
-			job_id: string | null;
-			root_issue_id: string | null;
-	  }
-	| {
-			kind: "activity";
-			activity_id: string;
-	  };
-
-export type HeartbeatProgramWakeMode = "immediate" | "next_heartbeat";
-
 export type HeartbeatProgramSnapshot = {
 	v: 1;
 	program_id: string;
@@ -23,19 +10,17 @@ export type HeartbeatProgramSnapshot = {
 	enabled: boolean;
 	every_ms: number;
 	reason: string;
-	wake_mode: HeartbeatProgramWakeMode;
-	target: HeartbeatProgramTarget;
 	metadata: Record<string, unknown>;
 	created_at_ms: number;
 	updated_at_ms: number;
 	last_triggered_at_ms: number | null;
-	last_result: "ok" | "not_found" | "not_running" | "failed" | null;
+	last_result: "ok" | "coalesced" | "failed" | null;
 	last_error: string | null;
 };
 
 export type HeartbeatProgramOperationResult = {
 	ok: boolean;
-	reason: "not_found" | "missing_target" | "invalid_target" | "not_running" | "failed" | null;
+	reason: "not_found" | "missing_target" | "not_running" | "failed" | null;
 	program: HeartbeatProgramSnapshot | null;
 };
 
@@ -43,26 +28,28 @@ export type HeartbeatProgramTickEvent = {
 	ts_ms: number;
 	program_id: string;
 	message: string;
-	status: "ok" | "not_found" | "not_running" | "failed";
+	status: "ok" | "coalesced" | "failed";
 	reason: string | null;
 	program: HeartbeatProgramSnapshot;
 };
+
+export type HeartbeatProgramDispatchResult =
+	| { status: "ok"; reason?: string | null }
+	| { status: "coalesced"; reason?: string | null }
+	| { status: "failed"; reason: string };
 
 export type HeartbeatProgramRegistryOpts = {
 	repoRoot: string;
 	heartbeatScheduler: ActivityHeartbeatScheduler;
 	nowMs?: () => number;
 	store?: JsonlStore<HeartbeatProgramSnapshot>;
-	runHeartbeat: (opts: {
-		jobId?: string | null;
-		rootIssueId?: string | null;
-		reason?: string | null;
-		wakeMode?: HeartbeatProgramWakeMode;
-	}) => Promise<{ ok: boolean; reason: "not_found" | "not_running" | "missing_target" | null }>;
-	activityHeartbeat: (opts: {
-		activityId?: string | null;
-		reason?: string | null;
-	}) => Promise<{ ok: boolean; reason: "not_found" | "not_running" | "missing_target" | null }>;
+	dispatchWake: (opts: {
+		programId: string;
+		title: string;
+		reason: string;
+		metadata: Record<string, unknown>;
+		triggeredAtMs: number;
+	}) => Promise<HeartbeatProgramDispatchResult>;
 	onTickEvent?: (event: HeartbeatProgramTickEvent) => void | Promise<void>;
 };
 
@@ -70,45 +57,6 @@ const HEARTBEAT_PROGRAMS_FILENAME = "heartbeats.jsonl";
 
 function defaultNowMs(): number {
 	return Date.now();
-}
-
-function normalizeTarget(input: unknown): HeartbeatProgramTarget | null {
-	if (!input || typeof input !== "object" || Array.isArray(input)) {
-		return null;
-	}
-	const record = input as Record<string, unknown>;
-	const kind = typeof record.kind === "string" ? record.kind.trim().toLowerCase() : "";
-	if (kind === "run") {
-		const jobId = typeof record.job_id === "string" ? record.job_id.trim() : "";
-		const rootIssueId = typeof record.root_issue_id === "string" ? record.root_issue_id.trim() : "";
-		if (!jobId && !rootIssueId) {
-			return null;
-		}
-		return {
-			kind: "run",
-			job_id: jobId || null,
-			root_issue_id: rootIssueId || null,
-		};
-	}
-	if (kind === "activity") {
-		const activityId = typeof record.activity_id === "string" ? record.activity_id.trim() : "";
-		if (!activityId) {
-			return null;
-		}
-		return {
-			kind: "activity",
-			activity_id: activityId,
-		};
-	}
-	return null;
-}
-
-function normalizeWakeMode(value: unknown): HeartbeatProgramWakeMode {
-	if (typeof value !== "string") {
-		return "immediate";
-	}
-	const normalized = value.trim().toLowerCase().replaceAll("-", "_");
-	return normalized === "next_heartbeat" ? "next_heartbeat" : "immediate";
 }
 
 function sanitizeMetadata(value: unknown): Record<string, unknown> {
@@ -125,8 +73,7 @@ function normalizeProgram(row: unknown): HeartbeatProgramSnapshot | null {
 	const record = row as Record<string, unknown>;
 	const programId = typeof record.program_id === "string" ? record.program_id.trim() : "";
 	const title = typeof record.title === "string" ? record.title.trim() : "";
-	const target = normalizeTarget(record.target);
-	if (!programId || !title || !target) {
+	if (!programId || !title) {
 		return null;
 	}
 	const everyMsRaw = record.every_ms;
@@ -145,16 +92,9 @@ function normalizeProgram(row: unknown): HeartbeatProgramSnapshot | null {
 			? Math.trunc(record.last_triggered_at_ms)
 			: null;
 	const lastResultRaw = typeof record.last_result === "string" ? record.last_result.trim().toLowerCase() : null;
-	const lastResult =
-		lastResultRaw === "ok" ||
-		lastResultRaw === "not_found" ||
-		lastResultRaw === "not_running" ||
-		lastResultRaw === "failed"
-			? lastResultRaw
-			: null;
+	const lastResult = lastResultRaw === "ok" || lastResultRaw === "coalesced" || lastResultRaw === "failed" ? lastResultRaw : null;
 	const reason =
 		typeof record.reason === "string" && record.reason.trim().length > 0 ? record.reason.trim() : "scheduled";
-	const wakeMode = normalizeWakeMode(record.wake_mode);
 	return {
 		v: 1,
 		program_id: programId,
@@ -162,8 +102,6 @@ function normalizeProgram(row: unknown): HeartbeatProgramSnapshot | null {
 		enabled: record.enabled !== false,
 		every_ms: everyMs,
 		reason,
-		wake_mode: wakeMode,
-		target,
 		metadata: sanitizeMetadata(record.metadata),
 		created_at_ms: createdAt,
 		updated_at_ms: updatedAt,
@@ -185,8 +123,7 @@ function sortPrograms(programs: HeartbeatProgramSnapshot[]): HeartbeatProgramSna
 export class HeartbeatProgramRegistry {
 	readonly #store: JsonlStore<HeartbeatProgramSnapshot>;
 	readonly #heartbeatScheduler: ActivityHeartbeatScheduler;
-	readonly #runHeartbeat: HeartbeatProgramRegistryOpts["runHeartbeat"];
-	readonly #activityHeartbeat: HeartbeatProgramRegistryOpts["activityHeartbeat"];
+	readonly #dispatchWake: HeartbeatProgramRegistryOpts["dispatchWake"];
 	readonly #onTickEvent: HeartbeatProgramRegistryOpts["onTickEvent"];
 	readonly #nowMs: () => number;
 	readonly #programs = new Map<string, HeartbeatProgramSnapshot>();
@@ -194,8 +131,7 @@ export class HeartbeatProgramRegistry {
 
 	public constructor(opts: HeartbeatProgramRegistryOpts) {
 		this.#heartbeatScheduler = opts.heartbeatScheduler;
-		this.#runHeartbeat = opts.runHeartbeat;
-		this.#activityHeartbeat = opts.activityHeartbeat;
+		this.#dispatchWake = opts.dispatchWake;
 		this.#onTickEvent = opts.onTickEvent;
 		this.#nowMs = opts.nowMs ?? defaultNowMs;
 		this.#store =
@@ -210,7 +146,6 @@ export class HeartbeatProgramRegistry {
 	#snapshot(program: HeartbeatProgramSnapshot): HeartbeatProgramSnapshot {
 		return {
 			...program,
-			target: program.target.kind === "run" ? { ...program.target } : { ...program.target },
 			metadata: { ...program.metadata },
 		};
 	}
@@ -277,50 +212,38 @@ export class HeartbeatProgramRegistry {
 		program.last_triggered_at_ms = nowMs;
 		program.updated_at_ms = nowMs;
 
-		let heartbeatResult: HeartbeatRunResult;
+		let tickResult: HeartbeatRunResult;
 		let eventStatus: HeartbeatProgramTickEvent["status"] = "ok";
 		let eventReason: string | null = heartbeatReason;
-		let eventMessage = `heartbeat program tick: ${program.title}`;
+		let eventMessage = `heartbeat program dispatched wake: ${program.title}`;
 
 		try {
-			const result =
-				program.target.kind === "run"
-					? await this.#runHeartbeat({
-							jobId: program.target.job_id,
-							rootIssueId: program.target.root_issue_id,
-							reason: heartbeatReason,
-							wakeMode: program.wake_mode,
-						})
-					: await this.#activityHeartbeat({
-							activityId: program.target.activity_id,
-							reason: heartbeatReason,
-						});
+			const result = await this.#dispatchWake({
+				programId: program.program_id,
+				title: program.title,
+				reason: heartbeatReason,
+				metadata: { ...program.metadata },
+				triggeredAtMs: nowMs,
+			});
 
-			if (result.ok) {
+			if (result.status === "ok") {
 				program.last_result = "ok";
 				program.last_error = null;
-				heartbeatResult = { status: "ran" };
-			} else if (result.reason === "not_running") {
-				program.last_result = "not_running";
+				tickResult = { status: "ran" };
+			} else if (result.status === "coalesced") {
+				program.last_result = "coalesced";
 				program.last_error = null;
-				eventStatus = "not_running";
-				eventReason = result.reason;
-				eventMessage = `heartbeat program skipped (not running): ${program.title}`;
-				heartbeatResult = { status: "skipped", reason: "not_running" };
-			} else if (result.reason === "not_found") {
-				program.last_result = "not_found";
-				program.last_error = null;
-				eventStatus = "not_found";
-				eventReason = result.reason;
-				eventMessage = `heartbeat program skipped (not found): ${program.title}`;
-				heartbeatResult = { status: "skipped", reason: "not_found" };
+				eventStatus = "coalesced";
+				eventReason = result.reason ?? "coalesced";
+				eventMessage = `heartbeat program coalesced wake: ${program.title}`;
+				tickResult = { status: "skipped", reason: "coalesced" };
 			} else {
 				program.last_result = "failed";
-				program.last_error = result.reason ?? "heartbeat_program_tick_failed";
+				program.last_error = result.reason;
 				eventStatus = "failed";
-				eventReason = program.last_error;
+				eventReason = result.reason;
 				eventMessage = `heartbeat program failed: ${program.title}`;
-				heartbeatResult = { status: "failed", reason: program.last_error };
+				tickResult = { status: "failed", reason: result.reason };
 			}
 		} catch (err) {
 			program.last_result = "failed";
@@ -328,26 +251,7 @@ export class HeartbeatProgramRegistry {
 			eventStatus = "failed";
 			eventReason = program.last_error;
 			eventMessage = `heartbeat program failed: ${program.title}`;
-			heartbeatResult = { status: "failed", reason: program.last_error };
-		}
-
-		const shouldAutoDisableOnTerminal =
-			program.target.kind === "run" &&
-			program.metadata.auto_disable_on_terminal === true &&
-			heartbeatResult.status === "skipped" &&
-			(heartbeatResult.reason === "not_running" || heartbeatResult.reason === "not_found");
-
-		if (shouldAutoDisableOnTerminal) {
-			program.enabled = false;
-			program.every_ms = 0;
-			program.updated_at_ms = Math.trunc(this.#nowMs());
-			program.metadata = {
-				...program.metadata,
-				auto_disabled_at_ms: Math.trunc(this.#nowMs()),
-				auto_disabled_reason: heartbeatResult.status === "skipped" ? (heartbeatResult.reason ?? null) : null,
-			};
-			this.#heartbeatScheduler.unregister(this.#scheduleId(program.program_id));
-			eventMessage = `${eventMessage} (auto-disabled)`;
+			tickResult = { status: "failed", reason: program.last_error };
 		}
 
 		await this.#persist();
@@ -362,20 +266,15 @@ export class HeartbeatProgramRegistry {
 			// best effort only
 		});
 
-		return heartbeatResult;
+		return tickResult;
 	}
 
-	public async list(
-		opts: { enabled?: boolean; targetKind?: "run" | "activity"; limit?: number } = {},
-	): Promise<HeartbeatProgramSnapshot[]> {
+	public async list(opts: { enabled?: boolean; limit?: number } = {}): Promise<HeartbeatProgramSnapshot[]> {
 		await this.#ensureLoaded();
 		const limit = Math.max(1, Math.min(500, Math.trunc(opts.limit ?? 100)));
 		return sortPrograms([...this.#programs.values()])
 			.filter((program) => {
 				if (typeof opts.enabled === "boolean" && program.enabled !== opts.enabled) {
-					return false;
-				}
-				if (opts.targetKind && program.target.kind !== opts.targetKind) {
 					return false;
 				}
 				return true;
@@ -392,10 +291,8 @@ export class HeartbeatProgramRegistry {
 
 	public async create(opts: {
 		title: string;
-		target: HeartbeatProgramTarget;
 		everyMs?: number;
 		reason?: string;
-		wakeMode?: HeartbeatProgramWakeMode;
 		enabled?: boolean;
 		metadata?: Record<string, unknown>;
 	}): Promise<HeartbeatProgramSnapshot> {
@@ -403,10 +300,6 @@ export class HeartbeatProgramRegistry {
 		const title = opts.title.trim();
 		if (!title) {
 			throw new Error("heartbeat_program_title_required");
-		}
-		const target = normalizeTarget(opts.target);
-		if (!target) {
-			throw new Error("heartbeat_program_invalid_target");
 		}
 		const nowMs = Math.trunc(this.#nowMs());
 		const program: HeartbeatProgramSnapshot = {
@@ -419,8 +312,6 @@ export class HeartbeatProgramRegistry {
 					? Math.max(0, Math.trunc(opts.everyMs))
 					: 15_000,
 			reason: opts.reason?.trim() || "scheduled",
-			wake_mode: normalizeWakeMode(opts.wakeMode),
-			target,
 			metadata: sanitizeMetadata(opts.metadata),
 			created_at_ms: nowMs,
 			updated_at_ms: nowMs,
@@ -439,9 +330,7 @@ export class HeartbeatProgramRegistry {
 		title?: string;
 		everyMs?: number;
 		reason?: string;
-		wakeMode?: HeartbeatProgramWakeMode;
 		enabled?: boolean;
-		target?: HeartbeatProgramTarget;
 		metadata?: Record<string, unknown>;
 	}): Promise<HeartbeatProgramOperationResult> {
 		await this.#ensureLoaded();
@@ -462,18 +351,8 @@ export class HeartbeatProgramRegistry {
 		if (typeof opts.reason === "string") {
 			program.reason = opts.reason.trim() || "scheduled";
 		}
-		if (typeof opts.wakeMode === "string") {
-			program.wake_mode = normalizeWakeMode(opts.wakeMode);
-		}
 		if (typeof opts.enabled === "boolean") {
 			program.enabled = opts.enabled;
-		}
-		if (opts.target) {
-			const target = normalizeTarget(opts.target);
-			if (!target) {
-				return { ok: false, reason: "invalid_target", program: this.#snapshot(program) };
-			}
-			program.target = target;
 		}
 		if (opts.metadata) {
 			program.metadata = sanitizeMetadata(opts.metadata);
