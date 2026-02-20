@@ -32,37 +32,43 @@ async function resolveIssueId(
 	return await resolveIssueIdCore(store, rawId, { formatRecovery });
 }
 
-export async function run(
-	argv: string[],
-	opts: {
-		cwd?: string;
-		io?: CliIO;
-		backend?: CliCtx["backend"];
-		operatorSessionFactory?: CliCtx["operatorSessionFactory"];
-		serveDeps?: Partial<ServeDeps>;
-	} = {},
-): Promise<RunResult> {
+type RunOptions = {
+	cwd?: string;
+	io?: CliIO;
+	backend?: CliCtx["backend"];
+	operatorSessionFactory?: CliCtx["operatorSessionFactory"];
+	serveDeps?: Partial<ServeDeps>;
+};
+
+async function createCliCtx(cwd: string, opts: RunOptions): Promise<CliCtx> {
+	const ctx0 = await ensureCtx(cwd);
+	return {
+		...ctx0,
+		io: opts.io,
+		backend: opts.backend,
+		operatorSessionFactory: opts.operatorSessionFactory,
+		serveDeps: opts.serveDeps,
+	};
+}
+
+function buildCommandHandlers() {
+	return createCommandHandlers({
+		resolveIssueId,
+		requestServerJson,
+		runServeLifecycle,
+		buildServeDeps,
+	});
+}
+
+export async function run(argv: string[], opts: RunOptions = {}): Promise<RunResult> {
 	const cwd = opts.cwd ?? process.cwd();
 
 	if (argv[0] === "--help" || argv[0] === "-h") {
 		return ok(`${mainHelp()}\n`);
 	}
 	if (argv.length === 0) {
-		const ctx0 = await ensureCtx(cwd);
-		const ctx: CliCtx = {
-			...ctx0,
-			io: opts.io,
-			backend: opts.backend,
-			operatorSessionFactory: opts.operatorSessionFactory,
-			serveDeps: opts.serveDeps,
-		};
-		const commandHandlers = createCommandHandlers({
-			resolveIssueId,
-			requestServerJson,
-			runServeLifecycle,
-			buildServeDeps,
-		});
-		return await commandHandlers.cmdServe([], ctx);
+		const ctx = await createCliCtx(cwd, opts);
+		return await buildCommandHandlers().cmdServe([], ctx);
 	}
 	if (argv.includes("--version")) {
 		const pkgPath = join(dirname(new URL(import.meta.url).pathname), "..", "package.json");
@@ -72,25 +78,11 @@ export async function run(
 
 	const cmd = argv[0]!;
 	const rest = argv.slice(1);
-	const ctx0 = await ensureCtx(cwd);
-	const ctx: CliCtx = {
-		...ctx0,
-		io: opts.io,
-		backend: opts.backend,
-		operatorSessionFactory: opts.operatorSessionFactory,
-		serveDeps: opts.serveDeps,
-	};
-
-	const commandHandlers = createCommandHandlers({
-		resolveIssueId,
-		requestServerJson,
-		runServeLifecycle,
-		buildServeDeps,
-	});
+	const ctx = await createCliCtx(cwd, opts);
 
 	return await routeCommand(cmd, rest, ctx, {
 		jsonError,
-		...commandHandlers,
+		...buildCommandHandlers(),
 	});
 }
 
