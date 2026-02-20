@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-server",
-  "version": "26.2.76",
+  "version": "26.2.77",
   "description": "HTTP API server for mu control-plane transport/session plus run/activity scheduling coordination.",
   "keywords": [
     "mu",
