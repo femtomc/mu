@@ -56,6 +56,7 @@ describe("mu-server", () => {
 	});
 
 	afterEach(async () => {
+		await server?.controlPlane?.stop?.().catch(() => {});
 		// Clean up temp directory
 		await rm(tempDir, { recursive: true, force: true });
 	});
@@ -151,6 +152,7 @@ describe("mu-server", () => {
 						slack: { signing_secret: string | null };
 					};
 					operator: { enabled: boolean; run_triggers_enabled: boolean };
+					memory_index: { enabled: boolean; every_ms: number };
 				};
 			};
 			presence: {
@@ -158,6 +160,7 @@ describe("mu-server", () => {
 					adapters: {
 						slack: { signing_secret: boolean };
 					};
+					memory_index: { enabled: boolean; every_ms: number };
 				};
 			};
 		};
@@ -165,7 +168,10 @@ describe("mu-server", () => {
 		expect(payload.config.control_plane.adapters.slack.signing_secret).toBeNull();
 		expect(payload.config.control_plane.operator.enabled).toBe(true);
 		expect(payload.config.control_plane.operator.run_triggers_enabled).toBe(true);
+		expect(payload.config.control_plane.memory_index.enabled).toBe(true);
+		expect(payload.config.control_plane.memory_index.every_ms).toBe(300_000);
 		expect(payload.presence.control_plane.adapters.slack.signing_secret).toBe(false);
+		expect(payload.presence.control_plane.memory_index.enabled).toBe(true);
 	});
 
 	test("config endpoint applies patch and persists to workspace config.json", async () => {
@@ -199,12 +205,14 @@ describe("mu-server", () => {
 						slack: { signing_secret: boolean };
 					};
 					operator: { enabled: boolean };
+					memory_index: { enabled: boolean };
 				};
 			};
 		};
 		expect(payload.ok).toBe(true);
 		expect(payload.presence.control_plane.adapters.slack.signing_secret).toBe(true);
 		expect(payload.presence.control_plane.operator.enabled).toBe(false);
+		expect(payload.presence.control_plane.memory_index.enabled).toBe(true);
 
 		const disk = JSON.parse(await readFile(payload.config_path, "utf8")) as {
 			control_plane: {

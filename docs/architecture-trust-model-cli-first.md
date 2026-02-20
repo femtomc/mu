@@ -19,6 +19,7 @@ roles are all treated as **trusted-as-root** in the repository.
 - transport + webhook ingress (`/webhooks/*`)
 - session coordination (`/api/control-plane/turn`)
 - run coordination + wake scheduling (`/api/control-plane/runs*`, `/api/heartbeats*`, `/api/cron*`)
+- memory-index background maintenance (scheduler-owned, configured via `control_plane.memory_index`)
 - config/control-plane lifecycle + discovery (`/api/control-plane/config`, `/api/control-plane/*`, `/api/control-plane/identities*`)
 - observability (`/api/control-plane/events*`, `/api/control-plane/status`)
 
@@ -49,8 +50,8 @@ Read/query workflows are direct CLI commands:
 - `mu runs list|get|trace`
 - `mu heartbeats list|get`
 - `mu cron stats|list|get`
-- `mu context search|timeline|stats`
-- `mu context index status|rebuild`
+- `mu memory search|timeline|stats`
+- `mu memory index status|rebuild`
 - `mu control status|identities`
 
 Mutations are also direct CLI commands:
@@ -74,7 +75,7 @@ Agent/operator default workflow is now: **generic tools + `bash("mu ...")`**.
 | `packages/agent/src/extensions/mu-tools.ts` | `packages/agent/src/extensions/index.ts` now uses empty worker/orchestrator extension tool lists |
 | `packages/server/src/api/issues.ts` | Server route scope reduced to control-plane/session/transport routes |
 | `packages/server/src/api/forum.ts` | Server no longer fronts forum business APIs |
-| `packages/server/src/api/context.ts` | Context retrieval moved to CLI-first `mu context ...` surface |
+| `packages/server/src/api/context.ts` | Context retrieval moved to CLI-first `mu memory ...` surface |
 | Legacy query/command gateway route handling in `packages/server/src/server_routing.ts` | Explicit control-plane-only routing + 404 coverage for removed routes |
 
 Additional architecture-coverage additions:

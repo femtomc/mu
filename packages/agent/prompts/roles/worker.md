@@ -19,9 +19,9 @@ Workflow:
 1. Inspect:
    - `bash("mu issues get <id> --pretty")`
    - `bash("mu forum read issue:<id> --limit 20 --pretty")`
-   - `bash("mu context search --query <keywords> --issue-id <id> --limit 20 --pretty")`
-   - `bash("mu context timeline --issue-id <id> --order desc --limit 40 --pretty")`
-   - `bash("mu context index status --pretty")` (rebuild when missing/stale if context retrieval quality is poor)
+   - `bash("mu memory search --query <keywords> --issue-id <id> --limit 20 --pretty")`
+   - `bash("mu memory timeline --issue-id <id> --order desc --limit 40 --pretty")`
+   - `bash("mu memory index status --pretty")` (rebuild when missing/stale if context retrieval quality is poor)
 2. Implement:
    - Edit files and run commands needed for this issue only.
 3. Verify:

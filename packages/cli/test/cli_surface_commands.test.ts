@@ -79,7 +79,7 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 	}
 });
 
-test("control-plane/context read interfaces default to compact output with opt-in --json", async () => {
+test("control-plane/memory read interfaces default to compact output with opt-in --json", async () => {
 	const dir = await mkTempRepo();
 	const storeDir = getStorePaths(dir).storeDir;
 
@@ -182,11 +182,11 @@ test("control-plane/context read interfaces default to compact output with opt-i
 		expect(cronListCompact.exitCode).toBe(0);
 		expect(cronListCompact.stdout).toContain("Cron programs:");
 
-		const contextCompact = await run(["context", "search", "--query", "reload", "--limit", "10"], { cwd: dir });
+		const contextCompact = await run(["memory", "search", "--query", "reload", "--limit", "10"], { cwd: dir });
 		expect(contextCompact.exitCode).toBe(0);
 		expect(contextCompact.stdout).toContain("search:");
 
-		const contextJson = await run(["context", "search", "--query", "reload", "--limit", "10", "--json"], {
+		const contextJson = await run(["memory", "search", "--query", "reload", "--limit", "10", "--json"], {
 			cwd: dir,
 		});
 		expect(contextJson.exitCode).toBe(0);
@@ -197,7 +197,45 @@ test("control-plane/context read interfaces default to compact output with opt-i
 	}
 });
 
-test("context index rebuild/status enables index-first query fallback when source files disappear", async () => {
+test("memory queries auto-heal missing index on demand", async () => {
+	const dir = await mkTempRepo();
+	const storeDir = getStorePaths(dir).storeDir;
+
+	try {
+		await writeFile(
+			join(storeDir, "issues.jsonl"),
+			`${JSON.stringify({
+				id: "mu-auto-index-1",
+				title: "Auto index",
+				body: "auto-index-token",
+				status: "open",
+				tags: ["node:agent"],
+				priority: 2,
+				created_at: 1_700_000_200_000,
+				updated_at: 1_700_000_200_100,
+			})}\n`,
+			"utf8",
+		);
+
+		const before = await run(["memory", "index", "status", "--json"], { cwd: dir });
+		expect(before.exitCode).toBe(0);
+		expect((JSON.parse(before.stdout) as { exists: boolean }).exists).toBe(false);
+
+		const search = await run(["memory", "search", "--query", "auto-index-token", "--json"], { cwd: dir });
+		expect(search.exitCode).toBe(0);
+		expect((JSON.parse(search.stdout) as { total: number }).total).toBeGreaterThanOrEqual(1);
+
+		const after = await run(["memory", "index", "status", "--json"], { cwd: dir });
+		expect(after.exitCode).toBe(0);
+		const afterPayload = JSON.parse(after.stdout) as { exists: boolean; total_count: number };
+		expect(afterPayload.exists).toBe(true);
+		expect(afterPayload.total_count).toBeGreaterThanOrEqual(1);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("memory index rebuild/status enables index-first query fallback when source files disappear", async () => {
 	const dir = await mkTempRepo();
 	const storeDir = getStorePaths(dir).storeDir;
 
@@ -239,11 +277,11 @@ test("context index rebuild/status enables index-first query fallback when sourc
 			"utf8",
 		);
 
-		const statusBefore = await run(["context", "index", "status", "--json"], { cwd: dir });
+		const statusBefore = await run(["memory", "index", "status", "--json"], { cwd: dir });
 		expect(statusBefore.exitCode).toBe(0);
 		expect((JSON.parse(statusBefore.stdout) as { exists: boolean }).exists).toBe(false);
 
-		const rebuild = await run(["context", "index", "rebuild", "--json"], { cwd: dir });
+		const rebuild = await run(["memory", "index", "rebuild", "--json"], { cwd: dir });
 		expect(rebuild.exitCode).toBe(0);
 		const rebuildPayload = JSON.parse(rebuild.stdout) as {
 			mode: string;
@@ -258,7 +296,7 @@ test("context index rebuild/status enables index-first query fallback when sourc
 		await rm(join(storeDir, "forum.jsonl"), { force: true });
 		await rm(join(storeDir, "events.jsonl"), { force: true });
 
-		const search = await run(["context", "search", "--query", "index-only-token", "--json"], {
+		const search = await run(["memory", "search", "--query", "index-only-token", "--json"], {
 			cwd: dir,
 		});
 		expect(search.exitCode).toBe(0);
@@ -271,13 +309,13 @@ test("context index rebuild/status enables index-first query fallback when sourc
 		expect(searchPayload.total).toBeGreaterThanOrEqual(1);
 		expect(searchPayload.items.some((item) => item.source_kind === "issues")).toBe(true);
 
-		const timeline = await run(["context", "timeline", "--issue-id", "mu-idx-1", "--json"], {
+		const timeline = await run(["memory", "timeline", "--issue-id", "mu-idx-1", "--json"], {
 			cwd: dir,
 		});
 		expect(timeline.exitCode).toBe(0);
 		expect((JSON.parse(timeline.stdout) as { total: number }).total).toBeGreaterThanOrEqual(1);
 
-		const statusAfter = await run(["context", "index", "status", "--json"], { cwd: dir });
+		const statusAfter = await run(["memory", "index", "status", "--json"], { cwd: dir });
 		expect(statusAfter.exitCode).toBe(0);
 		const statusAfterPayload = JSON.parse(statusAfter.stdout) as {
 			exists: boolean;
@@ -290,7 +328,7 @@ test("context index rebuild/status enables index-first query fallback when sourc
 	}
 });
 
-test("context search/timeline/stats use direct CLI runtime even when legacy /api/context routes 404", async () => {
+test("memory search/timeline/stats use direct CLI runtime even when legacy /api/context routes 404", async () => {
 	const dir = await mkTempRepo();
 	const seen: string[] = [];
 	const storeDir = getStorePaths(dir).storeDir;
@@ -355,7 +393,7 @@ test("context search/timeline/stats use direct CLI runtime even when legacy /api
 	);
 
 	try {
-		const search = await run(["context", "search", "--query", "reload", "--limit", "10", "--json"], {
+		const search = await run(["memory", "search", "--query", "reload", "--limit", "10", "--json"], {
 			cwd: dir,
 		});
 		expect(search.exitCode).toBe(0);
@@ -368,7 +406,7 @@ test("context search/timeline/stats use direct CLI runtime even when legacy /api
 		expect(searchPayload.total).toBeGreaterThanOrEqual(1);
 		expect(searchPayload.items.some((item) => item.source_kind === "events")).toBe(true);
 
-		const timeline = await run(["context", "timeline", "--issue-id", "mu-ctx-1", "--limit", "10", "--json"], {
+		const timeline = await run(["memory", "timeline", "--issue-id", "mu-ctx-1", "--limit", "10", "--json"], {
 			cwd: dir,
 		});
 		expect(timeline.exitCode).toBe(0);
@@ -381,7 +419,7 @@ test("context search/timeline/stats use direct CLI runtime even when legacy /api
 		expect(timelinePayload.count).toBeGreaterThanOrEqual(1);
 		expect(timelinePayload.items.every((item) => item.issue_id === "mu-ctx-1")).toBe(true);
 
-		const stats = await run(["context", "stats", "--source", "events", "--json"], { cwd: dir });
+		const stats = await run(["memory", "stats", "--source", "events", "--json"], { cwd: dir });
 		expect(stats.exitCode).toBe(0);
 		const statsPayload = JSON.parse(stats.stdout) as {
 			mode: string;

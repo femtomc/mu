@@ -85,6 +85,10 @@ Bun.serve(server);
       "control_plane": {
         "adapters": {
           "slack": { "signing_secret": "..." }
+        },
+        "memory_index": {
+          "enabled": true,
+          "every_ms": 300000
         }
       }
     }
@@ -129,6 +133,7 @@ Bun.serve(server);
   - `GET|POST|PATCH|DELETE /api/heartbeats...`
   - `GET|POST|PATCH|DELETE /api/cron...`
   - Heartbeat/cron ticks dispatch operator wake turns and broadcast the resulting operator reply.
+  - Built-in memory-index maintenance runs on the server heartbeat scheduler (config: `control_plane.memory_index`).
 - Identity bindings:
   - `GET /api/control-plane/identities`
   - `POST /api/control-plane/identities/link`

@@ -51,7 +51,11 @@ async function createServerForTest(opts: {
 		repoRoot: opts.repoRoot,
 		controlPlane: opts.controlPlane,
 	});
-	return createServerFromRuntime(runtime, opts.serverOptions);
+	const server = createServerFromRuntime(runtime, opts.serverOptions);
+	stopFns.add(async () => {
+		await server.controlPlane?.stop?.();
+	});
+	return server;
 }
 
 async function mkRepoRoot(): Promise<string> {

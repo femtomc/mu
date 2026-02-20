@@ -23,6 +23,7 @@ import {
 } from "./control_plane_reload.js";
 import { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 import { createProcessSessionLifecycle } from "./session_lifecycle.js";
+import { MemoryIndexMaintainer } from "./memory_index_maintainer.js";
 import { createServerProgramOrchestration } from "./server_program_orchestration.js";
 import { createServerRequestHandler } from "./server_routing.js";
 import type { ServerRuntime } from "./server_runtime.js";
@@ -532,6 +533,7 @@ function createServer(options: ServerOptions = {}) {
 			const handle = reloadManager.getControlPlaneCurrent();
 			handle?.setWakeDeliveryObserver?.(null);
 			reloadManager.setControlPlaneCurrent(null);
+			memoryIndexMaintainer.stop();
 			await handle?.stop();
 		},
 	};
@@ -542,6 +544,15 @@ function createServer(options: ServerOptions = {}) {
 		eventLog: context.eventLog,
 		emitOperatorWake,
 	});
+
+	const memoryIndexMaintainer = new MemoryIndexMaintainer({
+		repoRoot,
+		heartbeatScheduler,
+		eventLog: context.eventLog,
+		loadConfigFromDisk,
+		fallbackConfig,
+	});
+	memoryIndexMaintainer.start();
 
 	const handleRequest = createServerRequestHandler({
 		context,

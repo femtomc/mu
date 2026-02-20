@@ -10,8 +10,8 @@ describe("role prompts are CLI-first", () => {
 	test("orchestrator prompt uses mu CLI workflow", () => {
 		expect(DEFAULT_ORCHESTRATOR_PROMPT).toContain("mu issues get <id>");
 		expect(DEFAULT_ORCHESTRATOR_PROMPT).toContain("mu issues create");
-		expect(DEFAULT_ORCHESTRATOR_PROMPT).toContain("mu context search");
-		expect(DEFAULT_ORCHESTRATOR_PROMPT).toContain("mu context index status");
+		expect(DEFAULT_ORCHESTRATOR_PROMPT).toContain("mu memory search");
+		expect(DEFAULT_ORCHESTRATOR_PROMPT).toContain("mu memory index status");
 		expect(DEFAULT_ORCHESTRATOR_PROMPT).not.toContain("query({");
 		expect(DEFAULT_ORCHESTRATOR_PROMPT).not.toContain("command({");
 	});
@@ -19,8 +19,8 @@ describe("role prompts are CLI-first", () => {
 	test("worker prompt uses mu CLI workflow", () => {
 		expect(DEFAULT_WORKER_PROMPT).toContain("mu issues get <id>");
 		expect(DEFAULT_WORKER_PROMPT).toContain("mu issues close <id>");
-		expect(DEFAULT_WORKER_PROMPT).toContain("mu context search");
-		expect(DEFAULT_WORKER_PROMPT).toContain("mu context index status");
+		expect(DEFAULT_WORKER_PROMPT).toContain("mu memory search");
+		expect(DEFAULT_WORKER_PROMPT).toContain("mu memory index status");
 		expect(DEFAULT_WORKER_PROMPT).not.toContain("query({");
 		expect(DEFAULT_WORKER_PROMPT).not.toContain("command({");
 	});
@@ -28,8 +28,8 @@ describe("role prompts are CLI-first", () => {
 	test("reviewer prompt uses mu CLI workflow", () => {
 		expect(DEFAULT_REVIEWER_PROMPT).toContain("mu issues get <id>");
 		expect(DEFAULT_REVIEWER_PROMPT).toContain("mu forum post issue:<id>");
-		expect(DEFAULT_REVIEWER_PROMPT).toContain("mu context search");
-		expect(DEFAULT_REVIEWER_PROMPT).toContain("mu context timeline");
+		expect(DEFAULT_REVIEWER_PROMPT).toContain("mu memory search");
+		expect(DEFAULT_REVIEWER_PROMPT).toContain("mu memory timeline");
 		expect(DEFAULT_REVIEWER_PROMPT).not.toContain("query({");
 		expect(DEFAULT_REVIEWER_PROMPT).not.toContain("command({");
 	});
@@ -37,8 +37,8 @@ describe("role prompts are CLI-first", () => {
 	test("operator prompt uses bash + mu CLI patterns", () => {
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu status --pretty");
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu runs start");
-		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu context search");
-		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu context index status");
+		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu memory search");
+		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu memory index status");
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).not.toContain("query({");
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).not.toContain("command({");
 	});

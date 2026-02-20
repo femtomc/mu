@@ -7,8 +7,13 @@ import type { ControlPlaneHandle } from "../src/control_plane.js";
 import { composeServerRuntime, createServerFromRuntime } from "../src/server.js";
 
 const dirsToCleanup = new Set<string>();
+const serversToStop = new Set<ReturnType<typeof createServerFromRuntime>>();
 
 afterEach(async () => {
+	for (const server of serversToStop) {
+		await server.controlPlane?.stop?.().catch(() => {});
+	}
+	serversToStop.clear();
 	for (const dir of dirsToCleanup) {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -55,7 +60,9 @@ async function createServerForTest(opts: {
 		controlPlane: opts.controlPlane,
 		generationTelemetry: opts.generationTelemetry,
 	});
-	return createServerFromRuntime(runtime, opts.serverOptions);
+	const server = createServerFromRuntime(runtime, opts.serverOptions);
+	serversToStop.add(server);
+	return server;
 }
 
 describe("control-plane reload observability scaffold", () => {

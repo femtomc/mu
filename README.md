@@ -213,7 +213,7 @@ Operator terminal: connected
 
 `/api/control-plane/status` includes `control_plane` runtime state (active adapters/routes, generation supervisor snapshot, and reload observability counters).
 
-Business state reads/mutations are CLI-first (`mu issues ...`, `mu forum ...`, `mu context ...`).
+Business state reads/mutations are CLI-first (`mu issues ...`, `mu forum ...`, `mu memory ...`).
 
 ## Packages
 

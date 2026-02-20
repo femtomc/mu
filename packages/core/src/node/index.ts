@@ -8,6 +8,7 @@ export {
 	writeJsonl,
 } from "./jsonl.js";
 export { currentRunId, runContext } from "./run_context.js";
+export * from "./memory_runtime.js";
 export type { StorePaths } from "./store.js";
 export { findRepoRoot, getMuHomeDir, getStorePaths, workspaceIdForRepoRoot } from "./store.js";
 

@@ -46,10 +46,13 @@ describe("mu config", () => {
 			expect(normalized.control_plane.operator.enabled).toBe(false);
 			expect(normalized.control_plane.operator.run_triggers_enabled).toBe(true);
 			expect(normalized.control_plane.operator.thinking).toBeNull();
+			expect(normalized.control_plane.memory_index.enabled).toBe(true);
+			expect(normalized.control_plane.memory_index.every_ms).toBe(300_000);
 
 			const patched = applyMuConfigPatch(normalized, {
 				control_plane: {
 					operator: { run_triggers_enabled: false, thinking: "high" },
+					memory_index: { enabled: true, every_ms: 45_000 },
 					adapters: {
 						discord: { signing_secret: "discord-secret" },
 						neovim: { shared_secret: "nvim-secret" },
@@ -58,6 +61,8 @@ describe("mu config", () => {
 			});
 			expect(patched.control_plane.operator.run_triggers_enabled).toBe(false);
 			expect(patched.control_plane.operator.thinking).toBe("high");
+			expect(patched.control_plane.memory_index.enabled).toBe(true);
+			expect(patched.control_plane.memory_index.every_ms).toBe(45_000);
 			expect(patched.control_plane.adapters.discord.signing_secret).toBe("discord-secret");
 			expect(patched.control_plane.adapters.neovim.shared_secret).toBe("nvim-secret");
 
@@ -95,6 +100,8 @@ describe("mu config", () => {
 		expect(presence.control_plane.adapters.neovim.shared_secret).toBe(true);
 		expect(presence.control_plane.operator.run_triggers_enabled).toBe(false);
 		expect(presence.control_plane.operator.thinking).toBe(true);
+		expect(presence.control_plane.memory_index.enabled).toBe(true);
+		expect(presence.control_plane.memory_index.every_ms).toBe(300_000);
 
 		const redacted = redactMuConfigSecrets(config);
 		expect(redacted.control_plane.adapters.slack.signing_secret).toBe("***");

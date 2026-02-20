@@ -78,6 +78,7 @@ export type {
 	HeartbeatTickHandler,
 } from "./heartbeat_scheduler.js";
 export { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
+export { MemoryIndexMaintainer } from "./memory_index_maintainer.js";
 export type {
 	ServerContext,
 	ServerInstanceOptions,

@@ -28,6 +28,10 @@ export type MuConfig = {
 			model: string | null;
 			thinking: string | null;
 		};
+		memory_index: {
+			enabled: boolean;
+			every_ms: number;
+		};
 	};
 };
 
@@ -56,6 +60,10 @@ export type MuConfigPatch = {
 			model?: string | null;
 			thinking?: string | null;
 		};
+		memory_index?: {
+			enabled?: boolean;
+			every_ms?: number;
+		};
 	};
 };
 
@@ -63,6 +71,7 @@ type ControlPlanePatch = NonNullable<MuConfigPatch["control_plane"]>;
 type AdaptersPatch = NonNullable<ControlPlanePatch["adapters"]>;
 type TelegramPatch = NonNullable<AdaptersPatch["telegram"]>;
 type NeovimPatch = NonNullable<AdaptersPatch["neovim"]>;
+type MemoryIndexPatch = NonNullable<ControlPlanePatch["memory_index"]>;
 
 export type MuConfigPresence = {
 	control_plane: {
@@ -88,6 +97,10 @@ export type MuConfigPresence = {
 			provider: boolean;
 			model: boolean;
 			thinking: boolean;
+		};
+		memory_index: {
+			enabled: boolean;
+			every_ms: number;
 		};
 	};
 };
@@ -118,6 +131,10 @@ export const DEFAULT_MU_CONFIG: MuConfig = {
 			model: null,
 			thinking: null,
 		},
+		memory_index: {
+			enabled: true,
+			every_ms: 300_000,
+		},
 	},
 };
 
@@ -147,6 +164,23 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
 		if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
 	}
 	return fallback;
+}
+
+function normalizeInteger(value: unknown, fallback: number, opts: { min?: number; max?: number } = {}): number {
+	const min = opts.min ?? Number.NEGATIVE_INFINITY;
+	const max = opts.max ?? Number.POSITIVE_INFINITY;
+	const clamp = (next: number): number => Math.min(max, Math.max(min, Math.trunc(next)));
+
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return clamp(value);
+	}
+	if (typeof value === "string") {
+		const parsed = Number.parseInt(value.trim(), 10);
+		if (Number.isFinite(parsed)) {
+			return clamp(parsed);
+		}
+	}
+	return clamp(fallback);
 }
 
 export function normalizeMuConfig(input: unknown): MuConfig {
@@ -207,6 +241,23 @@ export function normalizeMuConfig(input: unknown): MuConfig {
 		}
 		if ("thinking" in operator) {
 			next.control_plane.operator.thinking = normalizeNullableString(operator.thinking);
+		}
+	}
+
+	const memoryIndex = asRecord(controlPlane.memory_index);
+	if (memoryIndex) {
+		if ("enabled" in memoryIndex) {
+			next.control_plane.memory_index.enabled = normalizeBoolean(
+				memoryIndex.enabled,
+				next.control_plane.memory_index.enabled,
+			);
+		}
+		if ("every_ms" in memoryIndex) {
+			next.control_plane.memory_index.every_ms = normalizeInteger(
+				memoryIndex.every_ms,
+				next.control_plane.memory_index.every_ms,
+				{ min: 1_000, max: 86_400_000 },
+			);
 		}
 	}
 
@@ -299,6 +350,23 @@ function normalizeMuConfigPatch(input: unknown): MuConfigPatch {
 		}
 	}
 
+	const memoryIndex = asRecord(controlPlane.memory_index);
+	if (memoryIndex) {
+		const memoryIndexPatch: MemoryIndexPatch = {};
+		if ("enabled" in memoryIndex) {
+			memoryIndexPatch.enabled = normalizeBoolean(memoryIndex.enabled, DEFAULT_MU_CONFIG.control_plane.memory_index.enabled);
+		}
+		if ("every_ms" in memoryIndex) {
+			memoryIndexPatch.every_ms = normalizeInteger(memoryIndex.every_ms, DEFAULT_MU_CONFIG.control_plane.memory_index.every_ms, {
+				min: 1_000,
+				max: 86_400_000,
+			});
+		}
+		if (Object.keys(memoryIndexPatch).length > 0) {
+			patch.control_plane.memory_index = memoryIndexPatch;
+		}
+	}
+
 	if (patch.control_plane.adapters && Object.keys(patch.control_plane.adapters).length === 0) {
 		delete patch.control_plane.adapters;
 	}
@@ -357,6 +425,20 @@ export function applyMuConfigPatch(base: MuConfig, patchInput: unknown): MuConfi
 		}
 		if ("thinking" in operator) {
 			next.control_plane.operator.thinking = operator.thinking ?? null;
+		}
+	}
+
+	const memoryIndex = patch.control_plane.memory_index;
+	if (memoryIndex) {
+		if ("enabled" in memoryIndex && typeof memoryIndex.enabled === "boolean") {
+			next.control_plane.memory_index.enabled = memoryIndex.enabled;
+		}
+		if ("every_ms" in memoryIndex && typeof memoryIndex.every_ms === "number" && Number.isFinite(memoryIndex.every_ms)) {
+			next.control_plane.memory_index.every_ms = normalizeInteger(
+				memoryIndex.every_ms,
+				next.control_plane.memory_index.every_ms,
+				{ min: 1_000, max: 86_400_000 },
+			);
 		}
 	}
 
@@ -438,6 +520,10 @@ export function muConfigPresence(config: MuConfig): MuConfigPresence {
 				provider: isPresent(config.control_plane.operator.provider),
 				model: isPresent(config.control_plane.operator.model),
 				thinking: isPresent(config.control_plane.operator.thinking),
+			},
+			memory_index: {
+				enabled: config.control_plane.memory_index.enabled,
+				every_ms: config.control_plane.memory_index.every_ms,
 			},
 		},
 	};

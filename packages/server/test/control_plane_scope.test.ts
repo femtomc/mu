@@ -30,6 +30,7 @@ describe("server control-plane-only route surface", () => {
 	});
 
 	afterEach(async () => {
+		await server?.controlPlane?.stop?.().catch(() => {});
 		await rm(tempDir, { recursive: true, force: true });
 	});
 

@@ -1094,8 +1094,8 @@ function renderContextPayloadCompact(payload: Record<string, unknown>): string {
 		const sources = asRecordArray(payload.sources);
 		const heading =
 			mode === "stats"
-				? `context stats: total_count=${recordInt(payload, "total_count") ?? 0} total_text_bytes=${recordInt(payload, "total_text_bytes") ?? 0}`
-				: `context index: ${recordBool(payload, "exists") ? "ready" : "missing"} total_count=${recordInt(payload, "total_count") ?? 0} stale_sources=${recordInt(payload, "stale_source_count") ?? 0}`;
+				? `memory stats: total_count=${recordInt(payload, "total_count") ?? 0} total_text_bytes=${recordInt(payload, "total_text_bytes") ?? 0}`
+				: `memory index: ${recordBool(payload, "exists") ? "ready" : "missing"} total_count=${recordInt(payload, "total_count") ?? 0} stale_sources=${recordInt(payload, "stale_source_count") ?? 0}`;
 		const lines = [heading];
 		if (mode !== "stats") {
 			const indexPath = recordString(payload, "index_path") ?? "-";
@@ -1174,8 +1174,8 @@ function mainHelp(): string {
 		h("Agent quick navigation:"),
 		`  ${dim("Inspect:")}   ${cmd("mu status --pretty")}`,
 		`  ${dim("Work queue:")} ${cmd("mu issues ready --root <root-id> --tag role:worker --pretty")}`,
-		`  ${dim("Memory:")}    ${cmd("mu context search --query <text> --limit 20")}`,
-		`  ${dim("Index:")}     ${cmd("mu context index status")} ${dim("/ ")} ${cmd("mu context index rebuild")}`,
+		`  ${dim("Memory:")}    ${cmd("mu memory search --query <text> --limit 20")}`,
+		`  ${dim("Index:")}     ${cmd("mu memory index status")} ${dim("/ ")} ${cmd("mu memory index rebuild")}`,
 		`  ${dim("Forensics:")} ${cmd("mu store tail events --limit 20")}`,
 		"",
 		h("Commands (grouped):"),
@@ -1183,7 +1183,7 @@ function mainHelp(): string {
 		`  ${cmd("status")} ${dim("[--json] [--pretty]")}            Repo + work summary`,
 		`  ${cmd("issues")} ${dim("<subcmd>")}                       Work-item lifecycle`,
 		`  ${cmd("forum")} ${dim("<subcmd>")}                        Coordination topics/messages`,
-		`  ${cmd("context")} ${dim("<subcmd>")}                      Cross-store memory (search/timeline/stats/index)`,
+		`  ${cmd("memory")} ${dim("<subcmd>")}                       Cross-store memory (search/timeline/stats/index)`,
 		`  ${cmd("events")} ${dim("<subcmd>")}                       Event-log queries`,
 		`  ${cmd("run")} ${dim("<prompt...>")}                       Queue run + attach operator session`,
 		`  ${cmd("resume")} ${dim("<root-id>")}                      Resume a run`,
@@ -1275,8 +1275,10 @@ export async function run(
 			return await cmdHeartbeats(rest, ctx);
 		case "cron":
 			return await cmdCron(rest, ctx);
+		case "memory":
+			return await cmdMemory(rest, ctx);
 		case "context":
-			return await cmdContext(rest, ctx);
+			return await cmdMemory(rest, ctx);
 		case "turn":
 			return await cmdTurn(rest, ctx);
 		case "run":
@@ -3718,17 +3720,17 @@ async function cronEnableDisable(argv: string[], ctx: CliCtx, pretty: boolean, e
 	return ok(jsonText(req.payload, pretty));
 }
 
-function contextHelpText(): string {
+function memoryHelpText(): string {
 	const sourceKinds = CONTEXT_SOURCE_KINDS.join(", ");
 	return (
 		[
-			"mu context - cross-store memory retrieval + index management",
+			"mu memory - cross-store memory retrieval + index management",
 			"",
 			"Usage:",
-			"  mu context search [filters...] [--json] [--pretty]",
-			"  mu context timeline [filters...] [--order asc|desc] [--json] [--pretty]",
-			"  mu context stats [filters...] [--json] [--pretty]",
-			"  mu context index <status|rebuild> [opts] [--json] [--pretty]",
+			"  mu memory search [filters...] [--json] [--pretty]",
+			"  mu memory timeline [filters...] [--order asc|desc] [--json] [--pretty]",
+			"  mu memory stats [filters...] [--json] [--pretty]",
+			"  mu memory index <status|rebuild> [opts] [--json] [--pretty]",
 			"",
 			"Common filters:",
 			"  --query/-q <text>                    Full-text query",
@@ -3742,32 +3744,39 @@ function contextHelpText(): string {
 			"  --limit <N>                           Result size (1..500, default 20)",
 			"",
 			"Timeline note:",
-			"  mu context timeline requires at least one anchor:",
+			"  mu memory timeline requires at least one anchor:",
 			"  --conversation-key | --issue-id | --run-id | --session-id | --topic | --channel",
 			"",
 			"Output mode:",
-			"  compact-by-default context summaries; add --json for full result payloads.",
+			"  compact-by-default memory summaries; add --json for full result payloads.",
+			"",
+			"Maintenance:",
+			"  memory search/timeline/stats auto-heal missing indexes on demand.",
+			"  when mu serve is running, server-side scheduled maintenance repairs stale indexes.",
 			"",
 			"Examples:",
-			"  mu context search --query reload --limit 20",
-			"  mu context timeline --issue-id mu-abc123 --order desc --limit 40",
-			"  mu context stats --source events --json --pretty",
-			"  mu context index status",
-			"  mu context index rebuild --sources issues,forum,events",
+			"  mu memory search --query reload --limit 20",
+			"  mu memory timeline --issue-id mu-abc123 --order desc --limit 40",
+			"  mu memory stats --source events --json --pretty",
+			"  mu memory index status",
+			"  mu memory index rebuild --sources issues,forum,events",
+			"",
+			"Compatibility:",
+			"  `mu context ...` remains available as an alias to `mu memory ...`.",
 		].join("\n") + "\n"
 	);
 }
 
-async function cmdContextIndex(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
+async function cmdMemoryIndex(argv: string[], ctx: CliCtx, pretty: boolean): Promise<RunResult> {
 	if (argv.length === 0 || hasHelpFlag(argv)) {
 		const sourceKinds = CONTEXT_SOURCE_KINDS.join(", ");
 		return ok(
 			[
-				"mu context index - manage local context memory index",
+				"mu memory index - manage local memory index",
 				"",
 				"Usage:",
-				"  mu context index status [--json] [--pretty]",
-				"  mu context index rebuild [--source <kind> | --sources <csv>] [--json] [--pretty]",
+				"  mu memory index status [--json] [--pretty]",
+				"  mu memory index rebuild [--source <kind> | --sources <csv>] [--json] [--pretty]",
 				"",
 				"Rebuild filters:",
 				`  --source <kind>   Single source kind (${sourceKinds})`,
@@ -3778,9 +3787,9 @@ async function cmdContextIndex(argv: string[], ctx: CliCtx, pretty: boolean): Pr
 				"  with automatic fallback to direct JSONL scans when index data is unavailable.",
 				"",
 				"Examples:",
-				"  mu context index status",
-				"  mu context index rebuild",
-				"  mu context index rebuild --sources issues,forum,events",
+				"  mu memory index status",
+				"  mu memory index rebuild",
+				"  mu memory index rebuild --sources issues,forum,events",
 			].join("\n") + "\n",
 		);
 	}
@@ -3789,7 +3798,7 @@ async function cmdContextIndex(argv: string[], ctx: CliCtx, pretty: boolean): Pr
 	if (sub !== "status" && sub !== "rebuild") {
 		return jsonError(`unknown subcommand: ${sub}`, {
 			pretty,
-			recovery: ["mu context index --help"],
+			recovery: ["mu memory index --help"],
 		});
 	}
 	const { value: sources, rest: argv1 } = getFlagValue(rest0, "--sources");
@@ -3799,13 +3808,13 @@ async function cmdContextIndex(argv: string[], ctx: CliCtx, pretty: boolean): Pr
 	if (unknown.length > 0) {
 		return jsonError(`unknown args: ${unknown.join(" ")}`, {
 			pretty,
-			recovery: ["mu context index --help"],
+			recovery: ["mu memory index --help"],
 		});
 	}
 	if (sub === "status" && (sources || source)) {
-		return jsonError("--source/--sources are only supported for `mu context index rebuild`", {
+		return jsonError("--source/--sources are only supported for `mu memory index rebuild`", {
 			pretty,
-			recovery: ["mu context index status", "mu context index rebuild --sources events,forum"],
+			recovery: ["mu memory index status", "mu memory index rebuild --sources events,forum"],
 		});
 	}
 	const search = new URLSearchParams();
@@ -3828,31 +3837,31 @@ async function cmdContextIndex(argv: string[], ctx: CliCtx, pretty: boolean): Pr
 		if (err instanceof ContextQueryValidationError) {
 			return jsonError(err.message, {
 				pretty,
-				recovery: ["mu context index rebuild --sources issues,forum,events"],
+				recovery: ["mu memory index rebuild --sources issues,forum,events"],
 			});
 		}
-		return jsonError(`context index ${sub} failed: ${describeError(err)}`, {
+		return jsonError(`memory index ${sub} failed: ${describeError(err)}`, {
 			pretty,
-			recovery: ["mu context index --help"],
+			recovery: ["mu memory index --help"],
 		});
 	}
 }
 
-async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
+async function cmdMemory(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
 	if (argv0.length === 0) {
-		return ok(contextHelpText());
+		return ok(memoryHelpText());
 	}
 	const sub = argv0[0]!;
 	const rest = argv0.slice(1);
 	if (sub === "index") {
-		return await cmdContextIndex(rest, ctx, pretty);
+		return await cmdMemoryIndex(rest, ctx, pretty);
 	}
 	if (hasHelpFlag(argv0)) {
-		return ok(contextHelpText());
+		return ok(memoryHelpText());
 	}
 	if (sub !== "search" && sub !== "timeline" && sub !== "stats") {
-		return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu context --help"] });
+		return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu memory --help"] });
 	}
 
 	const { value: query, rest: argv1 } = getFlagValue(rest, "--query");
@@ -3877,21 +3886,21 @@ async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
 	const { present: jsonMode, rest: argv20 } = popFlag(argv19, "--json");
 	const { present: compact, rest: unknown } = popFlag(argv20, "--compact");
 	if (unknown.length > 0) {
-		return jsonError(`unknown args: ${unknown.join(" ")}`, { pretty, recovery: ["mu context --help"] });
+		return jsonError(`unknown args: ${unknown.join(" ")}`, { pretty, recovery: ["mu memory --help"] });
 	}
 	const since = sinceRaw ? ensureInt(sinceRaw, { name: "--since", min: 0 }) : null;
 	if (sinceRaw && since == null) {
-		return jsonError("--since must be an integer >= 0", { pretty, recovery: ["mu context search --since 0"] });
+		return jsonError("--since must be an integer >= 0", { pretty, recovery: ["mu memory search --since 0"] });
 	}
 	const until = untilRaw ? ensureInt(untilRaw, { name: "--until", min: 0 }) : null;
 	if (untilRaw && until == null) {
-		return jsonError("--until must be an integer >= 0", { pretty, recovery: ["mu context search --until 0"] });
+		return jsonError("--until must be an integer >= 0", { pretty, recovery: ["mu memory search --until 0"] });
 	}
 	const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
 	if (limit == null) {
 		return jsonError("--limit must be an integer between 1 and 500", {
 			pretty,
-			recovery: ["mu context search --limit 20"],
+			recovery: ["mu memory search --limit 20"],
 		});
 	}
 
@@ -3917,31 +3926,43 @@ async function cmdContext(argv: string[], ctx: CliCtx): Promise<RunResult> {
 
 	try {
 		if (sub === "search") {
-			const result = await runContextSearch({ repoRoot: ctx.repoRoot, search });
+			const result = await runContextSearch({
+				repoRoot: ctx.repoRoot,
+				search,
+				indexAutoRebuild: "missing",
+			});
 			if (!jsonMode || compact) {
 				return ok(renderContextPayloadCompact(result as unknown as Record<string, unknown>));
 			}
 			return ok(jsonText(result, pretty));
 		}
 		if (sub === "timeline") {
-			const result = await runContextTimeline({ repoRoot: ctx.repoRoot, search });
+			const result = await runContextTimeline({
+				repoRoot: ctx.repoRoot,
+				search,
+				indexAutoRebuild: "missing",
+			});
 			if (!jsonMode || compact) {
 				return ok(renderContextPayloadCompact(result as unknown as Record<string, unknown>));
 			}
 			return ok(jsonText(result, pretty));
 		}
-		const result = await runContextStats({ repoRoot: ctx.repoRoot, search });
+		const result = await runContextStats({
+			repoRoot: ctx.repoRoot,
+			search,
+			indexAutoRebuild: "missing",
+		});
 		if (!jsonMode || compact) {
 			return ok(renderContextPayloadCompact(result as unknown as Record<string, unknown>));
 		}
 		return ok(jsonText(result, pretty));
 	} catch (err) {
 		if (err instanceof ContextQueryValidationError) {
-			return jsonError(err.message, { pretty, recovery: [`mu context ${sub}`] });
+			return jsonError(err.message, { pretty, recovery: [`mu memory ${sub}`] });
 		}
-		return jsonError(`context query failed: ${describeError(err)}`, {
+		return jsonError(`memory query failed: ${describeError(err)}`, {
 			pretty,
-			recovery: [`mu context ${sub}`],
+			recovery: [`mu memory ${sub}`],
 		});
 	}
 }
