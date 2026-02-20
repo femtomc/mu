@@ -63,6 +63,7 @@ import {
 import { formatRecovery, hasHelpFlag, jsonError, ok } from "./cli_primitives.js";
 import { resolveIssueId as resolveIssueIdCore } from "./issue_resolution.js";
 import { mainHelp } from "./main_help.js";
+import { routeCommand } from "./command_router.js";
 import { delayMs, describeError, signalExitCode } from "./cli_utils.js";
 
 export type RunResult = {
@@ -163,61 +164,29 @@ export async function run(
 		serveDeps: opts.serveDeps,
 	};
 
-	switch (cmd) {
-		case "guide":
-			return await cmdGuide(rest);
-		case "init":
-			return jsonError(
-				"`mu init` has been removed. mu now auto-initializes the workspace store on `mu run` and `mu serve`.",
-				{
-					recovery: ['mu run "Break down and execute this goal"', "mu serve", "mu --help"],
-				},
-			);
-		case "status":
-			return await cmdStatus(rest, ctx);
-		case "store":
-			return await cmdStore(rest, ctx);
-		case "issues":
-			return await cmdIssues(rest, ctx);
-		case "forum":
-			return await cmdForum(rest, ctx);
-		case "events":
-			return await cmdEvents(rest, ctx);
-		case "runs":
-			return await cmdRuns(rest, ctx);
-		case "heartbeats":
-			return await cmdHeartbeats(rest, ctx);
-		case "cron":
-			return await cmdCron(rest, ctx);
-		case "memory":
-			return await cmdMemoryDelegated(rest, ctx);
-		case "context":
-			return await cmdMemoryDelegated(rest, ctx);
-		case "turn":
-			return await cmdTurn(rest, ctx);
-		case "run":
-			return await cmdRun(rest, ctx);
-		case "_run-direct":
-			return await cmdRunDirect(rest, ctx);
-		case "resume":
-			return await cmdResume(rest, ctx);
-		case "login":
-			return await cmdLogin(rest);
-		case "replay":
-			return await cmdReplay(rest, ctx);
-		case "control":
-			return await cmdControl(rest, ctx);
-		case "session":
-			return await cmdSession(rest, ctx);
-		case "serve":
-			return await cmdServe(rest, ctx);
-		case "stop":
-			return await cmdStop(rest, ctx);
-		default:
-			return jsonError(`unknown command: ${cmd}`, {
-				recovery: ["mu --help"],
-			});
-	}
+	return await routeCommand(cmd, rest, ctx, {
+		jsonError,
+		cmdGuide,
+		cmdStatus,
+		cmdStore,
+		cmdIssues,
+		cmdForum,
+		cmdEvents,
+		cmdRuns,
+		cmdHeartbeats,
+		cmdCron,
+		cmdMemoryDelegated,
+		cmdTurn,
+		cmdRun,
+		cmdRunDirect,
+		cmdResume,
+		cmdLogin,
+		cmdReplay,
+		cmdControl,
+		cmdSession,
+		cmdServe,
+		cmdStop,
+	});
 }
 
 async function cmdGuide(argv: string[]): Promise<RunResult> {
