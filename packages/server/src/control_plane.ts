@@ -31,7 +31,6 @@ import {
 	type TelegramGenerationSwapHooks,
 	type WakeDeliveryObserver,
 } from "./control_plane_contract.js";
-import type { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 import {
 	type ControlPlaneRunInterruptResult,
 	type ControlPlaneRunSnapshot,
@@ -204,9 +203,7 @@ export type BootstrapControlPlaneOpts = {
 	config?: ControlPlaneConfig;
 	operatorRuntime?: MessagingOperatorRuntime | null;
 	operatorBackend?: MessagingOperatorBackend;
-	heartbeatScheduler?: ActivityHeartbeatScheduler;
 	runSupervisorSpawnProcess?: ControlPlaneRunSupervisorOpts["spawnProcess"];
-	runSupervisorHeartbeatIntervalMs?: number;
 	sessionLifecycle: ControlPlaneSessionLifecycle;
 	generation?: ControlPlaneGenerationContext;
 	telemetry?: GenerationTelemetryRecorder | null;
@@ -286,8 +283,6 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 
 		runSupervisor = new ControlPlaneRunSupervisor({
 			repoRoot: opts.repoRoot,
-			heartbeatScheduler: opts.heartbeatScheduler,
-			heartbeatIntervalMs: opts.runSupervisorHeartbeatIntervalMs,
 			spawnProcess: opts.runSupervisorSpawnProcess,
 			onEvent: async (event) => {
 				await runQueueCoordinator.onRunEvent(event);

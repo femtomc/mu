@@ -59,7 +59,6 @@ export async function composeServerRuntime(options: ServerRuntimeOptions = {}): 
 			: await bootstrapControlPlane({
 				repoRoot,
 				config: config.control_plane,
-				heartbeatScheduler,
 				generation: {
 					generation_id: "control-plane-gen-0",
 					generation_seq: 0,

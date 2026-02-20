@@ -1,7 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { CommandRecord } from "@femtomc/mu-control-plane";
-import { ActivityHeartbeatScheduler, type HeartbeatRunResult } from "./heartbeat_scheduler.js";
 
 export type ControlPlaneRunMode = "run_start" | "run_resume";
 export type ControlPlaneRunStatus = "running" | "completed" | "failed" | "cancelled";
@@ -43,7 +42,6 @@ export type ControlPlaneRunEventKind =
 	| "run_started"
 	| "run_root_discovered"
 	| "run_progress"
-	| "run_heartbeat"
 	| "run_interrupt_requested"
 	| "run_completed"
 	| "run_failed"
@@ -70,8 +68,6 @@ export type ControlPlaneRunSupervisorOpts = {
 	repoRoot: string;
 	nowMs?: () => number;
 	spawnProcess?: (opts: { argv: string[]; cwd: string }) => ControlPlaneRunProcess;
-	heartbeatIntervalMs?: number;
-	heartbeatScheduler?: ActivityHeartbeatScheduler;
 	maxStoredLines?: number;
 	maxHistory?: number;
 	onEvent?: (event: ControlPlaneRunEvent) => void | Promise<void>;
@@ -198,9 +194,6 @@ export class ControlPlaneRunSupervisor {
 	readonly #repoRoot: string;
 	readonly #nowMs: () => number;
 	readonly #spawnProcess: (opts: { argv: string[]; cwd: string }) => ControlPlaneRunProcess;
-	readonly #heartbeatIntervalMs: number;
-	readonly #heartbeatScheduler: ActivityHeartbeatScheduler;
-	readonly #ownsHeartbeatScheduler: boolean;
 	readonly #maxStoredLines: number;
 	readonly #maxHistory: number;
 	readonly #onEvent: ((event: ControlPlaneRunEvent) => void | Promise<void>) | null;
@@ -213,9 +206,6 @@ export class ControlPlaneRunSupervisor {
 		this.#repoRoot = opts.repoRoot;
 		this.#nowMs = opts.nowMs ?? defaultNowMs;
 		this.#spawnProcess = opts.spawnProcess ?? defaultSpawnProcess;
-		this.#heartbeatIntervalMs = Math.max(2_000, Math.trunc(opts.heartbeatIntervalMs ?? 15_000));
-		this.#heartbeatScheduler = opts.heartbeatScheduler ?? new ActivityHeartbeatScheduler();
-		this.#ownsHeartbeatScheduler = !opts.heartbeatScheduler;
 		this.#maxStoredLines = Math.max(50, Math.trunc(opts.maxStoredLines ?? 1_000));
 		this.#maxHistory = Math.max(20, Math.trunc(opts.maxHistory ?? 200));
 		this.#onEvent = opts.onEvent ?? null;
@@ -378,28 +368,12 @@ export class ControlPlaneRunSupervisor {
 			`🚀 Started ${describeRun(snapshot)} (job ${snapshot.job_id}, pid ${snapshot.pid ?? "?"})`,
 		);
 
-		this.#heartbeatScheduler.register({
-			activityId: snapshot.job_id,
-			everyMs: this.#heartbeatIntervalMs,
-			handler: async (): Promise<HeartbeatRunResult> => {
-				if (job.snapshot.status !== "running") {
-					return { status: "skipped", reason: "not_running" };
-				}
-				const elapsedSec = Math.max(0, Math.trunc((this.#nowMs() - job.snapshot.started_at_ms) / 1_000));
-				const root = job.snapshot.root_issue_id ?? job.snapshot.job_id;
-				const progress = job.snapshot.last_progress ? ` · ${job.snapshot.last_progress}` : "";
-				this.#emit("run_heartbeat", job, `⏱ ${root} running for ${elapsedSec}s${progress}`);
-				return { status: "ran" };
-			},
-		});
-
 		void (async () => {
 			const stdoutTask = consumeStreamLines(process.stdout, (line) => this.#handleLine(job, "stdout", line));
 			const stderrTask = consumeStreamLines(process.stderr, (line) => this.#handleLine(job, "stderr", line));
 			const exitCode = await process.exited.catch(() => -1);
 			await Promise.allSettled([stdoutTask, stderrTask]);
 
-			this.#heartbeatScheduler.unregister(job.snapshot.job_id);
 			if (job.hard_kill_timer) {
 				clearTimeout(job.hard_kill_timer);
 				job.hard_kill_timer = null;
@@ -612,7 +586,6 @@ export class ControlPlaneRunSupervisor {
 
 	public async stop(): Promise<void> {
 		for (const job of this.#jobsById.values()) {
-			this.#heartbeatScheduler.unregister(job.snapshot.job_id);
 			if (job.hard_kill_timer) {
 				clearTimeout(job.hard_kill_timer);
 				job.hard_kill_timer = null;
@@ -624,9 +597,6 @@ export class ControlPlaneRunSupervisor {
 					// best effort
 				}
 			}
-		}
-		if (this.#ownsHeartbeatScheduler) {
-			this.#heartbeatScheduler.stop();
 		}
 	}
 }

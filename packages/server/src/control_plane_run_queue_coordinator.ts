@@ -37,10 +37,6 @@ function normalizeIssueId(value: string | null | undefined): string | null {
 	return trimmed.toLowerCase();
 }
 
-function isInFlightQueueState(state: DurableRunQueueSnapshot["state"]): boolean {
-	return state === "active" || state === "waiting_review" || state === "refining";
-}
-
 export type QueueLaunchOpts = {
 	mode: "run_start" | "run_resume";
 	prompt?: string;
@@ -310,7 +306,7 @@ export class ControlPlaneRunQueueCoordinator {
 	}
 
 	public async onRunEvent(event: ControlPlaneRunEvent): Promise<void> {
-		const queueEventSnapshot = await this.#runQueue
+		await this.#runQueue
 			.applyRunSnapshot({
 				run: event.run,
 				operationId: `run-event:${event.seq}:${event.kind}`,
@@ -320,10 +316,6 @@ export class ControlPlaneRunQueueCoordinator {
 				// Best effort queue reconciliation from runtime events.
 				return null;
 			});
-
-		if (event.kind === "run_heartbeat" && queueEventSnapshot && isInFlightQueueState(queueEventSnapshot.state)) {
-			await this.scheduleReconcile(`event-wake:run_heartbeat:${queueEventSnapshot.queue_id}:${event.seq}`);
-		}
 
 		if (event.kind === "run_completed" || event.kind === "run_failed" || event.kind === "run_cancelled") {
 			await this.scheduleReconcile(`terminal:${event.kind}:${event.run.job_id}`);

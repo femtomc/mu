@@ -433,7 +433,6 @@ function createServer(options: ServerOptions = {}) {
 			return await bootstrapControlPlane({
 				repoRoot,
 				config,
-				heartbeatScheduler,
 				generation,
 				telemetry: generationTelemetry,
 				sessionLifecycle,
