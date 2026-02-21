@@ -12,6 +12,7 @@ cd /path/to/your/repo
 
 mu --help
 mu run "build the thing"
+mu exec "quickly inspect current ready work and summarize"
 mu status --pretty
 mu issues ready --pretty
 mu forum post research:topic -m "found something" --author worker
@@ -24,6 +25,7 @@ For messaging adapter-specific setup (Slack/Discord/Telegram/Neovim), use the pa
 ```bash
 # Start work
 mu run "Break down and execute this goal"
+mu exec "quick one-shot analysis without queuing a run"
 mu status --pretty
 mu issues ready --root <root-id> --pretty
 
@@ -142,6 +144,8 @@ Useful slash commands still available in-chat:
 - `/mu events tail 20` — quick event log snapshot
 - `/mu events watch on` — live event watch widget
 - `/mu brand on|off|toggle` — toggle UI branding
+- `/mu plan ...` — planning HUD (phase + checklist widget)
+- `/mu subagents ...` — tmux + issue queue subagent monitor/spawner widget
 - `/mu help` — list registered slash subcommands
 
 By default, `mu serve` uses a compact, information-dense chrome with a built-in

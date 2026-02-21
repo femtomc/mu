@@ -2,6 +2,8 @@ export { brandingExtension } from "./branding.js";
 export { eventLogExtension } from "./event-log.js";
 export { muOperatorExtension } from "./mu-operator.js";
 export { muServeExtension } from "./mu-serve.js";
+export { planningUiExtension } from "./planning-ui.js";
+export { subagentsUiExtension } from "./subagents-ui.js";
 
 const RUNTIME_EXTENSION = import.meta.url.endsWith(".ts") ? "ts" : "js";
 

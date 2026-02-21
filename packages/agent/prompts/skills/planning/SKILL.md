@@ -38,6 +38,13 @@ mu forum read user:context --limit 50 --pretty
 mu memory search --query "<topic>" --limit 30
 ```
 
+Optional planning HUD (interactive operator session):
+
+```text
+/mu plan on
+/mu plan phase investigating
+```
+
 Also inspect repo files directly (read/bash) for implementation constraints.
 
 ### B) Draft DAG in mu-issue
@@ -70,6 +77,15 @@ mu issues ready --root <root-id> --pretty
 - Apply feedback with `mu issues update` / `mu issues dep` / additional issues.
 - Re-run `mu issues ready --root <root-id> --pretty`.
 - Present a concise diff of what changed and why.
+
+Optional HUD updates during the loop:
+
+```text
+/mu plan root <root-id>
+/mu plan phase drafting
+/mu plan check 1
+/mu plan phase reviewing
+```
 
 ## Quality bar
 

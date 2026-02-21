@@ -36,11 +36,15 @@ mu issues create "title"   # Create new issue
 mu issues ready            # Show ready leaf issues
 mu forum post topic -m "message"  # Post to forum
 mu run "goal..."           # Queue a run + attach operator terminal (auto-inits workspace store)
+mu exec "task..."          # One-shot operator prompt (no queued run)
 mu resume <root-id>        # Resume interrupted run
 ```
 
 Most issue/forum/event/control-plane read surfaces now default to compact output.
 Use `--json` (optionally with `--pretty`) when you need full machine records.
+
+Use `mu exec` when you want a lightweight one-shot operator response.
+Use `mu run` when you want queued DAG orchestration with run lifecycle tracking.
 
 Memory retrieval supports a local memory index:
 
@@ -95,6 +99,13 @@ mu turn --session-kind operator --session-id <session-id> --body "follow-up ques
 
 If `--session-kind` is omitted, `mu turn` defaults to `cp_operator`
 (`control-plane/operator-sessions`) rather than terminal operator sessions.
+
+In-session `/mu` helpers include:
+
+- `/mu plan ...` (planning phase/checklist HUD)
+- `/mu subagents ...` (tmux + issue-queue monitor/spawner widget)
+- `/mu events ...` (event tail/watch)
+- `/mu brand ...` (chrome toggle)
 
 Use `mu store paths` to resolve `<store>`, and `mu control status` to inspect current
 config-driven control-plane/operator state.

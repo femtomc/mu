@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { brandingExtension } from "../src/extensions/branding.js";
-import { eventLogExtension } from "../src/extensions/event-log.js";
+import { muServeExtension } from "../src/extensions/mu-serve.js";
 import { registerMuSubcommand, resetMuCommandDispatcher } from "../src/extensions/mu-command-dispatcher.js";
 
 type RegisteredCommand = {
@@ -105,8 +104,7 @@ describe("mu command dispatcher", () => {
 	test("serve extensions expose only /mu command entrypoint", async () => {
 		const pi = createPiMock();
 
-		eventLogExtension(pi.api as any);
-		brandingExtension(pi.api as any);
+		muServeExtension(pi.api as any);
 
 		expect([...pi.commands.keys()]).toEqual(["mu"]);
 		expect(pi.commands.has("mu-events")).toBe(false);
@@ -122,5 +120,7 @@ describe("mu command dispatcher", () => {
 		const helpText = notifications.at(-1)?.text ?? "";
 		expect(helpText).toContain("/mu events");
 		expect(helpText).toContain("/mu brand");
+		expect(helpText).toContain("/mu plan");
+		expect(helpText).toContain("/mu subagents");
 	});
 });

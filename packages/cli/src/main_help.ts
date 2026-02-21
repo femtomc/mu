@@ -29,6 +29,7 @@ export function mainHelp(): string {
 		`  ${cmd("memory")} ${dim("<subcmd>")}                       Cross-store memory (search/timeline/stats/index)`,
 		`  ${cmd("events")} ${dim("<subcmd>")}                       Event-log queries`,
 		`  ${cmd("run")} ${dim("<prompt...>")}                       Queue run + attach operator session`,
+		`  ${cmd("exec")} ${dim("<prompt...>")}                      One-shot operator prompt (no queued run)`,
 		`  ${cmd("resume")} ${dim("<root-id>")}                      Resume a run`,
 		`  ${cmd("runs")} ${dim("<subcmd>")}                         Queued-run management + traces`,
 		`  ${cmd("heartbeats")} ${dim("<subcmd>")}                   Heartbeat program lifecycle`,

@@ -17,6 +17,7 @@ export type CommandRouterDeps<Ctx, Result> = {
 	cmdMemoryDelegated: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdTurn: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdRun: (argv: string[], ctx: Ctx) => Promise<Result>;
+	cmdExec: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdRunDirect: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdResume: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdLogin: (argv: string[]) => Promise<Result>;
@@ -67,6 +68,8 @@ export async function routeCommand<Ctx, Result>(
 			return await deps.cmdTurn(rest, ctx);
 		case "run":
 			return await deps.cmdRun(rest, ctx);
+		case "exec":
+			return await deps.cmdExec(rest, ctx);
 		case "_run-direct":
 			return await deps.cmdRunDirect(rest, ctx);
 		case "resume":

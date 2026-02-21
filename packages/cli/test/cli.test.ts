@@ -108,6 +108,7 @@ test("mu --help", async () => {
 	expect(result.stdout.includes("store <subcmd>")).toBe(true);
 	expect(result.stdout.includes("serve")).toBe(true);
 	expect(result.stdout.includes("session")).toBe(true);
+	expect(result.stdout.includes("exec")).toBe(true);
 	expect(result.stdout.includes("Getting started")).toBe(true);
 	expect(result.stdout.includes("Agent quick navigation")).toBe(true);
 	expect(result.stdout.includes("mu memory index status")).toBe(true);
@@ -125,6 +126,7 @@ test("mu guide", async () => {
 	expect(result.stdout.includes("mu control diagnose-operator")).toBe(true);
 	expect(result.stdout.includes("Agent Navigation (by intent)")).toBe(true);
 	expect(result.stdout.includes("mu memory index status")).toBe(true);
+	expect(result.stdout.includes("mu exec <prompt...>")).toBe(true);
 	expect(result.stdout).toContain("Use direct CLI commands in chat (for example: mu control status, mu session list)");
 	expect(result.stdout).not.toContain("/mu-setup");
 });
@@ -231,6 +233,10 @@ test("mu command-group help is self-explanatory across events/runs/cron/control/
 				"--session-id <id> --body <text>",
 				"defaults to control-plane operator sessions",
 			],
+		},
+		{
+			argv: ["exec", "--help"],
+			contains: ["one-shot operator prompt", "Does not queue a run", "mu exec <prompt...>"],
 		},
 		{
 			argv: ["replay", "--help"],
@@ -423,6 +429,67 @@ test("mu chat removed - returns unknown command", async () => {
 	const chatResult = await run(["chat"], { cwd: dir });
 	expect(chatResult.exitCode).toBe(1);
 	expect(chatResult.stdout).toContain("unknown command");
+});
+
+test("mu exec runs one-shot operator prompt without queuing orchestration", async () => {
+	const dir = await mkTempRepo();
+	const factoryCalls: Array<{ cwd: string; provider?: string; model?: string; thinking?: string }> = [];
+	let seenPrompt = "";
+	let disposed = false;
+
+	const result = await run(["exec", "summarize", "ready", "issues"], {
+		cwd: dir,
+		operatorSessionFactory: async (opts) => {
+			factoryCalls.push({
+				cwd: opts.cwd,
+				provider: opts.provider,
+				model: opts.model,
+				thinking: opts.thinking,
+			});
+			let listener: ((event: unknown) => void) | null = null;
+			return {
+				subscribe(next: (event: unknown) => void) {
+					listener = next;
+					return () => {
+						if (listener === next) {
+							listener = null;
+						}
+					};
+				},
+				prompt: async (text: string) => {
+					seenPrompt = text;
+					listener?.({
+						type: "message_end",
+						message: { role: "assistant", text: "exec-ok" },
+					});
+				},
+				dispose: () => {
+					disposed = true;
+				},
+				bindExtensions: async () => {},
+				agent: { waitForIdle: async () => {} },
+			};
+		},
+	});
+
+	expect(result.exitCode).toBe(0);
+	expect(seenPrompt).toBe("summarize ready issues");
+	expect(result.stdout).toBe("exec-ok\n");
+	expect(disposed).toBe(true);
+	expect(factoryCalls).toHaveLength(1);
+	expect(factoryCalls[0]?.cwd).toBe(dir);
+});
+
+test("mu exec help and empty invocation", async () => {
+	const dir = await mkTempRepo();
+	const help = await run(["exec", "--help"], { cwd: dir });
+	expect(help.exitCode).toBe(0);
+	expect(help.stdout).toContain("one-shot operator prompt");
+	expect(help.stdout).toContain("Does not queue a run");
+
+	const empty = await run(["exec"], { cwd: dir });
+	expect(empty.exitCode).toBe(0);
+	expect(empty.stdout).toContain("one-shot operator prompt");
 });
 
 test("mu serve help text", async () => {

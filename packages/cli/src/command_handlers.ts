@@ -7,6 +7,7 @@ import { cmdReplay as cmdReplayCommand } from "./commands/replay.js";
 import { cmdResume as cmdResumeCommand } from "./commands/resume.js";
 import { cmdRun as cmdRunCommand } from "./commands/run.js";
 import { cmdRunDirect as cmdRunDirectCommand } from "./commands/run_direct.js";
+import { cmdOperatorSession as cmdOperatorSessionCommand } from "./commands/operator_session.js";
 import { cmdServe as cmdServeCommand, cmdStop as cmdStopCommand } from "./commands/serve.js";
 import { cmdSession as cmdSessionCommand } from "./commands/session.js";
 import { cmdStore as cmdStoreCommand } from "./commands/store.js";
@@ -26,6 +27,7 @@ import {
 	issuesCommandDeps,
 	loginCommandDeps,
 	memoryCommandDeps,
+	operatorSessionCommandDeps,
 	replayCommandDeps,
 	resumeCommandDeps,
 	runCommandDeps,
@@ -103,6 +105,14 @@ export function createCommandHandlers(deps: CreateCommandHandlersDeps) {
 		},
 		cmdRun: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
 			return await cmdRunCommand(argv, ctx, runCommandDeps(deps.runServeLifecycle));
+		},
+		cmdExec: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			return await cmdOperatorSessionCommand(
+				argv,
+				ctx,
+				{ commandName: "exec", allowInteractive: false, session: { mode: "in-memory" } },
+				operatorSessionCommandDeps(),
+			);
 		},
 		cmdRunDirect: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
 			return await cmdRunDirectCommand(argv, ctx, runDirectCommandDeps());

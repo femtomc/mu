@@ -15,6 +15,8 @@ export type OperatorSessionCommandRunResult = {
 export type OperatorSessionCommandOptions = {
 	onInteractiveReady?: () => void;
 	session?: OperatorSessionStartOpts;
+	commandName?: "serve" | "exec";
+	allowInteractive?: boolean;
 };
 
 type OperatorSession = {
@@ -72,6 +74,57 @@ function readAssistantTextFromEvent(event: unknown): string | null {
 	return null;
 }
 
+function operatorSessionHelp(commandName: "serve" | "exec"): string {
+	if (commandName === "exec") {
+		return (
+			[
+				"mu exec - run a one-shot operator prompt (no queued orchestration run)",
+				"",
+				"Usage:",
+				"  mu exec <prompt...> [--provider ID] [--model ID] [--thinking LEVEL] [--system-prompt TEXT] [--json]",
+				"  mu exec --message <text> [--provider ID] [--model ID] [--thinking LEVEL] [--system-prompt TEXT] [--json]",
+				"",
+				"Options:",
+				"  --provider ID          LLM provider",
+				"  --model ID             Model ID",
+				"  --thinking LEVEL       Thinking level (minimal|low|medium|high)",
+				"  --system-prompt TEXT   Override system prompt",
+				"  --json                 Emit structured JSON output",
+				"",
+				"Notes:",
+				"  Uses an in-memory operator session and exits after one reply.",
+				"  Does not queue a run or invoke the DAG orchestration engine.",
+				"  Use `mu run` when you want orchestrated issue-DAG execution.",
+				"",
+				"Examples:",
+				'  mu exec "Investigate failing tests and propose a fix"',
+				'  mu exec "Summarize ready worker issues" --json',
+			].join("\n") + "\n"
+		);
+	}
+
+	return (
+		[
+			"mu serve - operator session (server + terminal)",
+			"",
+			"Usage:",
+			"  mu serve [--port N] [--provider ID] [--model ID] [--thinking LEVEL]",
+			"",
+			"Options:",
+			"  --port N               Server port (default: 3000)",
+			"  --provider ID          LLM provider for operator session",
+			"  --model ID             Model ID (default: gpt-5.3-codex)",
+			"  --thinking LEVEL       Thinking level (minimal|low|medium|high)",
+			"",
+			"Examples:",
+			"  mu serve",
+			"  mu serve --port 8080",
+			"",
+			"See also: `mu guide`, `mu control status`",
+		].join("\n") + "\n"
+	);
+}
+
 export async function cmdOperatorSession<Ctx extends OperatorSessionCommandCtx>(
 	argv: string[],
 	ctx: Ctx,
@@ -79,27 +132,10 @@ export async function cmdOperatorSession<Ctx extends OperatorSessionCommandCtx>(
 	deps: OperatorSessionCommandDeps,
 ): Promise<OperatorSessionCommandRunResult> {
 	const { hasHelpFlag, popFlag, getFlagValue, jsonError, jsonText, ok, defaultOperatorSessionStart } = deps;
-	if (hasHelpFlag(argv)) {
-		return ok(
-			[
-				"mu serve - operator session (server + terminal)",
-				"",
-				"Usage:",
-				"  mu serve [--port N] [--provider ID] [--model ID] [--thinking LEVEL]",
-				"",
-				"Options:",
-				"  --port N               Server port (default: 3000)",
-				"  --provider ID          LLM provider for operator session",
-				"  --model ID             Model ID (default: gpt-5.3-codex)",
-				"  --thinking LEVEL       Thinking level (minimal|low|medium|high)",
-				"",
-				"Examples:",
-				"  mu serve",
-				"  mu serve --port 8080",
-				"",
-				"See also: `mu guide`, `mu control status`",
-			].join("\n") + "\n",
-		);
+	const commandName = options.commandName ?? "serve";
+	const allowInteractive = options.allowInteractive ?? true;
+	if (hasHelpFlag(argv) || (commandName === "exec" && argv.length === 0)) {
+		return ok(operatorSessionHelp(commandName));
 	}
 
 	const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
@@ -120,7 +156,7 @@ export async function cmdOperatorSession<Ctx extends OperatorSessionCommandCtx>(
 	] as const) {
 		if (rawValue === "") {
 			return jsonError(`missing value for ${flagName}`, {
-				recovery: ["mu serve --help"],
+				recovery: [`mu ${commandName} --help`],
 			});
 		}
 	}
@@ -128,21 +164,21 @@ export async function cmdOperatorSession<Ctx extends OperatorSessionCommandCtx>(
 	let message = messageLong ?? messageShort;
 	if (message != null && message.trim().length === 0) {
 		return jsonError("message must not be empty", {
-			recovery: ["mu serve --help"],
+			recovery: [`mu ${commandName} --help`],
 		});
 	}
 
 	if (rest.length > 0) {
 		if (rest.some((arg) => arg.startsWith("-"))) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, {
-				recovery: ["mu serve --help"],
+				recovery: [`mu ${commandName} --help`],
 			});
 		}
 		const positionalMessage = rest.join(" ").trim();
 		if (positionalMessage.length > 0) {
 			if (message != null) {
 				return jsonError("provide either --message/-m or positional text, not both", {
-					recovery: ["mu serve --help"],
+					recovery: [`mu ${commandName} --help`],
 				});
 			}
 			message = positionalMessage;
@@ -150,8 +186,8 @@ export async function cmdOperatorSession<Ctx extends OperatorSessionCommandCtx>(
 	}
 
 	if (jsonMode && message == null) {
-		return jsonError("--json requires --message", {
-			recovery: ["mu serve --help"],
+		return jsonError("--json requires --message or positional prompt text", {
+			recovery: [`mu ${commandName} --help`],
 		});
 	}
 
@@ -217,9 +253,15 @@ export async function cmdOperatorSession<Ctx extends OperatorSessionCommandCtx>(
 		return ok();
 	}
 
+	if (!allowInteractive) {
+		return jsonError(`${commandName} requires a prompt (use positional text or --message)`, {
+			recovery: [`mu ${commandName} "..."`, `mu ${commandName} --help`],
+		});
+	}
+
 	if (!(process.stdin as { isTTY?: boolean }).isTTY) {
 		return jsonError("interactive operator session requires a TTY; use --message for one-shot mode", {
-			recovery: ["mu serve --help"],
+			recovery: [`mu ${commandName} --help`],
 		});
 	}
 
