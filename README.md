@@ -165,7 +165,7 @@ Useful slash commands still available in-chat:
 - `/mu events tail 20` — quick event log snapshot
 - `/mu events watch on` — live event watch widget
 - `/mu brand on|off|toggle` — toggle UI branding
-- `/mu plan ...` — planning HUD (phases, checklist editing, communication state, snapshots)
+- `/mu plan ...` — planning HUD (phases, checklist editing, communication state, snapshots); planning state stays in widget/status and does not alter branding footer
 - `/mu subagents ...` — subagents HUD (tmux + issue queue scope, spawn profiles, pause policy, refresh/staleness health)
 - `/mu help` — list registered slash subcommands
 

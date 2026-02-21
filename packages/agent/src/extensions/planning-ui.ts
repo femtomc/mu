@@ -83,9 +83,9 @@ const DEFAULT_STEPS = [
 const BAR_CHARS = ["░", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"] as const;
 const WIDGET_STEP_LIMIT = 4;
 const WIDGET_STEP_LABEL_MAX = 60;
-const WIDGET_ROOT_MAX = 20;
-const WIDGET_NEXT_MAX = 56;
-const WIDGET_BLOCKER_MAX = 56;
+const WIDGET_ROOT_MAX = 24;
+const WIDGET_NEXT_MAX = 76;
+const WIDGET_BLOCKER_MAX = 76;
 
 function phaseTone(phase: PlanningPhase): "dim" | "accent" | "warning" | "success" {
 	switch (phase) {
@@ -363,30 +363,32 @@ function renderPlanningUi(ctx: ExtensionContext, state: PlanningUiState): void {
 	const phase = summarizePhase(state.phase);
 	const phaseColor = phaseTone(state.phase);
 	const confidenceColor = confidenceTone(state.confidence);
-	const rootLabel = state.rootIssueId ?? "(unset)";
 	const meter = progressBar(done, total, 10);
-	const waitingLabel = state.waitingOnUser ? "yes" : "no";
+	const waitingLabel = state.waitingOnUser ? "awaiting-user" : "active";
 	const waitingColor: "dim" | "warning" = state.waitingOnUser ? "warning" : "dim";
-	const rootCompact = shortLabel(rootLabel, "(unset)", WIDGET_ROOT_MAX);
-	const nextCompact = shortLabel(state.nextAction, "(unset)", WIDGET_NEXT_MAX);
+	const rootCompact = state.rootIssueId ? shortLabel(state.rootIssueId, "", WIDGET_ROOT_MAX) : null;
+	const nextLabel = state.waitingOnUser ? "ask" : "next";
+	const nextFallback = state.waitingOnUser ? "(describe required user input)" : "(unset)";
+	const nextTone: "dim" | "warning" = state.waitingOnUser ? "warning" : "dim";
+	const nextCompact = shortLabel(state.nextAction, nextFallback, WIDGET_NEXT_MAX);
 	const blockerCompact = shortLabel(state.blocker, "(none)", WIDGET_BLOCKER_MAX);
 	const blockerColor: "dim" | "warning" = state.blocker ? "warning" : "dim";
 
-	ctx.ui.setStatus(
-		"mu-planning",
-		[
-			ctx.ui.theme.fg("dim", "plan"),
-			ctx.ui.theme.fg(phaseColor, phase),
-			ctx.ui.theme.fg("dim", `${done}/${total}`),
-			ctx.ui.theme.fg(phaseColor, meter),
-			ctx.ui.theme.fg(waitingColor, `wait:${waitingLabel}`),
-			ctx.ui.theme.fg("muted", `root:${rootCompact}`),
-		].join(` ${ctx.ui.theme.fg("muted", "·")} `),
-	);
-	ctx.ui.setStatus(
-		"mu-planning-meta",
-		`phase:${phase} steps:${done}/${total} wait:${waitingLabel} conf:${state.confidence}`,
-	);
+	const statusParts = [
+		ctx.ui.theme.fg("dim", "plan"),
+		ctx.ui.theme.fg(phaseColor, phase),
+		ctx.ui.theme.fg("dim", `${done}/${total}`),
+		ctx.ui.theme.fg(phaseColor, meter),
+	];
+	if (state.waitingOnUser) {
+		statusParts.push(ctx.ui.theme.fg("warning", "ask:user"));
+	}
+	if (state.blocker) {
+		statusParts.push(ctx.ui.theme.fg("warning", "blocked"));
+	}
+
+	ctx.ui.setStatus("mu-planning", statusParts.join(` ${ctx.ui.theme.fg("muted", "·")} `));
+	ctx.ui.setStatus("mu-planning-meta", undefined);
 
 	const lines = [
 		[
@@ -394,18 +396,25 @@ function renderPlanningUi(ctx: ExtensionContext, state: PlanningUiState): void {
 			ctx.ui.theme.fg("muted", "·"),
 			ctx.ui.theme.fg(phaseColor, phase),
 			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg(waitingColor, waitingLabel),
+			ctx.ui.theme.fg("muted", "·"),
 			ctx.ui.theme.fg("dim", `${done}/${total}`),
 			ctx.ui.theme.fg(phaseColor, meter),
 		].join(" "),
-		[
-			ctx.ui.theme.fg("muted", `root:${rootCompact}`),
-			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg(waitingColor, `wait:${waitingLabel}`),
-			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg(confidenceColor, `conf:${state.confidence}`),
-		].join(" "),
-		`${ctx.ui.theme.fg("muted", "next:")} ${ctx.ui.theme.fg("dim", nextCompact)}`,
 	];
+
+	const chips: string[] = [];
+	if (rootCompact) {
+		chips.push(ctx.ui.theme.fg("muted", `root:${rootCompact}`));
+	}
+	if (state.confidence !== "medium") {
+		chips.push(ctx.ui.theme.fg(confidenceColor, `conf:${state.confidence}`));
+	}
+	if (chips.length > 0) {
+		lines.push(chips.join(` ${ctx.ui.theme.fg("muted", "·")} `));
+	}
+
+	lines.push(`${ctx.ui.theme.fg("muted", `${nextLabel}:`)} ${ctx.ui.theme.fg(nextTone, nextCompact)}`);
 
 	if (state.blocker) {
 		lines.push(`${ctx.ui.theme.fg("muted", "blocker:")} ${ctx.ui.theme.fg(blockerColor, blockerCompact)}`);

@@ -214,14 +214,52 @@ describe("planning HUD tool", () => {
 
 		const lines = uiHarness.getWidgetLines() ?? [];
 		expect(lines.length).toBeLessThanOrEqual(10);
-		expect(lines.some((line) => line.includes("wait:yes"))).toBe(true);
-		expect(lines.some((line) => line.startsWith("next:"))).toBe(true);
+		expect(lines.some((line) => line.includes("awaiting-user"))).toBe(true);
+		expect(lines.some((line) => line.startsWith("ask:"))).toBe(true);
 		expect(lines.some((line) => line.includes("... +1 more steps"))).toBe(true);
 
 		const planningStatus = uiHarness.getStatus("mu-planning") ?? "";
 		expect(planningStatus).toContain("plan");
 		expect(planningStatus).toContain("reviewing");
+		expect(planningStatus).toContain("ask:user");
+		expect(uiHarness.getStatus("mu-planning-meta")).toBeUndefined();
 		expect(uiHarness.getStatus("mu-hud-mode")).toBe("hud:planning");
+	});
+
+	test("hides unset defaults while keeping waiting-user ask signal clear", async () => {
+		const { api, tools } = createExtensionApiMock();
+		planningUiExtension(api as unknown as Parameters<typeof planningUiExtension>[0]);
+
+		const tool = tools.get("mu_planning_hud");
+		if (!tool) {
+			throw new Error("mu_planning_hud tool missing");
+		}
+
+		const uiHarness = createInteractiveUiContext();
+		await executePlanningTool(tool, { action: "on" }, uiHarness.ctx);
+		await executePlanningTool(
+			tool,
+			{
+				action: "update",
+				phase: "waiting_user",
+				waiting_on_user: true,
+				confidence: "medium",
+				next_action: "Confirm final rollout order before implementation",
+				steps: ["Investigate", "Draft", "Review"],
+				step_updates: [{ index: 1, done: true }],
+			},
+			uiHarness.ctx,
+		);
+
+		const lines = uiHarness.getWidgetLines() ?? [];
+		expect(lines.some((line) => line.includes("root:(unset)"))).toBe(false);
+		expect(lines.some((line) => line.includes("conf:medium"))).toBe(false);
+		expect(lines.some((line) => line.startsWith("ask:"))).toBe(true);
+
+		const planningStatus = uiHarness.getStatus("mu-planning") ?? "";
+		expect(planningStatus).toContain("waiting-user");
+		expect(planningStatus).toContain("ask:user");
+		expect(uiHarness.getStatus("mu-planning-meta")).toBeUndefined();
 	});
 
 	test("returns structured error for invalid phase", async () => {

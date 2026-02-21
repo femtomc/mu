@@ -156,11 +156,10 @@ export function brandingExtension(pi: ExtensionAPI) {
 					}
 
 					const activeHudMode = getActiveHudMode();
-					if (activeHudMode) {
+					if (activeHudMode === "subagents") {
 						const extensionStatuses = footerData.getExtensionStatuses();
-						const modeMetaKey = activeHudMode === "planning" ? "mu-planning-meta" : "mu-subagents-meta";
-						const modeMeta = extensionStatuses.get(modeMetaKey) ?? "";
-						parts.push(theme.fg("muted", "·"), theme.fg("accent", `hud:${activeHudMode}`));
+						const modeMeta = extensionStatuses.get("mu-subagents-meta") ?? "";
+						parts.push(theme.fg("muted", "·"), theme.fg("accent", "hud:subagents"));
 						if (modeMeta.length > 0) {
 							parts.push(theme.fg("muted", "·"), theme.fg("dim", truncateToWidth(modeMeta, 42)));
 						}

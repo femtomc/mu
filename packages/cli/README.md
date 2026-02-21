@@ -103,7 +103,7 @@ If `--session-kind` is omitted, `mu turn` defaults to `cp_operator`
 
 In-session `/mu` helpers include:
 
-- `/mu plan ...` (planning HUD: phases, checklist editing, communication state, snapshots)
+- `/mu plan ...` (planning HUD: phases, checklist editing, communication state, snapshots; does not inject planning metadata into branding footer)
 - `/mu subagents ...` (subagents HUD: scope filters, spawn profiles, pause policy, refresh/staleness controls, snapshots)
 - `/mu events ...` (event tail/watch)
 - `/mu brand ...` (chrome toggle)
