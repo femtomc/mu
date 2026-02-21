@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { resetHudMode } from "../src/extensions/hud-mode.js";
 import { resetMuCommandDispatcher } from "../src/extensions/mu-command-dispatcher.js";
 import { planningUiExtension } from "../src/extensions/planning-ui.js";
 
@@ -66,13 +67,17 @@ async function executePlanningTool(
 
 function createInteractiveUiContext() {
 	let widgetLines: string[] | undefined;
-	let statusLine: string | undefined;
+	const statuses = new Map<string, string>();
 	const ctx = {
 		hasUI: true,
 		ui: {
 			notify: () => undefined,
-			setStatus: (_key: string, text: string | undefined) => {
-				statusLine = text;
+			setStatus: (key: string, text: string | undefined) => {
+				if (text == null) {
+					statuses.delete(key);
+					return;
+				}
+				statuses.set(key, text);
 			},
 			setWidget: (_key: string, content: string[] | undefined) => {
 				widgetLines = Array.isArray(content) ? [...content] : undefined;
@@ -86,17 +91,19 @@ function createInteractiveUiContext() {
 	return {
 		ctx,
 		getWidgetLines: () => widgetLines,
-		getStatusLine: () => statusLine,
+		getStatus: (key: string) => statuses.get(key),
 	};
 }
 
 describe("planning HUD tool", () => {
 	beforeEach(() => {
 		resetMuCommandDispatcher();
+		resetHudMode();
 	});
 
 	afterEach(() => {
 		resetMuCommandDispatcher();
+		resetHudMode();
 	});
 
 	test("registers mu_planning_hud and supports stateful actions", async () => {
@@ -211,9 +218,10 @@ describe("planning HUD tool", () => {
 		expect(lines.some((line) => line.startsWith("next:"))).toBe(true);
 		expect(lines.some((line) => line.includes("... +1 more steps"))).toBe(true);
 
-		const statusLine = uiHarness.getStatusLine();
-		expect(statusLine).toContain("plan");
-		expect(statusLine).toContain("reviewing");
+		const planningStatus = uiHarness.getStatus("mu-planning") ?? "";
+		expect(planningStatus).toContain("plan");
+		expect(planningStatus).toContain("reviewing");
+		expect(uiHarness.getStatus("mu-hud-mode")).toBe("hud:planning");
 	});
 
 	test("returns structured error for invalid phase", async () => {

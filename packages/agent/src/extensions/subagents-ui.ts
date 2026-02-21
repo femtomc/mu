@@ -1,4 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { fetchMuJson, muServerUrl } from "./shared.js";
+import { clearHudMode, setActiveHudMode, syncHudModeStatus } from "./hud-mode.js";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 
 type IssueStatus = "open" | "in_progress" | "closed";
@@ -28,6 +30,8 @@ type SubagentsState = {
 	staleAfterMs: number;
 	spawnPaused: boolean;
 	spawnMode: SpawnMode;
+	activityLines: string[];
+	activityError: string | null;
 };
 
 type MuCliOutcome = {
@@ -35,6 +39,18 @@ type MuCliOutcome = {
 	stdout: string;
 	stderr: string;
 	timedOut: boolean;
+	error: string | null;
+};
+
+type ActivityEvent = {
+	ts_ms?: number;
+	type?: string;
+	issue_id?: string;
+	payload?: unknown;
+};
+
+type ActivitySummary = {
+	lines: string[];
 	error: string | null;
 };
 
@@ -79,6 +95,12 @@ const MAX_REFRESH_SECONDS = 120;
 const DEFAULT_STALE_AFTER_MS = 60_000;
 const MIN_STALE_SECONDS = 10;
 const MAX_STALE_SECONDS = 3_600;
+const WIDGET_SCOPE_MAX = 52;
+const WIDGET_PREFIX_MAX = 20;
+const WIDGET_SUMMARY_MAX = 76;
+const WIDGET_ERROR_MAX = 72;
+const ACTIVITY_EVENT_LIMIT = 180;
+const ACTIVITY_LINE_LIMIT = 4;
 
 function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\"'\"'")}'`;
@@ -184,6 +206,8 @@ function createDefaultState(): SubagentsState {
 		staleAfterMs: DEFAULT_STALE_AFTER_MS,
 		spawnPaused: false,
 		spawnMode: DEFAULT_SPAWN_MODE,
+		activityLines: [],
+		activityError: null,
 	};
 }
 
@@ -401,19 +425,6 @@ async function listIssueSlices(
 	};
 }
 
-function formatIssueLine(
-	ctx: ExtensionContext,
-	issue: IssueDigest,
-	opts: { marker?: string; tone?: "accent" | "success" | "warning" } = {},
-): string {
-	const marker = opts.marker ?? "•";
-	const tone = opts.tone ?? "accent";
-	const id = ctx.ui.theme.fg("dim", issue.id);
-	const priority = ctx.ui.theme.fg("muted", `p${issue.priority}`);
-	const title = ctx.ui.theme.fg("text", truncateOneLine(issue.title));
-	return `  ${ctx.ui.theme.fg(tone, marker)} ${id} ${priority} ${title}`;
-}
-
 function queueMeter(value: number, total: number, width = 10): string {
 	if (width <= 0 || total <= 0) {
 		return "";
@@ -445,6 +456,144 @@ function isRefreshStale(lastUpdatedMs: number | null, staleAfterMs: number): boo
 		return false;
 	}
 	return Date.now() - lastUpdatedMs > staleAfterMs;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return null;
+	}
+	return value as Record<string, unknown>;
+}
+
+function issueIdFromEvent(event: ActivityEvent): string | null {
+	const issueId = typeof event.issue_id === "string" ? event.issue_id.trim() : "";
+	return issueId.length > 0 ? issueId : null;
+}
+
+function eventAgeLabel(tsMs: number | undefined): string {
+	if (typeof tsMs !== "number" || !Number.isFinite(tsMs)) {
+		return "now";
+	}
+	const ageSeconds = Math.max(0, Math.round((Date.now() - tsMs) / 1_000));
+	if (ageSeconds < 60) {
+		return `${ageSeconds}s`;
+	}
+	const mins = Math.floor(ageSeconds / 60);
+	if (mins < 60) {
+		return `${mins}m`;
+	}
+	const hours = Math.floor(mins / 60);
+	return `${hours}h`;
+}
+
+function renderActivitySentence(event: ActivityEvent): { issueId: string; sentence: string } | null {
+	const issueId = issueIdFromEvent(event);
+	if (!issueId) {
+		return null;
+	}
+	const eventType = typeof event.type === "string" ? event.type : "";
+	const payload = asRecord(event.payload);
+
+	if (eventType === "forum.post") {
+		const message = asRecord(payload?.message);
+		const body = typeof message?.body === "string" ? message.body.trim() : "";
+		const author = typeof message?.author === "string" ? message.author.trim() : "worker";
+		if (body.length === 0) {
+			return null;
+		}
+		return {
+			issueId,
+			sentence: `${issueId} ${author}: ${truncateOneLine(body, 54)}`,
+		};
+	}
+
+	if (eventType === "issue.claim") {
+		const ok = payload?.ok === true;
+		if (ok) {
+			return { issueId, sentence: `${issueId} claimed and started work` };
+		}
+		const reason = typeof payload?.reason === "string" ? payload.reason : "claim failed";
+		return { issueId, sentence: `${issueId} claim failed (${truncateOneLine(reason, 36)})` };
+	}
+
+	if (eventType === "issue.close") {
+		const outcome = typeof payload?.outcome === "string" ? payload.outcome : "closed";
+		return { issueId, sentence: `${issueId} closed (${outcome})` };
+	}
+
+	if (eventType === "issue.update") {
+		const changed = asRecord(payload?.changed);
+		const changedKeys = changed ? Object.keys(changed) : [];
+		if (changedKeys.includes("status")) {
+			const statusChange = asRecord(changed?.status);
+			const from = typeof statusChange?.from === "string" ? statusChange.from : "?";
+			const to = typeof statusChange?.to === "string" ? statusChange.to : "?";
+			return { issueId, sentence: `${issueId} status ${from} → ${to}` };
+		}
+		if (changedKeys.length > 0) {
+			return {
+				issueId,
+				sentence: `${issueId} updated ${truncateOneLine(changedKeys.join(","), 28)}`,
+			};
+		}
+	}
+
+	if (eventType === "issue.open") {
+		return { issueId, sentence: `${issueId} reopened` };
+	}
+
+	return null;
+}
+
+async function fetchRecentActivity(opts: {
+	issueIds: readonly string[];
+}): Promise<ActivitySummary> {
+	if (!muServerUrl()) {
+		return { lines: [], error: null };
+	}
+
+	let events: ActivityEvent[];
+	try {
+		events = await fetchMuJson<ActivityEvent[]>(`/api/control-plane/events?limit=${ACTIVITY_EVENT_LIMIT}`, {
+			timeoutMs: 4_000,
+		});
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return { lines: [], error: `activity refresh failed: ${truncateOneLine(message, 60)}` };
+	}
+
+	if (!Array.isArray(events) || events.length === 0) {
+		return { lines: [], error: null };
+	}
+
+	const tracked = new Set(opts.issueIds.map((issueId) => issueId.trim()).filter((issueId) => issueId.length > 0));
+	const seenIssueIds = new Set<string>();
+	const lines: string[] = [];
+	const sorted = [...events].sort((left, right) => {
+		const leftTs = typeof left.ts_ms === "number" ? left.ts_ms : 0;
+		const rightTs = typeof right.ts_ms === "number" ? right.ts_ms : 0;
+		return rightTs - leftTs;
+	});
+
+	for (const event of sorted) {
+		const rendered = renderActivitySentence(event);
+		if (!rendered) {
+			continue;
+		}
+		if (tracked.size > 0 && !tracked.has(rendered.issueId)) {
+			continue;
+		}
+		if (seenIssueIds.has(rendered.issueId)) {
+			continue;
+		}
+		seenIssueIds.add(rendered.issueId);
+		lines.push(`${eventAgeLabel(event.ts_ms)} ${rendered.sentence}`);
+		if (lines.length >= ACTIVITY_LINE_LIMIT) {
+			break;
+		}
+	}
+
+	return { lines, error: null };
 }
 
 function computeQueueDrift(
@@ -539,6 +688,7 @@ function subagentsSnapshot(state: SubagentsState, format: "compact" | "multiline
 			`spawn_paused: ${paused}`,
 			`queues: ${state.readyIssues.length} ready / ${state.activeIssues.length} active`,
 			`sessions: ${state.sessions.length}`,
+			`activity_lines: ${state.activityLines.length}`,
 			`drift_active_without_session: ${drift.activeWithoutSessionIds.length}`,
 			`drift_orphan_sessions: ${drift.orphanSessions.length}`,
 			`refresh_age: ${refreshAge}`,
@@ -558,6 +708,7 @@ function subagentsSnapshot(state: SubagentsState, format: "compact" | "multiline
 		`active=${state.activeIssues.length}`,
 		`sessions=${state.sessions.length}`,
 		`drift=${staleCount}`,
+		`activity=${state.activityLines.length}`,
 		`refresh=${refreshAge}`,
 	].join(" · ");
 }
@@ -568,12 +719,15 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	}
 	if (!state.enabled) {
 		ctx.ui.setStatus("mu-subagents", undefined);
+		ctx.ui.setStatus("mu-subagents-meta", undefined);
 		ctx.ui.setWidget("mu-subagents", undefined);
 		return;
 	}
 
 	const issueScope = state.issueRootId ? `root:${state.issueRootId}` : "all-roots";
 	const roleScope = state.issueRoleTag ? state.issueRoleTag : "(all roles)";
+	const scopeCompact = truncateOneLine(`${issueScope} · ${roleScope}`, WIDGET_SCOPE_MAX);
+	const prefixCompact = truncateOneLine(state.prefix || "(all sessions)", WIDGET_PREFIX_MAX);
 	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 	const drift = computeQueueDrift(state.sessions, state.activeIssues);
 	const staleCount = drift.activeWithoutSessionIds.length + drift.orphanSessions.length;
@@ -587,92 +741,80 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	const pausedColor: "warning" | "dim" = state.spawnPaused ? "warning" : "dim";
 	const refreshSeconds = Math.round(state.refreshIntervalMs / 1_000);
 	const staleAfterSeconds = Math.round(state.staleAfterMs / 1_000);
+	const activityLines = state.activityLines.slice(0, ACTIVITY_LINE_LIMIT);
 
 	ctx.ui.setStatus(
 		"mu-subagents",
 		[
 			ctx.ui.theme.fg("dim", "subagents"),
 			ctx.ui.theme.fg(healthColor, healthLabel),
-			ctx.ui.theme.fg("dim", `${state.spawnMode}`),
+			ctx.ui.theme.fg("dim", `mode:${state.spawnMode}`),
 			ctx.ui.theme.fg(pausedColor, `paused:${pausedLabel}`),
-			ctx.ui.theme.fg("dim", `${state.sessions.length} tmux`),
-			ctx.ui.theme.fg("dim", `${state.readyIssues.length} ready/${state.activeIssues.length} active`),
-			ctx.ui.theme.fg("muted", issueScope),
+			ctx.ui.theme.fg("dim", `q:${state.readyIssues.length}/${state.activeIssues.length}`),
+			ctx.ui.theme.fg("dim", `tmux:${state.sessions.length}`),
+			ctx.ui.theme.fg(staleCount > 0 ? "warning" : "dim", `drift:${staleCount}`),
+			ctx.ui.theme.fg("muted", truncateOneLine(issueScope, 18)),
 		].join(` ${ctx.ui.theme.fg("muted", "·")} `),
+	);
+	ctx.ui.setStatus(
+		"mu-subagents-meta",
+		`health:${healthLabel} q:${state.readyIssues.length}/${state.activeIssues.length} tmux:${state.sessions.length} drift:${staleCount} refresh:${refreshAge}`,
 	);
 
 	const lines = [
-		ctx.ui.theme.fg("accent", ctx.ui.theme.bold("Subagents board")),
-		`  ${ctx.ui.theme.fg("muted", "health:")} ${ctx.ui.theme.fg(healthColor, healthLabel)}`,
-		`  ${ctx.ui.theme.fg("muted", "scope:")} ${ctx.ui.theme.fg("dim", `${issueScope} · ${roleScope}`)}`,
-		`  ${ctx.ui.theme.fg("muted", "tmux prefix:")} ${ctx.ui.theme.fg("dim", state.prefix || "(all sessions)")}`,
-		`  ${ctx.ui.theme.fg("muted", "spawn mode:")} ${ctx.ui.theme.fg("accent", state.spawnMode)}`,
-		`  ${ctx.ui.theme.fg("muted", "spawn paused:")} ${ctx.ui.theme.fg(pausedColor, pausedLabel)}`,
-		`  ${ctx.ui.theme.fg("muted", "refresh:")} ${ctx.ui.theme.fg("dim", `${refreshSeconds}s`)} ${ctx.ui.theme.fg("muted", "| stale after:")} ${ctx.ui.theme.fg("dim", `${staleAfterSeconds}s`)}`,
-		`  ${ctx.ui.theme.fg("muted", "queues:")} ${ctx.ui.theme.fg("accent", `${state.readyIssues.length} ready`)} ${ctx.ui.theme.fg("muted", "| ")} ${ctx.ui.theme.fg("warning", `${state.activeIssues.length} active`)} ${ctx.ui.theme.fg("dim", queueBar)}`,
-		`  ${ctx.ui.theme.fg("muted", "last refresh:")} ${ctx.ui.theme.fg(refreshStale ? "warning" : "dim", refreshAge)}`,
-		`  ${ctx.ui.theme.fg("dim", "────────────────────────────")}`,
-		ctx.ui.theme.fg("accent", `tmux sessions (${state.sessions.length})`),
+		[
+			ctx.ui.theme.fg("accent", ctx.ui.theme.bold("Subagents")),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg(healthColor, healthLabel),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg("accent", `mode:${state.spawnMode}`),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg(pausedColor, `paused:${pausedLabel}`),
+		].join(" "),
+		`${ctx.ui.theme.fg("muted", "scope:")} ${ctx.ui.theme.fg("dim", scopeCompact)} ${ctx.ui.theme.fg("muted", "· prefix:")} ${ctx.ui.theme.fg("dim", prefixCompact)}`,
+		[
+			ctx.ui.theme.fg("muted", "queues:"),
+			ctx.ui.theme.fg("accent", `${state.readyIssues.length}r`),
+			ctx.ui.theme.fg("muted", "/"),
+			ctx.ui.theme.fg("warning", `${state.activeIssues.length}a`),
+			ctx.ui.theme.fg("dim", queueBar),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg("muted", "tmux:"),
+			ctx.ui.theme.fg("dim", `${state.sessions.length}`),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg(staleCount > 0 ? "warning" : "dim", `drift:${staleCount}`),
+		].join(" "),
+		[
+			ctx.ui.theme.fg("muted", "refresh:"),
+			ctx.ui.theme.fg(refreshStale ? "warning" : "dim", refreshAge),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg("muted", "every:"),
+			ctx.ui.theme.fg("dim", `${refreshSeconds}s`),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg("muted", "stale:"),
+			ctx.ui.theme.fg("dim", `${staleAfterSeconds}s`),
+		].join(" "),
 	];
 
-	if (state.sessionError) {
-		lines.push(ctx.ui.theme.fg("warning", `  tmux error: ${state.sessionError}`));
-	} else if (state.sessions.length === 0) {
-		lines.push(ctx.ui.theme.fg("muted", "  (no matching sessions)"));
-	} else {
-		for (const name of state.sessions.slice(0, 8)) {
-			lines.push(`  ${ctx.ui.theme.fg("success", "●")} ${ctx.ui.theme.fg("text", name)}`);
-		}
-		if (state.sessions.length > 8) {
-			lines.push(ctx.ui.theme.fg("muted", `  ... +${state.sessions.length - 8} more tmux sessions`));
-		}
-	}
-
-	lines.push(`  ${ctx.ui.theme.fg("dim", "────────────────────────────")}`);
 	if (state.issueError) {
-		lines.push(ctx.ui.theme.fg("warning", `issue error: ${state.issueError}`));
-	} else {
-		lines.push(ctx.ui.theme.fg("accent", `ready queue (${state.readyIssues.length})`));
-		if (state.readyIssues.length === 0) {
-			lines.push(ctx.ui.theme.fg("muted", "  (no ready issues)"));
-		} else {
-			for (const issue of state.readyIssues.slice(0, 6)) {
-				lines.push(formatIssueLine(ctx, issue, { marker: "→", tone: "accent" }));
-			}
-			if (state.readyIssues.length > 6) {
-				lines.push(ctx.ui.theme.fg("muted", `  ... +${state.readyIssues.length - 6} more ready issues`));
-			}
-		}
-
-		lines.push(ctx.ui.theme.fg("accent", `active queue (${state.activeIssues.length})`));
-		if (state.activeIssues.length === 0) {
-			lines.push(ctx.ui.theme.fg("muted", "  (no in-progress issues)"));
-		} else {
-			for (const issue of state.activeIssues.slice(0, 6)) {
-				lines.push(formatIssueLine(ctx, issue, { marker: "●", tone: "warning" }));
-			}
-			if (state.activeIssues.length > 6) {
-				lines.push(ctx.ui.theme.fg("muted", `  ... +${state.activeIssues.length - 6} more active issues`));
-			}
-		}
+		lines.push(ctx.ui.theme.fg("warning", `issue_error: ${truncateOneLine(state.issueError, WIDGET_ERROR_MAX)}`));
 	}
-
+	if (state.sessionError) {
+		lines.push(ctx.ui.theme.fg("warning", `tmux_error: ${truncateOneLine(state.sessionError, WIDGET_ERROR_MAX)}`));
+	}
 	if (refreshStale) {
 		lines.push(
-			ctx.ui.theme.fg("warning", `refresh warning: last successful refresh is stale (>${staleAfterSeconds}s)`),
+			ctx.ui.theme.fg("warning", `warning: refresh stale (>${staleAfterSeconds}s since last successful refresh)`),
 		);
 	}
 	if (drift.activeWithoutSessionIds.length > 0) {
 		lines.push(
 			ctx.ui.theme.fg(
 				"warning",
-				`drift warning: active issues without tmux sessions (${drift.activeWithoutSessionIds.length})`,
-			),
-		);
-		lines.push(
-			ctx.ui.theme.fg(
-				"warning",
-				`  missing sessions for: ${drift.activeWithoutSessionIds.slice(0, 8).join(", ")}${drift.activeWithoutSessionIds.length > 8 ? " ..." : ""}`,
+				truncateOneLine(
+					`drift_missing: ${drift.activeWithoutSessionIds.slice(0, 4).join(", ")}${drift.activeWithoutSessionIds.length > 4 ? " ..." : ""}`,
+					WIDGET_ERROR_MAX,
+				),
 			),
 		);
 	}
@@ -680,15 +822,28 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 		lines.push(
 			ctx.ui.theme.fg(
 				"warning",
-				`drift warning: tmux sessions without active issues (${drift.orphanSessions.length})`,
+				truncateOneLine(
+					`drift_orphan: ${drift.orphanSessions.slice(0, 4).join(", ")}${drift.orphanSessions.length > 4 ? " ..." : ""}`,
+					WIDGET_ERROR_MAX,
+				),
 			),
 		);
-		lines.push(
-			ctx.ui.theme.fg(
-				"warning",
-				`  orphan sessions: ${drift.orphanSessions.slice(0, 8).join(", ")}${drift.orphanSessions.length > 8 ? " ..." : ""}`,
-			),
-		);
+	}
+
+	lines.push(ctx.ui.theme.fg("dim", "────────────────────────────"));
+	lines.push(ctx.ui.theme.fg("accent", "activity"));
+	if (state.activityError) {
+		lines.push(ctx.ui.theme.fg("warning", truncateOneLine(state.activityError, WIDGET_ERROR_MAX)));
+	} else if (activityLines.length === 0) {
+		if (state.activeIssues.length > 0) {
+			lines.push(ctx.ui.theme.fg("muted", "(no recent subagent updates yet)"));
+		} else {
+			lines.push(ctx.ui.theme.fg("muted", "(no active workers)"));
+		}
+	} else {
+		for (const line of activityLines) {
+			lines.push(`${ctx.ui.theme.fg("muted", "•")} ${ctx.ui.theme.fg("text", truncateOneLine(line, WIDGET_SUMMARY_MAX))}`);
+		}
 	}
 
 	ctx.ui.setWidget("mu-subagents", lines, { placement: "belowEditor" });
@@ -728,6 +883,8 @@ function subagentsDetails(state: SubagentsState) {
 		refresh_stale: isRefreshStale(state.lastUpdatedMs, state.staleAfterMs),
 		issue_error: state.issueError,
 		session_error: state.sessionError,
+		activity_lines: [...state.activityLines],
+		activity_error: state.activityError,
 		last_updated_ms: state.lastUpdatedMs,
 		snapshot_compact: subagentsSnapshot(state, "compact"),
 		snapshot_multiline: subagentsSnapshot(state, "multiline"),
@@ -764,6 +921,14 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 		state.readyIssues = issues.ready;
 		state.activeIssues = issues.active;
 		state.issueError = issues.error;
+
+		const trackedIssueIds = (state.activeIssues.length > 0 ? state.activeIssues : state.readyIssues)
+			.slice(0, 8)
+			.map((issue) => issue.id);
+		const activity = await fetchRecentActivity({ issueIds: trackedIssueIds });
+		state.activityLines = activity.lines;
+		state.activityError = activity.error;
+
 		state.lastUpdatedMs = Date.now();
 		renderSubagentsUi(ctx, state);
 	};
@@ -800,6 +965,16 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 		ctx.ui.notify(`${message}\n\n${subagentsUsageText()}`, level);
 	};
 
+	const syncSubagentsMode = (ctx: ExtensionContext, action: SubagentsToolAction) => {
+		const passiveAction = action === "status" || action === "snapshot";
+		if (!state.enabled) {
+			clearHudMode("subagents");
+		} else if (!passiveAction) {
+			setActiveHudMode("subagents");
+		}
+		syncHudModeStatus(ctx);
+	};
+
 	const statusSummary = () => {
 		const when = state.lastUpdatedMs == null ? "never" : new Date(state.lastUpdatedMs).toLocaleTimeString();
 		const status = state.enabled ? "enabled" : "disabled";
@@ -809,6 +984,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 		const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 		const issueError = state.issueError ? `\nissue_error: ${state.issueError}` : "";
 		const tmuxError = state.sessionError ? `\ntmux_error: ${state.sessionError}` : "";
+		const activityError = state.activityError ? `\nactivity_error: ${state.activityError}` : "";
 		const driftInfo =
 			drift.activeWithoutSessionIds.length > 0 || drift.orphanSessions.length > 0
 				? `\ndrift_active_without_session: ${drift.activeWithoutSessionIds.length}\ndrift_orphan_sessions: ${drift.orphanSessions.length}`
@@ -818,6 +994,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 			level:
 				state.issueError ||
 				state.sessionError ||
+				state.activityError ||
 				refreshStale ||
 				drift.activeWithoutSessionIds.length > 0 ||
 				drift.orphanSessions.length > 0
@@ -836,10 +1013,12 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 					`sessions: ${state.sessions.length}`,
 					`ready_issues: ${state.readyIssues.length}`,
 					`active_issues: ${state.activeIssues.length}`,
+					`activity_updates: ${state.activityLines.length}`,
 					`last refresh: ${when}`,
 				].join("\n") +
 				issueError +
 				tmuxError +
+				activityError +
 				driftInfo +
 				staleInfo,
 		};
@@ -1201,6 +1380,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 			ensurePolling();
 		}
 		await refresh(ctx);
+		syncHudModeStatus(ctx);
 	});
 
 	pi.on("session_switch", async (_event, ctx) => {
@@ -1209,6 +1389,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 			ensurePolling();
 		}
 		await refresh(ctx);
+		syncHudModeStatus(ctx);
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -1294,6 +1475,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				notify(ctx, result.message, result.level);
 				return;
 			}
+			syncSubagentsMode(ctx, params.action);
 			ctx.ui.notify(result.message, result.level);
 		},
 	});
@@ -1351,6 +1533,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 			if (!result.ok) {
 				return subagentsToolError(result.message, state);
 			}
+			syncSubagentsMode(ctx, params.action);
 			return {
 				content: [{ type: "text", text: result.message }],
 				details: {

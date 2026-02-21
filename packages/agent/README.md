@@ -48,8 +48,8 @@ Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
 - `eventLogExtension` — event tail + watch widget
-- `planningUiExtension` — planning HUD with phase/checklist state plus user-facing communication metadata (`/mu plan ...`)
-- `subagentsUiExtension` — tmux + issue queue HUD with spawn profiles, pause controls, and queue/session health signals (`/mu subagents ...`)
+- `planningUiExtension` — planning mode: compact HUD for next-step/approval flow plus footer-ready incidental status metadata (`/mu plan ...`)
+- `subagentsUiExtension` — subagents mode: compact HUD with activity sentences from issue/forum events plus footer-ready queue/health metadata (`/mu subagents ...`)
 
 Default operator UI theme is `mu-gruvbox-dark`.
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { resetHudMode } from "../src/extensions/hud-mode.js";
 import { resetMuCommandDispatcher } from "../src/extensions/mu-command-dispatcher.js";
 import { subagentsUiExtension } from "../src/extensions/subagents-ui.js";
 
@@ -56,17 +57,75 @@ function textOf(result: unknown): string {
 	return typeof text === "string" ? text : "";
 }
 
-async function executeSubagentsTool(tool: RegisteredTool, params: Record<string, unknown>): Promise<unknown> {
-	return tool.execute("call-1", params, undefined, undefined, { hasUI: false, cwd: process.cwd() });
+async function executeSubagentsTool(
+	tool: RegisteredTool,
+	params: Record<string, unknown>,
+	ctx: unknown = { hasUI: false, cwd: process.cwd() },
+): Promise<unknown> {
+	return tool.execute("call-1", params, undefined, undefined, ctx);
+}
+
+function createInteractiveUiContext() {
+	let widgetLines: string[] | undefined;
+	const statuses = new Map<string, string>();
+	const ctx = {
+		hasUI: true,
+		cwd: process.cwd(),
+		ui: {
+			notify: () => undefined,
+			setStatus: (key: string, text: string | undefined) => {
+				if (text == null) {
+					statuses.delete(key);
+					return;
+				}
+				statuses.set(key, text);
+			},
+			setWidget: (_key: string, content: string[] | undefined) => {
+				widgetLines = Array.isArray(content) ? [...content] : undefined;
+			},
+			theme: {
+				fg: (_tone: string, text: string) => text,
+				bold: (text: string) => text,
+			},
+		},
+	};
+	return {
+		ctx,
+		getWidgetLines: () => widgetLines,
+		getStatus: (key: string) => statuses.get(key),
+	};
+}
+
+function textStream(value: string): ReadableStream {
+	const encoder = new TextEncoder();
+	return new ReadableStream({
+		start(controller) {
+			if (value.length > 0) {
+				controller.enqueue(encoder.encode(value));
+			}
+			controller.close();
+		},
+	});
+}
+
+function fakeProcess(stdout: string, stderr = "", exitCode = 0): Bun.Subprocess {
+	return {
+		exited: Promise.resolve(exitCode),
+		stdout: textStream(stdout),
+		stderr: textStream(stderr),
+		kill: () => undefined,
+	} as unknown as Bun.Subprocess;
 }
 
 describe("subagents HUD tool", () => {
 	beforeEach(() => {
 		resetMuCommandDispatcher();
+		resetHudMode();
 	});
 
 	afterEach(() => {
 		resetMuCommandDispatcher();
+		resetHudMode();
 	});
 
 	test("registers mu_subagents_hud and reports status details", async () => {
@@ -105,6 +164,79 @@ describe("subagents HUD tool", () => {
 		expect(textOf(result)).toContain("HUD(subagents)");
 		expect(textOf(result)).toContain("mode=worker");
 		expect(textOf(result)).toContain("paused=no");
+	});
+
+	test("renders compact widget layout on narrow terminal-friendly flow", async () => {
+		const { api, tools } = createExtensionApiMock();
+		subagentsUiExtension(api as unknown as Parameters<typeof subagentsUiExtension>[0]);
+
+		const tool = tools.get("mu_subagents_hud");
+		if (!tool) {
+			throw new Error("mu_subagents_hud tool missing");
+		}
+
+		const originalSpawn = Bun.spawn;
+		(Bun as { spawn: typeof Bun.spawn }).spawn = ((opts: { cmd: string[] }) => {
+			const cmd = opts.cmd;
+			if (cmd[0] === "tmux" && cmd[1] === "ls") {
+				return fakeProcess(
+					[
+						"mu-sub-20260221-mu-a1111111: 1 windows (created)",
+						"mu-sub-20260221-mu-b2222222: 1 windows (created)",
+					].join("\n"),
+				);
+			}
+			if (cmd[0] === "mu" && cmd.includes("ready")) {
+				return fakeProcess("[]\n");
+			}
+			if (cmd[0] === "mu" && cmd.includes("in_progress")) {
+				return fakeProcess(
+					JSON.stringify([
+						{
+							id: "mu-a1111111",
+							title: "Implement outbound-only v1 adapter path",
+							status: "in_progress",
+							priority: 2,
+							tags: ["role:worker"],
+						},
+						{
+							id: "mu-b2222222",
+							title: "Validate fallback parser behavior under retries",
+							status: "in_progress",
+							priority: 2,
+							tags: ["role:worker"],
+						},
+					]),
+				);
+			}
+			return fakeProcess("", "unexpected command", 1);
+		}) as typeof Bun.spawn;
+
+		try {
+			const uiHarness = createInteractiveUiContext();
+			await executeSubagentsTool(tool, { action: "set_root", root_issue_id: "mu-1f703f7e" }, uiHarness.ctx);
+
+			const lines = uiHarness.getWidgetLines() ?? [];
+			expect(lines.length).toBeLessThanOrEqual(10);
+			expect(lines[0]).toContain("Subagents");
+			expect(lines.some((line) => line === "activity")).toBe(true);
+			expect(
+				lines.some(
+					(line) =>
+						line.startsWith("•") ||
+						line.includes("subagent updates") ||
+						line.includes("active workers") ||
+						line.includes("activity refresh failed"),
+				),
+			).toBe(true);
+
+			const subagentsStatus = uiHarness.getStatus("mu-subagents") ?? "";
+			expect(subagentsStatus).toContain("subagents");
+			expect(subagentsStatus).toContain("q:0/2");
+			expect(uiHarness.getStatus("mu-hud-mode")).toBe("hud:subagents");
+		} finally {
+			(Bun as { spawn: typeof Bun.spawn }).spawn = originalSpawn;
+		}
 	});
 
 	test("returns structured validation errors without spawning external commands", async () => {

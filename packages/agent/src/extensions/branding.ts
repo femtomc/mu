@@ -10,6 +10,7 @@
 import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { MU_DEFAULT_THEME_NAME, MU_VERSION } from "../ui_defaults.js";
+import { getActiveHudMode } from "./hud-mode.js";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 import { fetchMuStatus, type MuControlPlaneRoute, muServerUrl } from "./shared.js";
 
@@ -152,6 +153,17 @@ export function brandingExtension(pi: ExtensionAPI) {
 							theme.fg(barColor, `ctx ${pct}%`),
 							theme.fg(barColor, contextBar(pct, 10)),
 						);
+					}
+
+					const activeHudMode = getActiveHudMode();
+					if (activeHudMode) {
+						const extensionStatuses = footerData.getExtensionStatuses();
+						const modeMetaKey = activeHudMode === "planning" ? "mu-planning-meta" : "mu-subagents-meta";
+						const modeMeta = extensionStatuses.get(modeMetaKey) ?? "";
+						parts.push(theme.fg("muted", "·"), theme.fg("accent", `hud:${activeHudMode}`));
+						if (modeMeta.length > 0) {
+							parts.push(theme.fg("muted", "·"), theme.fg("dim", truncateToWidth(modeMeta, 42)));
+						}
 					}
 
 					if (snapshot.openCount > 0 || snapshot.readyCount > 0) {

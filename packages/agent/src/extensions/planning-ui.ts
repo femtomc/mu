@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { clearHudMode, setActiveHudMode, syncHudModeStatus } from "./hud-mode.js";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 
 type PlanningPhase =
@@ -352,6 +353,7 @@ function renderPlanningUi(ctx: ExtensionContext, state: PlanningUiState): void {
 	}
 	if (!state.enabled) {
 		ctx.ui.setStatus("mu-planning", undefined);
+		ctx.ui.setStatus("mu-planning-meta", undefined);
 		ctx.ui.setWidget("mu-planning", undefined);
 		return;
 	}
@@ -380,6 +382,10 @@ function renderPlanningUi(ctx: ExtensionContext, state: PlanningUiState): void {
 			ctx.ui.theme.fg(waitingColor, `wait:${waitingLabel}`),
 			ctx.ui.theme.fg("muted", `root:${rootCompact}`),
 		].join(` ${ctx.ui.theme.fg("muted", "·")} `),
+	);
+	ctx.ui.setStatus(
+		"mu-planning-meta",
+		`phase:${phase} steps:${done}/${total} wait:${waitingLabel} conf:${state.confidence}`,
 	);
 
 	const lines = [
@@ -514,6 +520,16 @@ export function planningUiExtension(pi: ExtensionAPI) {
 
 	const refresh = (ctx: ExtensionContext) => {
 		renderPlanningUi(ctx, state);
+	};
+
+	const syncPlanningMode = (ctx: ExtensionContext, action: PlanningToolAction) => {
+		const passiveAction = action === "status" || action === "snapshot";
+		if (!state.enabled) {
+			clearHudMode("planning");
+		} else if (!passiveAction) {
+			setActiveHudMode("planning");
+		}
+		syncHudModeStatus(ctx);
 	};
 
 	const applyPlanningAction = (
@@ -787,10 +803,12 @@ export function planningUiExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		refresh(ctx);
+		syncHudModeStatus(ctx);
 	});
 
 	pi.on("session_switch", async (_event, ctx) => {
 		refresh(ctx);
+		syncHudModeStatus(ctx);
 	});
 
 	registerMuSubcommand(pi, {
@@ -877,6 +895,7 @@ export function planningUiExtension(pi: ExtensionAPI) {
 				notify(ctx, result.message, result.level ?? "error");
 				return;
 			}
+			syncPlanningMode(ctx, params.action);
 			ctx.ui.notify(result.message, result.level ?? "info");
 		},
 	});
@@ -968,6 +987,7 @@ export function planningUiExtension(pi: ExtensionAPI) {
 			if (!result.ok) {
 				return planningToolError(result.message);
 			}
+			syncPlanningMode(ctx, params.action);
 			return {
 				content: [{ type: "text", text: `${result.message}\n\n${planningStatusSummary(state)}` }],
 				details: {
