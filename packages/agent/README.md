@@ -48,8 +48,8 @@ Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
 - `eventLogExtension` — event tail + watch widget
-- `planningUiExtension` — planning phase/checklist HUD widget (`/mu plan ...`)
-- `subagentsUiExtension` — tmux subagent monitor/spawner widget (`/mu subagents ...`)
+- `planningUiExtension` — planning HUD with phase/checklist state plus user-facing communication metadata (`/mu plan ...`)
+- `subagentsUiExtension` — tmux + issue queue HUD with spawn profiles, pause controls, and queue/session health signals (`/mu subagents ...`)
 
 Default operator UI theme is `mu-gruvbox-dark`.
 
@@ -58,8 +58,8 @@ Default operator UI theme is `mu-gruvbox-dark`.
 - `/mu events [n]` / `/mu events tail [n]` — event log tail
 - `/mu events watch on|off` — toggle event watch widget
 - `/mu brand on|off|toggle` — enable/disable UI branding
-- `/mu plan on|off|status|phase|root|check|uncheck|toggle-step|reset` — planning HUD
-- `/mu subagents on|off|status|refresh|prefix|root|role|spawn` — tmux + issue queue monitor/spawner
+- `/mu plan ...` — planning HUD (phases, checklist editing, communication state, snapshots)
+- `/mu subagents ...` — tmux + issue queue monitor/spawner (profiles, spawn pause, stale/refresh controls, snapshots)
 - `/mu help` — dispatcher catalog of registered `/mu` subcommands
 
 ## Tooling model (CLI-first)

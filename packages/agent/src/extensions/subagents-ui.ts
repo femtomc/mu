@@ -11,6 +11,8 @@ type IssueDigest = {
 	tags: string[];
 };
 
+type SpawnMode = "worker" | "reviewer" | "researcher";
+
 type SubagentsState = {
 	enabled: boolean;
 	prefix: string;
@@ -22,6 +24,10 @@ type SubagentsState = {
 	activeIssues: IssueDigest[];
 	issueError: string | null;
 	lastUpdatedMs: number | null;
+	refreshIntervalMs: number;
+	staleAfterMs: number;
+	spawnPaused: boolean;
+	spawnMode: SpawnMode;
 };
 
 type MuCliOutcome = {
@@ -34,6 +40,7 @@ type MuCliOutcome = {
 
 type SubagentsToolAction =
 	| "status"
+	| "snapshot"
 	| "on"
 	| "off"
 	| "toggle"
@@ -41,6 +48,11 @@ type SubagentsToolAction =
 	| "set_prefix"
 	| "set_root"
 	| "set_role"
+	| "set_mode"
+	| "set_refresh_interval"
+	| "set_stale_after"
+	| "set_spawn_paused"
+	| "update"
 	| "spawn";
 
 type SubagentsToolParams = {
@@ -49,46 +61,84 @@ type SubagentsToolParams = {
 	root_issue_id?: string;
 	role_tag?: string;
 	count?: number | "all";
+	spawn_mode?: string;
+	refresh_seconds?: number;
+	stale_after_seconds?: number;
+	spawn_paused?: boolean;
+	snapshot_format?: string;
 };
 
 const DEFAULT_PREFIX = "mu-sub-";
 const DEFAULT_ROLE_TAG = "role:worker";
+const DEFAULT_SPAWN_MODE: SpawnMode = "worker";
 const ISSUE_LIST_LIMIT = 40;
 const MU_CLI_TIMEOUT_MS = 12_000;
+const DEFAULT_REFRESH_INTERVAL_MS = 8_000;
+const MIN_REFRESH_SECONDS = 2;
+const MAX_REFRESH_SECONDS = 120;
+const DEFAULT_STALE_AFTER_MS = 60_000;
+const MIN_STALE_SECONDS = 10;
+const MAX_STALE_SECONDS = 3_600;
 
 function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 function spawnRunId(now = new Date()): string {
-	return now.toISOString().replaceAll(/[-:TZ.]/g, "").slice(0, 14);
+	return now
+		.toISOString()
+		.replaceAll(/[-:TZ.]/g, "")
+		.slice(0, 14);
 }
 
-function issueHasSession(sessions: readonly string[], issueId: string): boolean {
-	return sessions.some(
-		(session) =>
-			session === issueId ||
-			session.endsWith(`-${issueId}`) ||
-			session.includes(`-${issueId}-`) ||
-			session.includes(`_${issueId}`),
+function sessionMatchesIssue(sessionName: string, issueId: string): boolean {
+	return (
+		sessionName === issueId ||
+		sessionName.endsWith(`-${issueId}`) ||
+		sessionName.includes(`-${issueId}-`) ||
+		sessionName.includes(`_${issueId}`)
 	);
 }
 
-function buildSubagentPrompt(issue: IssueDigest): string {
-	return [
-		`Work issue ${issue.id} (${truncateOneLine(issue.title, 80)}).`,
-		`First run: mu issues claim ${issue.id}.`,
-		`Keep forum updates in topic issue:${issue.id}.`,
-		"When done, close with an explicit outcome and summary.",
-	].join(" ");
+function issueHasSession(sessions: readonly string[], issueId: string): boolean {
+	return sessions.some((sessionName) => sessionMatchesIssue(sessionName, issueId));
+}
+
+function buildSubagentPrompt(issue: IssueDigest, mode: SpawnMode): string {
+	switch (mode) {
+		case "worker":
+			return [
+				`Work issue ${issue.id} (${truncateOneLine(issue.title, 80)}).`,
+				`First run: mu issues claim ${issue.id}.`,
+				`Keep forum updates in topic issue:${issue.id}.`,
+				"When done, close with an explicit outcome and summary.",
+			].join(" ");
+		case "reviewer":
+			return [
+				`Review issue ${issue.id} (${truncateOneLine(issue.title, 80)}).`,
+				`First run: mu issues claim ${issue.id}.`,
+				"Validate acceptance criteria with concrete checks and evidence.",
+				"Post PASS/FAIL verdict, blockers, and required fixes in topic issue:<id>.",
+				"Close the issue with explicit outcome and review summary.",
+			].join(" ");
+		case "researcher":
+			return [
+				`Research issue ${issue.id} (${truncateOneLine(issue.title, 80)}).`,
+				`First run: mu issues claim ${issue.id}.`,
+				"Collect concrete evidence and options; call out uncertainty explicitly.",
+				`Keep findings in topic issue:${issue.id}.`,
+				"Close the issue with a concise recommendation and rationale.",
+			].join(" ");
+	}
 }
 
 async function spawnIssueTmuxSession(opts: {
 	cwd: string;
 	sessionName: string;
 	issue: IssueDigest;
+	mode: SpawnMode;
 }): Promise<{ ok: boolean; error: string | null }> {
-	const shellCommand = `cd ${shellQuote(opts.cwd)} && mu exec ${shellQuote(buildSubagentPrompt(opts.issue))} ; rc=$?; echo __MU_DONE__:$rc`;
+	const shellCommand = `cd ${shellQuote(opts.cwd)} && mu exec ${shellQuote(buildSubagentPrompt(opts.issue, opts.mode))} ; rc=$?; echo __MU_DONE__:$rc`;
 
 	let proc: Bun.Subprocess | null = null;
 	try {
@@ -130,6 +180,10 @@ function createDefaultState(): SubagentsState {
 		activeIssues: [],
 		issueError: null,
 		lastUpdatedMs: null,
+		refreshIntervalMs: DEFAULT_REFRESH_INTERVAL_MS,
+		staleAfterMs: DEFAULT_STALE_AFTER_MS,
+		spawnPaused: false,
+		spawnMode: DEFAULT_SPAWN_MODE,
 	};
 }
 
@@ -236,7 +290,11 @@ async function runMuCli(args: string[]): Promise<MuCliOutcome> {
 		timedOut = true;
 		proc?.kill();
 	}, MU_CLI_TIMEOUT_MS);
-	const [exitCode, stdout, stderr] = await Promise.all([proc.exited, readableText(proc.stdout), readableText(proc.stderr)]);
+	const [exitCode, stdout, stderr] = await Promise.all([
+		proc.exited,
+		readableText(proc.stdout),
+		readableText(proc.stderr),
+	]);
 	clearTimeout(timeout);
 	return {
 		exitCode,
@@ -261,7 +319,11 @@ async function listTmuxSessions(prefix: string): Promise<{ sessions: string[]; e
 		return { sessions: [], error: `failed to launch tmux: ${message}` };
 	}
 
-	const [exitCode, stdout, stderr] = await Promise.all([proc.exited, readableText(proc.stdout), readableText(proc.stderr)]);
+	const [exitCode, stdout, stderr] = await Promise.all([
+		proc.exited,
+		readableText(proc.stdout),
+		readableText(proc.stderr),
+	]);
 	const stderrTrimmed = stderr.trim();
 
 	if (exitCode !== 0) {
@@ -288,7 +350,10 @@ async function listTmuxSessions(prefix: string): Promise<{ sessions: string[]; e
 	return { sessions, error: null };
 }
 
-async function listIssueSlices(rootId: string | null, roleTag: string | null): Promise<{
+async function listIssueSlices(
+	rootId: string | null,
+	roleTag: string | null,
+): Promise<{
 	ready: IssueDigest[];
 	active: IssueDigest[];
 	error: string | null;
@@ -375,6 +440,128 @@ function formatRefreshAge(lastUpdatedMs: number | null): string {
 	return `${hours}h ago`;
 }
 
+function isRefreshStale(lastUpdatedMs: number | null, staleAfterMs: number): boolean {
+	if (lastUpdatedMs == null) {
+		return false;
+	}
+	return Date.now() - lastUpdatedMs > staleAfterMs;
+}
+
+function computeQueueDrift(
+	sessions: readonly string[],
+	activeIssues: readonly IssueDigest[],
+): {
+	activeWithoutSessionIds: string[];
+	orphanSessions: string[];
+} {
+	const activeWithoutSessionIds = activeIssues
+		.filter((issue) => !issueHasSession(sessions, issue.id))
+		.map((issue) => issue.id);
+	const orphanSessions = sessions.filter(
+		(sessionName) => !activeIssues.some((issue) => sessionMatchesIssue(sessionName, issue.id)),
+	);
+	return {
+		activeWithoutSessionIds,
+		orphanSessions,
+	};
+}
+
+function normalizeRoleTag(raw: string): string | null {
+	const trimmed = raw.trim();
+	if (!trimmed || trimmed.toLowerCase() === "clear") {
+		return null;
+	}
+	if (trimmed === "worker" || trimmed === "orchestrator" || trimmed === "reviewer" || trimmed === "researcher") {
+		return `role:${trimmed}`;
+	}
+	return trimmed;
+}
+
+function parseSpawnMode(raw: string): SpawnMode | null {
+	const value = raw.trim().toLowerCase();
+	if (value === "worker" || value === "reviewer" || value === "researcher") {
+		return value;
+	}
+	return null;
+}
+
+function parseOnOff(raw: string | undefined): boolean | null {
+	const value = (raw ?? "").trim().toLowerCase();
+	if (value === "on" || value === "yes" || value === "true" || value === "1") {
+		return true;
+	}
+	if (value === "off" || value === "no" || value === "false" || value === "0") {
+		return false;
+	}
+	return null;
+}
+
+function parseSnapshotFormat(raw: string | undefined): "compact" | "multiline" {
+	const value = (raw ?? "compact").trim().toLowerCase();
+	return value === "multiline" ? "multiline" : "compact";
+}
+
+function parseSecondsBounded(
+	secondsRaw: unknown,
+	minSeconds: number,
+	maxSeconds: number,
+	field: string,
+): { ok: true; ms: number } | { ok: false; error: string } {
+	if (typeof secondsRaw !== "number" || !Number.isFinite(secondsRaw)) {
+		return { ok: false, error: `${field} must be a number.` };
+	}
+	const rounded = Math.round(secondsRaw);
+	if (rounded < minSeconds || rounded > maxSeconds) {
+		return { ok: false, error: `${field} must be ${minSeconds}-${maxSeconds} seconds.` };
+	}
+	return { ok: true, ms: rounded * 1_000 };
+}
+
+function subagentsSnapshot(state: SubagentsState, format: "compact" | "multiline"): string {
+	const issueScope = state.issueRootId ?? "(all roots)";
+	const roleScope = state.issueRoleTag ?? "(all roles)";
+	const drift = computeQueueDrift(state.sessions, state.activeIssues);
+	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
+	const staleCount = drift.activeWithoutSessionIds.length + drift.orphanSessions.length;
+	const health = state.issueError || state.sessionError || refreshStale || staleCount > 0 ? "degraded" : "healthy";
+	const refreshAge = formatRefreshAge(state.lastUpdatedMs);
+	const paused = state.spawnPaused ? "yes" : "no";
+	const refreshSeconds = Math.round(state.refreshIntervalMs / 1_000);
+	const staleAfterSeconds = Math.round(state.staleAfterMs / 1_000);
+	if (format === "multiline") {
+		return [
+			"Subagents HUD snapshot",
+			`health: ${health}`,
+			`prefix: ${state.prefix || "(all sessions)"}`,
+			`issue_root: ${issueScope}`,
+			`issue_role: ${roleScope}`,
+			`spawn_mode: ${state.spawnMode}`,
+			`spawn_paused: ${paused}`,
+			`queues: ${state.readyIssues.length} ready / ${state.activeIssues.length} active`,
+			`sessions: ${state.sessions.length}`,
+			`drift_active_without_session: ${drift.activeWithoutSessionIds.length}`,
+			`drift_orphan_sessions: ${drift.orphanSessions.length}`,
+			`refresh_age: ${refreshAge}`,
+			`refresh_stale: ${refreshStale ? "yes" : "no"}`,
+			`refresh_seconds: ${refreshSeconds}`,
+			`stale_after_seconds: ${staleAfterSeconds}`,
+		].join("\n");
+	}
+	return [
+		"HUD(subagents)",
+		`health=${health}`,
+		`root=${issueScope}`,
+		`role=${roleScope}`,
+		`mode=${state.spawnMode}`,
+		`paused=${paused}`,
+		`ready=${state.readyIssues.length}`,
+		`active=${state.activeIssues.length}`,
+		`sessions=${state.sessions.length}`,
+		`drift=${staleCount}`,
+		`refresh=${refreshAge}`,
+	].join(" · ");
+}
+
 function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	if (!ctx.hasUI) {
 		return;
@@ -387,18 +574,27 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 
 	const issueScope = state.issueRootId ? `root:${state.issueRootId}` : "all-roots";
 	const roleScope = state.issueRoleTag ? state.issueRoleTag : "(all roles)";
-	const hasError = Boolean(state.sessionError || state.issueError);
+	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
+	const drift = computeQueueDrift(state.sessions, state.activeIssues);
+	const staleCount = drift.activeWithoutSessionIds.length + drift.orphanSessions.length;
+	const hasError = Boolean(state.sessionError || state.issueError || refreshStale || staleCount > 0);
 	const healthColor: "success" | "warning" = hasError ? "warning" : "success";
 	const healthLabel = hasError ? "degraded" : "healthy";
 	const queueTotal = state.readyIssues.length + state.activeIssues.length;
 	const queueBar = queueMeter(state.activeIssues.length, Math.max(1, queueTotal), 10);
 	const refreshAge = formatRefreshAge(state.lastUpdatedMs);
+	const pausedLabel = state.spawnPaused ? "yes" : "no";
+	const pausedColor: "warning" | "dim" = state.spawnPaused ? "warning" : "dim";
+	const refreshSeconds = Math.round(state.refreshIntervalMs / 1_000);
+	const staleAfterSeconds = Math.round(state.staleAfterMs / 1_000);
 
 	ctx.ui.setStatus(
 		"mu-subagents",
 		[
 			ctx.ui.theme.fg("dim", "subagents"),
 			ctx.ui.theme.fg(healthColor, healthLabel),
+			ctx.ui.theme.fg("dim", `${state.spawnMode}`),
+			ctx.ui.theme.fg(pausedColor, `paused:${pausedLabel}`),
 			ctx.ui.theme.fg("dim", `${state.sessions.length} tmux`),
 			ctx.ui.theme.fg("dim", `${state.readyIssues.length} ready/${state.activeIssues.length} active`),
 			ctx.ui.theme.fg("muted", issueScope),
@@ -410,8 +606,11 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 		`  ${ctx.ui.theme.fg("muted", "health:")} ${ctx.ui.theme.fg(healthColor, healthLabel)}`,
 		`  ${ctx.ui.theme.fg("muted", "scope:")} ${ctx.ui.theme.fg("dim", `${issueScope} · ${roleScope}`)}`,
 		`  ${ctx.ui.theme.fg("muted", "tmux prefix:")} ${ctx.ui.theme.fg("dim", state.prefix || "(all sessions)")}`,
+		`  ${ctx.ui.theme.fg("muted", "spawn mode:")} ${ctx.ui.theme.fg("accent", state.spawnMode)}`,
+		`  ${ctx.ui.theme.fg("muted", "spawn paused:")} ${ctx.ui.theme.fg(pausedColor, pausedLabel)}`,
+		`  ${ctx.ui.theme.fg("muted", "refresh:")} ${ctx.ui.theme.fg("dim", `${refreshSeconds}s`)} ${ctx.ui.theme.fg("muted", "| stale after:")} ${ctx.ui.theme.fg("dim", `${staleAfterSeconds}s`)}`,
 		`  ${ctx.ui.theme.fg("muted", "queues:")} ${ctx.ui.theme.fg("accent", `${state.readyIssues.length} ready`)} ${ctx.ui.theme.fg("muted", "| ")} ${ctx.ui.theme.fg("warning", `${state.activeIssues.length} active`)} ${ctx.ui.theme.fg("dim", queueBar)}`,
-		`  ${ctx.ui.theme.fg("muted", "last refresh:")} ${ctx.ui.theme.fg("dim", refreshAge)}`,
+		`  ${ctx.ui.theme.fg("muted", "last refresh:")} ${ctx.ui.theme.fg(refreshStale ? "warning" : "dim", refreshAge)}`,
 		`  ${ctx.ui.theme.fg("dim", "────────────────────────────")}`,
 		ctx.ui.theme.fg("accent", `tmux sessions (${state.sessions.length})`),
 	];
@@ -458,43 +657,80 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 		}
 	}
 
+	if (refreshStale) {
+		lines.push(
+			ctx.ui.theme.fg("warning", `refresh warning: last successful refresh is stale (>${staleAfterSeconds}s)`),
+		);
+	}
+	if (drift.activeWithoutSessionIds.length > 0) {
+		lines.push(
+			ctx.ui.theme.fg(
+				"warning",
+				`drift warning: active issues without tmux sessions (${drift.activeWithoutSessionIds.length})`,
+			),
+		);
+		lines.push(
+			ctx.ui.theme.fg(
+				"warning",
+				`  missing sessions for: ${drift.activeWithoutSessionIds.slice(0, 8).join(", ")}${drift.activeWithoutSessionIds.length > 8 ? " ..." : ""}`,
+			),
+		);
+	}
+	if (drift.orphanSessions.length > 0) {
+		lines.push(
+			ctx.ui.theme.fg(
+				"warning",
+				`drift warning: tmux sessions without active issues (${drift.orphanSessions.length})`,
+			),
+		);
+		lines.push(
+			ctx.ui.theme.fg(
+				"warning",
+				`  orphan sessions: ${drift.orphanSessions.slice(0, 8).join(", ")}${drift.orphanSessions.length > 8 ? " ..." : ""}`,
+			),
+		);
+	}
+
 	ctx.ui.setWidget("mu-subagents", lines, { placement: "belowEditor" });
 }
 
 function subagentsUsageText(): string {
 	return [
 		"Usage:",
-		"  /mu subagents on|off|toggle|status|refresh",
+		"  /mu subagents on|off|toggle|status|refresh|snapshot",
 		"  /mu subagents prefix <text|clear>",
 		"  /mu subagents root <issue-id|clear>",
 		"  /mu subagents role <tag|clear>",
+		"  /mu subagents mode <worker|reviewer|researcher>",
+		"  /mu subagents refresh-interval <seconds>",
+		"  /mu subagents stale-after <seconds>",
+		"  /mu subagents pause <on|off>",
 		"  /mu subagents spawn [N|all]",
 	].join("\n");
 }
 
-function normalizeRoleTag(raw: string): string | null {
-	const trimmed = raw.trim();
-	if (!trimmed || trimmed.toLowerCase() === "clear") {
-		return null;
-	}
-	if (trimmed === "worker" || trimmed === "orchestrator") {
-		return `role:${trimmed}`;
-	}
-	return trimmed;
-}
-
 function subagentsDetails(state: SubagentsState) {
+	const drift = computeQueueDrift(state.sessions, state.activeIssues);
 	return {
 		enabled: state.enabled,
 		prefix: state.prefix,
 		issue_root_id: state.issueRootId,
 		issue_role_tag: state.issueRoleTag,
+		spawn_mode: state.spawnMode,
+		spawn_paused: state.spawnPaused,
+		refresh_seconds: Math.round(state.refreshIntervalMs / 1_000),
+		stale_after_seconds: Math.round(state.staleAfterMs / 1_000),
 		sessions: [...state.sessions],
 		ready_issue_ids: state.readyIssues.map((issue) => issue.id),
 		active_issue_ids: state.activeIssues.map((issue) => issue.id),
+		active_without_session_ids: drift.activeWithoutSessionIds,
+		orphan_sessions: drift.orphanSessions,
+		refresh_stale: isRefreshStale(state.lastUpdatedMs, state.staleAfterMs),
 		issue_error: state.issueError,
 		session_error: state.sessionError,
 		last_updated_ms: state.lastUpdatedMs,
+		snapshot_compact: subagentsSnapshot(state, "compact"),
+		snapshot_multiline: subagentsSnapshot(state, "multiline"),
 	};
 }
 
@@ -512,7 +748,7 @@ function subagentsToolError(message: string, state: SubagentsState) {
 export function subagentsUiExtension(pi: ExtensionAPI) {
 	let activeCtx: ExtensionContext | null = null;
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
-	let state = createDefaultState();
+	const state = createDefaultState();
 
 	const refresh = async (ctx: ExtensionContext) => {
 		if (!state.enabled) {
@@ -549,7 +785,15 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				return;
 			}
 			void refresh(activeCtx);
-		}, 8_000);
+		}, state.refreshIntervalMs);
+	};
+
+	const restartPolling = () => {
+		if (!state.enabled) {
+			return;
+		}
+		stopPolling();
+		ensurePolling();
 	};
 
 	const notify = (ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info") => {
@@ -561,21 +805,43 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 		const status = state.enabled ? "enabled" : "disabled";
 		const issueScope = state.issueRootId ?? "(all roots)";
 		const issueRole = state.issueRoleTag ?? "(all roles)";
+		const drift = computeQueueDrift(state.sessions, state.activeIssues);
+		const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 		const issueError = state.issueError ? `\nissue_error: ${state.issueError}` : "";
 		const tmuxError = state.sessionError ? `\ntmux_error: ${state.sessionError}` : "";
+		const driftInfo =
+			drift.activeWithoutSessionIds.length > 0 || drift.orphanSessions.length > 0
+				? `\ndrift_active_without_session: ${drift.activeWithoutSessionIds.length}\ndrift_orphan_sessions: ${drift.orphanSessions.length}`
+				: "";
+		const staleInfo = refreshStale ? "\nrefresh_stale: yes" : "\nrefresh_stale: no";
 		return {
-			level: state.issueError || state.sessionError ? "warning" : "info",
+			level:
+				state.issueError ||
+				state.sessionError ||
+				refreshStale ||
+				drift.activeWithoutSessionIds.length > 0 ||
+				drift.orphanSessions.length > 0
+					? "warning"
+					: "info",
 			text:
 				[
 					`Subagents monitor ${status}`,
 					`prefix: ${state.prefix || "(all sessions)"}`,
 					`issue_root: ${issueScope}`,
 					`issue_role: ${issueRole}`,
+					`spawn_mode: ${state.spawnMode}`,
+					`spawn_paused: ${state.spawnPaused ? "yes" : "no"}`,
+					`refresh_seconds: ${Math.round(state.refreshIntervalMs / 1_000)}`,
+					`stale_after_seconds: ${Math.round(state.staleAfterMs / 1_000)}`,
 					`sessions: ${state.sessions.length}`,
 					`ready_issues: ${state.readyIssues.length}`,
 					`active_issues: ${state.activeIssues.length}`,
 					`last refresh: ${when}`,
-				].join("\n") + issueError + tmuxError,
+				].join("\n") +
+				issueError +
+				tmuxError +
+				driftInfo +
+				staleInfo,
 		};
 	};
 
@@ -587,6 +853,10 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 			case "status": {
 				const summary = statusSummary();
 				return { ok: true, message: summary.text, level: summary.level as "info" | "warning" | "error" };
+			}
+			case "snapshot": {
+				const format = parseSnapshotFormat(params.snapshot_format);
+				return { ok: true, message: subagentsSnapshot(state, format), level: "info" };
 			}
 			case "on":
 				state.enabled = true;
@@ -642,9 +912,188 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				state.enabled = true;
 				ensurePolling();
 				await refresh(ctx);
-				return { ok: true, message: `Subagents issue tag filter set to ${state.issueRoleTag ?? "(all roles)"}.`, level: "info" };
+				return {
+					ok: true,
+					message: `Subagents issue tag filter set to ${state.issueRoleTag ?? "(all roles)"}.`,
+					level: "info",
+				};
+			}
+			case "set_mode": {
+				const modeRaw = params.spawn_mode?.trim() ?? "";
+				const mode = parseSpawnMode(modeRaw);
+				if (!mode) {
+					return { ok: false, message: "Invalid spawn mode.", level: "error" };
+				}
+				state.spawnMode = mode;
+				state.enabled = true;
+				ensurePolling();
+				await refresh(ctx);
+				return { ok: true, message: `Subagents spawn mode set to ${mode}.`, level: "info" };
+			}
+			case "set_refresh_interval": {
+				const parsed = parseSecondsBounded(
+					params.refresh_seconds,
+					MIN_REFRESH_SECONDS,
+					MAX_REFRESH_SECONDS,
+					"refresh_seconds",
+				);
+				if (!parsed.ok) {
+					return { ok: false, message: parsed.error, level: "error" };
+				}
+				state.refreshIntervalMs = parsed.ms;
+				state.enabled = true;
+				restartPolling();
+				await refresh(ctx);
+				return {
+					ok: true,
+					message: `Subagents refresh interval set to ${Math.round(state.refreshIntervalMs / 1_000)}s.`,
+					level: "info",
+				};
+			}
+			case "set_stale_after": {
+				const parsed = parseSecondsBounded(
+					params.stale_after_seconds,
+					MIN_STALE_SECONDS,
+					MAX_STALE_SECONDS,
+					"stale_after_seconds",
+				);
+				if (!parsed.ok) {
+					return { ok: false, message: parsed.error, level: "error" };
+				}
+				state.staleAfterMs = parsed.ms;
+				state.enabled = true;
+				ensurePolling();
+				await refresh(ctx);
+				return {
+					ok: true,
+					message: `Subagents stale threshold set to ${Math.round(state.staleAfterMs / 1_000)}s.`,
+					level: "info",
+				};
+			}
+			case "set_spawn_paused": {
+				if (typeof params.spawn_paused !== "boolean") {
+					return { ok: false, message: "spawn_paused must be a boolean.", level: "error" };
+				}
+				state.spawnPaused = params.spawn_paused;
+				state.enabled = true;
+				ensurePolling();
+				await refresh(ctx);
+				return {
+					ok: true,
+					message: `Subagents spawn pause set to ${state.spawnPaused ? "on" : "off"}.`,
+					level: "info",
+				};
+			}
+			case "update": {
+				const changed: string[] = [];
+				let refreshIntervalChanged = false;
+
+				if (params.prefix !== undefined) {
+					if (typeof params.prefix !== "string") {
+						return { ok: false, message: "prefix must be a string.", level: "error" };
+					}
+					const trimmed = params.prefix.trim();
+					if (trimmed.length === 0) {
+						return { ok: false, message: "prefix must not be empty.", level: "error" };
+					}
+					state.prefix = trimmed.toLowerCase() === "clear" ? "" : trimmed;
+					changed.push("prefix");
+				}
+
+				if (params.root_issue_id !== undefined) {
+					if (typeof params.root_issue_id !== "string") {
+						return { ok: false, message: "root_issue_id must be a string.", level: "error" };
+					}
+					const trimmed = params.root_issue_id.trim();
+					if (trimmed.length === 0) {
+						return { ok: false, message: "root_issue_id must not be empty.", level: "error" };
+					}
+					state.issueRootId = trimmed.toLowerCase() === "clear" ? null : trimmed;
+					changed.push("root_issue_id");
+				}
+
+				if (params.role_tag !== undefined) {
+					if (typeof params.role_tag !== "string") {
+						return { ok: false, message: "role_tag must be a string.", level: "error" };
+					}
+					const trimmed = params.role_tag.trim();
+					if (trimmed.length === 0) {
+						return { ok: false, message: "role_tag must not be empty.", level: "error" };
+					}
+					state.issueRoleTag = normalizeRoleTag(trimmed);
+					changed.push("role_tag");
+				}
+
+				if (params.spawn_mode !== undefined) {
+					if (typeof params.spawn_mode !== "string") {
+						return { ok: false, message: "spawn_mode must be a string.", level: "error" };
+					}
+					const mode = parseSpawnMode(params.spawn_mode);
+					if (!mode) {
+						return { ok: false, message: "Invalid spawn mode.", level: "error" };
+					}
+					state.spawnMode = mode;
+					changed.push("spawn_mode");
+				}
+
+				if (params.refresh_seconds !== undefined) {
+					const parsed = parseSecondsBounded(
+						params.refresh_seconds,
+						MIN_REFRESH_SECONDS,
+						MAX_REFRESH_SECONDS,
+						"refresh_seconds",
+					);
+					if (!parsed.ok) {
+						return { ok: false, message: parsed.error, level: "error" };
+					}
+					state.refreshIntervalMs = parsed.ms;
+					refreshIntervalChanged = true;
+					changed.push("refresh_seconds");
+				}
+
+				if (params.stale_after_seconds !== undefined) {
+					const parsed = parseSecondsBounded(
+						params.stale_after_seconds,
+						MIN_STALE_SECONDS,
+						MAX_STALE_SECONDS,
+						"stale_after_seconds",
+					);
+					if (!parsed.ok) {
+						return { ok: false, message: parsed.error, level: "error" };
+					}
+					state.staleAfterMs = parsed.ms;
+					changed.push("stale_after_seconds");
+				}
+
+				if (params.spawn_paused !== undefined) {
+					if (typeof params.spawn_paused !== "boolean") {
+						return { ok: false, message: "spawn_paused must be a boolean.", level: "error" };
+					}
+					state.spawnPaused = params.spawn_paused;
+					changed.push("spawn_paused");
+				}
+
+				if (changed.length === 0) {
+					return { ok: false, message: "No update fields provided.", level: "error" };
+				}
+
+				state.enabled = true;
+				if (refreshIntervalChanged) {
+					restartPolling();
+				} else {
+					ensurePolling();
+				}
+				await refresh(ctx);
+				return { ok: true, message: `Subagents monitor updated (${changed.join(", ")}).`, level: "info" };
 			}
 			case "spawn": {
+				if (state.spawnPaused) {
+					return {
+						ok: false,
+						message: "Spawn is paused. Use set_spawn_paused=false before spawning.",
+						level: "error",
+					};
+				}
 				if (!state.issueRootId) {
 					return {
 						ok: false,
@@ -655,7 +1104,8 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 
 				let spawnLimit: number | null = null;
 				if (params.count != null && params.count !== "all") {
-					const countNum = typeof params.count === "number" ? params.count : Number.parseInt(String(params.count), 10);
+					const countNum =
+						typeof params.count === "number" ? params.count : Number.parseInt(String(params.count), 10);
 					const parsed = Math.trunc(countNum);
 					if (!Number.isFinite(parsed) || parsed < 1 || parsed > ISSUE_LIST_LIMIT) {
 						return { ok: false, message: `Spawn count must be 1-${ISSUE_LIST_LIMIT} or 'all'.`, level: "error" };
@@ -717,6 +1167,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 						cwd: ctx.cwd,
 						sessionName,
 						issue,
+						mode: state.spawnMode,
 					});
 					if (spawned.ok) {
 						existingSessions.push(sessionName);
@@ -731,7 +1182,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				await refresh(ctx);
 
 				const summary = [
-					`Spawned ${launched.length}/${candidates.length} ready issue sessions.`,
+					`Spawned ${launched.length}/${candidates.length} ready issue sessions (mode=${state.spawnMode}).`,
 					launched.length > 0 ? `launched: ${launched.join(", ")}` : "launched: (none)",
 					`skipped: ${skipped.length}`,
 					`failed: ${failed.length}`,
@@ -768,7 +1219,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 	registerMuSubcommand(pi, {
 		subcommand: "subagents",
 		summary: "Monitor tmux subagent sessions + issue queue, and spawn ready issue sessions",
-		usage: "/mu subagents on|off|toggle|status|refresh|prefix|root|role|spawn",
+		usage: "/mu subagents on|off|toggle|status|refresh|snapshot|prefix|root|role|mode|refresh-interval|stale-after|pause|spawn",
 		handler: async (args, ctx) => {
 			activeCtx = ctx;
 			const tokens = args
@@ -781,6 +1232,9 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 			switch (command) {
 				case "status":
 					params = { action: "status" };
+					break;
+				case "snapshot":
+					params = { action: "snapshot", snapshot_format: tokens[1] };
 					break;
 				case "on":
 					params = { action: "on" };
@@ -803,6 +1257,20 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				case "role":
 					params = { action: "set_role", role_tag: tokens.slice(1).join(" ") };
 					break;
+				case "mode":
+					params = { action: "set_mode", spawn_mode: tokens[1] };
+					break;
+				case "refresh-interval":
+					params = { action: "set_refresh_interval", refresh_seconds: Number.parseFloat(tokens[1] ?? "") };
+					break;
+				case "stale-after":
+					params = { action: "set_stale_after", stale_after_seconds: Number.parseFloat(tokens[1] ?? "") };
+					break;
+				case "pause": {
+					const parsed = parseOnOff(tokens[1]);
+					params = { action: "set_spawn_paused", spawn_paused: parsed ?? undefined };
+					break;
+				}
 				case "spawn":
 					params = {
 						action: "spawn",
@@ -834,19 +1302,43 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 		name: "mu_subagents_hud",
 		label: "mu subagents HUD",
 		description:
-			"Control or inspect subagents HUD state, including tmux scope, issue queue filters, and ready-queue spawning.",
+			"Control or inspect subagents HUD state, including tmux scope, queue filters, spawn profile, and health policies.",
 		parameters: {
 			type: "object",
 			properties: {
 				action: {
 					type: "string",
-					enum: ["status", "on", "off", "toggle", "refresh", "set_prefix", "set_root", "set_role", "spawn"],
+					enum: [
+						"status",
+						"snapshot",
+						"on",
+						"off",
+						"toggle",
+						"refresh",
+						"set_prefix",
+						"set_root",
+						"set_role",
+						"set_mode",
+						"set_refresh_interval",
+						"set_stale_after",
+						"set_spawn_paused",
+						"update",
+						"spawn",
+					],
 				},
 				prefix: { type: "string" },
 				root_issue_id: { type: "string" },
 				role_tag: { type: "string" },
+				spawn_mode: { type: "string", enum: ["worker", "reviewer", "researcher"] },
+				refresh_seconds: { type: "number", minimum: MIN_REFRESH_SECONDS, maximum: MAX_REFRESH_SECONDS },
+				stale_after_seconds: { type: "number", minimum: MIN_STALE_SECONDS, maximum: MAX_STALE_SECONDS },
+				spawn_paused: { type: "boolean" },
+				snapshot_format: { type: "string", enum: ["compact", "multiline"] },
 				count: {
-					anyOf: [{ type: "integer", minimum: 1, maximum: ISSUE_LIST_LIMIT }, { type: "string", enum: ["all"] }],
+					anyOf: [
+						{ type: "integer", minimum: 1, maximum: ISSUE_LIST_LIMIT },
+						{ type: "string", enum: ["all"] },
+					],
 				},
 			},
 			required: ["action"],

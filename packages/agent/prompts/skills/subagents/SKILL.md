@@ -76,31 +76,45 @@ Optional live monitor widget (interactive operator session):
 /mu subagents prefix mu-sub-
 /mu subagents root <root-id>
 /mu subagents role role:worker
+/mu subagents mode worker
+/mu subagents refresh-interval 8
+/mu subagents stale-after 60
+/mu subagents pause off
 /mu subagents refresh
 /mu subagents spawn 3
+/mu subagents snapshot
 ```
 
-The widget picks up tracker decomposition by reading `mu issues ready` and
-`mu issues list --status in_progress`.
-Use `spawn` to launch tmux sessions directly from the ready queue for the
-current root/tag filter.
+The widget tracks queue and tmux drift, supports spawn profiles, and can pause spawning.
+Use `snapshot` for a user-facing status summary.
 
 Tool contract (preferred when tools are available):
 
 - Tool: `mu_subagents_hud`
-- Actions: `status`, `on`, `off`, `toggle`, `refresh`, `set_prefix`, `set_root`, `set_role`, `spawn`
-- Parameters:
+- Actions:
+  - state: `status`, `snapshot`, `on`, `off`, `toggle`, `refresh`
+  - scope: `set_prefix`, `set_root`, `set_role`
+  - policy: `set_mode`, `set_refresh_interval`, `set_stale_after`, `set_spawn_paused`
+  - orchestration: `spawn`
+  - atomic: `update`
+- Key parameters:
   - `prefix`: tmux prefix or `clear`
   - `root_issue_id`: issue root ID or `clear`
   - `role_tag`: issue tag filter (for example `role:worker`) or `clear`
+  - `spawn_mode`: `worker|reviewer|researcher`
+  - `refresh_seconds`: 2..120
+  - `stale_after_seconds`: 10..3600
+  - `spawn_paused`: boolean
   - `count`: integer 1..40 or `"all"` for spawn
 
 Example tool calls:
-- Configure root + role:
-  - `{"action":"set_root","root_issue_id":"<root-id>"}`
-  - `{"action":"set_role","role_tag":"role:worker"}`
-- Refresh status: `{"action":"refresh"}`
-- Spawn from ready queue: `{"action":"spawn","count":"all"}`
+- Configure root + role + mode atomically:
+  - `{"action":"update","root_issue_id":"<root-id>","role_tag":"role:worker","spawn_mode":"worker","spawn_paused":false}`
+- Tune monitor policy:
+  - `{"action":"set_refresh_interval","refresh_seconds":5}`
+  - `{"action":"set_stale_after","stale_after_seconds":45}`
+- Spawn from ready queue:
+  - `{"action":"spawn","count":3}`
 
 ## Handoffs and follow-up turns
 
@@ -135,4 +149,5 @@ If omitted, `mu turn` defaults to control-plane operator sessions (`cp_operator`
 - Keep shard prompts scoped and explicit.
 - Prefer fewer, higher-quality shards over many noisy shards.
 - Do not overwrite unrelated files across shards.
+- Pause spawning when the queue is unstable or blocked.
 - Tear down temporary tmux sessions when done.

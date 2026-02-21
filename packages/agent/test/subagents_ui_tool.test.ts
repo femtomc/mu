@@ -56,10 +56,7 @@ function textOf(result: unknown): string {
 	return typeof text === "string" ? text : "";
 }
 
-async function executeSubagentsTool(
-	tool: RegisteredTool,
-	params: Record<string, unknown>,
-): Promise<unknown> {
+async function executeSubagentsTool(tool: RegisteredTool, params: Record<string, unknown>): Promise<unknown> {
 	return tool.execute("call-1", params, undefined, undefined, { hasUI: false, cwd: process.cwd() });
 }
 
@@ -89,6 +86,25 @@ describe("subagents HUD tool", () => {
 		expect(details.prefix).toBe("mu-sub-");
 		expect(details.issue_role_tag).toBe("role:worker");
 		expect(details.issue_root_id).toBeNull();
+		expect(details.spawn_mode).toBe("worker");
+		expect(details.spawn_paused).toBe(false);
+		expect(details.refresh_seconds).toBe(8);
+		expect(details.stale_after_seconds).toBe(60);
+	});
+
+	test("supports compact snapshots for communication", async () => {
+		const { api, tools } = createExtensionApiMock();
+		subagentsUiExtension(api as unknown as Parameters<typeof subagentsUiExtension>[0]);
+
+		const tool = tools.get("mu_subagents_hud");
+		if (!tool) {
+			throw new Error("mu_subagents_hud tool missing");
+		}
+
+		const result = await executeSubagentsTool(tool, { action: "snapshot", snapshot_format: "compact" });
+		expect(textOf(result)).toContain("HUD(subagents)");
+		expect(textOf(result)).toContain("mode=worker");
+		expect(textOf(result)).toContain("paused=no");
 	});
 
 	test("returns structured validation errors without spawning external commands", async () => {
@@ -105,10 +121,20 @@ describe("subagents HUD tool", () => {
 		expect(missingPrefixDetails.ok).toBe(false);
 		expect(missingPrefixDetails.error).toBe("Missing prefix value.");
 
-		const missingRoot = await executeSubagentsTool(tool, { action: "set_root" });
-		const missingRootDetails = detailsOf(missingRoot);
-		expect(missingRootDetails.ok).toBe(false);
-		expect(missingRootDetails.error).toBe("Missing root issue id.");
+		const invalidMode = await executeSubagentsTool(tool, { action: "set_mode", spawn_mode: "invalid" });
+		const invalidModeDetails = detailsOf(invalidMode);
+		expect(invalidModeDetails.ok).toBe(false);
+		expect(invalidModeDetails.error).toBe("Invalid spawn mode.");
+
+		const invalidRefresh = await executeSubagentsTool(tool, { action: "set_refresh_interval", refresh_seconds: 0 });
+		const invalidRefreshDetails = detailsOf(invalidRefresh);
+		expect(invalidRefreshDetails.ok).toBe(false);
+		expect(String(invalidRefreshDetails.error)).toContain("refresh_seconds must be 2-120 seconds");
+
+		const updateNoFields = await executeSubagentsTool(tool, { action: "update" });
+		const updateNoFieldsDetails = detailsOf(updateNoFields);
+		expect(updateNoFieldsDetails.ok).toBe(false);
+		expect(updateNoFieldsDetails.error).toBe("No update fields provided.");
 
 		const spawnWithoutRoot = await executeSubagentsTool(tool, { action: "spawn", count: "all" });
 		const spawnWithoutRootDetails = detailsOf(spawnWithoutRoot);

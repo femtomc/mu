@@ -56,10 +56,7 @@ function textOf(result: unknown): string {
 	return typeof text === "string" ? text : "";
 }
 
-async function executePlanningTool(
-	tool: RegisteredTool,
-	params: Record<string, unknown>,
-): Promise<unknown> {
+async function executePlanningTool(tool: RegisteredTool, params: Record<string, unknown>): Promise<unknown> {
 	return tool.execute("call-1", params, undefined, undefined, { hasUI: false });
 }
 
@@ -98,6 +95,51 @@ describe("planning HUD tool", () => {
 		expect(Array.isArray(steps)).toBe(true);
 		const second = (steps as Array<Record<string, unknown>>)[1];
 		expect(second?.done).toBe(true);
+	});
+
+	test("supports communication metadata and atomic update", async () => {
+		const { api, tools } = createExtensionApiMock();
+		planningUiExtension(api as unknown as Parameters<typeof planningUiExtension>[0]);
+
+		const tool = tools.get("mu_planning_hud");
+		if (!tool) {
+			throw new Error("mu_planning_hud tool missing");
+		}
+
+		const updateResult = await executePlanningTool(tool, {
+			action: "update",
+			phase: "waiting_user",
+			root_issue_id: "workshop-root-1",
+			waiting_on_user: true,
+			next_action: "Confirm tradeoff A vs B",
+			blocker: "Need approval to proceed",
+			confidence: "low",
+			steps: ["Investigate", "Draft", "Review"],
+			step_updates: [
+				{ index: 1, done: true },
+				{ index: 2, label: "Draft issue DAG" },
+			],
+		});
+		const updateDetails = detailsOf(updateResult);
+		expect(updateDetails.ok).toBe(true);
+
+		const statusResult = await executePlanningTool(tool, { action: "status" });
+		const statusDetails = detailsOf(statusResult);
+		expect(statusDetails.phase).toBe("waiting_user");
+		expect(statusDetails.waiting_on_user).toBe(true);
+		expect(statusDetails.next_action).toBe("Confirm tradeoff A vs B");
+		expect(statusDetails.blocker).toBe("Need approval to proceed");
+		expect(statusDetails.confidence).toBe("low");
+		expect(statusDetails.root_issue_id).toBe("workshop-root-1");
+
+		const steps = statusDetails.steps as Array<Record<string, unknown>>;
+		expect(steps).toHaveLength(3);
+		expect(steps[0]?.done).toBe(true);
+		expect(steps[1]?.label).toBe("Draft issue DAG");
+
+		const snapshotResult = await executePlanningTool(tool, { action: "snapshot", snapshot_format: "compact" });
+		expect(textOf(snapshotResult)).toContain("HUD(plan)");
+		expect(textOf(snapshotResult)).toContain("waiting=yes");
 	});
 
 	test("returns structured error for invalid phase", async () => {

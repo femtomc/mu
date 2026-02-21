@@ -144,8 +144,8 @@ Useful slash commands still available in-chat:
 - `/mu events tail 20` — quick event log snapshot
 - `/mu events watch on` — live event watch widget
 - `/mu brand on|off|toggle` — toggle UI branding
-- `/mu plan ...` — planning HUD (phase + checklist widget)
-- `/mu subagents ...` — tmux + issue queue subagent monitor/spawner widget
+- `/mu plan ...` — planning HUD (phases, checklist editing, communication state, snapshots)
+- `/mu subagents ...` — subagents HUD (tmux + issue queue scope, spawn profiles, pause policy, refresh/staleness health)
 - `/mu help` — list registered slash subcommands
 
 By default, `mu serve` uses a compact, information-dense chrome with a built-in

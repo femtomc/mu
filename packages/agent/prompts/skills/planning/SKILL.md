@@ -43,21 +43,34 @@ Optional planning HUD (interactive operator session):
 ```text
 /mu plan on
 /mu plan phase investigating
+/mu plan waiting off
+/mu plan confidence medium
 ```
 
 Tool contract (preferred when tools are available):
 
 - Tool: `mu_planning_hud`
-- Actions: `status`, `on`, `off`, `toggle`, `reset`, `phase`, `root`, `check`, `uncheck`, `toggle_step`
-- Parameters:
-  - `phase`: `investigating|drafting|reviewing|approved`
+- Actions:
+  - state: `status`, `snapshot`, `on`, `off`, `toggle`, `reset`, `phase`, `root`
+  - checklist: `check`, `uncheck`, `toggle_step`, `set_steps`, `add_step`, `remove_step`, `set_step_label`
+  - communication: `set_waiting`, `set_next`, `set_blocker`, `set_confidence`
+  - atomic: `update`
+- Key parameters:
+  - `phase`: `investigating|drafting|reviewing|waiting_user|blocked|executing|approved|done`
   - `root_issue_id`: issue ID or `clear`
-  - `step`: 1-based checklist index
+  - `waiting_on_user`: boolean
+  - `next_action`, `blocker`: string or `clear`
+  - `confidence`: `low|medium|high`
+  - `steps`: string[]
+  - `step_updates`: array of `{index, done?, label?}`
 
 Example tool calls:
-- Set phase: `{"action":"phase","phase":"drafting"}`
-- Bind root: `{"action":"root","root_issue_id":"<root-id>"}`
-- Update checklist: `{"action":"check","step":2}`
+- Atomic update for user handoff:
+  - `{"action":"update","phase":"waiting_user","waiting_on_user":true,"next_action":"Confirm scope change","blocker":"Need approval","confidence":"low"}`
+- Customize checklist:
+  - `{"action":"set_steps","steps":["Investigate","Draft DAG","Review with user","Finalize"]}`
+- Human-facing status line:
+  - `{"action":"snapshot","snapshot_format":"compact"}`
 
 Also inspect repo files directly (read/bash) for implementation constraints.
 
@@ -98,7 +111,10 @@ Optional HUD updates during the loop:
 /mu plan root <root-id>
 /mu plan phase drafting
 /mu plan check 1
-/mu plan phase reviewing
+/mu plan phase waiting-user
+/mu plan waiting on
+/mu plan next "Need your approval on tradeoff A/B"
+/mu plan snapshot
 ```
 
 ## Quality bar
