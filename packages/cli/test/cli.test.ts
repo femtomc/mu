@@ -225,7 +225,12 @@ test("mu command-group help is self-explanatory across events/runs/cron/control/
 		},
 		{
 			argv: ["turn", "--help"],
-			contains: ["mu turn - inject one prompt turn", "Examples:", "--session-id <id> --body <text>"],
+			contains: [
+				"mu turn - inject one prompt turn",
+				"Examples:",
+				"--session-id <id> --body <text>",
+				"defaults to control-plane operator sessions",
+			],
 		},
 		{
 			argv: ["replay", "--help"],

@@ -1,10 +1,14 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { getStorePaths as resolveStorePaths } from "@femtomc/mu-core/node";
 import type { EventLog, StorePaths } from "@femtomc/mu-core/node";
 import type { ForumStore } from "@femtomc/mu-forum";
 import type { IssueStore } from "@femtomc/mu-issue";
 import type { OperatorSessionStartOpts } from "./serve_runtime.js";
+
+const require = createRequire(import.meta.url);
 
 export type WorkspaceCliContext = {
 	cwd: string;
@@ -19,13 +23,72 @@ export async function fileExists(path: string): Promise<boolean> {
 	return await Bun.file(path).exists();
 }
 
-async function writeFileIfMissing(path: string, content: string): Promise<void> {
+async function writeFileIfMissing(path: string, content: string | Uint8Array): Promise<void> {
 	try {
-		await writeFile(path, content, { encoding: "utf8", flag: "wx" });
+		if (typeof content === "string") {
+			await writeFile(path, content, { encoding: "utf8", flag: "wx" });
+		} else {
+			await writeFile(path, content, { flag: "wx" });
+		}
 	} catch (err: unknown) {
 		if (typeof err !== "object" || err == null || !("code" in err) || (err as { code?: string }).code !== "EEXIST") {
 			throw err;
 		}
+	}
+}
+
+const BUNDLED_SKILL_FILE_NAME = "SKILL.md";
+
+function bundledSkillsTemplateDir(): string | null {
+	try {
+		const agentPkgPath = require.resolve("@femtomc/mu-agent/package.json");
+		return join(dirname(agentPkgPath), "prompts", "skills");
+	} catch {
+		return null;
+	}
+}
+
+async function copyDirectoryFilesIfMissing(sourceDir: string, targetDir: string): Promise<void> {
+	await mkdir(targetDir, { recursive: true });
+	const entries = await readdir(sourceDir, { withFileTypes: true });
+	entries.sort((left, right) => left.name.localeCompare(right.name));
+	for (const entry of entries) {
+		const sourcePath = join(sourceDir, entry.name);
+		const targetPath = join(targetDir, entry.name);
+		if (entry.isDirectory()) {
+			await copyDirectoryFilesIfMissing(sourcePath, targetPath);
+			continue;
+		}
+		if (!entry.isFile()) {
+			continue;
+		}
+		const content = await readFile(sourcePath);
+		await writeFileIfMissing(targetPath, content);
+	}
+}
+
+async function installBundledStarterSkills(muHomeDir: string): Promise<void> {
+	const templateDir = bundledSkillsTemplateDir();
+	if (!templateDir || !existsSync(templateDir)) {
+		return;
+	}
+
+	const targetRoot = join(muHomeDir, "skills");
+	await mkdir(targetRoot, { recursive: true });
+
+	const entries = await readdir(templateDir, { withFileTypes: true });
+	entries.sort((left, right) => left.name.localeCompare(right.name));
+	for (const entry of entries) {
+		if (!entry.isDirectory()) {
+			continue;
+		}
+		const sourceSkillDir = join(templateDir, entry.name);
+		const sourceSkillFile = join(sourceSkillDir, BUNDLED_SKILL_FILE_NAME);
+		if (!existsSync(sourceSkillFile)) {
+			continue;
+		}
+		const targetSkillDir = join(targetRoot, entry.name);
+		await copyDirectoryFilesIfMissing(sourceSkillDir, targetSkillDir);
 	}
 }
 
@@ -46,6 +109,12 @@ export async function ensureStoreInitialized(ctx: Pick<WorkspaceCliContext, "pat
 			"",
 		].join("\n"),
 	);
+
+	try {
+		await installBundledStarterSkills(ctx.paths.muHomeDir);
+	} catch {
+		// Best-effort skill bootstrap. Keep store initialization resilient.
+	}
 }
 
 export async function findRepoRoot(start: string): Promise<string> {

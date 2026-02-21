@@ -102,6 +102,10 @@ you can customize the behavior of `mu` as you would any other agent.
 - **Customization**: if you wish to customize the context and behavior of mu's execution, use skills.
   - Pi skills: `.pi/skills/` (project) and `~/.pi/agent/skills/` (global).
   - Mu skills: `~/.mu/skills/` (global) and `~/.mu/workspaces/<workspace-id>/skills/` (workspace-local).
+  - Starter skills: mu bootstraps built-ins into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
+    - `planning` (investigate first, then draft/refine issue DAG plans with the user)
+    - `subagents` (parallel subagent dispatch with tmux)
+    - `reviewer` (dedicated reviewer lane with tmux)
   - Repo skills: if a repo has a top-level `skills/` directory, mu loads it too.
   - On skill-name collisions, mu-prefixed roots are preferred by default.
 
@@ -157,6 +161,16 @@ Operator CLI discipline (context-safe by default):
 Operator sessions are persisted by default under `<store>/operator/sessions`.
 Use `mu session` to reconnect to the latest session, `mu session list` to browse persisted sessions,
 or `mu session <session-id>` to reopen a specific one.
+
+For subagent handoffs and follow-up questions, use `mu turn` against the same session id:
+
+```bash
+mu session list --json --pretty
+mu turn --session-kind operator --session-id <session-id> --body "Follow-up question"
+```
+
+When `--session-kind` is omitted, `mu turn` defaults to control-plane operator sessions
+(`cp_operator`, `<store>/control-plane/operator-sessions`).
 
 ## Control Plane
 

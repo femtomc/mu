@@ -86,6 +86,16 @@ tools and invokes `mu` CLI commands directly for reads and mutations.
 By default, operator sessions are persisted under `<store>/operator/sessions`, and
 `mu session` reconnects to the latest persisted session.
 
+For follow-up handoffs on a prior terminal/tmux session:
+
+```bash
+mu session list --json --pretty
+mu turn --session-kind operator --session-id <session-id> --body "follow-up question"
+```
+
+If `--session-kind` is omitted, `mu turn` defaults to `cp_operator`
+(`control-plane/operator-sessions`) rather than terminal operator sessions.
+
 Use `mu store paths` to resolve `<store>`, and `mu control status` to inspect current
 config-driven control-plane/operator state.
 
