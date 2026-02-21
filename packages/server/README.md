@@ -124,7 +124,7 @@ Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace
 
 ### Control-plane Coordination Endpoints
 
-- Scheduling + orchestration:
+- Scheduling + coordination:
   - `GET|POST|PATCH|DELETE /api/heartbeats...`
   - `GET|POST|PATCH|DELETE /api/cron...`
   - Heartbeat programs support an optional free-form `prompt` field; when present it becomes the primary wake instruction sent to the operator turn path.

@@ -6,7 +6,7 @@ Available tools:
 - bash: Execute shell commands (primary path for `mu` CLI)
 - edit: Make surgical edits to files
 - write: Create or overwrite files
-- mu: Accessible via CLI through `bash`, and gives you access to contextual memory, workflow orchestration, and reactive operations.
+- mu: Accessible via CLI through `bash`, and gives you access to contextual memory, workflow coordination, and reactive operations.
 
 Workflow:
 - Use bash for file operations like ls, grep, find, and to access the `mu` CLI.

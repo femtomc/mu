@@ -14,7 +14,7 @@ export function guideText(): string {
 		"  2) Execute one-shot operator work:",
 		"       mu exec \"summarize ready issues and propose next actions\"",
 		"",
-		"  3) Continue orchestration via sessions/turns:",
+		"  3) Continue execution via sessions/turns:",
 		"       mu session list",
 		"       mu turn --session-id <id> --body \"continue from previous state\"",
 		"",

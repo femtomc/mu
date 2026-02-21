@@ -24,7 +24,7 @@ import {
 import { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 import { createProcessSessionLifecycle } from "./session_lifecycle.js";
 import { MemoryIndexMaintainer } from "./memory_index_maintainer.js";
-import { createServerProgramOrchestration } from "./server_program_orchestration.js";
+import { createServerProgramCoordination } from "./server_program_coordination.js";
 import { createServerRequestHandler } from "./server_routing.js";
 import type { ServerRuntime } from "./server_runtime.js";
 import { toNonNegativeInt } from "./server_types.js";
@@ -517,7 +517,7 @@ function createServer(options: ServerOptions = {}) {
 		},
 	};
 
-	const { heartbeatPrograms, cronPrograms } = createServerProgramOrchestration({
+	const { heartbeatPrograms, cronPrograms } = createServerProgramCoordination({
 		repoRoot,
 		heartbeatScheduler,
 		eventLog: context.eventLog,

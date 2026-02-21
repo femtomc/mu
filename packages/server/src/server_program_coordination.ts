@@ -17,7 +17,7 @@ function describeError(err: unknown): string {
 	return String(err);
 }
 
-export function createServerProgramOrchestration(opts: {
+export function createServerProgramCoordination(opts: {
 	repoRoot: string;
 	heartbeatScheduler: ActivityHeartbeatScheduler;
 	eventLog: EventLog;

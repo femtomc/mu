@@ -95,7 +95,7 @@ Tool contract (preferred when tools are available):
   - state: `status`, `snapshot`, `on`, `off`, `toggle`, `refresh`
   - scope: `set_prefix`, `set_root`, `set_tag`
   - policy: `set_mode`, `set_refresh_interval`, `set_stale_after`, `set_spawn_paused`
-  - orchestration: `spawn`
+  - dispatch: `spawn`
   - atomic: `update`
 - Key parameters:
   - `prefix`: tmux prefix or `clear`

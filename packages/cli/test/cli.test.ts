@@ -416,7 +416,7 @@ test("mu chat removed - returns unknown command", async () => {
 	expect(chatResult.stdout).toContain("unknown command");
 });
 
-test("mu exec runs one-shot operator prompt without queuing orchestration", async () => {
+test("mu exec runs one-shot operator prompt without queue side effects", async () => {
 	const dir = await mkTempRepo();
 	const factoryCalls: Array<{ cwd: string; provider?: string; model?: string; thinking?: string }> = [];
 	let seenPrompt = "";

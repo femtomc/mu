@@ -15,7 +15,7 @@ mu exec "quickly inspect current ready work and summarize"
 mu heartbeats --help
 mu status --pretty
 mu issues ready --pretty
-mu forum post research:topic -m "found something" --author worker
+mu forum post research:topic -m "found something" --author operator
 ```
 
 For messaging adapter-specific setup (Slack/Discord/Telegram/Neovim), use the package READMEs linked in [Packages](#packages).
@@ -47,7 +47,7 @@ mu control status --pretty
 mu control reload
 ```
 
-## Minimal orchestration protocol contract
+## Minimal issue-graph protocol contract
 
 `mu` treats the issue DAG as the executable coordination graph. The protocol kernel is:
 
@@ -73,15 +73,15 @@ CLI guidance:
 
 `mu` is a modular and compositional system. Broken apart, here are some of the main ideas:
 
-- **Work orchestration: structured work state**
+- **Work coordination: structured work state**
   - **Issue DAG** for decomposition, dependencies, status, and outcomes
   - **Forum** for topic-based coordination and durable agent notes
   - **Event log** for append-only audit trails and run correlation
 
-- **Work orchestration: protocol + skills**
+- **Work coordination: protocol + skills**
   - Minimal protocol contract over the issue DAG: `split/plan`, `claim`, `publish`, `close`, `decide`
   - Context semantics are explicit: spawn = dependency-minimal projection; fork = inherited branch context + deterministic reductions
-  - Execution substrate is operator-driven skills (`planning`, `subagents`, `reviewer`) plus durable wake loops (`mu heartbeats`, `mu cron`)
+  - Execution substrate is operator-driven skills (`planning`, `subagents`) plus durable wake loops (`mu heartbeats`, `mu cron`)
 
 - **Chat: operators and sessions**
   - Operators are your chat-based portal to `mu`: they are capable coding agent sessions with knowledge of how `mu` works
@@ -128,7 +128,6 @@ You can customize `mu` behavior as you would any other agent via project context
   - Starter skills: mu bootstraps built-ins into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
     - `planning` (investigate first, then draft/refine issue DAG plans with the user)
     - `subagents` (parallel subagent dispatch with tmux)
-    - `reviewer` (dedicated reviewer lane with tmux)
   - Repo skills: if a repo has a top-level `skills/` directory, mu loads it too.
   - On skill-name collisions, mu-prefixed roots are preferred by default.
 
@@ -287,7 +286,7 @@ Detailed adapter runbooks live in package READMEs:
 | [`@femtomc/mu-issue`](packages/issue/README.md) | Issue store — create, update, close, plus DAG queries (ready leaves, subtree, validate, collapsible). |
 | [`@femtomc/mu-forum`](packages/forum/README.md) | Forum store — topic-keyed messages with read filtering and event emission. |
 | [`@femtomc/mu`](packages/cli/README.md) | Bun CLI wrapping protocol + skills control surfaces into `mu` commands. |
-| [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — control-plane transport/session/realtime plus heartbeat/cron and operator-turn orchestration surfaces for `mu serve` and channel adapters. |
+| [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — control-plane transport/session/realtime plus heartbeat/cron and operator-turn coordination surfaces for `mu serve` and channel adapters. |
 | [`mu.nvim`](packages/neovim/README.md) | First-party Neovim frontend channel (`:Mu`, optional `:mu` alias) for control-plane ingress. |
 
 When `mu` is installed from npm, package READMEs are available under the install tree
