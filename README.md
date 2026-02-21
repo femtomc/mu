@@ -85,8 +85,7 @@ Use `mu store paths` to resolve exact locations for the current repo.
 ## mu builds on pi
 
 mu uses [`pi`](https://github.com/badlogic/pi-mono) directly -- `pi` is a great agent framework, 
-check it out! `pi` amounts to _a very smart and sleek ant_ (in the words of Yegge), `mu` is concerned with
-organizing smart ants into a workforce.
+check it out!
 
 mu inherits much of pi's philosophy, which grounds out in 3 main design points:
 - customizing mu's behavior is done straightforwardly with SKILLS, AGENTS.md, etc.
