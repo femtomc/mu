@@ -29,6 +29,7 @@ type StaticAdapterModule = {
 		pipeline: ControlPlaneCommandPipeline;
 		outbox: ControlPlaneOutbox;
 		secret: string;
+		config: ControlPlaneConfig;
 	}) => ControlPlaneAdapter;
 };
 
@@ -41,6 +42,7 @@ const STATIC_ADAPTER_MODULES: readonly StaticAdapterModule[] = [
 				pipeline: opts.pipeline,
 				outbox: opts.outbox,
 				signingSecret: opts.secret,
+				botToken: opts.config.adapters.slack.bot_token,
 			}),
 	},
 	{
@@ -101,6 +103,7 @@ export function detectAdapters(config: ControlPlaneConfig): DetectedAdapter[] {
 
 export function createStaticAdaptersFromDetected(opts: {
 	detected: readonly DetectedAdapter[];
+	config: ControlPlaneConfig;
 	pipeline: ControlPlaneCommandPipeline;
 	outbox: ControlPlaneOutbox;
 }): ControlPlaneAdapter[] {
@@ -118,6 +121,7 @@ export function createStaticAdaptersFromDetected(opts: {
 				pipeline: opts.pipeline,
 				outbox: opts.outbox,
 				secret: detected.secret,
+				config: opts.config,
 			}),
 		);
 	}

@@ -1,6 +1,7 @@
 import type { MessagingOperatorBackend, MessagingOperatorRuntime } from "@femtomc/mu-agent";
 import {
 	type AdapterIngressResult,
+	type AttachmentDescriptor,
 	type CommandPipelineResult,
 	type ControlPlaneAdapter,
 	type Channel,
@@ -123,6 +124,30 @@ export type TelegramSendMessagePayload = {
 	disable_web_page_preview?: boolean;
 };
 
+type SlackApiOkResponse = {
+	ok: boolean;
+	error?: string;
+};
+
+type SlackChatPostMessageResponse = SlackApiOkResponse;
+type SlackFileUploadResponse = SlackApiOkResponse;
+
+export type TelegramSendPhotoPayload = {
+	chat_id: string;
+	photo: string;
+	caption?: string;
+};
+
+export type TelegramSendDocumentPayload = {
+	chat_id: string;
+	document: string;
+	caption?: string;
+};
+
+type TelegramMediaMethod = "sendPhoto" | "sendDocument";
+
+const TELEGRAM_CAPTION_MAX_LEN = 1_024;
+
 /**
  * Telegram supports a markdown dialect that uses single markers for emphasis.
  * Normalize the most common LLM/GitHub-style markers (`**bold**`, `__italic__`, headings)
@@ -196,6 +221,325 @@ async function postTelegramMessage(botToken: string, payload: TelegramSendMessag
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(payload),
 	});
+}
+
+async function postTelegramApiJson(
+	botToken: string,
+	method: "sendPhoto" | "sendDocument",
+	payload: TelegramSendPhotoPayload | TelegramSendDocumentPayload,
+): Promise<Response> {
+	return await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(payload),
+	});
+}
+
+async function postTelegramApiMultipart(botToken: string, method: TelegramMediaMethod, form: FormData): Promise<Response> {
+	return await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
+		method: "POST",
+		body: form,
+	});
+}
+
+function truncateTelegramCaption(text: string): string {
+	const normalized = text.trim();
+	if (normalized.length <= TELEGRAM_CAPTION_MAX_LEN) {
+		return normalized;
+	}
+	if (TELEGRAM_CAPTION_MAX_LEN <= 16) {
+		return normalized.slice(0, TELEGRAM_CAPTION_MAX_LEN);
+	}
+	const suffix = "…(truncated)";
+	const headLen = Math.max(0, TELEGRAM_CAPTION_MAX_LEN - suffix.length);
+	return `${normalized.slice(0, headLen)}${suffix}`;
+}
+
+function chooseTelegramMediaMethod(attachment: AttachmentDescriptor): TelegramMediaMethod {
+	const mime = attachment.mime_type?.toLowerCase() ?? "";
+	const filename = attachment.filename?.toLowerCase() ?? "";
+	const declaredType = attachment.type.toLowerCase();
+	const isSvg = mime === "image/svg+xml" || filename.endsWith(".svg");
+	const isImageMime = mime.startsWith("image/");
+	if ((declaredType === "image" || isImageMime) && !isSvg) {
+		return "sendPhoto";
+	}
+	return "sendDocument";
+}
+
+function parseRetryDelayMs(res: Response): number | undefined {
+	const retryAfter = res.headers.get("retry-after");
+	if (!retryAfter) {
+		return undefined;
+	}
+	const parsed = Number.parseInt(retryAfter, 10);
+	if (!Number.isFinite(parsed) || parsed < 0) {
+		return undefined;
+	}
+	return parsed * 1000;
+}
+
+export async function deliverTelegramOutboxRecord(opts: {
+	botToken: string;
+	record: OutboxRecord;
+}): Promise<OutboxDeliveryHandlerResult> {
+	const { botToken, record } = opts;
+	const fallbackMessagePayload = buildTelegramSendMessagePayload({
+		chatId: record.envelope.channel_conversation_id,
+		text: record.envelope.body,
+		richFormatting: true,
+	});
+
+	const firstAttachment = record.envelope.attachments?.[0] ?? null;
+	if (!firstAttachment) {
+		let res = await postTelegramMessage(botToken, fallbackMessagePayload);
+		if (!res.ok && res.status === 400 && fallbackMessagePayload.parse_mode) {
+			res = await postTelegramMessage(
+				botToken,
+				buildTelegramSendMessagePayload({
+					chatId: record.envelope.channel_conversation_id,
+					text: record.envelope.body,
+					richFormatting: false,
+				}),
+			);
+		}
+		if (res.ok) {
+			return { kind: "delivered" };
+		}
+		const responseBody = await res.text().catch(() => "");
+		if (res.status === 429 || res.status >= 500) {
+			return {
+				kind: "retry",
+				error: `telegram sendMessage ${res.status}: ${responseBody}`,
+				retryDelayMs: parseRetryDelayMs(res),
+			};
+		}
+		return {
+			kind: "retry",
+			error: `telegram sendMessage ${res.status}: ${responseBody}`,
+		};
+	}
+
+	const mediaMethod = chooseTelegramMediaMethod(firstAttachment);
+	const mediaField = mediaMethod === "sendPhoto" ? "photo" : "document";
+	const mediaReference = firstAttachment.reference.file_id ?? firstAttachment.reference.url ?? null;
+	if (!mediaReference) {
+		return { kind: "retry", error: "telegram media attachment missing reference" };
+	}
+
+	const mediaCaption = truncateTelegramCaption(record.envelope.body);
+	let mediaResponse: Response;
+	if (firstAttachment.reference.file_id) {
+		mediaResponse = await postTelegramApiJson(
+			botToken,
+			mediaMethod,
+			mediaMethod === "sendPhoto"
+				? {
+					chat_id: record.envelope.channel_conversation_id,
+					photo: firstAttachment.reference.file_id,
+					caption: mediaCaption,
+				}
+				: {
+					chat_id: record.envelope.channel_conversation_id,
+					document: firstAttachment.reference.file_id,
+					caption: mediaCaption,
+				},
+		);
+	} else {
+		const sourceUrl = firstAttachment.reference.url as string;
+		const sourceRes = await fetch(sourceUrl);
+		if (!sourceRes.ok) {
+			const sourceErr = await sourceRes.text().catch(() => "");
+			return {
+				kind: "retry",
+				error: `telegram attachment fetch ${sourceRes.status}: ${sourceErr}`,
+				retryDelayMs: sourceRes.status === 429 || sourceRes.status >= 500 ? parseRetryDelayMs(sourceRes) : undefined,
+			};
+		}
+		const body = await sourceRes.arrayBuffer();
+		const contentType = firstAttachment.mime_type ?? sourceRes.headers.get("content-type") ?? "application/octet-stream";
+		const filename = firstAttachment.filename ?? `${firstAttachment.type || "attachment"}.bin`;
+		const form = new FormData();
+		form.append("chat_id", record.envelope.channel_conversation_id);
+		if (mediaCaption.length > 0) {
+			form.append("caption", mediaCaption);
+		}
+		form.append(mediaField, new Blob([body], { type: contentType }), filename);
+		mediaResponse = await postTelegramApiMultipart(botToken, mediaMethod, form);
+	}
+
+	if (mediaResponse.ok) {
+		return { kind: "delivered" };
+	}
+
+	const mediaBody = await mediaResponse.text().catch(() => "");
+	if (mediaResponse.status === 429 || mediaResponse.status >= 500) {
+		return {
+			kind: "retry",
+			error: `telegram ${mediaMethod} ${mediaResponse.status}: ${mediaBody}`,
+			retryDelayMs: parseRetryDelayMs(mediaResponse),
+		};
+	}
+
+	const fallbackPlainPayload = buildTelegramSendMessagePayload({
+		chatId: record.envelope.channel_conversation_id,
+		text: record.envelope.body,
+		richFormatting: false,
+	});
+	const fallbackRes = await postTelegramMessage(botToken, fallbackPlainPayload);
+	if (fallbackRes.ok) {
+		return { kind: "delivered" };
+	}
+	const fallbackBody = await fallbackRes.text().catch(() => "");
+	if (fallbackRes.status === 429 || fallbackRes.status >= 500) {
+		return {
+			kind: "retry",
+			error: `telegram media fallback sendMessage ${fallbackRes.status}: ${fallbackBody}`,
+			retryDelayMs: parseRetryDelayMs(fallbackRes),
+		};
+	}
+	return {
+		kind: "retry",
+		error: `telegram media fallback sendMessage ${fallbackRes.status}: ${fallbackBody} (media_error=${mediaMethod} ${mediaResponse.status}: ${mediaBody})`,
+	};
+}
+
+async function postSlackJson<T extends SlackApiOkResponse>(opts: {
+	botToken: string;
+	method: "chat.postMessage";
+	payload: Record<string, unknown>;
+}): Promise<{ response: Response; payload: T | null }> {
+	const response = await fetch(`https://slack.com/api/${opts.method}`, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${opts.botToken}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(opts.payload),
+	});
+	const payload = (await response.json().catch(() => null)) as T | null;
+	return { response, payload };
+}
+
+export async function deliverSlackOutboxRecord(opts: {
+	botToken: string;
+	record: OutboxRecord;
+}): Promise<OutboxDeliveryHandlerResult> {
+	const { botToken, record } = opts;
+	const attachments = record.envelope.attachments ?? [];
+	if (attachments.length === 0) {
+		const delivered = await postSlackJson<SlackChatPostMessageResponse>({
+			botToken,
+			method: "chat.postMessage",
+			payload: {
+				channel: record.envelope.channel_conversation_id,
+				text: record.envelope.body,
+				unfurl_links: false,
+				unfurl_media: false,
+			},
+		});
+		if (delivered.response.ok && delivered.payload?.ok) {
+			return { kind: "delivered" };
+		}
+		const status = delivered.response.status;
+		const err = delivered.payload?.error ?? "unknown_error";
+		if (status === 429 || status >= 500) {
+			return {
+				kind: "retry",
+				error: `slack chat.postMessage ${status}: ${err}`,
+				retryDelayMs: parseRetryDelayMs(delivered.response),
+			};
+		}
+		return { kind: "retry", error: `slack chat.postMessage ${status}: ${err}` };
+	}
+
+	let firstError: string | null = null;
+	for (const [index, attachment] of attachments.entries()) {
+		const referenceUrl = attachment.reference.url;
+		if (!referenceUrl) {
+			return {
+				kind: "retry",
+				error: `slack attachment ${index + 1} missing reference.url`,
+			};
+		}
+		const source = await fetch(referenceUrl);
+		if (!source.ok) {
+			const sourceErr = await source.text().catch(() => "");
+			if (source.status === 429 || source.status >= 500) {
+				return {
+					kind: "retry",
+					error: `slack attachment fetch ${source.status}: ${sourceErr}`,
+					retryDelayMs: parseRetryDelayMs(source),
+				};
+			}
+			return { kind: "retry", error: `slack attachment fetch ${source.status}: ${sourceErr}` };
+		}
+		const bytes = await source.arrayBuffer();
+		const contentType = attachment.mime_type ?? source.headers.get("content-type") ?? "application/octet-stream";
+		const filename = attachment.filename ?? `attachment-${index + 1}`;
+		const form = new FormData();
+		form.set("channels", record.envelope.channel_conversation_id);
+		form.set("filename", filename);
+		form.set("title", filename);
+		if (index === 0 && record.envelope.body.trim().length > 0) {
+			form.set("initial_comment", record.envelope.body);
+		}
+		form.set("file", new Blob([bytes], { type: contentType }), filename);
+
+		const uploaded = await fetch("https://slack.com/api/files.upload", {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${botToken}`,
+			},
+			body: form,
+		});
+		const uploadPayload = (await uploaded.json().catch(() => null)) as SlackFileUploadResponse | null;
+		if (!(uploaded.ok && uploadPayload?.ok)) {
+			const status = uploaded.status;
+			const err = uploadPayload?.error ?? "unknown_error";
+			if (status === 429 || status >= 500) {
+				return {
+					kind: "retry",
+					error: `slack files.upload ${status}: ${err}`,
+					retryDelayMs: parseRetryDelayMs(uploaded),
+				};
+			}
+			if (!firstError) {
+				firstError = `slack files.upload ${status}: ${err}`;
+			}
+		}
+	}
+
+	if (firstError) {
+		const fallback = await postSlackJson<SlackChatPostMessageResponse>({
+			botToken,
+			method: "chat.postMessage",
+			payload: {
+				channel: record.envelope.channel_conversation_id,
+				text: record.envelope.body,
+				unfurl_links: false,
+				unfurl_media: false,
+			},
+		});
+		if (fallback.response.ok && fallback.payload?.ok) {
+			return { kind: "delivered" };
+		}
+		const status = fallback.response.status;
+		const err = fallback.payload?.error ?? "unknown_error";
+		if (status === 429 || status >= 500) {
+			return {
+				kind: "retry",
+				error: `slack chat.postMessage fallback ${status}: ${err} (upload_error=${firstError})`,
+				retryDelayMs: parseRetryDelayMs(fallback.response),
+			};
+		}
+		return {
+			kind: "retry",
+			error: `slack chat.postMessage fallback ${status}: ${err} (upload_error=${firstError})`,
+		};
+	}
+
+	return { kind: "delivered" };
 }
 
 export type BootstrapControlPlaneOpts = {
@@ -506,6 +850,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 
 		for (const adapter of createStaticAdaptersFromDetected({
 			detected,
+			config: controlPlaneConfig,
 			pipeline,
 			outbox,
 		})) {
@@ -560,55 +905,34 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 
 		const deliveryRouter = new OutboundDeliveryRouter([
 			{
+				channel: "slack",
+				deliver: async (record: OutboxRecord): Promise<OutboxDeliveryHandlerResult> => {
+					const slackBotToken = controlPlaneConfig.adapters.slack.bot_token;
+					if (!slackBotToken) {
+						return { kind: "retry", error: "slack bot token not configured in mu workspace config" };
+					}
+					return await deliverSlackOutboxRecord({
+						botToken: slackBotToken,
+						record,
+					});
+				},
+			},
+			{
 				channel: "telegram",
 				deliver: async (record: OutboxRecord): Promise<OutboxDeliveryHandlerResult> => {
 					const telegramBotToken = telegramManager.activeBotToken();
 					if (!telegramBotToken) {
 						return { kind: "retry", error: "telegram bot token not configured in mu workspace config" };
 					}
-
-					const richPayload = buildTelegramSendMessagePayload({
-						chatId: record.envelope.channel_conversation_id,
-						text: record.envelope.body,
-						richFormatting: true,
+					return await deliverTelegramOutboxRecord({
+						botToken: telegramBotToken,
+						record,
 					});
-					let res = await postTelegramMessage(telegramBotToken, richPayload);
-
-					// Fallback: if Telegram rejects markdown entities, retry as plain text.
-					if (!res.ok && res.status === 400 && richPayload.parse_mode) {
-						const plainPayload = buildTelegramSendMessagePayload({
-							chatId: record.envelope.channel_conversation_id,
-							text: record.envelope.body,
-							richFormatting: false,
-						});
-						res = await postTelegramMessage(telegramBotToken, plainPayload);
-					}
-
-					if (res.ok) {
-						return { kind: "delivered" };
-					}
-
-					const responseBody = await res.text().catch(() => "");
-					if (res.status === 429 || res.status >= 500) {
-						const retryAfter = res.headers.get("retry-after");
-						const retryDelayMs = retryAfter ? Number.parseInt(retryAfter, 10) * 1000 : undefined;
-						return {
-							kind: "retry",
-							error: `telegram sendMessage ${res.status}: ${responseBody}`,
-							retryDelayMs: retryDelayMs && Number.isFinite(retryDelayMs) ? retryDelayMs : undefined,
-						};
-					}
-
-					return {
-						kind: "retry",
-						error: `telegram sendMessage ${res.status}: ${responseBody}`,
-					};
 				},
 			},
 		]);
-		for (const channel of deliveryRouter.supportedChannels()) {
-			outboundDeliveryChannels.add(channel);
-		}
+		outboundDeliveryChannels.add("slack");
+		outboundDeliveryChannels.add("telegram");
 
 		const notifyOperators = async (notifyOpts: NotifyOperatorsOpts): Promise<NotifyOperatorsResult> => {
 			if (!pipeline) {
@@ -645,6 +969,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			};
 
 			const nowMs = Math.trunc(Date.now());
+			const slackBotToken = controlPlaneConfig.adapters.slack.bot_token;
 			const telegramBotToken = telegramManager.activeBotToken();
 			const bindings = pipeline.identities
 				.listBindings({ includeInactive: false })
@@ -660,6 +985,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 				const capability = resolveWakeFanoutCapability({
 					binding,
 					isChannelDeliverySupported: (channel) => outboundDeliveryChannels.has(channel),
+					slackBotToken,
 					telegramBotToken,
 				});
 				if (!capability.ok) {

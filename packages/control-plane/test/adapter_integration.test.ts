@@ -51,6 +51,10 @@ type HarnessOpts = {
 	operatorBackend?: MessagingOperatorBackend;
 	cliRunResult?: MuCliRunResult;
 	cliRunResultForPlan?: (plan: MuCliInvocationPlan) => MuCliRunResult | Promise<MuCliRunResult>;
+	slackBotToken?: string | null;
+	slackFetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+	telegramBotToken?: string | null;
+	telegramFetchImpl?: typeof fetch;
 };
 
 const pipelinesToCleanup = new Set<ControlPlaneCommandPipeline>();
@@ -108,6 +112,30 @@ function slackRequest(opts: {
 	});
 }
 
+function slackEventRequest(opts: {
+	secret: string;
+	timestampSec: number;
+	body: Record<string, unknown>;
+	requestId?: string;
+}): Request {
+	const rawBody = JSON.stringify(opts.body);
+	const timestamp = String(opts.timestampSec);
+	const signature = `v0=${hmac(opts.secret, `v0:${timestamp}:${rawBody}`)}`;
+	const headers = new Headers({
+		"content-type": "application/json",
+		"x-slack-request-timestamp": timestamp,
+		"x-slack-signature": signature,
+	});
+	if (opts.requestId) {
+		headers.set("x-slack-request-id", opts.requestId);
+	}
+	return new Request("https://example.test/slack/events", {
+		method: "POST",
+		headers,
+		body: rawBody,
+	});
+}
+
 function discordRequest(opts: {
 	secret: string;
 	timestampSec: number;
@@ -147,19 +175,34 @@ function discordRequest(opts: {
 function telegramMessageRequest(opts: {
 	secret: string;
 	updateId: number;
-	text: string;
+	text?: string;
+	caption?: string;
+	document?: { file_id: string; file_unique_id?: string; file_name?: string; mime_type?: string; file_size?: number };
+	photo?: Array<{ file_id: string; file_unique_id?: string; file_size?: number; width?: number; height?: number }>;
 	messageId?: number;
 	chatId?: string;
 	actorId?: string;
 }): Request {
+	const message: Record<string, unknown> = {
+		message_id: opts.messageId ?? opts.updateId,
+		from: { id: opts.actorId ?? "telegram-actor" },
+		chat: { id: opts.chatId ?? "tg-chat-1", type: "private" },
+	};
+	if (typeof opts.text === "string") {
+		message.text = opts.text;
+	}
+	if (typeof opts.caption === "string") {
+		message.caption = opts.caption;
+	}
+	if (opts.document) {
+		message.document = opts.document;
+	}
+	if (opts.photo) {
+		message.photo = opts.photo;
+	}
 	const payload = {
 		update_id: opts.updateId,
-		message: {
-			message_id: opts.messageId ?? opts.updateId,
-			from: { id: opts.actorId ?? "telegram-actor" },
-			chat: { id: opts.chatId ?? "tg-chat-1", type: "private" },
-			text: opts.text,
-		},
+		message,
 	};
 	return new Request("https://example.test/telegram/webhook", {
 		method: "POST",
@@ -337,6 +380,8 @@ async function createHarness(opts: HarnessOpts = {}): Promise<Harness> {
 
 	const slack = new SlackControlPlaneAdapter({
 		signingSecret: "slack-secret",
+		botToken: opts.slackBotToken ?? null,
+		fetchImpl: opts.slackFetchImpl as typeof fetch | undefined,
 		pipeline,
 		outbox,
 		nowMs: () => clock.now,
@@ -351,6 +396,8 @@ async function createHarness(opts: HarnessOpts = {}): Promise<Harness> {
 		webhookSecret: "telegram-secret",
 		tenantId: "telegram-bot",
 		botUsername: "mu_bot",
+		botToken: opts.telegramBotToken ?? "telegram-bot-token",
+		fetchImpl: opts.telegramFetchImpl,
 		pipeline,
 		outbox,
 		nowMs: () => clock.now,
@@ -446,6 +493,34 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(harness.deliveries.length).toBe(2);
 		expect(harness.deliveries[1]?.commandId).toBe(commandId);
 		expect(harness.deliveries[1]?.body).toContain("RESULT · COMPLETED");
+	});
+
+	test("Slack non-/mu ingress returns guidance noop", async () => {
+		const harness = await createHarness();
+		const body = new URLSearchParams({
+			command: "/other",
+			text: "status",
+			team_id: "team-1",
+			channel_id: "chan-1",
+			user_id: "slack-actor",
+			trigger_id: "trigger-non-mu",
+			response_url: "https://hooks.slack.test/response",
+		}).toString();
+		const timestamp = String(Math.trunc(harness.clock.now / 1000));
+		const req = new Request("https://example.test/slack/commands", {
+			method: "POST",
+			headers: new Headers({
+				"content-type": "application/x-www-form-urlencoded",
+				"x-slack-request-timestamp": timestamp,
+				"x-slack-signature": `v0=${hmac("slack-secret", `v0:${timestamp}:${body}`)}`,
+			}),
+			body,
+		});
+		const result = await harness.slack.ingest(req);
+		expect(result.pipelineResult).toEqual({ kind: "noop", reason: "slack_command_required" });
+		expect(result.outboxRecord).toBeNull();
+		const ack = (await result.response.json()) as { text?: string };
+		expect(ack.text).toContain("command-only");
 	});
 
 	test("Slack guarded writes deny unauthorized scope with explicit visibility", async () => {
@@ -676,7 +751,7 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(harness.deliveries[1]?.body).toContain("RESULT · COMPLETED");
 	});
 
-	test("Slack/Discord/Telegram operator requests can safely trigger run resumes with correlation", async () => {
+	test("Telegram operator requests can safely trigger run resumes with correlation", async () => {
 		const harness = await createHarness({
 			operatorResult: {
 				kind: "command",
@@ -700,6 +775,9 @@ describe("channel adapters integrated with control-plane", () => {
 				requestId: "operator-slack-req-1",
 			}),
 		);
+		expect(slackSubmit.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
+		expect(slackSubmit.outboxRecord).toBeNull();
+
 		const discordSubmit = await harness.discord.ingest(
 			discordRequest({
 				secret: "discord-secret",
@@ -708,6 +786,9 @@ describe("channel adapters integrated with control-plane", () => {
 				text: "please resume that run",
 			}),
 		);
+		expect(discordSubmit.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
+		expect(discordSubmit.outboxRecord).toBeNull();
+
 		const telegramSubmit = await harness.telegram.ingest(
 			telegramMessageRequest({
 				secret: "telegram-secret",
@@ -716,44 +797,17 @@ describe("channel adapters integrated with control-plane", () => {
 			}),
 		);
 
-		for (const entry of [slackSubmit, discordSubmit, telegramSubmit]) {
-			expect(entry.pipelineResult?.kind).toBe("awaiting_confirmation");
-			if (entry.pipelineResult?.kind !== "awaiting_confirmation") {
-				throw new Error(`expected awaiting_confirmation, got ${entry.pipelineResult?.kind}`);
-			}
-			expect(entry.outboxRecord).not.toBeNull();
+		expect(telegramSubmit.pipelineResult?.kind).toBe("awaiting_confirmation");
+		if (telegramSubmit.pipelineResult?.kind !== "awaiting_confirmation") {
+			throw new Error(`expected awaiting_confirmation, got ${telegramSubmit.pipelineResult?.kind}`);
 		}
+		expect(telegramSubmit.outboxRecord).not.toBeNull();
 
-		const slackCommandId =
-			slackSubmit.pipelineResult?.kind === "awaiting_confirmation"
-				? slackSubmit.pipelineResult.command.command_id
-				: "";
-		const discordCommandId =
-			discordSubmit.pipelineResult?.kind === "awaiting_confirmation"
-				? discordSubmit.pipelineResult.command.command_id
-				: "";
 		const telegramCommandId =
 			telegramSubmit.pipelineResult?.kind === "awaiting_confirmation"
 				? telegramSubmit.pipelineResult.command.command_id
 				: "";
 
-		const slackConfirm = await harness.slack.ingest(
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
-				text: `confirm ${slackCommandId}`,
-				triggerId: "operator-slack-confirm",
-				requestId: "operator-slack-req-2",
-			}),
-		);
-		const discordConfirm = await harness.discord.ingest(
-			discordRequest({
-				secret: "discord-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
-				interactionId: "operator-discord-confirm",
-				text: `confirm ${discordCommandId}`,
-			}),
-		);
 		const telegramConfirm = await harness.telegram.ingest(
 			telegramCallbackRequest({
 				secret: "telegram-secret",
@@ -763,30 +817,28 @@ describe("channel adapters integrated with control-plane", () => {
 			}),
 		);
 
-		for (const entry of [slackConfirm, discordConfirm, telegramConfirm]) {
-			expect(entry.pipelineResult?.kind).toBe("completed");
-			if (entry.pipelineResult?.kind !== "completed") {
-				throw new Error(`expected completed, got ${entry.pipelineResult?.kind}`);
-			}
-			expect(entry.pipelineResult.command.cli_command_kind).toBe("run_resume");
-			expect(entry.pipelineResult.command.run_root_id).toBe("mu-root-operator");
-			expect(entry.pipelineResult.command.operator_session_id).toMatch(/^operator-session-adapter-/);
-			expect(entry.pipelineResult.command.operator_turn_id).toBe("operator-turn-adapter");
-			expect(entry.outboxRecord?.envelope.correlation.cli_command_kind).toBe("run_resume");
-			expect(entry.outboxRecord?.envelope.correlation.run_root_id).toBe("mu-root-operator");
-			expect(entry.outboxRecord?.envelope.correlation.cli_invocation_id).toBe(
-				entry.pipelineResult.command.cli_invocation_id,
-			);
+		expect(telegramConfirm.pipelineResult?.kind).toBe("completed");
+		if (telegramConfirm.pipelineResult?.kind !== "completed") {
+			throw new Error(`expected completed, got ${telegramConfirm.pipelineResult?.kind}`);
 		}
+		expect(telegramConfirm.pipelineResult.command.cli_command_kind).toBe("run_resume");
+		expect(telegramConfirm.pipelineResult.command.run_root_id).toBe("mu-root-operator");
+		expect(telegramConfirm.pipelineResult.command.operator_session_id).toMatch(/^operator-session-adapter-/);
+		expect(telegramConfirm.pipelineResult.command.operator_turn_id).toBe("operator-turn-adapter");
+		expect(telegramConfirm.outboxRecord?.envelope.correlation.cli_command_kind).toBe("run_resume");
+		expect(telegramConfirm.outboxRecord?.envelope.correlation.run_root_id).toBe("mu-root-operator");
+		expect(telegramConfirm.outboxRecord?.envelope.correlation.cli_invocation_id).toBe(
+			telegramConfirm.pipelineResult.command.cli_invocation_id,
+		);
 
-		expect(harness.cliPlans.length).toBe(3);
+		expect(harness.cliPlans.length).toBe(1);
 		for (const plan of harness.cliPlans) {
 			expect(plan.commandKind).toBe("run_resume");
 			expect(plan.argv[0]).toBe("mu");
 		}
 	});
 
-	test("chat-style Slack messages route through operator with conversation session continuity", async () => {
+	test("chat-style Telegram messages route through operator with conversation session continuity", async () => {
 		const backend = new QueueOperatorBackend([
 			{ kind: "respond", message: "Hey — I'm your control-plane operator." },
 			{ kind: "respond", message: "Still here in the same chat context." },
@@ -796,44 +848,36 @@ describe("channel adapters integrated with control-plane", () => {
 			operatorBackend: backend,
 		});
 
-		const first = await harness.slack.ingest(
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
+		const first = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 810,
 				text: "hey there",
-				channelId: "chat-1",
-				triggerId: "operator-chat-1",
-				requestId: "operator-chat-req-1",
+				chatId: "chat-1",
 			}),
 		);
-		const second = await harness.slack.ingest(
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
+		const second = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 811,
 				text: "can you help me?",
-				channelId: "chat-1",
-				triggerId: "operator-chat-2",
-				requestId: "operator-chat-req-2",
+				chatId: "chat-1",
 			}),
 		);
-		const third = await harness.slack.ingest(
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
+		const third = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 812,
 				text: "new room hello",
-				channelId: "chat-2",
-				triggerId: "operator-chat-3",
-				requestId: "operator-chat-req-3",
+				chatId: "chat-2",
 			}),
 		);
 
 		for (const entry of [first, second, third]) {
 			expect(entry.pipelineResult?.kind).toBe("operator_response");
-			expect(entry.outboxRecord).toBeNull();
+			expect(entry.outboxRecord).not.toBeNull();
 		}
 
-		const firstBody = (await first.response.json()) as { text?: string };
-		expect(firstBody.text).toContain("Operator · CHAT");
 		expect(backend.turns.length).toBe(3);
 		expect(backend.turns[0]?.sessionId).toBe(backend.turns[1]?.sessionId);
 		expect(backend.turns[0]?.sessionId).not.toBe(backend.turns[2]?.sessionId);
@@ -875,7 +919,105 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(harness.deliveries[0]?.body).toBe("Hey from Telegram operator.");
 	});
 
-	test("Slack operator path can kick off run starts and complete through confirmation", async () => {
+	test("Telegram document + caption routes conversationally and stores inbound attachment metadata", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Got the file." }]);
+		const harness = await createHarness({
+			operatorBackend: backend,
+			telegramFetchImpl: (async (input) => {
+				const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+				if (url.includes("/getFile")) {
+					return new Response(JSON.stringify({ ok: true, result: { file_path: "docs/file-1.pdf" } }), {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					});
+				}
+				if (url.includes("/file/bot")) {
+					return new Response(new Uint8Array([1, 2, 3]), {
+						status: 200,
+						headers: { "content-type": "application/pdf" },
+					});
+				}
+				throw new Error(`unexpected fetch ${url}`);
+			}) as typeof fetch,
+		});
+
+		const result = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 920,
+				caption: "please summarize this",
+				document: {
+					file_id: "doc-file-1",
+					file_unique_id: "doc-uniq-1",
+					file_name: "spec.pdf",
+					mime_type: "application/pdf",
+					file_size: 3,
+				},
+			}),
+		);
+		expect(result.pipelineResult?.kind).toBe("operator_response");
+		expect(backend.turns[0]?.inbound.command_text).toBe("please summarize this");
+		expect(result.inbound?.attachments?.length).toBe(1);
+		expect(result.inbound?.attachments?.[0]?.reference.source).toBe("mu-attachment:telegram");
+	});
+
+	test("Telegram file-only message creates deterministic synthetic conversational prompt", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Acknowledged attachment." }]);
+		const harness = await createHarness({
+			operatorBackend: backend,
+			telegramFetchImpl: (async (input) => {
+				const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+				if (url.includes("/getFile")) {
+					return new Response(JSON.stringify({ ok: true, result: { file_path: "photos/image-1.jpg" } }), {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					});
+				}
+				if (url.includes("/file/bot")) {
+					return new Response(new Uint8Array([9, 8, 7]), {
+						status: 200,
+						headers: { "content-type": "image/jpeg" },
+					});
+				}
+				throw new Error(`unexpected fetch ${url}`);
+			}) as typeof fetch,
+		});
+		const result = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 921,
+				photo: [{ file_id: "photo-1", file_unique_id: "photo-uniq-1", file_size: 3, width: 10, height: 10 }],
+			}),
+		);
+		expect(result.pipelineResult?.kind).toBe("operator_response");
+		expect(backend.turns[0]?.inbound.command_text).toContain("Telegram attachment message (no text/caption)");
+		expect(backend.turns[0]?.inbound.command_text).toContain("type=photo");
+	});
+
+	test("Telegram attachment download failures preserve conversational turn with audit metadata", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "I could not fetch the attachment." }]);
+		const harness = await createHarness({
+			operatorBackend: backend,
+			telegramFetchImpl: (async () => new Response("boom", { status: 500 })) as unknown as typeof fetch,
+		});
+		const result = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 922,
+				document: {
+					file_id: "doc-fail-1",
+					mime_type: "application/pdf",
+					file_size: 100,
+				},
+			}),
+		);
+		expect(result.pipelineResult?.kind).toBe("operator_response");
+		expect(result.inbound?.attachments ?? []).toHaveLength(0);
+		const audit = backend.turns[0]?.inbound.metadata.inbound_attachment_audit as Array<Record<string, unknown>> | undefined;
+		expect(audit?.[0]?.kind).toBe("download_failed");
+	});
+
+	test("Telegram operator path can kick off run starts and complete through confirmation", async () => {
 		const harness = await createHarness({
 			operatorResult: {
 				kind: "command",
@@ -890,13 +1032,11 @@ describe("channel adapters integrated with control-plane", () => {
 			},
 		});
 
-		const submit = await harness.slack.ingest(
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
+		const submit = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 900,
 				text: "please kick off a run to ship release",
-				triggerId: "operator-start-1",
-				requestId: "operator-start-req-1",
 			}),
 		);
 		expect(submit.pipelineResult?.kind).toBe("awaiting_confirmation");
@@ -905,13 +1045,12 @@ describe("channel adapters integrated with control-plane", () => {
 		}
 		expect(submit.pipelineResult.command.command_args).toEqual(["ship", "release"]);
 
-		const confirm = await harness.slack.ingest(
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
-				text: `confirm ${submit.pipelineResult.command.command_id}`,
-				triggerId: "operator-start-2",
-				requestId: "operator-start-req-2",
+		const confirm = await harness.telegram.ingest(
+			telegramCallbackRequest({
+				secret: "telegram-secret",
+				updateId: 901,
+				callbackId: "operator-start-confirm",
+				data: `confirm:${submit.pipelineResult.command.command_id}`,
 			}),
 		);
 		expect(confirm.pipelineResult?.kind).toBe("completed");
@@ -921,50 +1060,17 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(confirm.pipelineResult.command.cli_command_kind).toBe("run_start");
 		expect(confirm.pipelineResult.command.run_root_id).toBe("mu-root-start");
 		expect(confirm.outboxRecord?.envelope.body).toContain("RESULT · COMPLETED");
-		expect(confirm.outboxRecord?.envelope.body).toContain("run_start");
+		expect(confirm.outboxRecord?.envelope.body).toContain("run start");
 
 		expect(harness.cliPlans.length).toBe(1);
 		expect(harness.cliPlans[0]?.commandKind).toBe("run_start");
 		expect(harness.cliPlans[0]?.argv).toEqual(["mu", "runs", "start", "ship release", "--max-steps", "20"]);
 	});
 
-	test("scripted Slack chat journey validates status introspection + run kickoff + run follow-up management", async () => {
-		const backend = new QueueOperatorBackend([
-			{ kind: "respond", message: "Hey — I can help with control-plane tasks." },
-			{ kind: "command", command: { kind: "status" } },
-			{ kind: "command", command: { kind: "run_start", prompt: "ship release" } },
-			{ kind: "command", command: { kind: "run_resume", root_issue_id: "mu-root-flow" } },
-		]);
+	test("Slack non-command turns are deterministic no-op with guidance", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Should not be used in Slack command-only mode." }]);
 		const harness = await createHarness({
 			operatorBackend: backend,
-			cliRunResultForPlan: async (plan) => {
-				switch (plan.commandKind) {
-					case "run_start":
-						return {
-							kind: "completed",
-							stdout: '{"root":"mu-root-flow"}',
-							stderr: "",
-							exitCode: 0,
-							runRootId: "mu-root-flow",
-						};
-					case "run_resume":
-						return {
-							kind: "completed",
-							stdout: '{"status":"resumed"}',
-							stderr: "",
-							exitCode: 0,
-							runRootId: "mu-root-flow",
-						};
-					default:
-						return {
-							kind: "completed",
-							stdout: '{"ok":true}',
-							stderr: "",
-							exitCode: 0,
-							runRootId: null,
-						};
-				}
-			},
 		});
 
 		const chat = await harness.slack.ingest(
@@ -977,109 +1083,116 @@ describe("channel adapters integrated with control-plane", () => {
 				requestId: "journey-req-1",
 			}),
 		);
-		expect(chat.pipelineResult?.kind).toBe("operator_response");
+		expect(chat.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
 		expect(chat.outboxRecord).toBeNull();
 		const chatAck = (await chat.response.json()) as { text?: string };
-		expect(chatAck.text).toContain("Operator · CHAT");
+		expect(chatAck.text).toContain("IGNORED");
+		expect(backend.turns.length).toBe(0);
+	});
 
-		const status = await harness.slack.ingest(
-			slackRequest({
+	test("Slack event callbacks enforce explicit /mu and keep duplicates idempotent", async () => {
+		const harness = await createHarness();
+		const mkEventReq = () =>
+			slackEventRequest({
 				secret: "slack-secret",
 				timestampSec: Math.trunc(harness.clock.now / 1000),
-				text: "what is mu status right now?",
-				channelId: "journey-room",
-				triggerId: "journey-2",
-				requestId: "journey-req-2",
-			}),
-		);
-		expect(status.pipelineResult?.kind).toBe("completed");
-		if (status.pipelineResult?.kind !== "completed") {
-			throw new Error(`expected completed, got ${status.pipelineResult?.kind}`);
-		}
-		expect(status.pipelineResult.command.target_type).toBe("status");
-		const statusAck = (await status.response.json()) as { text?: string };
-		expect(statusAck.text).toContain("RESULT · COMPLETED");
-		expect(status.outboxRecord?.envelope.body).toContain("Payload (structured; can be collapsed in rich clients):");
+				requestId: "evt-req-1",
+				body: {
+					type: "event_callback",
+					team_id: "team-1",
+					event_id: "Ev123",
+					event: {
+						type: "message",
+						channel: "chan-1",
+						user: "slack-actor",
+						text: "/mu status",
+						event_ts: "1700000000.100",
+					},
+				},
+			});
 
-		const kickoff = await harness.slack.ingest(
-			slackRequest({
+		const first = await harness.slack.ingest(mkEventReq());
+		expect(first.pipelineResult?.kind).toBe("completed");
+		const duplicate = await harness.slack.ingest(mkEventReq());
+		expect(duplicate.pipelineResult?.kind).toBe("completed");
+		if (first.pipelineResult?.kind !== "completed" || duplicate.pipelineResult?.kind !== "completed") {
+			throw new Error("expected completed results for first+duplicate event callbacks");
+		}
+		expect(duplicate.pipelineResult.command.command_id).toBe(first.pipelineResult.command.command_id);
+
+		const ignored = await harness.slack.ingest(
+			slackEventRequest({
 				secret: "slack-secret",
 				timestampSec: Math.trunc(harness.clock.now / 1000),
-				text: "kick off a run to ship release",
-				channelId: "journey-room",
-				triggerId: "journey-3",
-				requestId: "journey-req-3",
+				requestId: "evt-req-2",
+				body: {
+					type: "event_callback",
+					team_id: "team-1",
+					event_id: "Ev124",
+					event: {
+						type: "message",
+						channel: "chan-1",
+						user: "slack-actor",
+						text: "status",
+						event_ts: "1700000000.101",
+					},
+				},
 			}),
 		);
-		expect(kickoff.pipelineResult?.kind).toBe("awaiting_confirmation");
-		if (kickoff.pipelineResult?.kind !== "awaiting_confirmation") {
-			throw new Error(`expected awaiting_confirmation, got ${kickoff.pipelineResult?.kind}`);
-		}
-		const kickoffId = kickoff.pipelineResult.command.command_id;
-		const kickoffAck = (await kickoff.response.json()) as { text?: string };
-		expect(kickoffAck.text).toContain("LIFECYCLE · AWAITING CONFIRMATION");
-		expect(kickoffAck.text).toContain(`/mu confirm ${kickoffId}`);
+		expect(ignored.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
+		expect(ignored.outboxRecord).toBeNull();
+	});
 
-		const kickoffConfirm = await harness.slack.ingest(
-			slackRequest({
+	test("Slack file-bearing events download/store allowed attachments and tolerate download failures", async () => {
+		const harness = await createHarness({
+			slackBotToken: "xoxb-test",
+			slackFetchImpl: async (input) => {
+				const url = String(input);
+				if (url.includes("file-ok")) {
+					return new Response("file-body", { status: 200, headers: { "content-type": "text/plain" } });
+				}
+				return new Response("not-found", { status: 404 });
+			},
+		});
+
+		const result = await harness.slack.ingest(
+			slackEventRequest({
 				secret: "slack-secret",
 				timestampSec: Math.trunc(harness.clock.now / 1000),
-				text: `confirm ${kickoffId}`,
-				channelId: "journey-room",
-				triggerId: "journey-4",
-				requestId: "journey-req-4",
+				requestId: "evt-req-files",
+				body: {
+					type: "event_callback",
+					team_id: "team-1",
+					event_id: "Ev200",
+					event: {
+						type: "message",
+						channel: "chan-1",
+						user: "slack-actor",
+						text: "/mu status",
+						event_ts: "1700000000.200",
+						files: [
+							{
+								id: "FOK",
+								mimetype: "text/plain",
+								size: 9,
+								name: "ok.txt",
+								url_private_download: "https://files.slack.test/file-ok",
+							},
+							{
+								id: "FBAD",
+								mimetype: "text/plain",
+								size: 5,
+								name: "bad.txt",
+								url_private_download: "https://files.slack.test/file-bad",
+							},
+						],
+					},
+				},
 			}),
 		);
-		expect(kickoffConfirm.pipelineResult?.kind).toBe("completed");
-		if (kickoffConfirm.pipelineResult?.kind !== "completed") {
-			throw new Error(`expected completed, got ${kickoffConfirm.pipelineResult?.kind}`);
-		}
-		expect(kickoffConfirm.pipelineResult.command.cli_command_kind).toBe("run_start");
-		expect(kickoffConfirm.pipelineResult.command.run_root_id).toBe("mu-root-flow");
-		expect(kickoffConfirm.outboxRecord?.envelope.body).toContain("run_start");
-
-		const followUp = await harness.slack.ingest(
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
-				text: "resume that run",
-				channelId: "journey-room",
-				triggerId: "journey-5",
-				requestId: "journey-req-5",
-			}),
-		);
-		expect(followUp.pipelineResult?.kind).toBe("awaiting_confirmation");
-		if (followUp.pipelineResult?.kind !== "awaiting_confirmation") {
-			throw new Error(`expected awaiting_confirmation, got ${followUp.pipelineResult?.kind}`);
-		}
-		const followUpId = followUp.pipelineResult.command.command_id;
-		const followUpAck = (await followUp.response.json()) as { text?: string };
-		expect(followUpAck.text).toContain("LIFECYCLE · AWAITING CONFIRMATION");
-
-		const followUpConfirm = await harness.slack.ingest(
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
-				text: `confirm ${followUpId}`,
-				channelId: "journey-room",
-				triggerId: "journey-6",
-				requestId: "journey-req-6",
-			}),
-		);
-		expect(followUpConfirm.pipelineResult?.kind).toBe("completed");
-		if (followUpConfirm.pipelineResult?.kind !== "completed") {
-			throw new Error(`expected completed, got ${followUpConfirm.pipelineResult?.kind}`);
-		}
-		expect(followUpConfirm.pipelineResult.command.cli_command_kind).toBe("run_resume");
-		expect(followUpConfirm.pipelineResult.command.run_root_id).toBe("mu-root-flow");
-		expect(followUpConfirm.outboxRecord?.envelope.body).toContain("run_resume");
-
-		expect(backend.turns.length).toBe(4);
-		expect(backend.turns.every((turn) => turn.sessionId === backend.turns[0]?.sessionId)).toBe(true);
-		expect(harness.cliPlans.map((plan) => plan.commandKind)).toEqual(["status", "run_start", "run_resume"]);
-		expect(harness.cliPlans[0]?.argv).toEqual(["mu", "status", "--json"]);
-		expect(harness.cliPlans[1]?.argv).toEqual(["mu", "runs", "start", "ship release", "--max-steps", "20"]);
-		expect(harness.cliPlans[2]?.argv).toEqual(["mu", "runs", "resume", "mu-root-flow", "--max-steps", "20"]);
+		expect(result.pipelineResult?.kind).toBe("completed");
+		expect(result.inbound?.attachments?.length).toBe(1);
+		expect(result.inbound?.attachments?.[0]?.reference.source).toBe("mu-attachment:slack");
 	});
 
 	test("compact + detailed interaction formatting is consistent across Slack/Discord/Telegram surfaces", async () => {
@@ -1160,20 +1273,19 @@ describe("channel adapters integrated with control-plane", () => {
 			operatorBackend: new ThrowingOperatorBackend(),
 		});
 
-		const fallback = await harness.slack.ingest(
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(harness.clock.now / 1000),
+		const fallback = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 991,
 				text: "hello?",
-				triggerId: "operator-fail-1",
-				requestId: "operator-fail-req-1",
 			}),
 		);
 		expect(fallback.pipelineResult?.kind).toBe("operator_response");
-		expect(fallback.outboxRecord).toBeNull();
-		const body = (await fallback.response.json()) as { text?: string };
-		expect(body.text).toContain("Operator · CHAT");
-		expect(body.text).toContain("operator_backend_error");
+		expect(fallback.outboxRecord).not.toBeNull();
+		if (!fallback.outboxRecord) {
+			throw new Error("expected telegram fallback outbox record");
+		}
+		expect(fallback.outboxRecord.envelope.body).toContain("operator_backend_error");
 	});
 
 	test("command_id/request_id/channel are preserved end-to-end across adapters", async () => {

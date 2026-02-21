@@ -44,7 +44,7 @@ function mkInbound(repoRoot: string, overrides: Partial<InboundEnvelope> = {}): 
 		received_at_ms: 10,
 		request_id: "req-1",
 		delivery_id: "delivery-1",
-		channel: "slack",
+		channel: "telegram",
 		channel_tenant_id: "tenant-1",
 		channel_conversation_id: "conv-1",
 		actor_id: "actor-1",
@@ -137,7 +137,7 @@ async function createPipeline(opts: {
 	await identities.link({
 		bindingId: "binding-1",
 		operatorId: "operator-1",
-		channel: "slack",
+		channel: "telegram",
 		channelTenantId: "tenant-1",
 		channelActorId: "actor-1",
 		scopes: opts.scopes,

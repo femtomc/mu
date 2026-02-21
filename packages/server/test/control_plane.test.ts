@@ -7,12 +7,15 @@ import {
 	ControlPlaneOutbox,
 	getControlPlanePaths,
 	IdentityStore,
+	OutboxRecordSchema,
 	SlackControlPlaneAdapterSpec,
 } from "@femtomc/mu-control-plane";
 import { DEFAULT_MU_CONFIG } from "../src/config.js";
 import {
 	bootstrapControlPlane,
 	buildTelegramSendMessagePayload,
+	deliverSlackOutboxRecord,
+	deliverTelegramOutboxRecord,
 	type BootstrapControlPlaneOpts,
 	type ControlPlaneConfig,
 	type ControlPlaneHandle,
@@ -191,6 +194,7 @@ async function mkRepoRoot(): Promise<string> {
 
 function configWith(opts: {
 	slackSecret?: string | null;
+	slackBotToken?: string | null;
 	neovimSecret?: string | null;
 	telegramSecret?: string | null;
 	telegramBotToken?: string | null;
@@ -200,6 +204,7 @@ function configWith(opts: {
 }): ControlPlaneConfig {
 	const base = JSON.parse(JSON.stringify(DEFAULT_MU_CONFIG.control_plane)) as ControlPlaneConfig;
 	base.adapters.slack.signing_secret = opts.slackSecret ?? null;
+	base.adapters.slack.bot_token = opts.slackBotToken ?? null;
 	base.adapters.neovim.shared_secret = opts.neovimSecret ?? null;
 	base.adapters.telegram.webhook_secret = opts.telegramSecret ?? null;
 	base.adapters.telegram.bot_token = opts.telegramBotToken ?? null;
@@ -211,6 +216,63 @@ function configWith(opts: {
 		base.operator.run_triggers_enabled = opts.runTriggersEnabled;
 	}
 	return base;
+}
+
+function mkTelegramOutboxRecord(opts: {
+	body?: string;
+	attachments?: Array<Record<string, unknown>>;
+}) {
+	return OutboxRecordSchema.parse({
+		outbox_id: "out-test-1",
+		dedupe_key: "dedupe-test-1",
+		state: "pending",
+		envelope: {
+			v: 1,
+			ts_ms: 1_000,
+			channel: "telegram",
+			channel_tenant_id: "telegram-bot",
+			channel_conversation_id: "tg-chat-1",
+			request_id: "req-1",
+			response_id: "resp-1",
+			kind: "result",
+			body: opts.body ?? "hello telegram",
+			attachments: opts.attachments,
+			correlation: {
+				command_id: "cmd-1",
+				idempotency_key: "idem-1",
+				request_id: "req-1",
+				channel: "telegram",
+				channel_tenant_id: "telegram-bot",
+				channel_conversation_id: "tg-chat-1",
+				actor_id: "telegram-actor",
+				actor_binding_id: "binding-telegram",
+				assurance_tier: "tier_b",
+				repo_root: "/tmp/repo",
+				scope_required: "cp.read",
+				scope_effective: "cp.read",
+				target_type: "status",
+				target_id: "tg-chat-1",
+				attempt: 1,
+				state: "completed",
+				error_code: null,
+				operator_session_id: null,
+				operator_turn_id: null,
+				cli_invocation_id: null,
+				cli_command_kind: null,
+				run_root_id: null,
+			},
+			metadata: {},
+		},
+		created_at_ms: 1_000,
+		updated_at_ms: 1_000,
+		next_attempt_at_ms: 1_000,
+		attempt_count: 0,
+		max_attempts: 3,
+		last_error: null,
+		dead_letter_reason: null,
+		replay_of_outbox_id: null,
+		replay_requested_by_command_id: null,
+	});
 }
 
 async function linkSlackIdentity(repoRoot: string, scopes: string[]): Promise<void> {
@@ -324,6 +386,151 @@ describe("telegram markdown rendering", () => {
 		expect(payload.text).toBe(text);
 		expect(payload.parse_mode).toBeUndefined();
 		expect(payload.disable_web_page_preview).toBeUndefined();
+	});
+});
+
+describe("telegram outbound media delivery", () => {
+	test("sends PDF/SVG attachments via sendDocument", async () => {
+		const calls: string[] = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			calls.push(url);
+			if (url === "https://example.invalid/report.pdf") {
+				return new Response(new Uint8Array([1, 2, 3, 4]), {
+					status: 200,
+					headers: { "content-type": "application/pdf" },
+				});
+			}
+			if (url.includes("/sendDocument")) {
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			throw new Error(`unexpected fetch: ${url} / ${String(init?.method ?? "GET")}`);
+		}) as typeof fetch;
+
+		try {
+			const record = mkTelegramOutboxRecord({
+				attachments: [
+					{
+						type: "document",
+						filename: "report.pdf",
+						mime_type: "application/pdf",
+						reference: { source: "artifact", url: "https://example.invalid/report.pdf" },
+					},
+				],
+			});
+			const result = await deliverTelegramOutboxRecord({
+				botToken: "telegram-token",
+				record,
+			});
+			expect(result.kind).toBe("delivered");
+			expect(calls.some((url) => url.includes("/sendDocument"))).toBe(true);
+			expect(calls.some((url) => url.includes("/sendPhoto"))).toBe(false);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("routes SVG attachments through sendDocument instead of sendPhoto", async () => {
+		const calls: string[] = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			calls.push(url);
+			if (url.includes("/sendDocument")) {
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			throw new Error(`unexpected fetch: ${url}`);
+		}) as typeof fetch;
+
+		try {
+			const record = mkTelegramOutboxRecord({
+				attachments: [
+					{
+						type: "image",
+						filename: "diagram.svg",
+						mime_type: "image/svg+xml",
+						reference: { source: "telegram", file_id: "file-svg-1" },
+					},
+				],
+			});
+			const result = await deliverTelegramOutboxRecord({
+				botToken: "telegram-token",
+				record,
+			});
+			expect(result.kind).toBe("delivered");
+			expect(calls.some((url) => url.includes("/sendDocument"))).toBe(true);
+			expect(calls.some((url) => url.includes("/sendPhoto"))).toBe(false);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("falls back to text sendMessage when media API rejects attachment", async () => {
+		const calls: string[] = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			calls.push(url);
+			if (url.includes("/sendPhoto")) {
+				return new Response(JSON.stringify({ ok: false, description: "Bad Request: PHOTO_INVALID" }), {
+					status: 400,
+				});
+			}
+			if (url.includes("/sendMessage")) {
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			throw new Error(`unexpected fetch: ${url}`);
+		}) as typeof fetch;
+
+		try {
+			const record = mkTelegramOutboxRecord({
+				attachments: [
+					{
+						type: "image",
+						filename: "plot.png",
+						mime_type: "image/png",
+						reference: { source: "telegram", file_id: "file-123" },
+					},
+				],
+			});
+			const result = await deliverTelegramOutboxRecord({
+				botToken: "telegram-token",
+				record,
+			});
+			expect(result.kind).toBe("delivered");
+			expect(calls.some((url) => url.includes("/sendPhoto"))).toBe(true);
+			expect(calls.some((url) => url.includes("/sendMessage"))).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("preserves text-only sendMessage behavior when attachments are omitted", async () => {
+		const calls: string[] = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			calls.push(url);
+			if (url.includes("/sendMessage")) {
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			throw new Error(`unexpected fetch: ${url}`);
+		}) as typeof fetch;
+
+		try {
+			const record = mkTelegramOutboxRecord({ body: "plain text response", attachments: undefined });
+			const result = await deliverTelegramOutboxRecord({
+				botToken: "telegram-token",
+				record,
+			});
+			expect(result.kind).toBe("delivered");
+			expect(calls.some((url) => url.includes("/sendMessage"))).toBe(true);
+			expect(calls.some((url) => url.includes("/sendDocument"))).toBe(false);
+			expect(calls.some((url) => url.includes("/sendPhoto"))).toBe(false);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 });
 
@@ -444,7 +651,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 
 		const byBinding = new Map(delivery.decisions.map((entry) => [entry.binding_id, entry]));
 		expect(byBinding.get("binding-slack")?.state).toBe("skipped");
-		expect(byBinding.get("binding-slack")?.reason_code).toBe("channel_delivery_unsupported");
+		expect(byBinding.get("binding-slack")?.reason_code).toBe("slack_bot_token_missing");
 		expect(byBinding.get("binding-discord")?.state).toBe("skipped");
 		expect(byBinding.get("binding-discord")?.reason_code).toBe("channel_delivery_unsupported");
 		expect(byBinding.get("binding-telegram")?.state).toBe("skipped");
@@ -546,17 +753,18 @@ describe("bootstrapControlPlane operator wiring", () => {
 		}
 	});
 
-	test("Slack webhook chat messages are routed through injected operator backend", async () => {
+	test("Slack webhook chat messages are command-only no-op and do not route to operator backend", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
+		const backend = new StaticOperatorBackend({
+			kind: "respond",
+			message: "Hello from the messaging operator.",
+		});
 		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({ slackSecret: "slack-secret" }),
-			operatorBackend: new StaticOperatorBackend({
-				kind: "respond",
-				message: "Hello from the messaging operator.",
-			}),
+			operatorBackend: backend,
 		});
 		expect(handle).not.toBeNull();
 		if (!handle) {
@@ -580,7 +788,144 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(response.status).toBe(200);
 
 		const body = (await response.json()) as { text?: string };
-		expect(body.text).toContain("Operator · CHAT");
+		expect(body.text).toContain("channel_requires_explicit_command");
+		expect(backend.turns).toBe(0);
+	});
+
+	test("Slack outbound delivery retries when bot token is missing", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkSlackIdentity(repoRoot, ["cp.read"]);
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({ slackSecret: "slack-secret", slackBotToken: null }),
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const response = await handle.handleWebhook(
+			"/webhooks/slack",
+			slackRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(Date.now() / 1000),
+				text: "status",
+				triggerId: "slack-no-token",
+			}),
+		);
+		expect(response?.status).toBe(200);
+
+		await Bun.sleep(150);
+		const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
+		await outbox.load();
+		const dead = outbox.records({ state: "dead_letter" });
+		expect(dead.length).toBe(0);
+		const pending = outbox.records({ state: "pending" });
+		expect(pending.length).toBeGreaterThan(0);
+		expect(pending[0]?.last_error).toContain("slack bot token not configured");
+	});
+
+	test("Slack outbound delivery uploads media attachments via Slack Web API", async () => {
+		const calls: Array<{ url: string; auth: string | null }> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url === "https://artifact.test/report.pdf") {
+				return new Response(new Uint8Array([37, 80, 68, 70, 45]), {
+					status: 200,
+					headers: { "content-type": "application/pdf" },
+				});
+			}
+			if (url === "https://slack.com/api/files.upload") {
+				calls.push({ url, auth: new Headers(init?.headers).get("authorization") });
+				return new Response(JSON.stringify({ ok: true, file: { id: "F123" } }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			if (url === "https://slack.com/api/chat.postMessage") {
+				calls.push({ url, auth: new Headers(init?.headers).get("authorization") });
+				return new Response(JSON.stringify({ ok: true, ts: "1.23" }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return await originalFetch(input as any, init);
+		}) as typeof fetch;
+
+		try {
+			const result = await deliverSlackOutboxRecord({
+				botToken: "xoxb-test-token",
+				record: {
+					outbox_id: "outbox-slack-media-1",
+					dedupe_key: "slack-media-1",
+					state: "pending",
+					attempt_count: 0,
+					next_attempt_at_ms: Date.now(),
+					last_error: null,
+					created_at_ms: Date.now(),
+					updated_at_ms: Date.now(),
+					max_attempts: 6,
+					dead_letter_reason: null,
+					replay_of_outbox_id: null,
+					replay_requested_by_command_id: null,
+					envelope: {
+						v: 1,
+						ts_ms: Date.now(),
+						channel: "slack",
+						channel_tenant_id: "team-1",
+						channel_conversation_id: "chan-1",
+						request_id: "req-media-1",
+						response_id: "resp-media-1",
+						kind: "result",
+						body: "Here is your report",
+						attachments: [
+							{
+								type: "document",
+								filename: "report.pdf",
+								mime_type: "application/pdf",
+								size_bytes: 5,
+								reference: { source: "artifact-store", url: "https://artifact.test/report.pdf" },
+								metadata: {},
+							},
+						],
+						correlation: {
+							command_id: "cmd-media-1",
+							idempotency_key: "idem-media-1",
+							request_id: "req-media-1",
+							channel: "slack",
+							channel_tenant_id: "team-1",
+							channel_conversation_id: "chan-1",
+							actor_id: "slack-actor",
+							actor_binding_id: "binding-slack",
+							assurance_tier: "tier_a",
+							repo_root: "/repo",
+							scope_required: "cp.read",
+							scope_effective: "cp.read",
+							target_type: "status",
+							target_id: "chan-1",
+							attempt: 1,
+							state: "completed",
+							error_code: null,
+							operator_session_id: null,
+							operator_turn_id: null,
+							cli_invocation_id: null,
+							cli_command_kind: null,
+							run_root_id: null,
+						},
+						metadata: {},
+					},
+				},
+			});
+
+			expect(result.kind).toBe("delivered");
+			expect(calls.some((entry) => entry.url.endsWith("/files.upload"))).toBe(true);
+			expect(calls.some((entry) => entry.auth === "Bearer xoxb-test-token")).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 
 	test("Telegram webhook drains outbox immediately for low-latency delivery", async () => {
@@ -812,19 +1157,19 @@ describe("bootstrapControlPlane operator wiring", () => {
 		}
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { text?: string };
-		expect(body.text).toContain("unmapped_command");
+		expect(body.text).toContain("channel_requires_explicit_command");
 		expect(body.text).not.toContain("Operator · CHAT");
 		expect(backend.turns).toBe(0);
 	});
 
 	test("run trigger actions can be disabled on the operator bridge", async () => {
 		const repoRoot = await mkRepoRoot();
-		await linkSlackIdentity(repoRoot, ["cp.read", "cp.run.execute"]);
+		await linkTelegramIdentity(repoRoot, ["cp.read", "cp.run.execute"]);
 
 		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({
-				slackSecret: "slack-secret",
+				telegramSecret: "telegram-secret",
 				runTriggersEnabled: false,
 			}),
 			operatorBackend: new StaticOperatorBackend({
@@ -839,12 +1184,11 @@ describe("bootstrapControlPlane operator wiring", () => {
 		handlesToCleanup.add(handle);
 
 		const response = await handle.handleWebhook(
-			"/webhooks/slack",
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(Date.now() / 1000),
+			"/webhooks/telegram",
+			telegramRequest({
+				secret: "telegram-secret",
+				updateId: 404,
 				text: "please resume that run",
-				triggerId: "chat-2",
 			}),
 		);
 		expect(response).not.toBeNull();
@@ -852,9 +1196,23 @@ describe("bootstrapControlPlane operator wiring", () => {
 			throw new Error("expected webhook response");
 		}
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as { text?: string };
-		expect(body.text).toContain("ERROR · DENIED");
-		expect(body.text).toContain("operator_action_disallowed");
+		const body = (await response.json()) as { method?: string; chat_id?: string; action?: string };
+		expect(body.method).toBe("sendChatAction");
+		expect(body.chat_id).toBe("tg-chat-1");
+
+		const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
+		let deniedBody = "";
+		for (let attempt = 0; attempt < 40; attempt++) {
+			await outbox.load();
+			const denied = outbox.records().find((record) => record.envelope.channel === "telegram");
+			if (typeof denied?.envelope.body === "string" && denied.envelope.body.length > 0) {
+				deniedBody = denied.envelope.body;
+				break;
+			}
+			await Bun.sleep(10);
+		}
+		expect(deniedBody).toContain("ERROR · DENIED");
+		expect(deniedBody).toContain("operator_action_disallowed");
 	});
 
 	test("terminal reload/update commands route through session lifecycle", async () => {

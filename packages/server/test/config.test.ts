@@ -30,7 +30,7 @@ describe("mu config", () => {
 			const normalized = normalizeMuConfig({
 				control_plane: {
 					adapters: {
-						slack: { signing_secret: "  slack-secret  " },
+						slack: { signing_secret: "  slack-secret  ", bot_token: "  xoxb-test-token  " },
 						telegram: {
 							webhook_secret: "tg-secret",
 							bot_token: "tg-token",
@@ -42,6 +42,7 @@ describe("mu config", () => {
 				},
 			});
 			expect(normalized.control_plane.adapters.slack.signing_secret).toBe("slack-secret");
+			expect(normalized.control_plane.adapters.slack.bot_token).toBe("xoxb-test-token");
 			expect(normalized.control_plane.adapters.telegram.webhook_secret).toBe("tg-secret");
 			expect(normalized.control_plane.operator.enabled).toBe(false);
 			expect(normalized.control_plane.operator.run_triggers_enabled).toBe(true);
@@ -80,7 +81,7 @@ describe("mu config", () => {
 		const config = normalizeMuConfig({
 			control_plane: {
 				adapters: {
-					slack: { signing_secret: "slack-secret" },
+					slack: { signing_secret: "slack-secret", bot_token: "slack-bot-token" },
 					telegram: { webhook_secret: "tg-secret", bot_token: "tg-token", bot_username: "mybot" },
 					neovim: { shared_secret: "nvim-secret" },
 				},
@@ -96,6 +97,7 @@ describe("mu config", () => {
 
 		const presence = muConfigPresence(config);
 		expect(presence.control_plane.adapters.slack.signing_secret).toBe(true);
+		expect(presence.control_plane.adapters.slack.bot_token).toBe(true);
 		expect(presence.control_plane.adapters.telegram.bot_username).toBe(true);
 		expect(presence.control_plane.adapters.neovim.shared_secret).toBe(true);
 		expect(presence.control_plane.operator.run_triggers_enabled).toBe(false);
@@ -105,6 +107,7 @@ describe("mu config", () => {
 
 		const redacted = redactMuConfigSecrets(config);
 		expect(redacted.control_plane.adapters.slack.signing_secret).toBe("***");
+		expect(redacted.control_plane.adapters.slack.bot_token).toBe("***");
 		expect(redacted.control_plane.adapters.telegram.bot_token).toBe("***");
 		expect(redacted.control_plane.adapters.neovim.shared_secret).toBe("***");
 		expect(redacted.control_plane.operator.provider).toBe("openai");

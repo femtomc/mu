@@ -38,9 +38,22 @@ export const ControlPlaneChannelCapabilitySchema = z.object({
 	ack_format: z.string().min(1),
 	delivery_semantics: z.string().min(1),
 	deferred_delivery: z.boolean(),
+	ingress_mode: z.enum(["command_only", "conversational"]),
 	configured: z.boolean(),
 	active: z.boolean(),
 	frontend: z.boolean(),
+	media: z.object({
+		outbound_delivery: z.object({
+			supported: z.boolean(),
+			configured: z.boolean(),
+			reason: z.string().nullable(),
+		}),
+		inbound_attachment_download: z.object({
+			supported: z.boolean(),
+			configured: z.boolean(),
+			reason: z.string().nullable(),
+		}),
+	}),
 });
 export type ControlPlaneChannelCapability = z.infer<typeof ControlPlaneChannelCapabilitySchema>;
 

@@ -8,6 +8,7 @@ export type MuConfig = {
 		adapters: {
 			slack: {
 				signing_secret: string | null;
+				bot_token: string | null;
 			};
 			discord: {
 				signing_secret: string | null;
@@ -40,6 +41,7 @@ export type MuConfigPatch = {
 		adapters?: {
 			slack?: {
 				signing_secret?: string | null;
+				bot_token?: string | null;
 			};
 			discord?: {
 				signing_secret?: string | null;
@@ -78,6 +80,7 @@ export type MuConfigPresence = {
 		adapters: {
 			slack: {
 				signing_secret: boolean;
+				bot_token: boolean;
 			};
 			discord: {
 				signing_secret: boolean;
@@ -111,6 +114,7 @@ export const DEFAULT_MU_CONFIG: MuConfig = {
 		adapters: {
 			slack: {
 				signing_secret: null,
+				bot_token: null,
 			},
 			discord: {
 				signing_secret: null,
@@ -197,6 +201,9 @@ export function normalizeMuConfig(input: unknown): MuConfig {
 		if (slack && "signing_secret" in slack) {
 			next.control_plane.adapters.slack.signing_secret = normalizeNullableString(slack.signing_secret);
 		}
+		if (slack && "bot_token" in slack) {
+			next.control_plane.adapters.slack.bot_token = normalizeNullableString(slack.bot_token);
+		}
 
 		const discord = asRecord(adapters.discord);
 		if (discord && "signing_secret" in discord) {
@@ -279,10 +286,17 @@ function normalizeMuConfigPatch(input: unknown): MuConfigPatch {
 		patch.control_plane.adapters = {};
 
 		const slack = asRecord(adapters.slack);
-		if (slack && "signing_secret" in slack) {
-			patch.control_plane.adapters.slack = {
-				signing_secret: normalizeNullableString(slack.signing_secret),
-			};
+		if (slack) {
+			const slackPatch: NonNullable<AdaptersPatch["slack"]> = {};
+			if ("signing_secret" in slack) {
+				slackPatch.signing_secret = normalizeNullableString(slack.signing_secret);
+			}
+			if ("bot_token" in slack) {
+				slackPatch.bot_token = normalizeNullableString(slack.bot_token);
+			}
+			if (Object.keys(slackPatch).length > 0) {
+				patch.control_plane.adapters.slack = slackPatch;
+			}
 		}
 
 		const discord = asRecord(adapters.discord);
@@ -390,6 +404,9 @@ export function applyMuConfigPatch(base: MuConfig, patchInput: unknown): MuConfi
 		if (adapters.slack && "signing_secret" in adapters.slack) {
 			next.control_plane.adapters.slack.signing_secret = adapters.slack.signing_secret ?? null;
 		}
+		if (adapters.slack && "bot_token" in adapters.slack) {
+			next.control_plane.adapters.slack.bot_token = adapters.slack.bot_token ?? null;
+		}
 		if (adapters.discord && "signing_secret" in adapters.discord) {
 			next.control_plane.adapters.discord.signing_secret = adapters.discord.signing_secret ?? null;
 		}
@@ -484,6 +501,7 @@ function redacted(value: string | null): string | null {
 export function redactMuConfigSecrets(config: MuConfig): MuConfig {
 	const next = normalizeMuConfig(config);
 	next.control_plane.adapters.slack.signing_secret = redacted(next.control_plane.adapters.slack.signing_secret);
+	next.control_plane.adapters.slack.bot_token = redacted(next.control_plane.adapters.slack.bot_token);
 	next.control_plane.adapters.discord.signing_secret = redacted(next.control_plane.adapters.discord.signing_secret);
 	next.control_plane.adapters.telegram.webhook_secret = redacted(next.control_plane.adapters.telegram.webhook_secret);
 	next.control_plane.adapters.telegram.bot_token = redacted(next.control_plane.adapters.telegram.bot_token);
@@ -501,6 +519,7 @@ export function muConfigPresence(config: MuConfig): MuConfigPresence {
 			adapters: {
 				slack: {
 					signing_secret: isPresent(config.control_plane.adapters.slack.signing_secret),
+					bot_token: isPresent(config.control_plane.adapters.slack.bot_token),
 				},
 				discord: {
 					signing_secret: isPresent(config.control_plane.adapters.discord.signing_secret),

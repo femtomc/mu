@@ -293,7 +293,12 @@ describe("mu-server", () => {
 				configured: boolean;
 				active: boolean;
 				frontend: boolean;
+				ingress_mode: "command_only" | "conversational";
 				verification: { kind?: string; secret_header?: string };
+				media: {
+					outbound_delivery: { supported: boolean; configured: boolean; reason: string | null };
+					inbound_attachment_download: { supported: boolean; configured: boolean; reason: string | null };
+				};
 			}>;
 		};
 		expect(payload.ok).toBe(true);
@@ -305,8 +310,104 @@ describe("mu-server", () => {
 			configured: true,
 			active: true,
 			frontend: true,
+			ingress_mode: "command_only",
 		});
 		expect(byChannel.get("neovim")?.verification?.kind).toBe("shared_secret_header");
+		expect(byChannel.get("neovim")?.media.outbound_delivery).toMatchObject({
+			supported: false,
+			configured: false,
+			reason: "channel_media_delivery_unsupported",
+		});
+		expect(byChannel.get("slack")?.media.outbound_delivery).toMatchObject({
+			supported: true,
+			configured: false,
+			reason: "slack_bot_token_missing",
+		});
+		expect(byChannel.get("telegram")?.ingress_mode).toBe("conversational");
+		expect(byChannel.get("telegram")?.media.inbound_attachment_download).toMatchObject({
+			supported: true,
+			configured: false,
+			reason: "telegram_bot_token_missing",
+		});
+	});
+
+	test("control-plane channels endpoint reports configured media capabilities for Slack and Telegram tokens", async () => {
+		const serverWithControlPlane = await createServerForTest({
+			repoRoot: tempDir,
+			controlPlane: {
+				activeAdapters: [
+					{ name: "slack", route: "/webhooks/slack" },
+					{ name: "telegram", route: "/webhooks/telegram" },
+				],
+				handleWebhook: async () => null,
+				stop: async () => {},
+			},
+		});
+
+		const patchRes = await serverWithControlPlane.fetch(
+			new Request("http://localhost/api/control-plane/config", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					patch: {
+						control_plane: {
+							adapters: {
+								slack: { signing_secret: "slack-secret", bot_token: "xoxb-media" },
+								telegram: {
+									webhook_secret: "telegram-secret",
+									bot_token: "telegram-media-token",
+									bot_username: "mu_bot",
+								},
+							},
+						},
+					},
+				}),
+			}),
+		);
+		expect(patchRes.status).toBe(200);
+
+		const channelsRes = await serverWithControlPlane.fetch(
+			new Request("http://localhost/api/control-plane/channels"),
+		);
+		expect(channelsRes.status).toBe(200);
+		const payload = (await channelsRes.json()) as {
+			channels: Array<{
+				channel: string;
+				configured: boolean;
+				active: boolean;
+				media: {
+					outbound_delivery: { supported: boolean; configured: boolean; reason: string | null };
+					inbound_attachment_download: { supported: boolean; configured: boolean; reason: string | null };
+				};
+			}>;
+		};
+		const byChannel = new Map(payload.channels.map((entry) => [entry.channel, entry]));
+
+		expect(byChannel.get("slack")?.configured).toBe(true);
+		expect(byChannel.get("slack")?.active).toBe(true);
+		expect(byChannel.get("slack")?.media.outbound_delivery).toMatchObject({
+			supported: true,
+			configured: true,
+			reason: null,
+		});
+		expect(byChannel.get("slack")?.media.inbound_attachment_download).toMatchObject({
+			supported: true,
+			configured: true,
+			reason: null,
+		});
+
+		expect(byChannel.get("telegram")?.configured).toBe(true);
+		expect(byChannel.get("telegram")?.active).toBe(true);
+		expect(byChannel.get("telegram")?.media.outbound_delivery).toMatchObject({
+			supported: true,
+			configured: true,
+			reason: null,
+		});
+		expect(byChannel.get("telegram")?.media.inbound_attachment_download).toMatchObject({
+			supported: true,
+			configured: true,
+			reason: null,
+		});
 	});
 
 	test("control-plane turn endpoint requires a configured neovim shared secret", async () => {

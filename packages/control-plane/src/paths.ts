@@ -11,6 +11,8 @@ export type ControlPlanePaths = {
 	outboxPath: string;
 	adapterAuditPath: string;
 	writerLockPath: string;
+	attachmentIndexPath: string;
+	attachmentBlobRootDir: string;
 };
 
 export function getControlPlanePaths(repoRoot: string): ControlPlanePaths {
@@ -26,5 +28,7 @@ export function getControlPlanePaths(repoRoot: string): ControlPlanePaths {
 		outboxPath: join(controlPlaneDir, "outbox.jsonl"),
 		adapterAuditPath: join(controlPlaneDir, "adapter_audit.jsonl"),
 		writerLockPath: join(controlPlaneDir, "writer.lock"),
+		attachmentIndexPath: join(controlPlaneDir, "attachments", "index.jsonl"),
+		attachmentBlobRootDir: join(controlPlaneDir, "attachments", "blobs"),
 	};
 }

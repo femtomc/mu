@@ -50,9 +50,14 @@ describe("frontend client bootstrap", () => {
 							ack_format: "slack_ephemeral_json",
 							delivery_semantics: "at_least_once",
 							deferred_delivery: true,
+							ingress_mode: "command_only",
 							configured: false,
 							active: false,
 							frontend: false,
+							media: {
+								outbound_delivery: { supported: true, configured: false, reason: "slack_bot_token_missing" },
+								inbound_attachment_download: { supported: true, configured: false, reason: "slack_bot_token_missing" },
+							},
 						},
 						{
 							channel: "neovim",
@@ -62,9 +67,18 @@ describe("frontend client bootstrap", () => {
 							ack_format: "json",
 							delivery_semantics: "at_least_once",
 							deferred_delivery: false,
+							ingress_mode: "command_only",
 							configured: true,
 							active: true,
 							frontend: true,
+							media: {
+								outbound_delivery: { supported: false, configured: false, reason: "channel_media_delivery_unsupported" },
+								inbound_attachment_download: {
+									supported: false,
+									configured: false,
+									reason: "channel_attachment_ingress_unsupported",
+								},
+							},
 						},
 					],
 				});

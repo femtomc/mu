@@ -165,6 +165,7 @@ export class TelegramAdapterGenerationManager {
 			pipeline: this.#pipeline,
 			outbox: this.#outbox,
 			webhookSecret: config.webhookSecret,
+			botToken: config.botToken,
 			botUsername: config.botUsername,
 			deferredIngress: true,
 			onOutboxEnqueued: this.#onOutboxEnqueued ?? undefined,

@@ -35,7 +35,16 @@ describe("adapter contract", () => {
 	});
 
 	test("built-in adapter classes expose canonical specs", () => {
-		const pipeline = {} as any;
+		const pipeline = {
+			runtime: {
+				paths: {
+					controlPlaneDir: "/tmp/mu-contract",
+					attachmentIndexPath: "/tmp/mu-contract/attachments/index.jsonl",
+					attachmentBlobRootDir: "/tmp/mu-contract/attachments/blobs",
+					adapterAuditPath: "/tmp/mu-contract/adapter_audit.jsonl",
+				},
+			},
+		} as any;
 		const outbox = {} as any;
 
 		const slack = new SlackControlPlaneAdapter({

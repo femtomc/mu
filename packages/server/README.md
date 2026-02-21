@@ -86,7 +86,7 @@ Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace
     "patch": {
       "control_plane": {
         "adapters": {
-          "slack": { "signing_secret": "..." }
+          "slack": { "signing_secret": "...", "bot_token": "xoxb-..." }
         },
         "memory_index": {
           "enabled": true,
@@ -156,7 +156,7 @@ mu control status --pretty
 
 2) Edit `<store>/config.json` and set adapter secrets:
 
-- Slack: `control_plane.adapters.slack.signing_secret`
+- Slack: `control_plane.adapters.slack.signing_secret`, `bot_token`
 - Discord: `control_plane.adapters.discord.signing_secret`
 - Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`, `bot_username`
 - Neovim: `control_plane.adapters.neovim.shared_secret`
@@ -177,6 +177,26 @@ mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot
 ```
 
 For Neovim, use `:Mu link` in `mu.nvim` after configuring `shared_secret`.
+
+## Media support operations checklist
+
+When validating attachment support end-to-end, use this sequence:
+
+1. Configure adapter secrets/tokens in `<store>/config.json` (Slack/Telegram need bot tokens for media egress).
+2. Reload control-plane (`mu control reload`).
+3. Verify `/api/control-plane/channels` media capability flags:
+   - `media.outbound_delivery`
+   - `media.inbound_attachment_download`
+4. Send a text-only control-plane turn and verify normal delivery semantics still hold.
+5. Send attachment-bearing ingress/outbox payloads and verify channel-specific routing:
+   - Slack media upload through `files.upload`
+   - Telegram PNG/JPEG/WEBP images through `sendPhoto`
+   - Telegram SVG/PDF through `sendDocument`
+
+Operational fallback expectations:
+
+- If media upload fails, Telegram delivery falls back to text `sendMessage`.
+- If Slack/Telegram bot token is missing, channel capability reason codes should report `*_bot_token_missing` and outbound delivery retries rather than hard-crashing runtime.
 
 ## Running the Server
 

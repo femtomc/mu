@@ -1,4 +1,8 @@
-import { CONTROL_PLANE_CHANNEL_ADAPTER_SPECS } from "@femtomc/mu-control-plane";
+import {
+	CONTROL_PLANE_CHANNEL_ADAPTER_SPECS,
+	ingressModeForValue,
+	summarizeInboundAttachmentPolicy,
+} from "@femtomc/mu-control-plane";
 import type { MuConfig } from "../config.js";
 import type { ServerRoutingDependencies } from "../server_routing.js";
 import { configRoutes } from "./config.js";
@@ -39,6 +43,74 @@ function configuredForChannel(config: MuConfig, channel: string): boolean {
 		default:
 			return false;
 	}
+}
+
+function mediaOutboundCapability(config: MuConfig, channel: string): {
+	supported: boolean;
+	configured: boolean;
+	reason: string | null;
+} {
+	switch (channel) {
+		case "slack": {
+			const configured = typeof config.control_plane.adapters.slack.bot_token === "string";
+			return {
+				supported: true,
+				configured,
+				reason: configured ? null : "slack_bot_token_missing",
+			};
+		}
+		case "telegram": {
+			const configured = typeof config.control_plane.adapters.telegram.bot_token === "string";
+			return {
+				supported: true,
+				configured,
+				reason: configured ? null : "telegram_bot_token_missing",
+			};
+		}
+		default:
+			return {
+				supported: false,
+				configured: false,
+				reason: "channel_media_delivery_unsupported",
+			};
+	}
+}
+
+function mediaInboundAttachmentCapability(config: MuConfig, channel: string): {
+	supported: boolean;
+	configured: boolean;
+	reason: string | null;
+} {
+	if (channel !== "slack" && channel !== "telegram") {
+		return {
+			supported: false,
+			configured: false,
+			reason: "channel_attachment_ingress_unsupported",
+		};
+	}
+	const channelModes = summarizeInboundAttachmentPolicy().channel_modes;
+	const policyEnabled = channelModes[channel] === "enabled";
+	if (!policyEnabled) {
+		return {
+			supported: true,
+			configured: false,
+			reason: "inbound_attachment_channel_disabled",
+		};
+	}
+	if (channel === "slack") {
+		const hasToken = typeof config.control_plane.adapters.slack.bot_token === "string";
+		return {
+			supported: true,
+			configured: hasToken,
+			reason: hasToken ? null : "slack_bot_token_missing",
+		};
+	}
+	const hasToken = typeof config.control_plane.adapters.telegram.bot_token === "string";
+	return {
+		supported: true,
+		configured: hasToken,
+		reason: hasToken ? null : "telegram_bot_token_missing",
+	};
 }
 
 export async function controlPlaneRoutes(
@@ -123,9 +195,14 @@ export async function controlPlaneRoutes(
 			ack_format: spec.ack_format,
 			delivery_semantics: spec.delivery_semantics,
 			deferred_delivery: spec.deferred_delivery,
+			ingress_mode: ingressModeForValue(spec.channel),
 			configured: configuredForChannel(config, spec.channel),
 			active: activeChannels.has(spec.channel),
 			frontend: spec.channel === "neovim",
+			media: {
+				outbound_delivery: mediaOutboundCapability(config, spec.channel),
+				inbound_attachment_download: mediaInboundAttachmentCapability(config, spec.channel),
+			},
 		}));
 
 		return Response.json(

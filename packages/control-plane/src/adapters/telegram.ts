@@ -1,6 +1,18 @@
 import { join } from "node:path";
 import { AdapterAuditLog } from "../adapter_audit.js";
 import {
+	DEFAULT_INBOUND_ATTACHMENT_POLICY,
+	evaluateInboundAttachmentPostDownload,
+	evaluateInboundAttachmentPreDownload,
+	inboundAttachmentExpiryMs,
+	type InboundAttachmentPolicy,
+} from "../inbound_attachment_policy.js";
+import {
+	buildInboundAttachmentStorePaths,
+	InboundAttachmentStore,
+	toInboundAttachmentReference,
+} from "../inbound_attachment_store.js";
+import {
 	type AdapterIngressResult,
 	type ControlPlaneAdapter,
 	ControlPlaneAdapterSpecSchema,
@@ -49,6 +61,17 @@ type TelegramWebhookMethodPayload =
 	| TelegramWebhookSendMessagePayload
 	| TelegramWebhookAnswerCallbackPayload
 	| TelegramWebhookSendChatActionPayload;
+
+type TelegramMessageAttachmentCandidate = {
+	telegram_type: "document" | "photo";
+	file_id: string;
+	file_unique_id: string | null;
+	filename: string | null;
+	mime_type: string | null;
+	size_bytes: number | null;
+	width: number | null;
+	height: number | null;
+};
 
 function telegramWebhookMethodResponse(payload: TelegramWebhookMethodPayload): Response {
 	return jsonResponse(payload, { status: 200 });
@@ -128,6 +151,72 @@ function normalizeTelegramCallbackData(data: string): string | null {
 	return null;
 }
 
+function extractTelegramMessageAttachments(message: Record<string, unknown>): TelegramMessageAttachmentCandidate[] {
+	const out: TelegramMessageAttachmentCandidate[] = [];
+	const doc = message.document as Record<string, unknown> | undefined;
+	const docFileId = stringId(doc?.file_id);
+	if (doc && docFileId) {
+		out.push({
+			telegram_type: "document",
+			file_id: docFileId,
+			file_unique_id: stringId(doc.file_unique_id),
+			filename: typeof doc.file_name === "string" ? doc.file_name : null,
+			mime_type: typeof doc.mime_type === "string" ? doc.mime_type : null,
+			size_bytes: typeof doc.file_size === "number" ? Math.trunc(doc.file_size) : null,
+			width: null,
+			height: null,
+		});
+	}
+	const photos = Array.isArray(message.photo) ? message.photo : [];
+	let selectedPhoto: Record<string, unknown> | null = null;
+	for (const entry of photos) {
+		if (!entry || typeof entry !== "object") {
+			continue;
+		}
+		const photo = entry as Record<string, unknown>;
+		if (!stringId(photo.file_id)) {
+			continue;
+		}
+		if (!selectedPhoto) {
+			selectedPhoto = photo;
+			continue;
+		}
+		const currentSize = typeof photo.file_size === "number" ? photo.file_size : -1;
+		const selectedSize = typeof selectedPhoto.file_size === "number" ? selectedPhoto.file_size : -1;
+		if (currentSize > selectedSize) {
+			selectedPhoto = photo;
+		}
+	}
+	const photoFileId = stringId(selectedPhoto?.file_id);
+	if (selectedPhoto && photoFileId) {
+		out.push({
+			telegram_type: "photo",
+			file_id: photoFileId,
+			file_unique_id: stringId(selectedPhoto.file_unique_id),
+			filename: null,
+			mime_type: "image/jpeg",
+			size_bytes: typeof selectedPhoto.file_size === "number" ? Math.trunc(selectedPhoto.file_size) : null,
+			width: typeof selectedPhoto.width === "number" ? Math.trunc(selectedPhoto.width) : null,
+			height: typeof selectedPhoto.height === "number" ? Math.trunc(selectedPhoto.height) : null,
+		});
+	}
+	return out;
+}
+
+function syntheticTelegramAttachmentPrompt(attachments: readonly TelegramMessageAttachmentCandidate[]): string {
+	const summary = attachments
+		.map((entry, idx) => {
+			const parts = [`#${idx + 1}`, `type=${entry.telegram_type}`];
+			if (entry.filename) parts.push(`filename=${entry.filename}`);
+			if (entry.mime_type) parts.push(`mime=${entry.mime_type}`);
+			if (entry.size_bytes != null) parts.push(`size_bytes=${entry.size_bytes}`);
+			if (entry.width != null && entry.height != null) parts.push(`dimensions=${entry.width}x${entry.height}`);
+			return parts.join(" ");
+		})
+		.join("; ");
+	return `Telegram attachment message (no text/caption): ${summary}`;
+}
+
 export const TelegramControlPlaneAdapterSpec = ControlPlaneAdapterSpecSchema.parse({
 	channel: "telegram",
 	route: defaultWebhookRouteForChannel("telegram"),
@@ -162,6 +251,9 @@ export type TelegramControlPlaneAdapterOpts = {
 	 * telegram ingress queue.
 	 */
 	ingressDrainEnabled?: boolean;
+	botToken?: string | null;
+	inboundAttachmentPolicy?: InboundAttachmentPolicy;
+	fetchImpl?: typeof fetch;
 };
 
 export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
@@ -178,6 +270,10 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 	readonly #signalObserver: ControlPlaneSignalObserver | null;
 	readonly #ingressQueue: TelegramIngressQueue | null;
 	readonly #adapterAudit: AdapterAuditLog | null;
+	readonly #botToken: string | null;
+	readonly #inboundAttachmentPolicy: InboundAttachmentPolicy;
+	readonly #inboundAttachmentStore: InboundAttachmentStore;
+	readonly #fetchImpl: typeof fetch;
 	#ingressDraining = false;
 	#ingressDrainRequested = false;
 	#ingressRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -198,6 +294,11 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		this.#ingressMaxAttempts = Math.max(1, Math.trunc(opts.ingressMaxAttempts ?? 5));
 		this.#onOutboxEnqueued = opts.onOutboxEnqueued ?? null;
 		this.#signalObserver = opts.signalObserver ?? null;
+		this.#botToken = opts.botToken?.trim() || null;
+		this.#inboundAttachmentPolicy = opts.inboundAttachmentPolicy ?? DEFAULT_INBOUND_ATTACHMENT_POLICY;
+		this.#fetchImpl = opts.fetchImpl ?? fetch;
+		const attachmentPaths = buildInboundAttachmentStorePaths(this.#pipeline.runtime.paths.controlPlaneDir);
+		this.#inboundAttachmentStore = new InboundAttachmentStore(attachmentPaths);
 		this.#acceptIngress = opts.acceptIngress ?? true;
 		this.#ingressDrainEnabled = opts.ingressDrainEnabled ?? this.#acceptIngress;
 		if (this.#deferredIngress) {
@@ -412,6 +513,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		if (this.#stopped) {
 			throw new Error("telegram_adapter_stopped");
 		}
+		await this.#inboundAttachmentStore.load();
 		if (!this.#deferredIngress || !this.#ingressQueue) {
 			return;
 		}
@@ -487,6 +589,98 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		this.#stopped = true;
 		this.#ingressDrainRequested = false;
 		this.#clearIngressRetryTimer();
+	}
+
+	async #buildInboundAttachments(opts: {
+		requestId: string;
+		attachments: readonly TelegramMessageAttachmentCandidate[];
+		nowMs: number;
+	}): Promise<{ descriptors: NonNullable<InboundEnvelope["attachments"]>; audit: Array<Record<string, unknown>> }> {
+		const descriptors: NonNullable<InboundEnvelope["attachments"]> = [];
+		const audit: Array<Record<string, unknown>> = [];
+		for (const candidate of opts.attachments) {
+			const pre = evaluateInboundAttachmentPreDownload(
+				{
+					channel: "telegram",
+					adapter: this.spec.channel,
+					attachment_id: `${opts.requestId}:${candidate.file_id}`,
+					channel_file_id: candidate.file_id,
+					declared_mime_type: candidate.mime_type,
+					declared_size_bytes: candidate.size_bytes,
+				},
+				this.#inboundAttachmentPolicy,
+			);
+			if (pre.kind === "deny") {
+				audit.push({ kind: "pre_deny", file_id: candidate.file_id, reason: pre.reason });
+				continue;
+			}
+			if (!this.#botToken) {
+				audit.push({ kind: "download_failed", file_id: candidate.file_id, reason: "telegram_bot_token_missing" });
+				continue;
+			}
+			const fileInfoRes = await this.#fetchImpl(
+				`https://api.telegram.org/bot${this.#botToken}/getFile?file_id=${encodeURIComponent(candidate.file_id)}`,
+			);
+			if (!fileInfoRes.ok) {
+				audit.push({ kind: "download_failed", file_id: candidate.file_id, reason: `telegram_get_file_${fileInfoRes.status}` });
+				continue;
+			}
+			const fileInfo = (await fileInfoRes.json().catch(() => null)) as { result?: { file_path?: string } } | null;
+			const filePath = typeof fileInfo?.result?.file_path === "string" ? fileInfo.result.file_path : null;
+			if (!filePath) {
+				audit.push({ kind: "download_failed", file_id: candidate.file_id, reason: "telegram_get_file_missing_path" });
+				continue;
+			}
+			const blobRes = await this.#fetchImpl(`https://api.telegram.org/file/bot${this.#botToken}/${filePath}`);
+			if (!blobRes.ok) {
+				audit.push({ kind: "download_failed", file_id: candidate.file_id, reason: `telegram_file_download_${blobRes.status}` });
+				continue;
+			}
+			const bytes = new Uint8Array(await blobRes.arrayBuffer());
+			const ttlMs = Math.max(1, inboundAttachmentExpiryMs(opts.nowMs, this.#inboundAttachmentPolicy) - opts.nowMs);
+			const stored = await this.#inboundAttachmentStore.put({
+				channel: "telegram",
+				source: this.spec.channel,
+				sourceFileId: candidate.file_id,
+				filename: candidate.filename,
+				mimeType: candidate.mime_type ?? blobRes.headers.get("content-type"),
+				bytes,
+				ttlMs,
+				nowMs: opts.nowMs,
+				metadata: { telegram_type: candidate.telegram_type, telegram_file_path: filePath },
+			});
+			const post = evaluateInboundAttachmentPostDownload(
+				{
+					channel: "telegram",
+					attachment_id: stored.record.attachment_id,
+					channel_file_id: candidate.file_id,
+					stored_mime_type: stored.record.mime_type,
+					stored_size_bytes: stored.record.size_bytes,
+					content_hash: stored.record.content_hash_sha256,
+					malware_flagged: false,
+				},
+				this.#inboundAttachmentPolicy,
+			);
+			if (post.kind === "deny") {
+				audit.push({ kind: "post_deny", file_id: candidate.file_id, reason: post.reason });
+				continue;
+			}
+			descriptors.push({
+				type: candidate.telegram_type,
+				filename: stored.record.safe_filename,
+				mime_type: stored.record.mime_type,
+				size_bytes: stored.record.size_bytes,
+				reference: toInboundAttachmentReference(stored.record),
+				metadata: {
+					origin: "telegram_inbound",
+					telegram_file_id: candidate.file_id,
+					telegram_file_unique_id: candidate.file_unique_id,
+					dedupe_kind: stored.dedupe_kind,
+				},
+			});
+			audit.push({ kind: "stored", file_id: candidate.file_id, attachment_id: stored.record.attachment_id });
+		}
+		return { descriptors, audit };
 	}
 
 	public async ingest(req: Request): Promise<AdapterIngressResult> {
@@ -585,9 +779,40 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			actorId = stringId((message.from as Record<string, unknown> | undefined)?.id) ?? actorId;
 			conversationId = stringId((message.chat as Record<string, unknown> | undefined)?.id) ?? conversationId;
 			const rawText = typeof message.text === "string" ? message.text : "";
-			commandText = normalizeTelegramMessageCommand(rawText, this.#botUsername);
+			const rawCaption = typeof message.caption === "string" ? message.caption : "";
+			const attachmentCandidates = extractTelegramMessageAttachments(message);
+			const rawCommand = rawText.trim().length > 0 ? rawText : rawCaption;
+			commandText = normalizeTelegramMessageCommand(rawCommand, this.#botUsername);
 			metadata.message_id = stringId(message.message_id);
 			metadata.chat_type = (message.chat as Record<string, unknown> | undefined)?.type ?? null;
+			metadata.telegram_attachment_count = attachmentCandidates.length;
+			if (rawCommand.trim().length === 0 && attachmentCandidates.length === 0) {
+				return acceptedIngressResult({
+					channel: this.spec.channel,
+					reason: "unsupported_update",
+					response: jsonResponse({ ok: true, result: "ignored_unsupported_update" }, { status: 200 }),
+					inbound: null,
+					pipelineResult: { kind: "noop", reason: "not_command" },
+					outboxRecord: null,
+				});
+			}
+			if (attachmentCandidates.length > 0) {
+				const source = `telegram:update:${updateId}`;
+				const stableId = sha256Hex(source).slice(0, 32);
+				const requestId = `telegram-req-${stableId}`;
+				const attachmentResult = await this.#buildInboundAttachments({
+					requestId,
+					attachments: attachmentCandidates,
+					nowMs: Math.trunc(this.#nowMs()),
+				});
+				metadata.inbound_attachment_audit = attachmentResult.audit;
+				if (attachmentResult.descriptors.length > 0) {
+					metadata.inbound_attachments = attachmentResult.descriptors;
+				}
+				if (commandText.trim().length === 0) {
+					commandText = syntheticTelegramAttachmentPrompt(attachmentCandidates);
+				}
+			}
 		} else {
 			return acceptedIngressResult({
 				channel: this.spec.channel,
@@ -605,7 +830,11 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		const deliveryId = `telegram-delivery-${stableId}`;
 		const bindingHint = resolveBindingHint(this.#pipeline, this.spec.channel, this.#tenantId, actorId);
 		const nowMs = Math.trunc(this.#nowMs());
-		const normalizedCommandText = commandText.length > 0 ? commandText : "/mu";
+		const normalizedCommandText = commandText.trim();
+		const inboundAttachments = Array.isArray(metadata.inbound_attachments)
+			? (metadata.inbound_attachments as NonNullable<InboundEnvelope["attachments"]>)
+			: undefined;
+		delete metadata.inbound_attachments;
 
 		const inbound = InboundEnvelopeSchema.parse({
 			v: 1,
@@ -626,6 +855,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			target_id: conversationId,
 			idempotency_key: `telegram-idem-${sourceKind}-${sourceId}`,
 			fingerprint: `telegram-fp-${sha256Hex(normalizedCommandText.toLowerCase())}`,
+			...(inboundAttachments && inboundAttachments.length > 0 ? { attachments: inboundAttachments } : {}),
 			metadata,
 		});
 

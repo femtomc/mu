@@ -27,7 +27,10 @@ function normalizeChannel(value: unknown): Channel | null {
 	}
 }
 
-export type WakeFanoutSkipReasonCode = "channel_delivery_unsupported" | "telegram_bot_token_missing";
+export type WakeFanoutSkipReasonCode =
+	| "channel_delivery_unsupported"
+	| "slack_bot_token_missing"
+	| "telegram_bot_token_missing";
 
 export type WakeFanoutContext = {
 	wakeId: string;
@@ -58,11 +61,15 @@ export function wakeFanoutDedupeKey(opts: {
 export function resolveWakeFanoutCapability(opts: {
 	binding: IdentityBinding;
 	isChannelDeliverySupported: (channel: Channel) => boolean;
+	slackBotToken: string | null;
 	telegramBotToken: string | null;
 }): { ok: true } | { ok: false; reasonCode: WakeFanoutSkipReasonCode } {
 	const { binding } = opts;
 	if (!opts.isChannelDeliverySupported(binding.channel)) {
 		return { ok: false, reasonCode: "channel_delivery_unsupported" };
+	}
+	if (binding.channel === "slack" && (!opts.slackBotToken || opts.slackBotToken.trim().length === 0)) {
+		return { ok: false, reasonCode: "slack_bot_token_missing" };
 	}
 	if (binding.channel === "telegram" && (!opts.telegramBotToken || opts.telegramBotToken.trim().length === 0)) {
 		return { ok: false, reasonCode: "telegram_bot_token_missing" };
