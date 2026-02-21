@@ -80,6 +80,11 @@ const DEFAULT_STEPS = [
 ] as const;
 
 const BAR_CHARS = ["░", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"] as const;
+const WIDGET_STEP_LIMIT = 4;
+const WIDGET_STEP_LABEL_MAX = 60;
+const WIDGET_ROOT_MAX = 20;
+const WIDGET_NEXT_MAX = 56;
+const WIDGET_BLOCKER_MAX = 56;
 
 function phaseTone(phase: PlanningPhase): "dim" | "accent" | "warning" | "success" {
 	switch (phase) {
@@ -360,7 +365,9 @@ function renderPlanningUi(ctx: ExtensionContext, state: PlanningUiState): void {
 	const meter = progressBar(done, total, 10);
 	const waitingLabel = state.waitingOnUser ? "yes" : "no";
 	const waitingColor: "dim" | "warning" = state.waitingOnUser ? "warning" : "dim";
-	const blockerLabel = shortLabel(state.blocker, "(none)", 56);
+	const rootCompact = shortLabel(rootLabel, "(unset)", WIDGET_ROOT_MAX);
+	const nextCompact = shortLabel(state.nextAction, "(unset)", WIDGET_NEXT_MAX);
+	const blockerCompact = shortLabel(state.blocker, "(none)", WIDGET_BLOCKER_MAX);
 	const blockerColor: "dim" | "warning" = state.blocker ? "warning" : "dim";
 
 	ctx.ui.setStatus(
@@ -371,34 +378,51 @@ function renderPlanningUi(ctx: ExtensionContext, state: PlanningUiState): void {
 			ctx.ui.theme.fg("dim", `${done}/${total}`),
 			ctx.ui.theme.fg(phaseColor, meter),
 			ctx.ui.theme.fg(waitingColor, `wait:${waitingLabel}`),
-			ctx.ui.theme.fg("muted", `root:${rootLabel}`),
+			ctx.ui.theme.fg("muted", `root:${rootCompact}`),
 		].join(` ${ctx.ui.theme.fg("muted", "·")} `),
 	);
 
 	const lines = [
-		ctx.ui.theme.fg("accent", ctx.ui.theme.bold("Planning board")),
-		`  ${ctx.ui.theme.fg("muted", "phase:")} ${ctx.ui.theme.fg(phaseColor, phase)}`,
-		`  ${ctx.ui.theme.fg("muted", "progress:")} ${ctx.ui.theme.fg("dim", `${done}/${total}`)} ${ctx.ui.theme.fg(phaseColor, meter)}`,
-		`  ${ctx.ui.theme.fg("muted", "root:")} ${ctx.ui.theme.fg("dim", rootLabel)}`,
-		`  ${ctx.ui.theme.fg("muted", "waiting_on_user:")} ${ctx.ui.theme.fg(waitingColor, waitingLabel)}`,
-		`  ${ctx.ui.theme.fg("muted", "confidence:")} ${ctx.ui.theme.fg(confidenceColor, state.confidence)}`,
-		`  ${ctx.ui.theme.fg("muted", "next_action:")} ${ctx.ui.theme.fg("dim", shortLabel(state.nextAction, "(unset)", 72))}`,
-		`  ${ctx.ui.theme.fg("muted", "blocker:")} ${ctx.ui.theme.fg(blockerColor, blockerLabel)}`,
-		`  ${ctx.ui.theme.fg("dim", "────────────────────────────")}`,
+		[
+			ctx.ui.theme.fg("accent", ctx.ui.theme.bold("Planning")),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg(phaseColor, phase),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg("dim", `${done}/${total}`),
+			ctx.ui.theme.fg(phaseColor, meter),
+		].join(" "),
+		[
+			ctx.ui.theme.fg("muted", `root:${rootCompact}`),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg(waitingColor, `wait:${waitingLabel}`),
+			ctx.ui.theme.fg("muted", "·"),
+			ctx.ui.theme.fg(confidenceColor, `conf:${state.confidence}`),
+		].join(" "),
+		`${ctx.ui.theme.fg("muted", "next:")} ${ctx.ui.theme.fg("dim", nextCompact)}`,
 	];
 
+	if (state.blocker) {
+		lines.push(`${ctx.ui.theme.fg("muted", "blocker:")} ${ctx.ui.theme.fg(blockerColor, blockerCompact)}`);
+	}
+
+	lines.push(ctx.ui.theme.fg("dim", "────────────────────────────"));
+
 	if (state.steps.length === 0) {
-		lines.push(ctx.ui.theme.fg("muted", "  (no checklist steps configured)"));
+		lines.push(ctx.ui.theme.fg("muted", "(no checklist steps configured)"));
 	} else {
-		for (let index = 0; index < state.steps.length; index += 1) {
-			const step = state.steps[index]!;
+		const shownSteps = state.steps.slice(0, WIDGET_STEP_LIMIT);
+		for (let index = 0; index < shownSteps.length; index += 1) {
+			const step = shownSteps[index]!;
 			const mark = step.done ? ctx.ui.theme.fg("success", "☑") : ctx.ui.theme.fg("muted", "☐");
-			const label = step.done ? ctx.ui.theme.fg("dim", step.label) : ctx.ui.theme.fg("text", step.label);
+			const labelText = shortLabel(step.label, "(empty)", WIDGET_STEP_LABEL_MAX);
+			const label = step.done ? ctx.ui.theme.fg("dim", labelText) : ctx.ui.theme.fg("text", labelText);
 			lines.push(`${mark} ${ctx.ui.theme.fg("muted", `${index + 1}.`)} ${label}`);
+		}
+		if (state.steps.length > shownSteps.length) {
+			lines.push(ctx.ui.theme.fg("muted", `... +${state.steps.length - shownSteps.length} more steps`));
 		}
 	}
 
-	lines.push(ctx.ui.theme.fg("muted", "  /mu plan status · /mu plan snapshot"));
 	ctx.ui.setWidget("mu-planning", lines, { placement: "belowEditor" });
 }
 

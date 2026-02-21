@@ -56,8 +56,38 @@ function textOf(result: unknown): string {
 	return typeof text === "string" ? text : "";
 }
 
-async function executePlanningTool(tool: RegisteredTool, params: Record<string, unknown>): Promise<unknown> {
-	return tool.execute("call-1", params, undefined, undefined, { hasUI: false });
+async function executePlanningTool(
+	tool: RegisteredTool,
+	params: Record<string, unknown>,
+	ctx: unknown = { hasUI: false },
+): Promise<unknown> {
+	return tool.execute("call-1", params, undefined, undefined, ctx);
+}
+
+function createInteractiveUiContext() {
+	let widgetLines: string[] | undefined;
+	let statusLine: string | undefined;
+	const ctx = {
+		hasUI: true,
+		ui: {
+			notify: () => undefined,
+			setStatus: (_key: string, text: string | undefined) => {
+				statusLine = text;
+			},
+			setWidget: (_key: string, content: string[] | undefined) => {
+				widgetLines = Array.isArray(content) ? [...content] : undefined;
+			},
+			theme: {
+				fg: (_tone: string, text: string) => text,
+				bold: (text: string) => text,
+			},
+		},
+	};
+	return {
+		ctx,
+		getWidgetLines: () => widgetLines,
+		getStatusLine: () => statusLine,
+	};
 }
 
 describe("planning HUD tool", () => {
@@ -140,6 +170,50 @@ describe("planning HUD tool", () => {
 		const snapshotResult = await executePlanningTool(tool, { action: "snapshot", snapshot_format: "compact" });
 		expect(textOf(snapshotResult)).toContain("HUD(plan)");
 		expect(textOf(snapshotResult)).toContain("waiting=yes");
+	});
+
+	test("renders compact widget layout that preserves checklist visibility", async () => {
+		const { api, tools } = createExtensionApiMock();
+		planningUiExtension(api as unknown as Parameters<typeof planningUiExtension>[0]);
+
+		const tool = tools.get("mu_planning_hud");
+		if (!tool) {
+			throw new Error("mu_planning_hud tool missing");
+		}
+
+		const uiHarness = createInteractiveUiContext();
+		await executePlanningTool(tool, { action: "on" }, uiHarness.ctx);
+		await executePlanningTool(
+			tool,
+			{
+				action: "update",
+				phase: "reviewing",
+				root_issue_id: "mu-1f703f7e",
+				waiting_on_user: true,
+				confidence: "medium",
+				next_action:
+					"Review DAG scope decisions (outbound-only v1, attachment source model, parser fallback semantics, migration sequencing)",
+				steps: [
+					"Investigate current Slack/Telegram adapter constraints",
+					"Draft DAG decomposition for outbound-only v1",
+					"Review dependency ordering and rollout risks",
+					"Incorporate feedback and finalize issue graph",
+					"Prepare implementation handoff checklist",
+				],
+				step_updates: [{ index: 1, done: true }, { index: 2, done: true }],
+			},
+			uiHarness.ctx,
+		);
+
+		const lines = uiHarness.getWidgetLines() ?? [];
+		expect(lines.length).toBeLessThanOrEqual(10);
+		expect(lines.some((line) => line.includes("wait:yes"))).toBe(true);
+		expect(lines.some((line) => line.startsWith("next:"))).toBe(true);
+		expect(lines.some((line) => line.includes("... +1 more steps"))).toBe(true);
+
+		const statusLine = uiHarness.getStatusLine();
+		expect(statusLine).toContain("plan");
+		expect(statusLine).toContain("reviewing");
 	});
 
 	test("returns structured error for invalid phase", async () => {
