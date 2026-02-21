@@ -241,9 +241,9 @@ for issue_id in $(mu issues ready --root <root-id> --tag proto:subagents-v1 --js
 done
 ```
 
-## Subagents HUD (optional board)
+## Subagents HUD
 
-Use HUD for visibility and bounded spawning. Protocol truth still lives in issues/forum.
+Use HUD to communicate with your user for visibility. Truth should still live entirely in issues/forum.
 
 ```text
 /mu subagents on
