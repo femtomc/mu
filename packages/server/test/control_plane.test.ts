@@ -199,7 +199,6 @@ function configWith(opts: {
 	telegramBotToken?: string | null;
 	telegramBotUsername?: string | null;
 	operatorEnabled?: boolean;
-	runTriggersEnabled?: boolean;
 }): ControlPlaneConfig {
 	const base = JSON.parse(JSON.stringify(DEFAULT_MU_CONFIG.control_plane)) as ControlPlaneConfig;
 	base.adapters.slack.signing_secret = opts.slackSecret ?? null;
@@ -210,9 +209,6 @@ function configWith(opts: {
 	base.adapters.telegram.bot_username = opts.telegramBotUsername ?? null;
 	if (typeof opts.operatorEnabled === "boolean") {
 		base.operator.enabled = opts.operatorEnabled;
-	}
-	if (typeof opts.runTriggersEnabled === "boolean") {
-		base.operator.run_triggers_enabled = opts.runTriggersEnabled;
 	}
 	return base;
 }

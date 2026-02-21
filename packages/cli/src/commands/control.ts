@@ -300,11 +300,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		}
 
 		operatorLifecycleRows.sort((a, b) => a.ts_ms - b.ts_ms);
-		const operatorRunMutations = operatorLifecycleRows
-			.filter(
-				(row) =>
-					row.target_type === "run start" || row.target_type === "run resume" || row.target_type === "run interrupt",
-			)
+		const recentOperatorLifecycle = operatorLifecycleRows
 			.slice(-limit)
 			.reverse()
 			.map((row) => ({
@@ -332,7 +328,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 			command_journal: {
 				path: paths.commandsPath,
 				operator_lifecycle_events: operatorLifecycleRows.length,
-				recent_operator_run_mutations: operatorRunMutations,
+				recent_operator_lifecycle: recentOperatorLifecycle,
 			},
 			hints: [
 				!turnsExists
@@ -340,9 +336,6 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					: null,
 				problematicTurns.length > 0
 					? "Recent invalid_directive/error outcomes detected. Inspect operator_turns.jsonl for failed command tool calls."
-					: null,
-				operatorRunMutations.length === 0
-					? "No operator-attributed run mutations found in command journal. In current architecture, operator-triggered runs should appear as brokered command lifecycle events."
 					: null,
 			].filter((line): line is string => line != null),
 		};
@@ -371,9 +364,9 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		}
 
 		out += `\nOperator lifecycle events in commands journal: ${operatorLifecycleRows.length}\n`;
-		if (operatorRunMutations.length > 0) {
-			out += "Recent operator run mutations:\n";
-			for (const row of operatorRunMutations) {
+		if (recentOperatorLifecycle.length > 0) {
+			out += "Recent operator lifecycle events:\n";
+			for (const row of recentOperatorLifecycle) {
 				out += `  ${row.ts_iso} ${row.target_type} ${row.event_type} command=${row.command_id}`;
 				if (row.error_code) {
 					out += ` error=${row.error_code}`;
@@ -404,8 +397,8 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"    [--binding-id ID] [--pretty]",
 					"",
 					"Roles (default: operator):",
-					"  operator      Full access (read, write, execute, admin)",
-					"  contributor   Read + write + execute (no admin)",
+					"  operator      Full access (read, write, admin)",
+					"  contributor   Read + write (no admin)",
 					"  viewer        Read-only",
 					"",
 					"Examples:",
@@ -682,7 +675,6 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 
 		const operator = {
 			enabled: boolOr(operatorCfg.enabled, true),
-			run_triggers_enabled: boolOr(operatorCfg.run_triggers_enabled, true),
 			provider: strOrNull(operatorCfg.provider),
 			model: strOrNull(operatorCfg.model),
 			thinking: strOrNull(operatorCfg.thinking),
@@ -718,7 +710,6 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		}
 		out += "\nOperator config:\n";
 		out += `  enabled              ${operator.enabled}\n`;
-		out += `  run_triggers_enabled ${operator.run_triggers_enabled}\n`;
 		out += `  provider             ${operator.provider ?? "(default)"}\n`;
 		out += `  model                ${operator.model ?? "(default)"}\n`;
 		out += `  thinking             ${operator.thinking ?? "(default)"}\n`;
@@ -915,7 +906,6 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 				config_path: getMuConfigPath(ctx.repoRoot),
 				operator: {
 					enabled: config.control_plane.operator.enabled,
-					run_triggers_enabled: config.control_plane.operator.run_triggers_enabled,
 					provider: config.control_plane.operator.provider,
 					model: config.control_plane.operator.model,
 					thinking: config.control_plane.operator.thinking,
@@ -928,7 +918,6 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 				[
 					`Operator config: ${ctx.repoRoot}`,
 					`  enabled              ${payload.operator.enabled}`,
-					`  run_triggers_enabled ${payload.operator.run_triggers_enabled}`,
 					`  provider             ${payload.operator.provider ?? "(default)"}`,
 					`  model                ${payload.operator.model ?? "(default)"}`,
 					`  thinking             ${payload.operator.thinking ?? "(default)"}`,

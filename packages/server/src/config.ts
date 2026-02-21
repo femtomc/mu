@@ -24,7 +24,6 @@ export type MuConfig = {
 		};
 		operator: {
 			enabled: boolean;
-			run_triggers_enabled: boolean;
 			provider: string | null;
 			model: string | null;
 			thinking: string | null;
@@ -57,7 +56,6 @@ export type MuConfigPatch = {
 		};
 		operator?: {
 			enabled?: boolean;
-			run_triggers_enabled?: boolean;
 			provider?: string | null;
 			model?: string | null;
 			thinking?: string | null;
@@ -96,7 +94,6 @@ export type MuConfigPresence = {
 		};
 		operator: {
 			enabled: boolean;
-			run_triggers_enabled: boolean;
 			provider: boolean;
 			model: boolean;
 			thinking: boolean;
@@ -130,7 +127,6 @@ export const DEFAULT_MU_CONFIG: MuConfig = {
 		},
 		operator: {
 			enabled: true,
-			run_triggers_enabled: true,
 			provider: null,
 			model: null,
 			thinking: null,
@@ -233,12 +229,6 @@ export function normalizeMuConfig(input: unknown): MuConfig {
 	if (operator) {
 		if ("enabled" in operator) {
 			next.control_plane.operator.enabled = normalizeBoolean(operator.enabled, next.control_plane.operator.enabled);
-		}
-		if ("run_triggers_enabled" in operator) {
-			next.control_plane.operator.run_triggers_enabled = normalizeBoolean(
-				operator.run_triggers_enabled,
-				next.control_plane.operator.run_triggers_enabled,
-			);
 		}
 		if ("provider" in operator) {
 			next.control_plane.operator.provider = normalizeNullableString(operator.provider);
@@ -344,12 +334,6 @@ function normalizeMuConfigPatch(input: unknown): MuConfigPatch {
 				DEFAULT_MU_CONFIG.control_plane.operator.enabled,
 			);
 		}
-		if ("run_triggers_enabled" in operator) {
-			patch.control_plane.operator.run_triggers_enabled = normalizeBoolean(
-				operator.run_triggers_enabled,
-				DEFAULT_MU_CONFIG.control_plane.operator.run_triggers_enabled,
-			);
-		}
 		if ("provider" in operator) {
 			patch.control_plane.operator.provider = normalizeNullableString(operator.provider);
 		}
@@ -430,9 +414,6 @@ export function applyMuConfigPatch(base: MuConfig, patchInput: unknown): MuConfi
 	if (operator) {
 		if ("enabled" in operator && typeof operator.enabled === "boolean") {
 			next.control_plane.operator.enabled = operator.enabled;
-		}
-		if ("run_triggers_enabled" in operator && typeof operator.run_triggers_enabled === "boolean") {
-			next.control_plane.operator.run_triggers_enabled = operator.run_triggers_enabled;
 		}
 		if ("provider" in operator) {
 			next.control_plane.operator.provider = operator.provider ?? null;
@@ -535,7 +516,6 @@ export function muConfigPresence(config: MuConfig): MuConfigPresence {
 			},
 			operator: {
 				enabled: config.control_plane.operator.enabled,
-				run_triggers_enabled: config.control_plane.operator.run_triggers_enabled,
 				provider: isPresent(config.control_plane.operator.provider),
 				model: isPresent(config.control_plane.operator.model),
 				thinking: isPresent(config.control_plane.operator.thinking),

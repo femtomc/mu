@@ -38,7 +38,6 @@ async function writeConfigWithOperatorDefaults(
 					},
 					operator: {
 						enabled: true,
-						run_triggers_enabled: true,
 						provider,
 						model,
 						thinking: thinking ?? null,

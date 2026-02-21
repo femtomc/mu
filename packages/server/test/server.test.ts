@@ -151,7 +151,7 @@ describe("mu-server", () => {
 					adapters: {
 						slack: { signing_secret: string | null };
 					};
-					operator: { enabled: boolean; run_triggers_enabled: boolean };
+					operator: { enabled: boolean };
 					memory_index: { enabled: boolean; every_ms: number };
 				};
 			};
@@ -167,7 +167,6 @@ describe("mu-server", () => {
 		expect(payload.config_path).toBe(join(getStorePaths(tempDir).storeDir, "config.json"));
 		expect(payload.config.control_plane.adapters.slack.signing_secret).toBeNull();
 		expect(payload.config.control_plane.operator.enabled).toBe(true);
-		expect(payload.config.control_plane.operator.run_triggers_enabled).toBe(true);
 		expect(payload.config.control_plane.memory_index.enabled).toBe(true);
 		expect(payload.config.control_plane.memory_index.every_ms).toBe(300_000);
 		expect(payload.presence.control_plane.adapters.slack.signing_secret).toBe(false);

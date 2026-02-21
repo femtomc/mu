@@ -223,7 +223,6 @@ Slack example:
     },
     "operator": {
       "enabled": true,
-      "run_triggers_enabled": true,
       "provider": null,
       "model": null,
       "thinking": null
