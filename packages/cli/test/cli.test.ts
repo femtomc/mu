@@ -127,7 +127,7 @@ test("mu guide", async () => {
 	expect(result.stdout.includes("Agent Navigation (by intent)")).toBe(true);
 	expect(result.stdout.includes("mu memory index status")).toBe(true);
 	expect(result.stdout.includes("mu exec <prompt...>")).toBe(true);
-	expect(result.stdout).toContain("Use direct CLI commands in chat (for example: mu control status, mu session list)");
+	expect(result.stdout).toContain("Removed engine commands");
 	expect(result.stdout).not.toContain("/mu-setup");
 });
 
@@ -173,7 +173,7 @@ test("mu heartbeats help surfaces telegram setup and subcommand guidance", async
 	expect(listHelp.stdout).toContain("--limit N");
 });
 
-test("mu command-group help is self-explanatory across events/runs/cron/control/turn/replay", async () => {
+test("mu command-group help is self-explanatory across events/cron/control/turn/replay", async () => {
 	const dir = await mkTempRepo();
 
 	const checks: Array<{ argv: string[]; contains: string[] }> = [
@@ -188,18 +188,6 @@ test("mu command-group help is self-explanatory across events/runs/cron/control/
 		{
 			argv: ["events", "trace", "--help"],
 			contains: ["mu events trace - deeper bounded trace view", "Defaults:", "--limit 40"],
-		},
-		{
-			argv: ["runs", "--help"],
-			contains: ["Subcommands:", "mu runs <subcommand> --help", "compact-by-default output"],
-		},
-		{
-			argv: ["runs", "start", "--help"],
-			contains: ["mu runs start - queue a new run", "--max-steps <N>", "Examples:"],
-		},
-		{
-			argv: ["runs", "interrupt", "--help"],
-			contains: ["mu runs interrupt - interrupt an active run", "--job-id <job-id>", "Examples:"],
 		},
 		{
 			argv: ["cron", "--help"],
@@ -236,7 +224,7 @@ test("mu command-group help is self-explanatory across events/runs/cron/control/
 		},
 		{
 			argv: ["exec", "--help"],
-			contains: ["one-shot operator prompt", "Does not queue a run", "mu exec <prompt...>"],
+			contains: ["one-shot operator prompt", "durable workflows", "mu exec <prompt...>"],
 		},
 		{
 			argv: ["replay", "--help"],
@@ -485,7 +473,7 @@ test("mu exec help and empty invocation", async () => {
 	const help = await run(["exec", "--help"], { cwd: dir });
 	expect(help.exitCode).toBe(0);
 	expect(help.stdout).toContain("one-shot operator prompt");
-	expect(help.stdout).toContain("Does not queue a run");
+	expect(help.stdout).toContain("durable workflows");
 
 	const empty = await run(["exec"], { cwd: dir });
 	expect(empty.exitCode).toBe(0);
@@ -624,135 +612,6 @@ test("mu session <id-prefix> resolves and opens a specific persisted operator se
 	expect(seenSessionFile).toBe(persisted.path);
 });
 
-test("mu run auto-initializes store layout", async () => {
-	const dir = await mkTempRepo();
-	let seenSessionMode: string | undefined;
-	let seenSessionDir: string | undefined;
-	let seenSessionFile: string | undefined;
-	const result = await run(["run", "hello", "--max-steps", "1"], {
-		cwd: dir,
-		serveDeps: {
-			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
-			queueRun: async ({ maxSteps }) => ({
-				job_id: "run-job-init",
-				root_issue_id: "mu-root-init",
-				max_steps: maxSteps,
-				mode: "run_start",
-				status: "running",
-				source: "api",
-			}),
-			runOperatorSession: async ({ onReady, sessionMode, sessionDir, sessionFile }) => {
-				seenSessionMode = sessionMode;
-				seenSessionDir = sessionDir;
-				seenSessionFile = sessionFile;
-				onReady();
-				return { stdout: "", stderr: "", exitCode: 0 };
-			},
-			registerSignalHandler: () => () => {},
-		},
-	});
-	expect(result.exitCode).toBe(0);
-	expect(seenSessionMode).toBe("new");
-	expect(seenSessionDir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
-	expect(seenSessionFile).toBeUndefined();
-	await expectStoreBootstrapped(dir);
-});
-
-test("mu run uses shared serve lifecycle and queues run before operator attach", async () => {
-	const dir = await mkTempRepo();
-	const events: string[] = [];
-	let queuedArgs: {
-		serverUrl: string;
-		prompt: string;
-		maxSteps: number;
-		provider?: string;
-		model?: string;
-		reasoning?: string;
-	} | null = null;
-	let seenOperator: { provider?: string; model?: string; thinking?: string } | null = null;
-	const { io, chunks } = mkCaptureIo();
-
-	const result = await run(
-		[
-			"run",
-			"Ship",
-			"release",
-			"--max-steps",
-			"7",
-			"--provider",
-			"openai-codex",
-			"--model",
-			"gpt-5.3-codex",
-			"--reasoning",
-			"high",
-			"--port",
-			"3311",
-		],
-		{
-			cwd: dir,
-			io,
-			serveDeps: {
-				spawnBackgroundServer: async ({ port }) => {
-					events.push(`server:spawn:${port}`);
-					return { pid: 99999, url: `http://localhost:${port}` };
-				},
-				queueRun: async (opts) => {
-					events.push("run:queue");
-					queuedArgs = opts;
-					return {
-						job_id: "run-job-1",
-						root_issue_id: "mu-root1234",
-						max_steps: opts.maxSteps,
-						mode: "run_start",
-						status: "running",
-						source: "api",
-					};
-				},
-				runOperatorSession: async ({ onReady, provider, model, thinking }) => {
-					events.push("operator:start");
-					seenOperator = { provider, model, thinking };
-					onReady();
-					events.push("operator:end");
-					return { stdout: "", stderr: "", exitCode: 0 };
-				},
-				registerSignalHandler: () => () => {},
-			},
-		},
-	);
-
-	expect(result.exitCode).toBe(0);
-	// Server is NOT stopped — it runs in the background
-	expect(events).toEqual(["server:spawn:3311", "run:queue", "operator:start", "operator:end"]);
-	expect(queuedArgs).toMatchObject({
-		serverUrl: "http://localhost:3311",
-		prompt: "Ship release",
-		maxSteps: 7,
-		provider: "openai-codex",
-		model: "gpt-5.3-codex",
-		reasoning: "high",
-	});
-	expect(seenOperator!).toEqual({
-		provider: "openai-codex",
-		model: "gpt-5.3-codex",
-		thinking: "high",
-	});
-	expect(chunks.stderr).toContain("Queued run: run-job-1 root=mu-root1234 max_steps=7");
-});
-
-test("mu run rejects removed --json/--raw-stream flows with recovery guidance", async () => {
-	const dir = await mkTempRepo();
-	const jsonMode = await run(["run", "hello", "--json"], { cwd: dir });
-	expect(jsonMode.exitCode).toBe(1);
-	expect(jsonMode.stdout).toContain("--json");
-	expect(jsonMode.stdout).toContain("has been removed");
-	expect(jsonMode.stdout).toContain("mu serve");
-
-	const rawMode = await run(["run", "hello", "--raw-stream"], { cwd: dir });
-	expect(rawMode.exitCode).toBe(1);
-	expect(rawMode.stdout).toContain("--raw-stream");
-	expect(rawMode.stdout).toContain("has been removed");
-	expect(rawMode.stdout).toContain("mu resume <root-id> --raw-stream");
-});
 
 test("mu serve auto-initializes store layout", async () => {
 	const dir = await mkTempRepo();

@@ -62,19 +62,19 @@ describe("PolicyEngine authorization", () => {
 		});
 		expect(lowAssurance).toMatchObject({ kind: "deny", reason: "assurance_tier_too_low" });
 
-		const runAllowed = policy.authorizeCommand({
-			commandKey: "run resume",
+		const operatorSetAllowed = policy.authorizeCommand({
+			commandKey: "operator model set",
 			requestedMode: "auto",
-			binding: mkBinding({ scopes: ["cp.run.execute"], assurance_tier: "tier_b", channel: "telegram" }),
+			binding: mkBinding({ scopes: ["cp.ops.admin"], assurance_tier: "tier_b", channel: "telegram" }),
 		});
-		expect(runAllowed.kind).toBe("allow");
+		expect(operatorSetAllowed.kind).toBe("allow");
 
-		const runMissingScope = policy.authorizeCommand({
-			commandKey: "run resume",
+		const operatorSetMissingScope = policy.authorizeCommand({
+			commandKey: "operator model set",
 			requestedMode: "auto",
 			binding: mkBinding({ scopes: ["cp.read"], assurance_tier: "tier_b", channel: "telegram" }),
 		});
-		expect(runMissingScope).toMatchObject({ kind: "deny", reason: "missing_scope" });
+		expect(operatorSetMissingScope).toMatchObject({ kind: "deny", reason: "missing_scope" });
 
 		const reloadAllowed = policy.authorizeCommand({
 			commandKey: "reload",

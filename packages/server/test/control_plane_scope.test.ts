@@ -44,7 +44,7 @@ describe("server control-plane-only route surface", () => {
 		expect("ready_count" in payload).toBe(false);
 	});
 
-	test("run/scheduling endpoints remain mounted", async () => {
+	test("scheduling endpoints remain mounted while legacy runs API is absent", async () => {
 		const heartbeatList = await server.fetch(new Request("http://localhost/api/heartbeats?limit=1"));
 		expect(heartbeatList.status).toBe(200);
 
@@ -52,8 +52,7 @@ describe("server control-plane-only route surface", () => {
 		expect(cronStatus.status).toBe(200);
 
 		const runsList = await server.fetch(new Request("http://localhost/api/control-plane/runs?limit=1"));
-		expect(runsList.status).toBe(200);
-
+		expect(runsList.status).toBe(404);
 	});
 
 	test("legacy business/session gateway endpoints return 404", async () => {

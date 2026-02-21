@@ -11,8 +11,8 @@ npm install -g @femtomc/mu
 cd /path/to/your/repo
 
 mu --help
-mu run "build the thing"
 mu exec "quickly inspect current ready work and summarize"
+mu heartbeats --help
 mu status --pretty
 mu issues ready --pretty
 mu forum post research:topic -m "found something" --author worker
@@ -24,10 +24,10 @@ For messaging adapter-specific setup (Slack/Discord/Telegram/Neovim), use the pa
 
 ```bash
 # Start work
-mu run "Break down and execute this goal"
-mu exec "quick one-shot analysis without queuing a run"
+mu exec "quick one-shot analysis"
 mu status --pretty
 mu issues ready --root <root-id> --pretty
+mu heartbeats --help
 
 # Inspect + mutate state (bounded first)
 mu issues list --status open --limit 20 --pretty
@@ -47,6 +47,28 @@ mu control status --pretty
 mu control reload
 ```
 
+## Minimal orchestration protocol contract
+
+`mu` treats the issue DAG as the executable coordination graph. The protocol kernel is:
+
+- `split/plan` — create child issues and dependency edges
+- `claim` — lease ready leaf work
+- `publish` — persist durable outputs/summaries to forum/artifacts
+- `close` — apply terminal outcomes (`success|failure|needs_work|expanded`)
+- `decide` — explicit gate decisions (ask/review/waiver/approval)
+
+Context semantics are operation-specific and deterministic:
+
+- **spawn context**: minimal dependency projection only (bounded, source-linked)
+- **fork context**: inherited branch context + deterministic reduction inputs for joins
+- **join/review gates**: ordinary DAG nodes with explicit dependencies (no global phase machine)
+
+CLI guidance:
+
+- Use primitive surfaces directly: `mu issues ...`, `mu forum ...`, and `mu exec ...`.
+- Durable automation: `mu heartbeats ...` and `mu cron ...`.
+- Operator session control: `mu session ...` and `mu turn ...`.
+
 ## mu, quickly
 
 `mu` is a modular and compositional system. Broken apart, here are some of the main ideas:
@@ -56,9 +78,10 @@ mu control reload
   - **Forum** for topic-based coordination and durable agent notes
   - **Event log** for append-only audit trails and run correlation
 
-- **Work orchestration: long-running execution engine**
-  - Role prompts for `orchestrator`, `reviewer`, and `worker`
-  - A DAG execution engine that claims ready leaves, executes work, and advances lifecycle state
+- **Work orchestration: protocol + skills**
+  - Minimal protocol contract over the issue DAG: `split/plan`, `claim`, `publish`, `close`, `decide`
+  - Context semantics are explicit: spawn = dependency-minimal projection; fork = inherited branch context + deterministic reductions
+  - Execution substrate is operator-driven skills (`planning`, `subagents`, `reviewer`) plus durable wake loops (`mu heartbeats`, `mu cron`)
 
 - **Chat: operators and sessions**
   - Operators are your chat-based portal to `mu`: they are capable coding agent sessions with knowledge of how `mu` works
@@ -96,8 +119,7 @@ mu inherits much of pi's philosophy, which grounds out in 3 main design points:
 
 ## Customizing mu: Project Context and Skills
 
-We don't recommend screwing around with the system prompts for orchestrators / workers, but 
-you can customize the behavior of `mu` as you would any other agent.
+You can customize `mu` behavior as you would any other agent via project context and skills.
 
 - **Project context**: mu only loads `AGENTS.md` (ignores `CLAUDE.md`).
 - **Customization**: if you wish to customize the context and behavior of mu's execution, use skills.
@@ -135,9 +157,9 @@ The attached terminal operator session uses generic tools (`bash`, `read`, `writ
 invokes `mu` CLI directly for state reads and mutations.
 
 In the attached terminal chat, ask naturally (for example: “show status”,
-“list ready issues”, “start a run for this prompt”).
+“list ready issues”, “show heartbeat programs”).
 The operator executes the corresponding CLI commands directly (for example: `mu status`,
-`mu issues ready`, `mu runs start ...`).
+`mu issues ready`, `mu heartbeats list`).
 
 Useful slash commands still available in-chat:
 
@@ -154,7 +176,7 @@ By default, `mu serve` uses a compact, information-dense chrome with a built-in
 Operator CLI discipline (context-safe by default):
 
 - Start with bounded discovery (`--limit` + scoped filters).
-- Then inspect specific entities via targeted commands (`mu issues get <id>`, `mu runs trace <id>`).
+- Then inspect specific entities via targeted commands (`mu issues get <id>`, `mu replay <root-id>/<issue-id>`).
 - Prefer focused commands over repeated broad scans of issues/forum/events.
 
 ### Terminal Operator Chat
@@ -261,13 +283,12 @@ Detailed adapter runbooks live in package READMEs:
 | Package | Description |
 |---------|-------------|
 | [`@femtomc/mu-core`](packages/core/README.md) | Types, JSONL persistence, DAG algorithms, event system. Runtime-agnostic core with Node and browser adapters. |
-| [`@femtomc/mu-agent`](packages/agent/README.md) | Shared agent runtime primitives (operator runtime/backends, orchestration role prompts, pi agent backends, and prompt helpers). |
+| [`@femtomc/mu-agent`](packages/agent/README.md) | Shared agent runtime primitives (operator runtime/backends, skill loading, pi agent backends, and prompt helpers). |
 | [`@femtomc/mu-control-plane`](packages/control-plane/README.md) | Messaging control-plane runtime (Slack/Discord/Telegram adapters, policy/confirmation/idempotency pipeline, outbox + DLQ tooling). |
 | [`@femtomc/mu-issue`](packages/issue/README.md) | Issue store — create, update, close, plus DAG queries (ready leaves, subtree, validate, collapsible). |
 | [`@femtomc/mu-forum`](packages/forum/README.md) | Forum store — topic-keyed messages with read filtering and event emission. |
-| [`@femtomc/mu-orchestrator`](packages/orchestrator/README.md) | DAG runner — walks the issue tree, dispatches to LLM backends, manages run lifecycle. |
-| [`@femtomc/mu`](packages/cli/README.md) | Bun CLI wrapping the above into `mu` commands. |
-| [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — control-plane transport/session/realtime plus run/activity coordination and heartbeat/cron operator-wake scheduling for `mu serve` and channel adapters. |
+| [`@femtomc/mu`](packages/cli/README.md) | Bun CLI wrapping protocol + skills control surfaces into `mu` commands. |
+| [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server — control-plane transport/session/realtime plus heartbeat/cron and operator-turn orchestration surfaces for `mu serve` and channel adapters. |
 | [`mu.nvim`](packages/neovim/README.md) | First-party Neovim frontend channel (`:Mu`, optional `:mu` alias) for control-plane ingress. |
 
 When `mu` is installed from npm, package READMEs are available under the install tree

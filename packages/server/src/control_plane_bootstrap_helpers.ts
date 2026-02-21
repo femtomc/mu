@@ -44,7 +44,6 @@ export function buildMessagingOperatorRuntime(opts: {
 	return new MessagingOperatorRuntime({
 		backend,
 		broker: new ApprovedCommandBroker({
-			runTriggersEnabled: opts.config.operator.run_triggers_enabled,
 			contextResolver: new CommandContextResolver({ allowedRepoRoots: [opts.repoRoot] }),
 		}),
 		enabled: true,

@@ -16,7 +16,6 @@ describe("control-plane modular boundaries", () => {
 		const forbiddenSpecifiers = [
 			"@femtomc/mu-issue",
 			"@femtomc/mu-forum",
-			"@femtomc/mu-orchestrator",
 			"packages/issue",
 			"packages/forum",
 		];

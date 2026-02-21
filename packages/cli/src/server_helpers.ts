@@ -2,15 +2,6 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { getStorePaths as resolveStorePaths } from "@femtomc/mu-core/node";
 
-export type QueuedRunSnapshot = {
-	job_id: string;
-	root_issue_id: string | null;
-	max_steps: number;
-	mode?: string;
-	status?: string;
-	source?: string;
-};
-
 function storePathForRepoRoot(repoRoot: string, ...parts: string[]): string {
 	return join(resolveStorePaths(repoRoot).storeDir, ...parts);
 }
@@ -46,29 +37,6 @@ export async function readApiError(response: Response, payloadOverride?: unknown
 		return `${detail} (${statusText})`;
 	}
 	return statusText;
-}
-
-export function normalizeQueuedRun(value: unknown): QueuedRunSnapshot | null {
-	const rec = asRecord(value);
-	if (!rec) {
-		return null;
-	}
-	const jobId = typeof rec.job_id === "string" ? rec.job_id.trim() : "";
-	if (jobId.length === 0) {
-		return null;
-	}
-	const rootRaw = typeof rec.root_issue_id === "string" ? rec.root_issue_id.trim() : "";
-	const rootIssueId = rootRaw.length > 0 ? rootRaw : null;
-	const maxSteps =
-		typeof rec.max_steps === "number" && Number.isFinite(rec.max_steps) ? Math.max(1, Math.trunc(rec.max_steps)) : 20;
-	return {
-		job_id: jobId,
-		root_issue_id: rootIssueId,
-		max_steps: maxSteps,
-		mode: typeof rec.mode === "string" ? rec.mode : undefined,
-		status: typeof rec.status === "string" ? rec.status : undefined,
-		source: typeof rec.source === "string" ? rec.source : undefined,
-	};
 }
 
 export async function detectRunningServer(repoRoot: string): Promise<{ url: string; port: number; pid: number } | null> {

@@ -356,7 +356,7 @@ async function createHarness(opts: HarnessOpts = {}): Promise<Harness> {
 		channel: "slack",
 		channelTenantId: "team-1",
 		channelActorId: "slack-actor",
-		scopes: opts.slackScopes ?? ["cp.read", "cp.issue.write", "cp.ops.admin", "cp.run.execute"],
+		scopes: opts.slackScopes ?? ["cp.read", "cp.issue.write", "cp.ops.admin"],
 		nowMs: clock.now,
 	});
 	await identities.link({
@@ -365,7 +365,7 @@ async function createHarness(opts: HarnessOpts = {}): Promise<Harness> {
 		channel: "discord",
 		channelTenantId: "guild-1",
 		channelActorId: "discord-actor",
-		scopes: opts.discordScopes ?? ["cp.read", "cp.issue.write", "cp.ops.admin", "cp.run.execute"],
+		scopes: opts.discordScopes ?? ["cp.read", "cp.issue.write", "cp.ops.admin"],
 		nowMs: clock.now,
 	});
 	await identities.link({
@@ -374,7 +374,7 @@ async function createHarness(opts: HarnessOpts = {}): Promise<Harness> {
 		channel: "telegram",
 		channelTenantId: "telegram-bot",
 		channelActorId: "telegram-actor",
-		scopes: opts.telegramScopes ?? ["cp.read", "cp.issue.write", "cp.ops.admin", "cp.run.execute"],
+		scopes: opts.telegramScopes ?? ["cp.read", "cp.issue.write", "cp.ops.admin"],
 		nowMs: clock.now,
 	});
 
@@ -751,18 +751,23 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(harness.deliveries[1]?.body).toContain("RESULT · COMPLETED");
 	});
 
-	test("Telegram operator requests can safely trigger run resumes with correlation", async () => {
+	test("Telegram operator requests can safely trigger model updates with correlation", async () => {
 		const harness = await createHarness({
 			operatorResult: {
 				kind: "command",
-				command: { kind: "run_resume", root_issue_id: "mu-root-operator" },
+				command: {
+					kind: "operator_model_set",
+					provider: "openai-codex",
+					model: "gpt-5.3-codex",
+					thinking: "high",
+				},
 			},
 			cliRunResult: {
 				kind: "completed",
 				stdout: '{"status":"ok"}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: "mu-root-operator",
+				runRootId: null,
 			},
 		});
 
@@ -770,7 +775,7 @@ describe("channel adapters integrated with control-plane", () => {
 			slackRequest({
 				secret: "slack-secret",
 				timestampSec: Math.trunc(harness.clock.now / 1000),
-				text: "please resume that run",
+				text: "please update the operator model",
 				triggerId: "operator-slack-1",
 				requestId: "operator-slack-req-1",
 			}),
@@ -783,7 +788,7 @@ describe("channel adapters integrated with control-plane", () => {
 				secret: "discord-secret",
 				timestampSec: Math.trunc(harness.clock.now / 1000),
 				interactionId: "operator-discord-1",
-				text: "please resume that run",
+				text: "please update the operator model",
 			}),
 		);
 		expect(discordSubmit.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
@@ -793,7 +798,7 @@ describe("channel adapters integrated with control-plane", () => {
 			telegramMessageRequest({
 				secret: "telegram-secret",
 				updateId: 300,
-				text: "please resume that run",
+				text: "please update the operator model",
 			}),
 		);
 
@@ -821,20 +826,29 @@ describe("channel adapters integrated with control-plane", () => {
 		if (telegramConfirm.pipelineResult?.kind !== "completed") {
 			throw new Error(`expected completed, got ${telegramConfirm.pipelineResult?.kind}`);
 		}
-		expect(telegramConfirm.pipelineResult.command.cli_command_kind).toBe("run_resume");
-		expect(telegramConfirm.pipelineResult.command.run_root_id).toBe("mu-root-operator");
+		expect(telegramConfirm.pipelineResult.command.cli_command_kind).toBe("operator_model_set");
+		expect(telegramConfirm.pipelineResult.command.run_root_id).toBeNull();
 		expect(telegramConfirm.pipelineResult.command.operator_session_id).toMatch(/^operator-session-adapter-/);
 		expect(telegramConfirm.pipelineResult.command.operator_turn_id).toBe("operator-turn-adapter");
-		expect(telegramConfirm.outboxRecord?.envelope.correlation.cli_command_kind).toBe("run_resume");
-		expect(telegramConfirm.outboxRecord?.envelope.correlation.run_root_id).toBe("mu-root-operator");
+		expect(telegramConfirm.outboxRecord?.envelope.correlation.cli_command_kind).toBe("operator_model_set");
+		expect(telegramConfirm.outboxRecord?.envelope.correlation.run_root_id).toBeNull();
 		expect(telegramConfirm.outboxRecord?.envelope.correlation.cli_invocation_id).toBe(
 			telegramConfirm.pipelineResult.command.cli_invocation_id,
 		);
 
 		expect(harness.cliPlans.length).toBe(1);
 		for (const plan of harness.cliPlans) {
-			expect(plan.commandKind).toBe("run_resume");
-			expect(plan.argv[0]).toBe("mu");
+			expect(plan.commandKind).toBe("operator_model_set");
+			expect(plan.argv).toEqual([
+				"mu",
+				"control",
+				"operator",
+				"set",
+				"openai-codex",
+				"gpt-5.3-codex",
+				"high",
+				"--json",
+			]);
 		}
 	});
 
@@ -1017,18 +1031,18 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(audit?.[0]?.kind).toBe("download_failed");
 	});
 
-	test("Telegram operator path can kick off run starts and complete through confirmation", async () => {
+	test("Telegram operator path can update thinking level through confirmation", async () => {
 		const harness = await createHarness({
 			operatorResult: {
 				kind: "command",
-				command: { kind: "run_start", prompt: "ship release" },
+				command: { kind: "operator_thinking_set", thinking: "high" },
 			},
 			cliRunResult: {
 				kind: "completed",
 				stdout: '{"status":"ok"}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: "mu-root-start",
+				runRootId: null,
 			},
 		});
 
@@ -1036,14 +1050,14 @@ describe("channel adapters integrated with control-plane", () => {
 			telegramMessageRequest({
 				secret: "telegram-secret",
 				updateId: 900,
-				text: "please kick off a run to ship release",
+				text: "please increase operator thinking",
 			}),
 		);
 		expect(submit.pipelineResult?.kind).toBe("awaiting_confirmation");
 		if (submit.pipelineResult?.kind !== "awaiting_confirmation") {
 			throw new Error(`expected awaiting_confirmation, got ${submit.pipelineResult?.kind}`);
 		}
-		expect(submit.pipelineResult.command.command_args).toEqual(["ship", "release"]);
+		expect(submit.pipelineResult.command.command_args).toEqual(["high"]);
 
 		const confirm = await harness.telegram.ingest(
 			telegramCallbackRequest({
@@ -1057,14 +1071,21 @@ describe("channel adapters integrated with control-plane", () => {
 		if (confirm.pipelineResult?.kind !== "completed") {
 			throw new Error(`expected completed, got ${confirm.pipelineResult?.kind}`);
 		}
-		expect(confirm.pipelineResult.command.cli_command_kind).toBe("run_start");
-		expect(confirm.pipelineResult.command.run_root_id).toBe("mu-root-start");
+		expect(confirm.pipelineResult.command.cli_command_kind).toBe("operator_thinking_set");
+		expect(confirm.pipelineResult.command.run_root_id).toBeNull();
 		expect(confirm.outboxRecord?.envelope.body).toContain("RESULT · COMPLETED");
-		expect(confirm.outboxRecord?.envelope.body).toContain("run start");
+		expect(confirm.outboxRecord?.envelope.body).toContain("operator thinking set");
 
 		expect(harness.cliPlans.length).toBe(1);
-		expect(harness.cliPlans[0]?.commandKind).toBe("run_start");
-		expect(harness.cliPlans[0]?.argv).toEqual(["mu", "runs", "start", "ship release", "--max-steps", "20"]);
+		expect(harness.cliPlans[0]?.commandKind).toBe("operator_thinking_set");
+		expect(harness.cliPlans[0]?.argv).toEqual([
+			"mu",
+			"control",
+			"operator",
+			"thinking-set",
+			"high",
+			"--json",
+		]);
 	});
 
 	test("Slack non-command turns are deterministic no-op with guidance", async () => {

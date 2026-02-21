@@ -2,7 +2,6 @@ import { existsSync, openSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getStorePaths as resolveStorePaths } from "@femtomc/mu-core/node";
-import { asRecord, normalizeQueuedRun, readApiError } from "./server_helpers.js";
 
 export type ServeRuntimeRunResult = {
 	stdout: string;
@@ -29,15 +28,6 @@ export type ServeServerHandle = {
 	stop: () => Promise<void>;
 };
 
-export type QueuedRunSnapshot = {
-	job_id: string;
-	root_issue_id: string | null;
-	max_steps: number;
-	mode?: string;
-	status?: string;
-	source?: string;
-};
-
 export type OperatorSessionStartMode = "in-memory" | "continue-recent" | "new" | "open";
 
 export type OperatorSessionStartOpts = {
@@ -59,14 +49,6 @@ export type ServeDeps = {
 		sessionDir?: string;
 		sessionFile?: string;
 	}) => Promise<ServeRuntimeRunResult>;
-	queueRun: (opts: {
-		serverUrl: string;
-		prompt: string;
-		maxSteps: number;
-		provider?: string;
-		model?: string;
-		reasoning?: string;
-	}) => Promise<QueuedRunSnapshot>;
 	registerSignalHandler: (signal: NodeJS.Signals, handler: () => void) => () => void;
 	registerProcessExitHandler: (handler: () => void) => () => void;
 };
@@ -246,34 +228,6 @@ export function buildServeDeps<Ctx extends { repoRoot: string; serveDeps?: Parti
 				sessionFile: requestedSession.sessionFile,
 			});
 		},
-		queueRun: async ({ serverUrl, prompt, maxSteps, provider, model, reasoning }) => {
-			const response = await fetch(`${serverUrl}/api/control-plane/runs/start`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					prompt,
-					max_steps: maxSteps,
-					provider: provider ?? null,
-					model: model ?? null,
-					reasoning: reasoning ?? null,
-				}),
-			});
-			let payload: unknown = null;
-			try {
-				payload = await response.json();
-			} catch {
-				// handled below via status check + normalizeQueuedRun guard
-			}
-			if (!response.ok) {
-				const detail = await readApiError(response, payload);
-				throw new Error(`run queue request failed: ${detail}`);
-			}
-			const run = normalizeQueuedRun(asRecord(payload)?.run);
-			if (!run) {
-				throw new Error("run queue response missing run snapshot");
-			}
-			return run;
-		},
 		registerSignalHandler: (signal, handler) => {
 			process.on(signal, handler);
 			return () => {
@@ -340,13 +294,13 @@ export async function runServeLifecycle<Ctx extends { repoRoot: string; io?: Ser
 
 	Bun.env.MU_SERVER_URL = serverUrl;
 
-	// Step 2: Run pre-operator hooks (mu run: queue work before operator attach)
+	// Step 2: Run pre-operator hooks before operator attach
 	if (opts.beforeOperatorSession) {
 		try {
 			await opts.beforeOperatorSession({ serverUrl, deps: serveDeps, io });
 		} catch (err) {
 			return deps.jsonError(`failed to prepare run lifecycle: ${deps.describeError(err)}`, {
-				recovery: [`mu ${opts.commandName} --help`, "mu serve --help", "mu run --help"],
+				recovery: [`mu ${opts.commandName} --help`, "mu serve --help"],
 			});
 		}
 	}

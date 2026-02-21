@@ -30,40 +30,13 @@ describe("parseSeriousWorkCommand", () => {
 			args: [],
 		});
 
-		const runResume = parseSeriousWorkCommand("/mu run resume mu-abc123 40");
-		expect(runResume).toMatchObject({
+		const legacyRun = parseSeriousWorkCommand("/mu run resume mu-abc123 40");
+		expect(legacyRun).toMatchObject({
 			kind: "command",
 			invocation: "slash",
 			requestedMode: "auto",
-			commandKey: "run resume",
-			args: ["mu-abc123", "40"],
-		});
-
-		const runList = parseSeriousWorkCommand("/mu run list");
-		expect(runList).toMatchObject({
-			kind: "command",
-			invocation: "slash",
-			requestedMode: "auto",
-			commandKey: "run list",
-			args: [],
-		});
-
-		const runStatus = parseSeriousWorkCommand("/mu run status mu-abc123");
-		expect(runStatus).toMatchObject({
-			kind: "command",
-			invocation: "slash",
-			requestedMode: "auto",
-			commandKey: "run status",
-			args: ["mu-abc123"],
-		});
-
-		const runInterrupt = parseSeriousWorkCommand("/mu run interrupt mu-abc123");
-		expect(runInterrupt).toMatchObject({
-			kind: "command",
-			invocation: "slash",
-			requestedMode: "auto",
-			commandKey: "run interrupt",
-			args: ["mu-abc123"],
+			commandKey: "run",
+			args: ["resume", "mu-abc123", "40"],
 		});
 
 		const reload = parseSeriousWorkCommand("/reload");

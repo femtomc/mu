@@ -62,7 +62,6 @@ const INTERNAL_PACKAGE_DEPENDENCY_INVARIANTS: Record<string, readonly string[]> 
 	"@femtomc/mu-control-plane": ["@femtomc/mu-core"],
 	"@femtomc/mu-forum": ["@femtomc/mu-core"],
 	"@femtomc/mu-issue": ["@femtomc/mu-core"],
-	"@femtomc/mu-orchestrator": ["@femtomc/mu-agent", "@femtomc/mu-core", "@femtomc/mu-forum", "@femtomc/mu-issue"],
 	"@femtomc/mu-server": ["@femtomc/mu-agent", "@femtomc/mu-control-plane", "@femtomc/mu-core"],
 	"@femtomc/mu": [
 		"@femtomc/mu-agent",
@@ -70,7 +69,6 @@ const INTERNAL_PACKAGE_DEPENDENCY_INVARIANTS: Record<string, readonly string[]> 
 		"@femtomc/mu-core",
 		"@femtomc/mu-forum",
 		"@femtomc/mu-issue",
-		"@femtomc/mu-orchestrator",
 		"@femtomc/mu-server",
 	],
 };
@@ -99,7 +97,6 @@ const SOURCE_BOUNDARY_RULES: SourceBoundaryRule[] = [
 		forbiddenTokens: [
 			{ token: "@femtomc/mu-issue", reason: "do not couple adapters directly to issue persistence" },
 			{ token: "@femtomc/mu-forum", reason: "do not couple adapters directly to forum persistence" },
-			{ token: "@femtomc/mu-orchestrator", reason: "do not couple adapters to orchestration engine" },
 			{ token: "packages/issue", reason: "do not bypass package boundaries with source imports" },
 			{ token: "packages/forum", reason: "do not bypass package boundaries with source imports" },
 			{ token: ".journal.append", reason: "adapter layer must not mutate command journal directly" },

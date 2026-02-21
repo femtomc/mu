@@ -4,19 +4,12 @@ import { cmdEvents as cmdEventsCommand } from "./commands/events.js";
 import { cmdForum as cmdForumCommand } from "./commands/forum.js";
 import { cmdIssues as cmdIssuesCommand } from "./commands/issues.js";
 import { cmdReplay as cmdReplayCommand } from "./commands/replay.js";
-import { cmdResume as cmdResumeCommand } from "./commands/resume.js";
-import { cmdRun as cmdRunCommand } from "./commands/run.js";
-import { cmdRunDirect as cmdRunDirectCommand } from "./commands/run_direct.js";
 import { cmdOperatorSession as cmdOperatorSessionCommand } from "./commands/operator_session.js";
 import { cmdServe as cmdServeCommand, cmdStop as cmdStopCommand } from "./commands/serve.js";
 import { cmdSession as cmdSessionCommand } from "./commands/session.js";
 import { cmdStore as cmdStoreCommand } from "./commands/store.js";
 import { cmdStatus as cmdStatusCommand } from "./commands/status.js";
-import {
-	cmdCron as cmdCronCommand,
-	cmdHeartbeats as cmdHeartbeatsCommand,
-	cmdRuns as cmdRunsCommand,
-} from "./commands/scheduling.js";
+import { cmdCron as cmdCronCommand, cmdHeartbeats as cmdHeartbeatsCommand } from "./commands/scheduling.js";
 import { cmdMemory as cmdMemoryCommand } from "./commands/memory.js";
 import { cmdLogin as cmdLoginCommand } from "./commands/login.js";
 import { cmdTurn as cmdTurnCommand } from "./commands/turn.js";
@@ -29,9 +22,6 @@ import {
 	memoryCommandDeps,
 	operatorSessionCommandDeps,
 	replayCommandDeps,
-	resumeCommandDeps,
-	runCommandDeps,
-	runDirectCommandDeps,
 	schedulingCommandDeps,
 	sessionCommandDeps,
 	serveCommandDeps,
@@ -88,9 +78,6 @@ export function createCommandHandlers(deps: CreateCommandHandlersDeps) {
 		cmdEvents: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
 			return await cmdEventsCommand(argv, ctx, eventsCommandDeps());
 		},
-		cmdRuns: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
-			return await cmdRunsCommand(argv, ctx, schedulingCommandDeps(deps.requestServerJson));
-		},
 		cmdHeartbeats: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
 			return await cmdHeartbeatsCommand(argv, ctx, schedulingCommandDeps(deps.requestServerJson));
 		},
@@ -103,9 +90,6 @@ export function createCommandHandlers(deps: CreateCommandHandlersDeps) {
 		cmdTurn: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
 			return await cmdTurnCommand(argv, ctx, turnCommandDeps());
 		},
-		cmdRun: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
-			return await cmdRunCommand(argv, ctx, runCommandDeps(deps.runServeLifecycle));
-		},
 		cmdExec: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
 			return await cmdOperatorSessionCommand(
 				argv,
@@ -113,12 +97,6 @@ export function createCommandHandlers(deps: CreateCommandHandlersDeps) {
 				{ commandName: "exec", allowInteractive: false, session: { mode: "in-memory" } },
 				operatorSessionCommandDeps(),
 			);
-		},
-		cmdRunDirect: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
-			return await cmdRunDirectCommand(argv, ctx, runDirectCommandDeps());
-		},
-		cmdResume: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
-			return await cmdResumeCommand(argv, ctx, resumeCommandDeps(deps.resolveIssueId));
 		},
 		cmdLogin: async (argv: string[]): Promise<RunResult> => {
 			return await cmdLoginCommand(argv, loginCommandDeps());

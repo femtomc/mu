@@ -124,13 +124,6 @@ Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace
 
 ### Control-plane Coordination Endpoints
 
-- Runs:
-  - `GET /api/control-plane/runs`
-  - `POST /api/control-plane/runs/start`
-  - `POST /api/control-plane/runs/resume`
-  - `POST /api/control-plane/runs/interrupt`
-  - `GET /api/control-plane/runs/:id`
-  - `GET /api/control-plane/runs/:id/trace`
 - Scheduling + orchestration:
   - `GET|POST|PATCH|DELETE /api/heartbeats...`
   - `GET|POST|PATCH|DELETE /api/cron...`

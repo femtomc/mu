@@ -651,82 +651,41 @@ describe("mu-server", () => {
 	});
 
 
-	test("run management APIs proxy through control-plane handle", async () => {
-		const run = {
-			job_id: "run-job-1",
-			mode: "run_start",
-			status: "running",
-			prompt: "ship release",
-			root_issue_id: "mu-root1234",
-			max_steps: 20,
-			command_id: "cmd-1",
-			source: "command",
-			started_at_ms: 1,
-			updated_at_ms: 2,
-			finished_at_ms: null,
-			exit_code: null,
-			pid: 10,
-			last_progress: "Step 1/20",
-		} as const;
+	test("legacy run management APIs are absent", async () => {
 		const controlPlane: ControlPlaneHandle = {
 			activeAdapters: [{ name: "telegram", route: "/webhooks/telegram" }],
 			handleWebhook: async () => null,
-			listRuns: async () => [run],
-			getRun: async () => run,
-			startRun: async () => run,
-			resumeRun: async () => ({ ...run, mode: "run_resume" }),
-			interruptRun: async () => ({ ok: true, reason: null, run }),
-			traceRun: async () => ({ run, stdout: ["a"], stderr: ["b"], log_hints: [".mu/logs/x"], trace_files: [] }),
 			stop: async () => {},
 		};
 		const serverWithRuns = await createServerForTest({ repoRoot: tempDir, controlPlane });
 
-		const listRes = await serverWithRuns.fetch(new Request("http://localhost/api/control-plane/runs?limit=10"));
-		expect(listRes.status).toBe(200);
-		const listPayload = (await listRes.json()) as { count: number; runs: Array<{ job_id: string }> };
-		expect(listPayload.count).toBe(1);
-		expect(listPayload.runs[0]?.job_id).toBe("run-job-1");
-
-		const getRes = await serverWithRuns.fetch(new Request("http://localhost/api/control-plane/runs/mu-root1234"));
-		expect(getRes.status).toBe(200);
-		const getPayload = (await getRes.json()) as { root_issue_id: string };
-		expect(getPayload.root_issue_id).toBe("mu-root1234");
-
-		const traceRes = await serverWithRuns.fetch(new Request("http://localhost/api/control-plane/runs/run-job-1/trace?limit=10"));
-		expect(traceRes.status).toBe(200);
-		const tracePayload = (await traceRes.json()) as { stdout: string[]; stderr: string[] };
-		expect(tracePayload.stdout).toEqual(["a"]);
-		expect(tracePayload.stderr).toEqual(["b"]);
-
-		const startRes = await serverWithRuns.fetch(
+		const endpoints = [
+			new Request("http://localhost/api/control-plane/runs?limit=10"),
+			new Request("http://localhost/api/control-plane/runs/mu-root1234"),
+			new Request("http://localhost/api/control-plane/runs/run-job-1/trace?limit=10"),
 			new Request("http://localhost/api/control-plane/runs/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ prompt: "ship release", max_steps: 20 }),
 			}),
-		);
-		expect(startRes.status).toBe(201);
-
-		const resumeRes = await serverWithRuns.fetch(
 			new Request("http://localhost/api/control-plane/runs/resume", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ root_issue_id: "mu-root1234", max_steps: 20 }),
 			}),
-		);
-		expect(resumeRes.status).toBe(201);
-
-		const interruptRes = await serverWithRuns.fetch(
 			new Request("http://localhost/api/control-plane/runs/interrupt", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ root_issue_id: "mu-root1234" }),
 			}),
-		);
-		expect(interruptRes.status).toBe(200);
-		const interruptPayload = (await interruptRes.json()) as { ok: boolean };
-		expect(interruptPayload.ok).toBe(true);
+		];
 
+		for (const request of endpoints) {
+			const res = await serverWithRuns.fetch(request);
+			expect(res.status).toBe(404);
+			const payload = (await res.json()) as { error: string };
+			expect(payload.error).toContain("Not Found");
+		}
 	});
 
 	test("events API supports issue_id/run_id/contains query filters", async () => {

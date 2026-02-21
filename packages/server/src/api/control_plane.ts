@@ -8,7 +8,6 @@ import type { ServerRoutingDependencies } from "../server_routing.js";
 import { configRoutes } from "./config.js";
 import { eventRoutes } from "./events.js";
 import { identityRoutes } from "./identities.js";
-import { runRoutes } from "./runs.js";
 import { sessionTurnRoutes } from "./session_turn.js";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -213,10 +212,6 @@ export async function controlPlaneRoutes(
 			},
 			{ headers },
 		);
-	}
-
-	if (path === "/api/control-plane/runs" || path.startsWith("/api/control-plane/runs/")) {
-		return runRoutes(request, url, deps, headers);
 	}
 
 	if (path === "/api/control-plane/turn") {

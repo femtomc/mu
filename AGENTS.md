@@ -12,7 +12,6 @@ If the user did not give a concrete task in their first message:
    - `packages/control-plane/README.md`
    - `packages/forum/README.md`
    - `packages/issue/README.md`
-   - `packages/orchestrator/README.md`
    - `packages/cli/README.md`
    - `packages/server/README.md`
    - `packages/neovim/README.md`

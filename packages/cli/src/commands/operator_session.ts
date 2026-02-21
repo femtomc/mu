@@ -78,7 +78,7 @@ function operatorSessionHelp(commandName: "serve" | "exec"): string {
 	if (commandName === "exec") {
 		return (
 			[
-				"mu exec - run a one-shot operator prompt (no queued orchestration run)",
+				"mu exec - run a one-shot operator prompt",
 				"",
 				"Usage:",
 				"  mu exec <prompt...> [--provider ID] [--model ID] [--thinking LEVEL] [--system-prompt TEXT] [--json]",
@@ -93,8 +93,7 @@ function operatorSessionHelp(commandName: "serve" | "exec"): string {
 				"",
 				"Notes:",
 				"  Uses an in-memory operator session and exits after one reply.",
-				"  Does not queue a run or invoke the DAG orchestration engine.",
-				"  Use `mu run` when you want orchestrated issue-DAG execution.",
+				"  For durable workflows, combine `mu issues` + `mu forum` with `mu heartbeats`/`mu cron`.",
 				"",
 				"Examples:",
 				'  mu exec "Investigate failing tests and propose a fix"',

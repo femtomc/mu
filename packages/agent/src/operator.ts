@@ -38,20 +38,6 @@ export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 		topic: z.string().trim().min(1).optional(),
 		limit: z.number().int().min(1).max(500).optional(),
 	}),
-	z.object({ kind: z.literal("run_list") }),
-	z.object({
-		kind: z.literal("run_status"),
-		root_issue_id: z.string().trim().min(1).optional(),
-	}),
-	z.object({
-		kind: z.literal("run_resume"),
-		root_issue_id: z.string().trim().min(1).optional(),
-		max_steps: z.number().int().min(1).max(500).optional(),
-	}),
-	z.object({
-		kind: z.literal("run_interrupt"),
-		root_issue_id: z.string().trim().min(1).optional(),
-	}),
 	z.object({ kind: z.literal("reload") }),
 	z.object({ kind: z.literal("update") }),
 	z.object({ kind: z.literal("operator_config_get") }),
@@ -73,11 +59,6 @@ export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("operator_thinking_set"),
 		thinking: z.string().trim().min(1),
-	}),
-	z.object({
-		kind: z.literal("run_start"),
-		prompt: z.string().trim().min(1),
-		max_steps: z.number().int().min(1).max(500).optional(),
 	}),
 ]);
 export type OperatorApprovedCommand = z.infer<typeof OperatorApprovedCommandSchema>;
@@ -133,24 +114,15 @@ export type ApprovedCommandBrokerOpts = {
 	runTriggersEnabled?: boolean;
 };
 
-function splitPromptIntoTokens(prompt: string): string[] {
-	return prompt
-		.split(/\s+/)
-		.map((token) => token.trim())
-		.filter((token) => token.length > 0);
-}
-
 function normalizeArg(arg: string): string {
 	return arg.trim();
 }
 
 export class ApprovedCommandBroker {
 	readonly #contextResolver: CommandContextResolver;
-	readonly #runTriggersEnabled: boolean;
 
 	public constructor(opts: ApprovedCommandBrokerOpts = {}) {
 		this.#contextResolver = opts.contextResolver ?? new CommandContextResolver();
-		this.#runTriggersEnabled = opts.runTriggersEnabled ?? true;
 	}
 
 	public approve(opts: { proposal: OperatorApprovedCommand; inbound: InboundEnvelope }):
@@ -199,42 +171,6 @@ export class ApprovedCommandBroker {
 				}
 				break;
 			}
-			case "run_list":
-				commandKey = "run list";
-				args = [];
-				break;
-			case "run_status":
-				commandKey = "run status";
-				args = [];
-				if (opts.proposal.root_issue_id) {
-					args.push(normalizeArg(opts.proposal.root_issue_id));
-				}
-				break;
-			case "run_resume": {
-				if (!this.#runTriggersEnabled) {
-					return { kind: "reject", reason: "operator_action_disallowed", details: "run triggers disabled" };
-				}
-				commandKey = "run resume";
-				args = [];
-				if (opts.proposal.root_issue_id) {
-					args.push(normalizeArg(opts.proposal.root_issue_id));
-				}
-				if (opts.proposal.max_steps != null) {
-					args.push(String(Math.trunc(opts.proposal.max_steps)));
-				}
-				break;
-			}
-			case "run_interrupt": {
-				if (!this.#runTriggersEnabled) {
-					return { kind: "reject", reason: "operator_action_disallowed", details: "run triggers disabled" };
-				}
-				commandKey = "run interrupt";
-				args = [];
-				if (opts.proposal.root_issue_id) {
-					args.push(normalizeArg(opts.proposal.root_issue_id));
-				}
-				break;
-			}
 			case "reload": {
 				commandKey = "reload";
 				args = [];
@@ -280,14 +216,6 @@ export class ApprovedCommandBroker {
 			case "operator_thinking_set": {
 				commandKey = "operator thinking set";
 				args = [normalizeArg(opts.proposal.thinking)];
-				break;
-			}
-			case "run_start": {
-				if (!this.#runTriggersEnabled) {
-					return { kind: "reject", reason: "operator_action_disallowed", details: "run triggers disabled" };
-				}
-				commandKey = "run start";
-				args = splitPromptIntoTokens(opts.proposal.prompt);
 				break;
 			}
 			default:
@@ -346,7 +274,7 @@ function buildOperatorFailureFallbackMessage(code: string): string {
 	return [
 		"I ran into an internal operator formatting/runtime issue and could not complete that turn safely.",
 		`Code: ${code}`,
-		"You can retry, or use an explicit /mu command (for example: /mu status or /mu run list).",
+		"You can retry, or use an explicit /mu command (for example: /mu status or /mu issue list).",
 	].join("\n");
 }
 

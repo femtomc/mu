@@ -23,7 +23,6 @@ import {
 	containsTelegramMathNotation,
 	renderTelegramMarkdown,
 } from "../src/control_plane.js";
-import type { ControlPlaneRunProcess } from "../src/run_supervisor.js";
 
 const handlesToCleanup = new Set<ControlPlaneHandle>();
 const dirsToCleanup = new Set<string>();
@@ -1162,20 +1161,19 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(backend.turns).toBe(0);
 	});
 
-	test("run trigger actions can be disabled on the operator bridge", async () => {
+	test("legacy operator run proposals degrade to safe backend-error responses", async () => {
 		const repoRoot = await mkRepoRoot();
-		await linkTelegramIdentity(repoRoot, ["cp.read", "cp.run.execute"]);
+		await linkTelegramIdentity(repoRoot, ["cp.read"]);
 
 		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({
 				telegramSecret: "telegram-secret",
-				runTriggersEnabled: false,
 			}),
 			operatorBackend: new StaticOperatorBackend({
 				kind: "command",
 				command: { kind: "run_resume", root_issue_id: "mu-root-1234" },
-			}),
+			} as unknown as OperatorBackendTurnResult),
 		});
 		expect(handle).not.toBeNull();
 		if (!handle) {
@@ -1201,18 +1199,17 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(body.chat_id).toBe("tg-chat-1");
 
 		const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
-		let deniedBody = "";
+		let responseBody = "";
 		for (let attempt = 0; attempt < 40; attempt++) {
 			await outbox.load();
-			const denied = outbox.records().find((record) => record.envelope.channel === "telegram");
-			if (typeof denied?.envelope.body === "string" && denied.envelope.body.length > 0) {
-				deniedBody = denied.envelope.body;
+			const record = outbox.records().find((entry) => entry.envelope.channel === "telegram");
+			if (typeof record?.envelope.body === "string" && record.envelope.body.length > 0) {
+				responseBody = record.envelope.body;
 				break;
 			}
 			await Bun.sleep(10);
 		}
-		expect(deniedBody).toContain("ERROR · DENIED");
-		expect(deniedBody).toContain("operator_action_disallowed");
+		expect(responseBody).toContain("operator_backend_error");
 	});
 
 	test("terminal reload/update commands route through session lifecycle", async () => {
@@ -1255,30 +1252,13 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(calls).toEqual(["reload", "update"]);
 	});
 
-	test("command-originated run lifecycle notifications stay routable via outbox", async () => {
+	test("legacy run commands are denied and emit no run lifecycle metadata", async () => {
 		const repoRoot = await mkRepoRoot();
-		await linkSlackIdentity(repoRoot, ["cp.read", "cp.run.execute"]);
-
-		let resolveExit: (code: number) => void = () => {};
-		const exited = new Promise<number>((resolve) => {
-			resolveExit = resolve;
-		});
+		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
 		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({ slackSecret: "slack-secret" }),
-			runSupervisorSpawnProcess: () => {
-				const process: ControlPlaneRunProcess = {
-					pid: 777,
-					stdout: streamFromLines([]),
-					stderr: streamFromLines([]),
-					exited,
-					kill() {
-						resolveExit(0);
-					},
-				};
-				return process;
-			},
 		});
 		expect(handle).not.toBeNull();
 		if (!handle) {
@@ -1300,37 +1280,11 @@ describe("bootstrapControlPlane operator wiring", () => {
 			throw new Error("expected webhook response");
 		}
 		expect(response.status).toBe(200);
-		const kickoffBody = (await response.json()) as { text?: string };
-		const commandId = kickoffBody.text?.match(/cmd-[a-z0-9-]+/i)?.[0] ?? null;
-		expect(commandId).not.toBeNull();
-		if (!commandId) {
-			throw new Error("expected command id in confirmation response");
-		}
-
-		const confirmResponse = await handle.handleWebhook(
-			"/webhooks/slack",
-			slackRequest({
-				secret: "slack-secret",
-				timestampSec: Math.trunc(Date.now() / 1000),
-				text: `confirm ${commandId}`,
-				triggerId: "run-heartbeat-2",
-			}),
-		);
-		expect(confirmResponse).not.toBeNull();
-		if (!confirmResponse) {
-			throw new Error("expected confirmation webhook response");
-		}
-		expect(confirmResponse.status).toBe(200);
-
-		await waitFor(async () => {
-			const run = await handle.getRun?.("mu-rootcmd123");
-			return run?.status === "running" ? true : null;
-		});
+		const deniedBody = (await response.json()) as { text?: string };
+		expect(deniedBody.text).toContain("ACK · IGNORED");
+		expect(deniedBody.text).toContain("channel_requires_explicit_command");
 
 		await Bun.sleep(150);
-		resolveExit(0);
-
-		await Bun.sleep(350);
 		const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
 		await outbox.load();
 		const runEventKinds = new Set(
@@ -1339,199 +1293,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 				.filter((record) => typeof record.envelope.metadata.run_event_kind === "string")
 				.map((record) => String(record.envelope.metadata.run_event_kind)),
 		);
-		expect(runEventKinds.has("run_started")).toBe(true);
-		expect(runEventKinds.has("run_completed")).toBe(true);
-	});
-
-	test("run queue snapshots persist across control-plane restarts", async () => {
-		const repoRoot = await mkRepoRoot();
-
-		const firstHandle = await bootstrapControlPlaneForTest({
-			repoRoot,
-			config: configWith({}),
-			terminalEnabled: true,
-			runSupervisorSpawnProcess: () => {
-				const process: ControlPlaneRunProcess = {
-					pid: 555,
-					stdout: streamFromLines([]),
-					stderr: streamFromLines([]),
-					exited: Promise.resolve(0),
-					kill() {},
-				};
-				return process;
-			},
-		});
-		expect(firstHandle).not.toBeNull();
-		if (!firstHandle) {
-			throw new Error("expected control plane handle");
-		}
-		handlesToCleanup.add(firstHandle);
-
-		const run = await firstHandle.startRun?.({ prompt: "persist queue state", maxSteps: 3 });
-		expect(run).not.toBeNull();
-		if (!run) {
-			throw new Error("expected started run");
-		}
-
-		await waitFor(async () => {
-			const latest = await firstHandle.getRun?.(run.job_id);
-			return latest?.status === "completed" ? latest : null;
-		});
-
-		handlesToCleanup.delete(firstHandle);
-		await firstHandle.stop();
-
-		const secondHandle = await bootstrapControlPlaneForTest({
-			repoRoot,
-			config: configWith({}),
-			terminalEnabled: true,
-		});
-		expect(secondHandle).not.toBeNull();
-		if (!secondHandle) {
-			throw new Error("expected control plane handle");
-		}
-		handlesToCleanup.add(secondHandle);
-
-		const restored = await secondHandle.getRun?.(run.job_id);
-		expect(restored).not.toBeNull();
-		expect(restored?.status).toBe("completed");
-		expect(restored?.queue_state).toBe("done");
-		expect(typeof restored?.queue_id).toBe("string");
-
-		const listed = await secondHandle.listRuns?.({ limit: 20 });
-		expect(listed?.some((entry) => entry.job_id === run.job_id)).toBe(true);
-	});
-
-	test("run start/resume flow is queue-driven and obeys sequential inter-root policy", async () => {
-		const repoRoot = await mkRepoRoot();
-		const spawned: number[] = [];
-		const exitResolvers: Array<(code: number) => void> = [];
-		let nextPid = 800;
-
-		const handle = await bootstrapControlPlaneForTest({
-			repoRoot,
-			config: configWith({}),
-			terminalEnabled: true,
-			interRootQueuePolicy: { mode: "sequential", max_active_roots: 1 },
-			runSupervisorSpawnProcess: () => {
-				const pid = nextPid;
-				nextPid += 1;
-				spawned.push(pid);
-				let resolveExit: (code: number) => void = () => {};
-				const exited = new Promise<number>((resolve) => {
-					resolveExit = resolve;
-				});
-				exitResolvers.push(resolveExit);
-				const process: ControlPlaneRunProcess = {
-					pid,
-					stdout: streamFromLines([]),
-					stderr: streamFromLines([]),
-					exited,
-					kill() {
-						resolveExit(0);
-					},
-				};
-				return process;
-			},
-		});
-		expect(handle).not.toBeNull();
-		if (!handle) {
-			throw new Error("expected control plane handle");
-		}
-		handlesToCleanup.add(handle);
-
-		const first = await handle.resumeRun?.({ rootIssueId: "mu-rootseqa", maxSteps: 2 });
-		const second = await handle.resumeRun?.({ rootIssueId: "mu-rootseqb", maxSteps: 2 });
-		expect(first).not.toBeNull();
-		expect(second).not.toBeNull();
-		if (!first || !second) {
-			throw new Error("expected queued runs");
-		}
-
-		expect(first.queue_state).toBe("active");
-		expect(second.queue_state).toBe("queued");
-		expect(spawned.length).toBe(1);
-
-		exitResolvers[0]?.(0);
-		await waitFor(async () => {
-			const latestSecond = await handle.getRun?.(second.queue_id ?? second.job_id);
-			return latestSecond?.queue_state === "active" ? latestSecond : null;
-		});
-		expect(spawned.length).toBe(2);
-
-		exitResolvers[1]?.(0);
-		await waitFor(async () => {
-			const latestSecond = await handle.getRun?.(second.queue_id ?? second.job_id);
-			return latestSecond?.status === "completed" ? true : null;
-		});
-	});
-
-	test("terminal event wake re-enters queue reconcile and keeps terminal rows stable", async () => {
-		const repoRoot = await mkRepoRoot();
-		const spawned: number[] = [];
-		const exitResolvers: Array<(code: number) => void> = [];
-		let nextPid = 950;
-
-		const handle = await bootstrapControlPlaneForTest({
-			repoRoot,
-			config: configWith({}),
-			terminalEnabled: true,
-			interRootQueuePolicy: { mode: "sequential", max_active_roots: 1 },
-			runSupervisorSpawnProcess: () => {
-				const pid = nextPid;
-				nextPid += 1;
-				spawned.push(pid);
-				let resolveExit: (code: number) => void = () => {};
-				const exited = new Promise<number>((resolve) => {
-					resolveExit = resolve;
-				});
-				exitResolvers.push(resolveExit);
-				const process: ControlPlaneRunProcess = {
-					pid,
-					stdout: streamFromLines([]),
-					stderr: streamFromLines([]),
-					exited,
-					kill() {
-						resolveExit(0);
-					},
-				};
-				return process;
-			},
-		});
-		expect(handle).not.toBeNull();
-		if (!handle) {
-			throw new Error("expected control plane handle");
-		}
-		handlesToCleanup.add(handle);
-
-		const first = await handle.resumeRun?.({ rootIssueId: "mu-rootwakea", maxSteps: 2 });
-		const second = await handle.resumeRun?.({ rootIssueId: "mu-rootwakeb", maxSteps: 2 });
-		expect(first).not.toBeNull();
-		expect(second).not.toBeNull();
-		if (!first || !second) {
-			throw new Error("expected queued runs");
-		}
-		expect(first.queue_state).toBe("active");
-		expect(second.queue_state).toBe("queued");
-		expect(spawned.length).toBe(1);
-
-		exitResolvers[0]?.(0);
-		await waitFor(async () => {
-			const latestSecond = await handle.getRun?.(second.queue_id ?? second.job_id);
-			return latestSecond?.queue_state === "active" ? latestSecond : null;
-		});
-		expect(spawned.length).toBe(2);
-
-		const firstAfterRepeatedWake = await handle.getRun?.(first.queue_id ?? first.job_id);
-		expect(firstAfterRepeatedWake?.status).toBe("completed");
-		expect(firstAfterRepeatedWake?.queue_state).toBe("done");
-		expect(spawned.length).toBe(2);
-
-		exitResolvers[1]?.(0);
-		await waitFor(async () => {
-			const latestSecond = await handle.getRun?.(second.queue_id ?? second.job_id);
-			return latestSecond?.status === "completed" ? true : null;
-		});
+		expect(runEventKinds.size).toBe(0);
 	});
 
 	test("bootstrap cleanup releases writer lock when startup fails", async () => {

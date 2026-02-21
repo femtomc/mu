@@ -60,7 +60,6 @@ async function main(): Promise<void> {
 		join(repoRoot, "packages/agent/dist/index.d.ts"),
 		join(repoRoot, "packages/forum/dist/index.js"),
 		join(repoRoot, "packages/issue/dist/index.js"),
-		join(repoRoot, "packages/orchestrator/dist/index.js"),
 		join(repoRoot, "packages/cli/dist/index.js"),
 		join(repoRoot, "packages/cli/dist/cli.js"),
 	];
@@ -82,7 +81,6 @@ async function main(): Promise<void> {
 			{ name: "@femtomc/mu-agent", dir: join(repoRoot, "packages/agent") },
 			{ name: "@femtomc/mu-forum", dir: join(repoRoot, "packages/forum") },
 			{ name: "@femtomc/mu-issue", dir: join(repoRoot, "packages/issue") },
-			{ name: "@femtomc/mu-orchestrator", dir: join(repoRoot, "packages/orchestrator") },
 			{ name: "@femtomc/mu", dir: join(repoRoot, "packages/cli") },
 		] as const;
 
@@ -109,7 +107,6 @@ import { readJsonl } from "@femtomc/mu-core/node";
 import { LocalStorageJsonlStore } from "@femtomc/mu-core/browser";
 import { ForumStore } from "@femtomc/mu-forum";
 import { IssueStore } from "@femtomc/mu-issue";
-import { DagRunner } from "@femtomc/mu-orchestrator";
 import { run } from "@femtomc/mu";
 
 if (typeof newRunId !== "function") throw new Error("@femtomc/mu-core missing newRunId");
@@ -118,7 +115,6 @@ if (typeof readJsonl !== "function") throw new Error("@femtomc/mu-core/node miss
 if (typeof LocalStorageJsonlStore !== "function") throw new Error("@femtomc/mu-core/browser missing LocalStorageJsonlStore");
 if (typeof ForumStore !== "function") throw new Error("@femtomc/mu-forum missing ForumStore");
 if (typeof IssueStore !== "function") throw new Error("@femtomc/mu-issue missing IssueStore");
-if (typeof DagRunner !== "function") throw new Error("@femtomc/mu-orchestrator missing DagRunner");
 
 const help = await run(["--help"]);
 if (help.exitCode !== 0) throw new Error("@femtomc/mu run(--help) failed");

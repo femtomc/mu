@@ -177,7 +177,40 @@ describe("PiMessagingOperatorBackend", () => {
 		const backend = new PiMessagingOperatorBackend({
 			sessionFactory: async () =>
 				makeStubSession({
-					responses: ["I'll start that run for you."],
+					responses: ["Updating operator model."],
+					toolCalls: [
+						{
+							toolName: "command",
+							args: {
+								kind: "operator_model_set",
+								provider: "openai-codex",
+								model: "gpt-5.3-codex",
+								thinking: "high",
+							},
+						},
+					],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-cmd", turnId: "turn-1", commandText: "set operator model" }),
+		);
+		expect(result).toEqual({
+			kind: "command",
+			command: {
+				kind: "operator_model_set",
+				provider: "openai-codex",
+				model: "gpt-5.3-codex",
+				thinking: "high",
+			},
+		});
+	});
+
+	test("legacy run command tool calls are ignored and fall back to assistant text", async () => {
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ["I can no longer run legacy orchestration commands."],
 					toolCalls: [
 						{
 							toolName: "command",
@@ -188,48 +221,11 @@ describe("PiMessagingOperatorBackend", () => {
 		});
 
 		const result = await backend.runTurn(
-			mkInput({ sessionId: "session-cmd", turnId: "turn-1", commandText: "please run this" }),
+			mkInput({ sessionId: "session-legacy-run", turnId: "turn-1", commandText: "please run this" }),
 		);
 		expect(result).toEqual({
-			kind: "command",
-			command: {
-				kind: "run_start",
-				prompt: "ship release",
-			},
-		});
-	});
-
-	test("command tool call works with multi-line prompts", async () => {
-		const longPrompt = [
-			"Set up Telegram messaging integration for mu control-plane in /home/user/Dev/workshop.",
-			"Use public base URL https://example.tail4cdecd.ts.net (Tailscale Funnel -> localhost:3000).",
-			"Bot token: 123456:ABCDEF.",
-			"Generate a strong random webhook_secret, update .mu/config.json,",
-			"run a reload after writing config, call Telegram setWebhook, then verify.",
-		].join("\n");
-
-		const backend = new PiMessagingOperatorBackend({
-			sessionFactory: async () =>
-				makeStubSession({
-					responses: ["Setting up Telegram integration now."],
-					toolCalls: [
-						{
-							toolName: "command",
-							args: { kind: "run_start", prompt: longPrompt },
-						},
-					],
-				}),
-		});
-
-		const result = await backend.runTurn(
-			mkInput({ sessionId: "session-multiline", turnId: "turn-1", commandText: "set up telegram" }),
-		);
-		expect(result).toEqual({
-			kind: "command",
-			command: {
-				kind: "run_start",
-				prompt: longPrompt,
-			},
+			kind: "respond",
+			message: "I can no longer run legacy orchestration commands.",
 		});
 	});
 

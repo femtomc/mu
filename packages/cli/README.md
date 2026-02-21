@@ -35,16 +35,17 @@ mu issues list             # List all issues
 mu issues create "title"   # Create new issue
 mu issues ready            # Show ready leaf issues
 mu forum post topic -m "message"  # Post to forum
-mu run "goal..."           # Queue a run + attach operator terminal (auto-inits workspace store)
-mu exec "task..."          # One-shot operator prompt (no queued run)
-mu resume <root-id>        # Resume interrupted run
+mu exec "task..."          # One-shot operator prompt
+mu heartbeats --help        # Durable heartbeat automation programs
+mu cron --help              # Durable cron automation programs
 ```
 
 Most issue/forum/event/control-plane read surfaces now default to compact output.
 Use `--json` (optionally with `--pretty`) when you need full machine records.
 
+
 Use `mu exec` when you want a lightweight one-shot operator response.
-Use `mu run` when you want queued DAG orchestration with run lifecycle tracking.
+Use `mu heartbeats`/`mu cron` + `mu turn`/`mu session` for durable operator-centric automation loops.
 
 Memory retrieval supports a local memory index:
 

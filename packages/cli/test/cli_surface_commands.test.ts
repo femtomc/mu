@@ -33,8 +33,8 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 			if (url.pathname === "/healthz") {
 				return Response.json({ ok: true });
 			}
-			if (url.pathname === "/api/control-plane/runs") {
-				return Response.json({ count: 1, runs: [{ job_id: "run-1", status: "running" }] });
+			if (url.pathname === "/api/heartbeats") {
+				return Response.json({ count: 1, programs: [{ program_id: "hb-1", title: "hb", enabled: true }] });
 			}
 			if (url.pathname === "/api/heartbeats/create") {
 				return Response.json({ ok: true, program: { program_id: "hb-1", ...(body as Record<string, unknown>) } });
@@ -51,11 +51,16 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 	);
 
 	try {
-		const runs = await run(["runs", "list", "--status", "running", "--limit", "5", "--json"], { cwd: dir });
-		expect(runs.exitCode).toBe(0);
-		const runsPayload = JSON.parse(runs.stdout) as { count: number; runs: Array<{ job_id: string }> };
-		expect(runsPayload.count).toBe(1);
-		expect(runsPayload.runs[0]?.job_id).toBe("run-1");
+		const heartbeatsList = await run(["heartbeats", "list", "--limit", "5", "--json"], {
+			cwd: dir,
+		});
+		expect(heartbeatsList.exitCode).toBe(0);
+		const heartbeatsListPayload = JSON.parse(heartbeatsList.stdout) as {
+			count: number;
+			programs: Array<{ program_id: string }>;
+		};
+		expect(heartbeatsListPayload.count).toBe(1);
+		expect(heartbeatsListPayload.programs[0]?.program_id).toBe("hb-1");
 
 		const hb = await run(
 			[
@@ -82,9 +87,7 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 		expect(hbPayload.program.title).toBe("Run heartbeat");
 		expect(hbPayload.program.prompt).toBe("Check queued runs and recover stuck work");
 
-		expect(
-			seen.some((entry) => entry.path === "/api/control-plane/runs" && entry.search.includes("status=running")),
-		).toBe(true);
+		expect(seen.some((entry) => entry.path === "/api/heartbeats" && entry.search.includes("limit=5"))).toBe(true);
 		expect(seen.some((entry) => entry.path === "/api/heartbeats/create" && entry.method === "POST")).toBe(true);
 		expect(
 			seen.some(
@@ -125,22 +128,6 @@ test("control-plane/memory read interfaces default to compact output with opt-in
 			const url = new URL(req.url);
 			if (url.pathname === "/healthz") {
 				return Response.json({ ok: true });
-			}
-			if (url.pathname === "/api/control-plane/runs") {
-				return Response.json({
-					count: 1,
-					runs: [
-						{
-							job_id: "run-compact-1",
-							status: "running",
-							mode: "run_start",
-							root_issue_id: "mu-root-compact",
-							max_steps: 20,
-							updated_at_ms: Date.now(),
-							last_progress: "step 1/20",
-						},
-					],
-				});
 			}
 			if (url.pathname === "/api/heartbeats") {
 				return Response.json({
@@ -185,13 +172,6 @@ test("control-plane/memory read interfaces default to compact output with opt-in
 	);
 
 	try {
-		const runsCompact = await run(["runs", "list"], { cwd: dir });
-		expect(runsCompact.exitCode).toBe(0);
-		expect(runsCompact.stdout).toContain("Runs:");
-
-		const runsJson = await run(["runs", "list", "--json"], { cwd: dir });
-		expect(runsJson.exitCode).toBe(0);
-		expect((JSON.parse(runsJson.stdout) as { count: number }).count).toBe(1);
 
 		const heartbeatsCompact = await run(["heartbeats", "list"], { cwd: dir });
 		expect(heartbeatsCompact.exitCode).toBe(0);
@@ -460,42 +440,14 @@ test("memory search/timeline/stats use direct CLI runtime even when legacy /api/
 	}
 });
 
-test("direct CLI surfaces return deterministic failure payloads when dedicated endpoints fail", async () => {
+test("legacy runs command is removed from CLI surface", async () => {
 	const dir = await mkTempRepo();
-	const seen: string[] = [];
-
-	const server = Bun.serve({
-		port: 0,
-		fetch: async (req) => {
-			const url = new URL(req.url);
-			seen.push(url.pathname);
-			if (url.pathname === "/healthz") {
-				return Response.json({ ok: true });
-			}
-			if (url.pathname === "/api/control-plane/runs") {
-				return Response.json({ error: "runs unavailable" }, { status: 503 });
-			}
-			return Response.json({ error: "not found" }, { status: 404 });
-		},
-	});
-
-	const discovery = join(getStorePaths(dir).storeDir, "control-plane", "server.json");
-	await writeFile(
-		discovery,
-		`${JSON.stringify({ pid: process.pid, port: server.port, url: `http://localhost:${server.port}` })}\n`,
-		"utf8",
-	);
-
 	try {
 		const result = await run(["runs", "list"], { cwd: dir });
 		expect(result.exitCode).toBe(1);
 		const payload = JSON.parse(result.stdout) as { error?: string };
-		expect(payload.error).toContain("request failed: runs unavailable (503 Service Unavailable)");
-		expect(seen.includes("/api/control-plane/runs")).toBe(true);
-		expect(seen.includes("/api/query")).toBe(false);
-		expect(seen.includes("/api/commands/submit")).toBe(false);
+		expect(payload.error).toContain("unknown command: runs");
 	} finally {
-		server.stop(true);
 		await rm(dir, { recursive: true, force: true });
 	}
 });

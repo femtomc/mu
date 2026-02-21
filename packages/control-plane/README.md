@@ -190,13 +190,12 @@ collapsible UI while preserving deterministic serialization.
 `MessagingOperatorRuntime` (from `@femtomc/mu-agent`) is the user-facing operator runtime that sits outside orchestration execution dispatch. It translates conversational channel input into approved command proposals and routes them through the same policy/idempotency/confirmation pipeline.
 
 CLI execution is constrained through an explicit allowlist (`MuCliCommandSurface`) and a non-shell runner (`MuCliRunner`).
-Operator proposals can bridge readonly status/info queries (`status`, `ready`, `issue list`, `issue get`, `forum read`) plus mutating run lifecycle actions (`run start`, `run resume`), with run triggers still requiring confirmation and correlated end-to-end via:
+Operator proposals can bridge readonly status/info queries (`status`, `ready`, `issue list`, `issue get`, `forum read`, `operator config get`, `operator model list`, `operator thinking list`) and mutating operator configuration actions (`operator model set`, `operator thinking set`). Mutations still require confirmation and are correlated end-to-end via:
 
 - `operator_session_id`
 - `operator_turn_id`
 - `cli_invocation_id`
 - `cli_command_kind`
-- `run_root_id`
 
 Unsafe or ambiguous requests are rejected with explicit reasons (`context_missing`, `context_ambiguous`, `context_unauthorized`, `cli_validation_failed`, etc.).
 

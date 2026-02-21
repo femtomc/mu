@@ -123,12 +123,11 @@ export const ROLE_SCOPES: Record<string, readonly string[]> = {
 		"cp.read",
 		"cp.issue.write",
 		"cp.forum.write",
-		"cp.run.execute",
 		"cp.identity.self",
 		"cp.identity.admin",
 		"cp.ops.admin",
 	],
-	contributor: ["cp.read", "cp.issue.write", "cp.forum.write", "cp.run.execute", "cp.identity.self"],
+	contributor: ["cp.read", "cp.issue.write", "cp.forum.write", "cp.identity.self"],
 	viewer: ["cp.read"],
 };
 

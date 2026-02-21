@@ -189,13 +189,13 @@ describe("direct CLI integrity primitives", () => {
 				channel: "slack",
 				channelTenantId: "tenant-1",
 				channelActorId: "actor-1",
-				scopes: ["cp.read", "cp.run.execute"],
+				scopes: ["cp.read", "cp.ops.admin"],
 				nowMs: 100,
 			});
 
 			const first = await pipeline.handleInbound(
 				mkInbound(repoRoot, {
-					command_text: "/mu run resume mu-root-idem",
+					command_text: "/mu operator model set openai-codex gpt-5.3-codex high",
 				}),
 			);
 			expect(first.kind).toBe("awaiting_confirmation");
@@ -208,7 +208,7 @@ describe("direct CLI integrity primitives", () => {
 					request_id: "req-2",
 					delivery_id: "delivery-2",
 					received_at_ms: 101,
-					command_text: "/mu run resume mu-root-idem",
+					command_text: "/mu operator model set openai-codex gpt-5.3-codex high",
 				}),
 			);
 			expect(duplicate.kind).toBe("awaiting_confirmation");
@@ -233,14 +233,14 @@ describe("direct CLI integrity primitives", () => {
 				throw new Error(`expected completed, got ${confirmed.kind}`);
 			}
 			expect(cliPlans).toHaveLength(1);
-			expect(cliPlans[0]?.commandKind).toBe("run_resume");
+			expect(cliPlans[0]?.commandKind).toBe("operator_model_set");
 
 			const conflict = await pipeline.handleInbound(
 				mkInbound(repoRoot, {
 					request_id: "req-3",
 					delivery_id: "delivery-3",
 					received_at_ms: 103,
-					command_text: "/mu run list",
+					command_text: "/mu operator model list openai-codex",
 				}),
 			);
 			expect(conflict).toEqual({ kind: "denied", reason: "idempotency_conflict" });

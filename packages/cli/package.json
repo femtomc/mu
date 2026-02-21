@@ -30,7 +30,6 @@
     "@femtomc/mu-core": "workspace:*",
     "@femtomc/mu-forum": "workspace:*",
     "@femtomc/mu-issue": "workspace:*",
-    "@femtomc/mu-orchestrator": "workspace:*",
     "@femtomc/mu-server": "workspace:*",
     "@mariozechner/pi-ai": "^0.53.0",
     "@mariozechner/pi-coding-agent": "^0.53.0",

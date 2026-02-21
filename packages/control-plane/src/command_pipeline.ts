@@ -297,9 +297,6 @@ export class ControlPlaneCommandPipeline {
 			case "audit get":
 			case "dlq inspect":
 			case "dlq replay":
-			case "run resume":
-			case "run status":
-			case "run interrupt":
 				return [record.target_id];
 			default:
 				return [];

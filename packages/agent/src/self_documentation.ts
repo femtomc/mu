@@ -39,7 +39,6 @@ const INSTALLED_PACKAGE_README_LOOKUP = [
 	{ packageName: "@femtomc/mu-core", label: "@femtomc/mu-core" },
 	{ packageName: "@femtomc/mu-forum", label: "@femtomc/mu-forum" },
 	{ packageName: "@femtomc/mu-issue", label: "@femtomc/mu-issue" },
-	{ packageName: "@femtomc/mu-orchestrator", label: "@femtomc/mu-orchestrator" },
 	{ packageName: "@femtomc/mu-server", label: "@femtomc/mu-server" },
 ] as const;
 
@@ -49,7 +48,6 @@ const MONOREPO_PACKAGE_README_LOOKUP = [
 	{ relPath: join("packages", "core", "README.md"), label: "@femtomc/mu-core" },
 	{ relPath: join("packages", "forum", "README.md"), label: "@femtomc/mu-forum" },
 	{ relPath: join("packages", "issue", "README.md"), label: "@femtomc/mu-issue" },
-	{ relPath: join("packages", "orchestrator", "README.md"), label: "@femtomc/mu-orchestrator" },
 	{ relPath: join("packages", "server", "README.md"), label: "@femtomc/mu-server" },
 	{ relPath: join("packages", "cli", "README.md"), label: "@femtomc/mu (CLI)" },
 	{ relPath: join("packages", "neovim", "README.md"), label: "mu.nvim" },

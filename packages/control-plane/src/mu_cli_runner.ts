@@ -9,11 +9,6 @@ export const MuCliCommandKindSchema = z.enum([
 	"issue_get",
 	"issue_list",
 	"forum_read",
-	"run_list",
-	"run_status",
-	"run_start",
-	"run_resume",
-	"run_interrupt",
 	"operator_config_get",
 	"operator_model_list",
 	"operator_thinking_list",
@@ -31,11 +26,6 @@ const KNOWN_COMMAND_KEYS = new Set<string>([
 	"issue get",
 	"issue list",
 	"forum read",
-	"run list",
-	"run status",
-	"run start",
-	"run resume",
-	"run interrupt",
 	"operator config get",
 	"operator model list",
 	"operator thinking list",
@@ -72,17 +62,6 @@ function parsePositiveInt(raw: string): number | null {
 		return null;
 	}
 	return value;
-}
-
-function parseRunMaxSteps(arg: string | undefined): number | null {
-	if (arg == null) {
-		return 20;
-	}
-	const parsed = parsePositiveInt(arg);
-	if (parsed == null || parsed < 1 || parsed > 500) {
-		return null;
-	}
-	return parsed;
 }
 
 function parseForumLimit(arg: string | undefined): number | null {
@@ -269,62 +248,6 @@ export class MuCliCommandSurface {
 					},
 				};
 			}
-			case "run list": {
-				if (args.length > 0) {
-					return reject("cli_validation_failed", "run list does not accept arguments");
-				}
-				return {
-					kind: "ok",
-					plan: {
-						invocationId,
-						commandKind: "run_list",
-						argv: [this.#muBinary, "runs", "list", "--limit", "100"],
-						timeoutMs: this.#readTimeoutMs,
-						runRootId: null,
-						mutating: false,
-					},
-				};
-			}
-			case "run status": {
-				if (args.length !== 1) {
-					return reject("cli_validation_failed", "run status expects <root-id>");
-				}
-				const rootId = resolveIssueId(args[0]);
-				if (!rootId) {
-					return reject("cli_validation_failed", "invalid run root id");
-				}
-				return {
-					kind: "ok",
-					plan: {
-						invocationId,
-						commandKind: "run_status",
-						argv: [this.#muBinary, "runs", "get", rootId],
-						timeoutMs: this.#readTimeoutMs,
-						runRootId: rootId,
-						mutating: false,
-					},
-				};
-			}
-			case "run interrupt": {
-				if (args.length !== 1) {
-					return reject("cli_validation_failed", "run interrupt expects <root-id>");
-				}
-				const rootId = resolveIssueId(args[0]);
-				if (!rootId) {
-					return reject("cli_validation_failed", "invalid run root id");
-				}
-				return {
-					kind: "ok",
-					plan: {
-						invocationId,
-						commandKind: "run_interrupt",
-						argv: [this.#muBinary, "runs", "interrupt", rootId],
-						timeoutMs: this.#runTimeoutMs,
-						runRootId: rootId,
-						mutating: true,
-					},
-				};
-			}
 			case "operator config get": {
 				if (args.length > 0) {
 					return reject("cli_validation_failed", "operator config get does not accept arguments");
@@ -453,56 +376,6 @@ export class MuCliCommandSurface {
 					},
 				};
 			}
-			case "run start": {
-				if (args.length === 0) {
-					return reject("cli_validation_failed", "run start requires a prompt");
-				}
-				if (args.some((arg) => arg.startsWith("-"))) {
-					return reject("cli_validation_failed", "run start prompt contains disallowed flag-like token");
-				}
-				if (args.some((arg) => /[\u0000-\u001f]/.test(arg))) {
-					return reject("cli_validation_failed", "run start prompt contains control characters");
-				}
-				const prompt = args.join(" ");
-				if (prompt.length > 500) {
-					return reject("cli_validation_failed", "run start prompt is too long");
-				}
-				return {
-					kind: "ok",
-					plan: {
-						invocationId,
-						commandKind: "run_start",
-						argv: [this.#muBinary, "runs", "start", prompt, "--max-steps", "20"],
-						timeoutMs: this.#runTimeoutMs,
-						runRootId: null,
-						mutating: true,
-					},
-				};
-			}
-			case "run resume": {
-				if (args.length < 1 || args.length > 2) {
-					return reject("cli_validation_failed", "run resume expects <root-id> [max-steps]");
-				}
-				const rootId = resolveIssueId(args[0]);
-				if (!rootId) {
-					return reject("cli_validation_failed", "invalid run root id");
-				}
-				const maxSteps = parseRunMaxSteps(args[1]);
-				if (maxSteps == null) {
-					return reject("cli_validation_failed", "invalid max-steps");
-				}
-				return {
-					kind: "ok",
-					plan: {
-						invocationId,
-						commandKind: "run_resume",
-						argv: [this.#muBinary, "runs", "resume", rootId, "--max-steps", String(maxSteps)],
-						timeoutMs: this.#runTimeoutMs,
-						runRootId: rootId,
-						mutating: true,
-					},
-				};
-			}
 			default:
 				return { kind: "skip" };
 		}
@@ -530,15 +403,6 @@ export type MuCliRunResult =
 
 export interface MuCliRunnerLike {
 	run(opts: { plan: MuCliInvocationPlan; repoRoot: string }): Promise<MuCliRunResult>;
-}
-
-function extractRootIssueId(stdout: string, stderr: string): string | null {
-	const joined = `${stdout}\n${stderr}`;
-	const match = /\bRoot:\s*(mu-[a-z0-9]{4,})\b/i.exec(joined);
-	if (!match?.[1]) {
-		return null;
-	}
-	return match[1].toLowerCase();
 }
 
 async function streamText(stream: ReadableStream<Uint8Array> | null): Promise<string> {
@@ -618,14 +482,12 @@ export class MuCliRunner implements MuCliRunnerLike {
 				};
 			}
 
-			const parsedRunRoot =
-				opts.plan.commandKind === "run_start" ? extractRootIssueId(stdout, stderr) : opts.plan.runRootId;
 			return {
 				kind: "completed",
 				stdout,
 				stderr,
 				exitCode,
-				runRootId: parsedRunRoot,
+				runRootId: opts.plan.runRootId,
 			};
 		} finally {
 			clearTimeout(timeout);

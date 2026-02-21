@@ -11,15 +11,11 @@ export type CommandRouterDeps<Ctx, Result> = {
 	cmdIssues: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdForum: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdEvents: (argv: string[], ctx: Ctx) => Promise<Result>;
-	cmdRuns: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdHeartbeats: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdCron: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdMemoryDelegated: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdTurn: (argv: string[], ctx: Ctx) => Promise<Result>;
-	cmdRun: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdExec: (argv: string[], ctx: Ctx) => Promise<Result>;
-	cmdRunDirect: (argv: string[], ctx: Ctx) => Promise<Result>;
-	cmdResume: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdLogin: (argv: string[]) => Promise<Result>;
 	cmdReplay: (argv: string[], ctx: Ctx) => Promise<Result>;
 	cmdControl: (argv: string[], ctx: Ctx) => Promise<Result>;
@@ -39,9 +35,9 @@ export async function routeCommand<Ctx, Result>(
 			return await deps.cmdGuide(rest);
 		case "init":
 			return deps.jsonError(
-				"`mu init` has been removed. mu now auto-initializes the workspace store on `mu run` and `mu serve`.",
+				"`mu init` has been removed. mu now auto-initializes the workspace store on `mu serve`.",
 				{
-					recovery: ['mu run "Break down and execute this goal"', "mu serve", "mu --help"],
+					recovery: ["mu serve", "mu --help"],
 				},
 			);
 		case "status":
@@ -54,8 +50,6 @@ export async function routeCommand<Ctx, Result>(
 			return await deps.cmdForum(rest, ctx);
 		case "events":
 			return await deps.cmdEvents(rest, ctx);
-		case "runs":
-			return await deps.cmdRuns(rest, ctx);
 		case "heartbeats":
 			return await deps.cmdHeartbeats(rest, ctx);
 		case "cron":
@@ -66,14 +60,8 @@ export async function routeCommand<Ctx, Result>(
 			return await deps.cmdMemoryDelegated(rest, ctx);
 		case "turn":
 			return await deps.cmdTurn(rest, ctx);
-		case "run":
-			return await deps.cmdRun(rest, ctx);
 		case "exec":
 			return await deps.cmdExec(rest, ctx);
-		case "_run-direct":
-			return await deps.cmdRunDirect(rest, ctx);
-		case "resume":
-			return await deps.cmdResume(rest, ctx);
 		case "login":
 			return await deps.cmdLogin(rest);
 		case "replay":

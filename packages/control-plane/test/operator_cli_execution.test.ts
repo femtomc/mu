@@ -51,11 +51,11 @@ function mkInbound(repoRoot: string, overrides: Partial<InboundEnvelope> = {}): 
 		actor_binding_id: "binding-1",
 		assurance_tier: "tier_a",
 		repo_root: repoRoot,
-		command_text: "please resume this run",
+		command_text: "please update the operator model",
 		scope_required: "cp.read",
 		scope_effective: "cp.read",
-		target_type: "issue",
-		target_id: "mu-root9999",
+		target_type: "status",
+		target_id: "status",
 		idempotency_key: "idem-1",
 		fingerprint: "fp-1",
 		metadata: {},
@@ -148,19 +148,24 @@ async function createPipeline(opts: {
 }
 
 describe("operator + allowlisted mu CLI execution", () => {
-	test("operator-triggered run resumes are confirmed, correlated, and auditable", async () => {
+	test("operator-triggered model set commands are confirmed, correlated, and auditable", async () => {
 		const harness = await createPipeline({
-			scopes: ["cp.read", "cp.run.execute"],
+			scopes: ["cp.read", "cp.ops.admin"],
 			backendResult: {
 				kind: "command",
-				command: { kind: "run_resume" },
+				command: {
+					kind: "operator_model_set",
+					provider: "openai-codex",
+					model: "gpt-5.3-codex",
+					thinking: "high",
+				},
 			},
 			cliRunResult: {
 				kind: "completed",
 				stdout: '{"status":"ok"}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: "mu-root9999",
+				runRootId: null,
 			},
 		});
 
@@ -185,38 +190,47 @@ describe("operator + allowlisted mu CLI execution", () => {
 		}
 
 		expect(confirm.command.cli_invocation_id).toBe("cli-operator-1");
-		expect(confirm.command.cli_command_kind).toBe("run_resume");
-		expect(confirm.command.run_root_id).toBe("mu-root9999");
+		expect(confirm.command.cli_command_kind).toBe("operator_model_set");
+		expect(confirm.command.run_root_id).toBeNull();
 		expect(confirm.command.operator_session_id).toBe("operator-session-1");
 		expect(confirm.command.operator_turn_id).toBe("operator-turn-1");
 		expect(harness.cli.plans.length).toBe(1);
-		expect(harness.cli.plans[0]?.argv).toEqual(["mu", "runs", "resume", "mu-root9999", "--max-steps", "20"]);
+		expect(harness.cli.plans[0]?.argv).toEqual([
+			"mu",
+			"control",
+			"operator",
+			"set",
+			"openai-codex",
+			"gpt-5.3-codex",
+			"high",
+			"--json",
+		]);
 
 		const mutating = harness.runtime.journal.mutatingEvents(confirm.command.command_id);
 		expect(mutating.some((entry) => entry.event_type === "cli.invocation.started")).toBe(true);
 		expect(mutating.some((entry) => entry.event_type === "cli.invocation.completed")).toBe(true);
 		for (const entry of mutating) {
 			expect(entry.correlation.cli_invocation_id).toBe("cli-operator-1");
-			expect(entry.correlation.cli_command_kind).toBe("run_resume");
-			expect(entry.correlation.run_root_id).toBe("mu-root9999");
+			expect(entry.correlation.cli_command_kind).toBe("operator_model_set");
+			expect(entry.correlation.run_root_id).toBeNull();
 			expect(entry.correlation.operator_session_id).toBe("operator-session-1");
 			expect(entry.correlation.operator_turn_id).toBe("operator-turn-1");
 		}
 	});
 
-	test("operator-triggered run starts are confirmed and preserve prompt args", async () => {
+	test("operator-triggered thinking updates are confirmed and preserve arguments", async () => {
 		const harness = await createPipeline({
-			scopes: ["cp.read", "cp.run.execute"],
+			scopes: ["cp.read", "cp.ops.admin"],
 			backendResult: {
 				kind: "command",
-				command: { kind: "run_start", prompt: "ship release" },
+				command: { kind: "operator_thinking_set", thinking: "high" },
 			},
 			cliRunResult: {
 				kind: "completed",
-				stdout: '{"root":"mu-new-root"}',
+				stdout: '{"ok":true}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: "mu-new-root",
+				runRootId: null,
 			},
 		});
 
@@ -225,7 +239,7 @@ describe("operator + allowlisted mu CLI execution", () => {
 		if (submit.kind !== "awaiting_confirmation") {
 			throw new Error(`expected awaiting_confirmation, got ${submit.kind}`);
 		}
-		expect(submit.command.command_args).toEqual(["ship", "release"]);
+		expect(submit.command.command_args).toEqual(["high"]);
 
 		const confirm = await harness.pipeline.handleInbound(
 			mkInbound(harness.repoRoot, {
@@ -240,10 +254,17 @@ describe("operator + allowlisted mu CLI execution", () => {
 		if (confirm.kind !== "completed") {
 			throw new Error(`expected completed, got ${confirm.kind}`);
 		}
-		expect(confirm.command.cli_command_kind).toBe("run_start");
-		expect(confirm.command.run_root_id).toBe("mu-new-root");
+		expect(confirm.command.cli_command_kind).toBe("operator_thinking_set");
+		expect(confirm.command.run_root_id).toBeNull();
 		expect(harness.cli.plans.length).toBe(1);
-		expect(harness.cli.plans[0]?.argv).toEqual(["mu", "runs", "start", "ship release", "--max-steps", "20"]);
+		expect(harness.cli.plans[0]?.argv).toEqual([
+			"mu",
+			"control",
+			"operator",
+			"thinking-set",
+			"high",
+			"--json",
+		]);
 	});
 
 	test("operator readonly status queries execute through allowlisted mu CLI", async () => {
@@ -279,16 +300,38 @@ describe("operator + allowlisted mu CLI execution", () => {
 		expect(payload.cli_command_kind).toBe("status");
 	});
 
-	test("operator can inspect orchestration runs via run list + run status", async () => {
+	test("operator can inspect operator config/model via readonly allowlisted commands", async () => {
+		const configHarness = await createPipeline({
+			scopes: ["cp.read"],
+			backendResult: {
+				kind: "command",
+				command: { kind: "operator_config_get" },
+			},
+			cliRunResult: {
+				kind: "completed",
+				stdout: '{"enabled":true}',
+				stderr: "",
+				exitCode: 0,
+				runRootId: null,
+			},
+		});
+		const configResult = await configHarness.pipeline.handleInbound(mkInbound(configHarness.repoRoot));
+		expect(configResult.kind).toBe("completed");
+		if (configResult.kind !== "completed") {
+			throw new Error(`expected completed, got ${configResult.kind}`);
+		}
+		expect(configResult.command.cli_command_kind).toBe("operator_config_get");
+		expect(configHarness.cli.plans[0]?.argv).toEqual(["mu", "control", "operator", "get", "--json"]);
+
 		const listHarness = await createPipeline({
 			scopes: ["cp.read"],
 			backendResult: {
 				kind: "command",
-				command: { kind: "run_list" },
+				command: { kind: "operator_model_list", provider: "openai-codex" },
 			},
 			cliRunResult: {
 				kind: "completed",
-				stdout: "[]",
+				stdout: '["gpt-5.3-codex"]',
 				stderr: "",
 				exitCode: 0,
 				runRootId: null,
@@ -299,30 +342,15 @@ describe("operator + allowlisted mu CLI execution", () => {
 		if (listResult.kind !== "completed") {
 			throw new Error(`expected completed, got ${listResult.kind}`);
 		}
-		expect(listResult.command.cli_command_kind).toBe("run_list");
-		expect(listHarness.cli.plans[0]?.argv).toEqual(["mu", "runs", "list", "--limit", "100"]);
-
-		const statusHarness = await createPipeline({
-			scopes: ["cp.read"],
-			backendResult: {
-				kind: "command",
-				command: { kind: "run_status", root_issue_id: "mu-root9999" },
-			},
-			cliRunResult: {
-				kind: "completed",
-				stdout: '{"id":"mu-root9999"}',
-				stderr: "",
-				exitCode: 0,
-				runRootId: "mu-root9999",
-			},
-		});
-		const statusResult = await statusHarness.pipeline.handleInbound(mkInbound(statusHarness.repoRoot));
-		expect(statusResult.kind).toBe("completed");
-		if (statusResult.kind !== "completed") {
-			throw new Error(`expected completed, got ${statusResult.kind}`);
-		}
-		expect(statusResult.command.cli_command_kind).toBe("run_status");
-		expect(statusHarness.cli.plans[0]?.argv).toEqual(["mu", "runs", "get", "mu-root9999"]);
+		expect(listResult.command.cli_command_kind).toBe("operator_model_list");
+		expect(listHarness.cli.plans[0]?.argv).toEqual([
+			"mu",
+			"control",
+			"operator",
+			"models",
+			"openai-codex",
+			"--json",
+		]);
 	});
 
 	test("operator readonly CLI failures surface deterministic error reasons", async () => {
@@ -353,19 +381,23 @@ describe("operator + allowlisted mu CLI execution", () => {
 		expect(harness.cli.plans[0]?.argv).toEqual(["mu", "status", "--json"]);
 	});
 
-	test("unauthorized run triggers are denied before confirmation", async () => {
+	test("unauthorized mutating operator commands are denied before confirmation", async () => {
 		const harness = await createPipeline({
 			scopes: ["cp.read"],
 			backendResult: {
 				kind: "command",
-				command: { kind: "run_resume", root_issue_id: "mu-root9999" },
+				command: {
+					kind: "operator_model_set",
+					provider: "openai-codex",
+					model: "gpt-5.3-codex",
+				},
 			},
 			cliRunResult: {
 				kind: "completed",
 				stdout: "{}",
 				stderr: "",
 				exitCode: 0,
-				runRootId: "mu-root9999",
+				runRootId: null,
 			},
 		});
 
@@ -376,10 +408,10 @@ describe("operator + allowlisted mu CLI execution", () => {
 
 	test("CLI failures surface deterministic failure reasons", async () => {
 		const harness = await createPipeline({
-			scopes: ["cp.read", "cp.run.execute"],
+			scopes: ["cp.read", "cp.ops.admin"],
 			backendResult: {
 				kind: "command",
-				command: { kind: "run_resume", root_issue_id: "mu-root9999" },
+				command: { kind: "operator_thinking_set", thinking: "high" },
 			},
 			cliRunResult: {
 				kind: "failed",
@@ -387,7 +419,7 @@ describe("operator + allowlisted mu CLI execution", () => {
 				stdout: "",
 				stderr: "timed out",
 				exitCode: null,
-				runRootId: "mu-root9999",
+				runRootId: null,
 			},
 		});
 

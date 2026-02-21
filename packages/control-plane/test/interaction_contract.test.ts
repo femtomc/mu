@@ -51,11 +51,11 @@ function mkCompletedCliCommand(): CommandRecord {
 	const accepted = createAcceptedCommandRecord({
 		commandId: "cmd-contract-complete",
 		inbound: {
-			...mkInbound("/mu run resume mu-root-1"),
-			target_type: "run resume",
-			target_id: "mu-root-1",
-			scope_required: "cp.run.execute",
-			scope_effective: "cp.run.execute",
+			...mkInbound("/mu operator model set openai-codex gpt-5.3-codex high"),
+			target_type: "operator model set",
+			target_id: "operator model set",
+			scope_required: "cp.ops.admin",
+			scope_effective: "cp.ops.admin",
 		},
 		nowMs: 1_000,
 		operatorSessionId: "operator-session-1",
@@ -71,16 +71,16 @@ function mkCompletedCliCommand(): CommandRecord {
 		nowMs: 1_020,
 		errorCode: null,
 		cliInvocationId: "cli-1",
-		cliCommandKind: "run_resume",
-		runRootId: "mu-root-1",
+		cliCommandKind: "operator_model_set",
+		runRootId: null,
 	});
 	return transitionCommandRecord(inProgress, {
 		nextState: "completed",
 		nowMs: 1_030,
 		errorCode: null,
 		cliInvocationId: "cli-1",
-		cliCommandKind: "run_resume",
-		runRootId: "mu-root-1",
+		cliCommandKind: "operator_model_set",
+		runRootId: null,
 		result: {
 			z: 1,
 			a: {
@@ -136,7 +136,7 @@ describe("interaction contract presentation", () => {
 		expect(presented.message.speaker).toBe("mu_tool");
 		expect(presented.message.intent).toBe("result");
 		expect(presented.compact).toContain("RESULT · COMPLETED");
-		expect(presented.detailed).toContain("CLI command: run_resume");
+		expect(presented.detailed).toContain("CLI command: operator_model_set");
 		const resultPayload = presented.message.payload.result as Record<string, unknown>;
 		expect(stableSerializeJson(resultPayload)).toBe('{"a":{"c":3,"d":4},"z":1}');
 	});

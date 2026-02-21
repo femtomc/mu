@@ -14,7 +14,6 @@ const PUBLISH_PACKAGE_DIRS = [
 	"packages/control-plane",
 	"packages/forum",
 	"packages/issue",
-	"packages/orchestrator",
 	"packages/server",
 	"packages/cli",
 ] as const;

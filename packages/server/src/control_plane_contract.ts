@@ -1,5 +1,4 @@
 import type { Channel, CommandPipelineResult, ReloadableGenerationIdentity } from "@femtomc/mu-control-plane";
-import type { ControlPlaneRunInterruptResult, ControlPlaneRunSnapshot, ControlPlaneRunTrace } from "./run_supervisor.js";
 import type { MuConfig } from "./config.js";
 
 /**
@@ -12,17 +11,6 @@ import type { MuConfig } from "./config.js";
 
 // Domain seam: immutable runtime configuration shape consumed by control-plane bootstrap/reload.
 export type ControlPlaneConfig = MuConfig["control_plane"];
-
-/**
- * Durable orchestration queue contract (default-on path).
- */
-export type { InterRootQueuePolicy, OrchestrationQueueState } from "./orchestration_queue.js";
-export {
-	DEFAULT_INTER_ROOT_QUEUE_POLICY,
-	normalizeInterRootQueuePolicy,
-	ORCHESTRATION_QUEUE_ALLOWED_TRANSITIONS,
-	ORCHESTRATION_QUEUE_INVARIANTS,
-} from "./orchestration_queue.js";
 
 // Application seam: server-visible adapter/routing surface.
 export type ActiveAdapter = {
@@ -160,20 +148,6 @@ export type ControlPlaneHandle = {
 		config: ControlPlaneConfig;
 		reason: string;
 	}): Promise<TelegramGenerationReloadResult>;
-	listRuns?(opts?: { status?: string; limit?: number }): Promise<ControlPlaneRunSnapshot[]>;
-	getRun?(idOrRoot: string): Promise<ControlPlaneRunSnapshot | null>;
-	/**
-	 * Run lifecycle boundary: accepts start intent into the default queue/reconcile path.
-	 * Queue coordinators may dispatch immediately after enqueue, but must preserve queue invariants.
-	 */
-	startRun?(opts: { prompt: string; maxSteps?: number }): Promise<ControlPlaneRunSnapshot>;
-	/**
-	 * Run lifecycle boundary: accepts resume intent into the default queue/reconcile path.
-	 * No flag-based alternate path is allowed.
-	 */
-	resumeRun?(opts: { rootIssueId: string; maxSteps?: number }): Promise<ControlPlaneRunSnapshot>;
-	interruptRun?(opts: { jobId?: string | null; rootIssueId?: string | null }): Promise<ControlPlaneRunInterruptResult>;
-	traceRun?(opts: { idOrRoot: string; limit?: number }): Promise<ControlPlaneRunTrace | null>;
 	submitTerminalCommand?(opts: {
 		commandText: string;
 		repoRoot: string;

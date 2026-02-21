@@ -45,15 +45,7 @@ const ISSUE_ID_RE = /^mu-[a-z0-9][a-z0-9-]*$/;
 const SAFE_TOPIC_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const SAFE_TARGET_RE = /^(?!-)[A-Za-z0-9._:@/-]{1,200}$/;
 
-const ISSUE_TARGET_COMMANDS = new Set<string>([
-	"issue get",
-	"issue update",
-	"issue claim",
-	"issue close",
-	"run resume",
-	"run status",
-	"run interrupt",
-]);
+const ISSUE_TARGET_COMMANDS = new Set<string>(["issue get", "issue update", "issue claim", "issue close"]);
 const TOPIC_TARGET_COMMANDS = new Set<string>(["forum read", "forum post"]);
 const GENERIC_TARGET_COMMANDS = new Set<string>(["audit get", "dlq inspect", "dlq replay"]);
 
@@ -82,19 +74,14 @@ function collectIssueCandidates(opts: {
 }): string[] {
 	const candidates: string[] = [];
 	const targetType = opts.inboundTargetType.toLowerCase();
-	if (
-		targetType === "issue" ||
-		targetType === "issue_id" ||
-		targetType === "run_root" ||
-		targetType === "root_issue"
-	) {
+	if (targetType === "issue" || targetType === "issue_id" || targetType === "root_issue") {
 		const fromTarget = readString(opts.inboundTargetId);
 		if (fromTarget) {
 			candidates.push(fromTarget);
 		}
 	}
 
-	for (const key of ["issue_id", "root_issue_id", "run_root_id"]) {
+	for (const key of ["issue_id", "root_issue_id"]) {
 		const fromMeta = readString(opts.metadata[key]);
 		if (fromMeta) {
 			candidates.push(fromMeta);

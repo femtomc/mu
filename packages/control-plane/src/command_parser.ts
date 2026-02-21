@@ -56,11 +56,6 @@ const KNOWN_TWO_TOKEN_COMMANDS = new Set([
 	"dlq list",
 	"dlq inspect",
 	"dlq replay",
-	"run start",
-	"run resume",
-	"run list",
-	"run status",
-	"run interrupt",
 ]);
 
 const KNOWN_ONE_TOKEN_COMMANDS = new Set(["status", "ready", "revoke", "reload", "update"]);
@@ -126,6 +121,10 @@ function deriveCommandKey(tokensLower: readonly string[]): { commandKey: string;
 		}
 	}
 	if (KNOWN_ONE_TOKEN_COMMANDS.has(tokensLower[0]!)) {
+		return { commandKey: tokensLower[0]!, tokenCount: 1 };
+	}
+
+	if (tokensLower[0] === "run" || tokensLower[0] === "runs") {
 		return { commandKey: tokensLower[0]!, tokenCount: 1 };
 	}
 

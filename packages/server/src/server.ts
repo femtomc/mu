@@ -501,42 +501,6 @@ function createServer(options: ServerOptions = {}) {
 			const handle = reloadManager.getControlPlaneCurrent();
 			handle?.setWakeDeliveryObserver?.(observer ?? null);
 		},
-		async listRuns(opts) {
-			const handle = reloadManager.getControlPlaneCurrent();
-			if (!handle?.listRuns) return [];
-			return await handle.listRuns(opts);
-		},
-		async getRun(idOrRoot) {
-			const handle = reloadManager.getControlPlaneCurrent();
-			if (!handle?.getRun) return null;
-			return await handle.getRun(idOrRoot);
-		},
-		async startRun(opts) {
-			const handle = reloadManager.getControlPlaneCurrent();
-			if (!handle?.startRun) {
-				throw new Error("run_supervisor_unavailable");
-			}
-			return await handle.startRun(opts);
-		},
-		async resumeRun(opts) {
-			const handle = reloadManager.getControlPlaneCurrent();
-			if (!handle?.resumeRun) {
-				throw new Error("run_supervisor_unavailable");
-			}
-			return await handle.resumeRun(opts);
-		},
-		async interruptRun(opts) {
-			const handle = reloadManager.getControlPlaneCurrent();
-			if (!handle?.interruptRun) {
-				return { ok: false, reason: "not_found", run: null };
-			}
-			return await handle.interruptRun(opts);
-		},
-		async traceRun(opts) {
-			const handle = reloadManager.getControlPlaneCurrent();
-			if (!handle?.traceRun) return null;
-			return await handle.traceRun(opts);
-		},
 		async submitTerminalCommand(opts) {
 			const handle = reloadManager.getControlPlaneCurrent();
 			if (!handle?.submitTerminalCommand) {

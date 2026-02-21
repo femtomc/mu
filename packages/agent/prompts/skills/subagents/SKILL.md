@@ -55,7 +55,7 @@ done
 ```
 
 Use `mu exec` for lightweight one-shot subagent work.
-If you need queued orchestration runs, use `mu runs start ...` / `mu run ...` instead.
+For durable wake loops, use `mu heartbeats ...` / `mu cron ...`.
 
 ## Monitoring
 
@@ -125,7 +125,7 @@ With `mu exec`, follow up by issuing another `mu exec` command in the same tmux 
 mu exec "Continue issue <issue-id>. Address feedback: ..."
 ```
 
-If you intentionally use long-lived terminal operator sessions (`mu run`/`mu serve`),
+If you intentionally use long-lived terminal operator sessions (`mu serve`),
 you can hand off with `mu turn`:
 
 ```bash

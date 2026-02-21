@@ -28,7 +28,6 @@ import {
 	renderIssueDepMutationCompact,
 	renderIssueDetailCompact,
 	renderIssueMutationCompact,
-	renderRunPayloadCompact,
 } from "./render.js";
 import { cleanupStaleServerFiles, detectRunningServer, readApiError } from "./server_helpers.js";
 import {
@@ -134,7 +133,6 @@ export function schedulingCommandDeps<Ctx, Result>(requestServerJson: RequestSer
 		jsonText,
 		ok,
 		requestServerJson,
-		renderRunPayloadCompact,
 		renderHeartbeatsPayloadCompact,
 		renderCronPayloadCompact,
 	};
