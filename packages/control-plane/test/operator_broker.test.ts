@@ -112,12 +112,12 @@ describe("ApprovedCommandBroker", () => {
 		expect(unauthorizedRepo).toMatchObject({ kind: "reject", reason: "context_unauthorized" });
 	});
 
-	test("rejects legacy run proposals", () => {
+	test("rejects unsupported command proposals", () => {
 		const broker = new ApprovedCommandBroker({
 			contextResolver: new CommandContextResolver({ allowedRepoRoots: ["/repo"] }),
 		});
 		const decision = broker.approve({
-			proposal: { kind: "run_resume", root_issue_id: "mu-abc99999" } as unknown as { kind: "status" },
+			proposal: { kind: "unsupported_action", payload: "noop" } as unknown as { kind: "status" },
 			inbound: mkInbound(),
 		});
 		expect(decision).toMatchObject({ kind: "reject", reason: "operator_action_disallowed" });

@@ -206,26 +206,26 @@ describe("PiMessagingOperatorBackend", () => {
 		});
 	});
 
-	test("legacy run command tool calls are ignored and fall back to assistant text", async () => {
+	test("unsupported command tool calls are ignored and fall back to assistant text", async () => {
 		const backend = new PiMessagingOperatorBackend({
 			sessionFactory: async () =>
 				makeStubSession({
-					responses: ["I can no longer run legacy orchestration commands."],
+					responses: ["I cannot execute that unsupported command."],
 					toolCalls: [
 						{
 							toolName: "command",
-							args: { kind: "run_start", prompt: "ship release" },
+							args: { kind: "unsupported_action", payload: "ship release" },
 						},
 					],
 				}),
 		});
 
 		const result = await backend.runTurn(
-			mkInput({ sessionId: "session-legacy-run", turnId: "turn-1", commandText: "please run this" }),
+			mkInput({ sessionId: "session-unsupported-command", turnId: "turn-1", commandText: "please do this" }),
 		);
 		expect(result).toEqual({
 			kind: "respond",
-			message: "I can no longer run legacy orchestration commands.",
+			message: "I cannot execute that unsupported command.",
 		});
 	});
 

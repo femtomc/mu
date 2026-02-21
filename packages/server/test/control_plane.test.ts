@@ -1155,7 +1155,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(backend.turns).toBe(0);
 	});
 
-	test("legacy operator run proposals degrade to safe backend-error responses", async () => {
+	test("unsupported operator command proposals degrade to safe backend-error responses", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkTelegramIdentity(repoRoot, ["cp.read"]);
 
@@ -1166,7 +1166,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			}),
 			operatorBackend: new StaticOperatorBackend({
 				kind: "command",
-				command: { kind: "run_resume", root_issue_id: "mu-root-1234" },
+				command: { kind: "unsupported_action", payload: "mu-root-1234" },
 			} as unknown as OperatorBackendTurnResult),
 		});
 		expect(handle).not.toBeNull();
@@ -1180,7 +1180,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			telegramRequest({
 				secret: "telegram-secret",
 				updateId: 404,
-				text: "please resume that run",
+				text: "please do that unsupported action",
 			}),
 		);
 		expect(response).not.toBeNull();
@@ -1246,7 +1246,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(calls).toEqual(["reload", "update"]);
 	});
 
-	test("legacy run commands are denied and emit no run lifecycle metadata", async () => {
+	test("unsupported freeform slack text is ignored", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
@@ -1265,8 +1265,8 @@ describe("bootstrapControlPlane operator wiring", () => {
 			slackRequest({
 				secret: "slack-secret",
 				timestampSec: Math.trunc(Date.now() / 1000),
-				text: "run resume mu-rootcmd123 5",
-				triggerId: "run-heartbeat-1",
+				text: "please do this workflow action now",
+				triggerId: "slack-freeform-ignored",
 			}),
 		);
 		expect(response).not.toBeNull();
@@ -1274,20 +1274,14 @@ describe("bootstrapControlPlane operator wiring", () => {
 			throw new Error("expected webhook response");
 		}
 		expect(response.status).toBe(200);
-		const deniedBody = (await response.json()) as { text?: string };
-		expect(deniedBody.text).toContain("ACK · IGNORED");
-		expect(deniedBody.text).toContain("channel_requires_explicit_command");
+		const ignoredBody = (await response.json()) as { text?: string };
+		expect(ignoredBody.text).toContain("ACK · IGNORED");
+		expect(ignoredBody.text).toContain("channel_requires_explicit_command");
 
 		await Bun.sleep(150);
 		const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
 		await outbox.load();
-		const runEventKinds = new Set(
-			outbox
-				.records()
-				.filter((record) => typeof record.envelope.metadata.run_event_kind === "string")
-				.map((record) => String(record.envelope.metadata.run_event_kind)),
-		);
-		expect(runEventKinds.size).toBe(0);
+		expect(outbox.records().length).toBe(0);
 	});
 
 	test("bootstrap cleanup releases writer lock when startup fails", async () => {

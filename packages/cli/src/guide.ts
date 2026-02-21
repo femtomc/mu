@@ -51,7 +51,7 @@ export function guideText(): string {
 		"  mu login                        Authenticate with an AI provider",
 		"",
 		"Removed engine commands",
-		"  Legacy engine commands are removed: mu run, mu runs, mu resume, mu init, mu chat.",
+		"  Legacy engine commands are removed: mu init, mu chat.",
 		"",
 		"Workspace Store Layout",
 		"  mu stores runtime state under ~/.mu/workspaces/<workspace-id>/ :",

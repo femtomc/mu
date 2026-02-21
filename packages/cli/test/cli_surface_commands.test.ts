@@ -440,13 +440,13 @@ test("memory search/timeline/stats use direct CLI runtime even when legacy /api/
 	}
 });
 
-test("legacy runs command is removed from CLI surface", async () => {
+test("removed chat command is absent from CLI surface", async () => {
 	const dir = await mkTempRepo();
 	try {
-		const result = await run(["runs", "list"], { cwd: dir });
+		const result = await run(["chat"], { cwd: dir });
 		expect(result.exitCode).toBe(1);
 		const payload = JSON.parse(result.stdout) as { error?: string };
-		expect(payload.error).toContain("unknown command: runs");
+		expect(payload.error).toContain("unknown command: chat");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

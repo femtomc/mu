@@ -30,12 +30,12 @@ describe("parseSeriousWorkCommand", () => {
 			args: [],
 		});
 
-		const legacyRun = parseSeriousWorkCommand("/mu run resume mu-abc123 40");
-		expect(legacyRun).toMatchObject({
+		const unknownCommand = parseSeriousWorkCommand("/mu zebra dance mu-abc123 40");
+		expect(unknownCommand).toMatchObject({
 			kind: "command",
 			invocation: "slash",
 			requestedMode: "auto",
-			commandKey: "run resume",
+			commandKey: "zebra dance",
 			args: ["mu-abc123", "40"],
 		});
 

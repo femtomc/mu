@@ -299,7 +299,7 @@ export async function runServeLifecycle<Ctx extends { repoRoot: string; io?: Ser
 		try {
 			await opts.beforeOperatorSession({ serverUrl, deps: serveDeps, io });
 		} catch (err) {
-			return deps.jsonError(`failed to prepare run lifecycle: ${deps.describeError(err)}`, {
+			return deps.jsonError(`failed to prepare serve lifecycle: ${deps.describeError(err)}`, {
 				recovery: [`mu ${opts.commandName} --help`, "mu serve --help"],
 			});
 		}

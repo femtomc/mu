@@ -650,42 +650,6 @@ describe("mu-server", () => {
 	});
 
 
-	test("legacy run management APIs are absent", async () => {
-		const controlPlane: ControlPlaneHandle = {
-			activeAdapters: [{ name: "telegram", route: "/webhooks/telegram" }],
-			handleWebhook: async () => null,
-			stop: async () => {},
-		};
-		const serverWithRuns = await createServerForTest({ repoRoot: tempDir, controlPlane });
-
-		const endpoints = [
-			new Request("http://localhost/api/control-plane/runs?limit=10"),
-			new Request("http://localhost/api/control-plane/runs/mu-root1234"),
-			new Request("http://localhost/api/control-plane/runs/run-job-1/trace?limit=10"),
-			new Request("http://localhost/api/control-plane/runs/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "ship release", max_steps: 20 }),
-			}),
-			new Request("http://localhost/api/control-plane/runs/resume", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ root_issue_id: "mu-root1234", max_steps: 20 }),
-			}),
-			new Request("http://localhost/api/control-plane/runs/interrupt", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ root_issue_id: "mu-root1234" }),
-			}),
-		];
-
-		for (const request of endpoints) {
-			const res = await serverWithRuns.fetch(request);
-			expect(res.status).toBe(404);
-			const payload = (await res.json()) as { error: string };
-			expect(payload.error).toContain("Not Found");
-		}
-	});
 
 	test("events API supports issue_id/run_id/contains query filters", async () => {
 		const eventsPath = getStorePaths(tempDir).eventsPath;

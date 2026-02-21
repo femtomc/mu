@@ -46,7 +46,7 @@ export async function cmdReplay(
 				"  mu replay mu-root123/mu-worker456",
 				"  mu replay ~/.mu/workspaces/<workspace-id>/logs/<root-id>/<issue-id>.jsonl",
 				"",
-				"See also: `mu resume`, `mu store paths`, `mu guide`",
+				"See also: `mu store paths`, `mu guide`",
 			].join("\n") + "\n",
 		);
 	}
