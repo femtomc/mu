@@ -117,7 +117,7 @@ if (typeof ForumStore !== "function") throw new Error("@femtomc/mu-forum missing
 if (typeof IssueStore !== "function") throw new Error("@femtomc/mu-issue missing IssueStore");
 
 const help = await run(["--help"]);
-if (help.exitCode !== 0) throw new Error("@femtomc/mu run(--help) failed");
+if (help.exitCode !== 0) throw new Error("@femtomc/mu --help failed");
 if (!help.stdout.includes("Usage:")) throw new Error("@femtomc/mu help missing Usage");
 
 console.log("ok");

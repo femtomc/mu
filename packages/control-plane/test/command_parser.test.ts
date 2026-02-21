@@ -35,8 +35,8 @@ describe("parseSeriousWorkCommand", () => {
 			kind: "command",
 			invocation: "slash",
 			requestedMode: "auto",
-			commandKey: "run",
-			args: ["resume", "mu-abc123", "40"],
+			commandKey: "run resume",
+			args: ["mu-abc123", "40"],
 		});
 
 		const reload = parseSeriousWorkCommand("/reload");

@@ -124,9 +124,6 @@ function deriveCommandKey(tokensLower: readonly string[]): { commandKey: string;
 		return { commandKey: tokensLower[0]!, tokenCount: 1 };
 	}
 
-	if (tokensLower[0] === "run" || tokensLower[0] === "runs") {
-		return { commandKey: tokensLower[0]!, tokenCount: 1 };
-	}
 
 	if (tokensLower.length >= 2) {
 		return { commandKey: `${tokensLower[0]} ${tokensLower[1]}`, tokenCount: 2 };

@@ -111,7 +111,6 @@ export type OperatorDecision =
 
 export type ApprovedCommandBrokerOpts = {
 	contextResolver?: CommandContextResolver;
-	runTriggersEnabled?: boolean;
 };
 
 function normalizeArg(arg: string): string {
