@@ -102,7 +102,7 @@ async function main(): Promise<void> {
 		}
 
 		const smokeMjs = `import { newRunId } from "@femtomc/mu-core";
-import { roleFromTags } from "@femtomc/mu-agent";
+import { CommandContextResolver } from "@femtomc/mu-agent";
 import { readJsonl } from "@femtomc/mu-core/node";
 import { LocalStorageJsonlStore } from "@femtomc/mu-core/browser";
 import { ForumStore } from "@femtomc/mu-forum";
@@ -110,7 +110,7 @@ import { IssueStore } from "@femtomc/mu-issue";
 import { run } from "@femtomc/mu";
 
 if (typeof newRunId !== "function") throw new Error("@femtomc/mu-core missing newRunId");
-if (typeof roleFromTags !== "function") throw new Error("@femtomc/mu-agent missing roleFromTags");
+if (typeof CommandContextResolver !== "function") throw new Error("@femtomc/mu-agent missing CommandContextResolver");
 if (typeof readJsonl !== "function") throw new Error("@femtomc/mu-core/node missing readJsonl");
 if (typeof LocalStorageJsonlStore !== "function") throw new Error("@femtomc/mu-core/browser missing LocalStorageJsonlStore");
 if (typeof ForumStore !== "function") throw new Error("@femtomc/mu-forum missing ForumStore");
