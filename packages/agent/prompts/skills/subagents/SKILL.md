@@ -85,6 +85,23 @@ The widget picks up tracker decomposition by reading `mu issues ready` and
 Use `spawn` to launch tmux sessions directly from the ready queue for the
 current root/tag filter.
 
+Tool contract (preferred when tools are available):
+
+- Tool: `mu_subagents_hud`
+- Actions: `status`, `on`, `off`, `toggle`, `refresh`, `set_prefix`, `set_root`, `set_role`, `spawn`
+- Parameters:
+  - `prefix`: tmux prefix or `clear`
+  - `root_issue_id`: issue root ID or `clear`
+  - `role_tag`: issue tag filter (for example `role:worker`) or `clear`
+  - `count`: integer 1..40 or `"all"` for spawn
+
+Example tool calls:
+- Configure root + role:
+  - `{"action":"set_root","root_issue_id":"<root-id>"}`
+  - `{"action":"set_role","role_tag":"role:worker"}`
+- Refresh status: `{"action":"refresh"}`
+- Spawn from ready queue: `{"action":"spawn","count":"all"}`
+
 ## Handoffs and follow-up turns
 
 With `mu exec`, follow up by issuing another `mu exec` command in the same tmux pane

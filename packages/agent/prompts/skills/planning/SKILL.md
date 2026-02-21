@@ -45,6 +45,20 @@ Optional planning HUD (interactive operator session):
 /mu plan phase investigating
 ```
 
+Tool contract (preferred when tools are available):
+
+- Tool: `mu_planning_hud`
+- Actions: `status`, `on`, `off`, `toggle`, `reset`, `phase`, `root`, `check`, `uncheck`, `toggle_step`
+- Parameters:
+  - `phase`: `investigating|drafting|reviewing|approved`
+  - `root_issue_id`: issue ID or `clear`
+  - `step`: 1-based checklist index
+
+Example tool calls:
+- Set phase: `{"action":"phase","phase":"drafting"}`
+- Bind root: `{"action":"root","root_issue_id":"<root-id>"}`
+- Update checklist: `{"action":"check","step":2}`
+
 Also inspect repo files directly (read/bash) for implementation constraints.
 
 ### B) Draft DAG in mu-issue

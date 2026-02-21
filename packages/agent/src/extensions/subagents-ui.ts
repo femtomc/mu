@@ -32,6 +32,25 @@ type MuCliOutcome = {
 	error: string | null;
 };
 
+type SubagentsToolAction =
+	| "status"
+	| "on"
+	| "off"
+	| "toggle"
+	| "refresh"
+	| "set_prefix"
+	| "set_root"
+	| "set_role"
+	| "spawn";
+
+type SubagentsToolParams = {
+	action: SubagentsToolAction;
+	prefix?: string;
+	root_issue_id?: string;
+	role_tag?: string;
+	count?: number | "all";
+};
+
 const DEFAULT_PREFIX = "mu-sub-";
 const DEFAULT_ROLE_TAG = "role:worker";
 const ISSUE_LIST_LIMIT = 40;
@@ -317,10 +336,43 @@ async function listIssueSlices(rootId: string | null, roleTag: string | null): P
 	};
 }
 
-function formatIssueLine(ctx: ExtensionContext, issue: IssueDigest): string {
+function formatIssueLine(
+	ctx: ExtensionContext,
+	issue: IssueDigest,
+	opts: { marker?: string; tone?: "accent" | "success" | "warning" } = {},
+): string {
+	const marker = opts.marker ?? "•";
+	const tone = opts.tone ?? "accent";
 	const id = ctx.ui.theme.fg("dim", issue.id);
 	const priority = ctx.ui.theme.fg("muted", `p${issue.priority}`);
-	return `  ${ctx.ui.theme.fg("success", "•")} ${id} ${priority} ${truncateOneLine(issue.title)}`;
+	const title = ctx.ui.theme.fg("text", truncateOneLine(issue.title));
+	return `  ${ctx.ui.theme.fg(tone, marker)} ${id} ${priority} ${title}`;
+}
+
+function queueMeter(value: number, total: number, width = 10): string {
+	if (width <= 0 || total <= 0) {
+		return "";
+	}
+	const clamped = Math.max(0, Math.min(total, value));
+	const full = Math.floor((clamped / total) * width);
+	const empty = Math.max(0, width - full);
+	return "█".repeat(full) + "░".repeat(empty);
+}
+
+function formatRefreshAge(lastUpdatedMs: number | null): string {
+	if (lastUpdatedMs == null) {
+		return "never";
+	}
+	const deltaSec = Math.max(0, Math.round((Date.now() - lastUpdatedMs) / 1000));
+	if (deltaSec < 60) {
+		return `${deltaSec}s ago`;
+	}
+	const mins = Math.floor(deltaSec / 60);
+	if (mins < 60) {
+		return `${mins}m ago`;
+	}
+	const hours = Math.floor(mins / 60);
+	return `${hours}h ago`;
 }
 
 function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
@@ -333,62 +385,72 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 		return;
 	}
 
-	const issueScope = state.issueRootId ? `root ${state.issueRootId}` : "all roots";
+	const issueScope = state.issueRootId ? `root:${state.issueRootId}` : "all-roots";
 	const roleScope = state.issueRoleTag ? state.issueRoleTag : "(all roles)";
-	const issueStatus = `${state.readyIssues.length} ready / ${state.activeIssues.length} active`;
+	const hasError = Boolean(state.sessionError || state.issueError);
+	const healthColor: "success" | "warning" = hasError ? "warning" : "success";
+	const healthLabel = hasError ? "degraded" : "healthy";
+	const queueTotal = state.readyIssues.length + state.activeIssues.length;
+	const queueBar = queueMeter(state.activeIssues.length, Math.max(1, queueTotal), 10);
+	const refreshAge = formatRefreshAge(state.lastUpdatedMs);
 
-	if (state.sessionError || state.issueError) {
-		ctx.ui.setStatus(
-			"mu-subagents",
-			ctx.ui.theme.fg("warning", `subagents ${state.sessions.length} · issues ${issueStatus} · degraded`),
-		);
-	} else {
-		ctx.ui.setStatus(
-			"mu-subagents",
-			ctx.ui.theme.fg("dim", `subagents ${state.sessions.length} · issues ${issueStatus} · ${issueScope}`),
-		);
-	}
+	ctx.ui.setStatus(
+		"mu-subagents",
+		[
+			ctx.ui.theme.fg("dim", "subagents"),
+			ctx.ui.theme.fg(healthColor, healthLabel),
+			ctx.ui.theme.fg("dim", `${state.sessions.length} tmux`),
+			ctx.ui.theme.fg("dim", `${state.readyIssues.length} ready/${state.activeIssues.length} active`),
+			ctx.ui.theme.fg("muted", issueScope),
+		].join(` ${ctx.ui.theme.fg("muted", "·")} `),
+	);
 
 	const lines = [
-		ctx.ui.theme.fg("accent", "Subagents monitor"),
-		ctx.ui.theme.fg("dim", `  tmux prefix: ${state.prefix || "(all sessions)"}`),
-		ctx.ui.theme.fg("dim", `  issue scope: ${issueScope} · tag ${roleScope}`),
+		ctx.ui.theme.fg("accent", ctx.ui.theme.bold("Subagents board")),
+		`  ${ctx.ui.theme.fg("muted", "health:")} ${ctx.ui.theme.fg(healthColor, healthLabel)}`,
+		`  ${ctx.ui.theme.fg("muted", "scope:")} ${ctx.ui.theme.fg("dim", `${issueScope} · ${roleScope}`)}`,
+		`  ${ctx.ui.theme.fg("muted", "tmux prefix:")} ${ctx.ui.theme.fg("dim", state.prefix || "(all sessions)")}`,
+		`  ${ctx.ui.theme.fg("muted", "queues:")} ${ctx.ui.theme.fg("accent", `${state.readyIssues.length} ready`)} ${ctx.ui.theme.fg("muted", "| ")} ${ctx.ui.theme.fg("warning", `${state.activeIssues.length} active`)} ${ctx.ui.theme.fg("dim", queueBar)}`,
+		`  ${ctx.ui.theme.fg("muted", "last refresh:")} ${ctx.ui.theme.fg("dim", refreshAge)}`,
+		`  ${ctx.ui.theme.fg("dim", "────────────────────────────")}`,
+		ctx.ui.theme.fg("accent", `tmux sessions (${state.sessions.length})`),
 	];
 
 	if (state.sessionError) {
 		lines.push(ctx.ui.theme.fg("warning", `  tmux error: ${state.sessionError}`));
 	} else if (state.sessions.length === 0) {
-		lines.push(ctx.ui.theme.fg("muted", "  tmux: (no matching sessions)"));
+		lines.push(ctx.ui.theme.fg("muted", "  (no matching sessions)"));
 	} else {
 		for (const name of state.sessions.slice(0, 8)) {
-			lines.push(`  ${ctx.ui.theme.fg("success", "●")} ${name}`);
+			lines.push(`  ${ctx.ui.theme.fg("success", "●")} ${ctx.ui.theme.fg("text", name)}`);
 		}
 		if (state.sessions.length > 8) {
 			lines.push(ctx.ui.theme.fg("muted", `  ... +${state.sessions.length - 8} more tmux sessions`));
 		}
 	}
 
+	lines.push(`  ${ctx.ui.theme.fg("dim", "────────────────────────────")}`);
 	if (state.issueError) {
-		lines.push(ctx.ui.theme.fg("warning", `  issue error: ${state.issueError}`));
+		lines.push(ctx.ui.theme.fg("warning", `issue error: ${state.issueError}`));
 	} else {
-		lines.push(ctx.ui.theme.fg("accent", "Ready issues"));
+		lines.push(ctx.ui.theme.fg("accent", `ready queue (${state.readyIssues.length})`));
 		if (state.readyIssues.length === 0) {
 			lines.push(ctx.ui.theme.fg("muted", "  (no ready issues)"));
 		} else {
 			for (const issue of state.readyIssues.slice(0, 6)) {
-				lines.push(formatIssueLine(ctx, issue));
+				lines.push(formatIssueLine(ctx, issue, { marker: "→", tone: "accent" }));
 			}
 			if (state.readyIssues.length > 6) {
 				lines.push(ctx.ui.theme.fg("muted", `  ... +${state.readyIssues.length - 6} more ready issues`));
 			}
 		}
 
-		lines.push(ctx.ui.theme.fg("accent", "Active issues"));
+		lines.push(ctx.ui.theme.fg("accent", `active queue (${state.activeIssues.length})`));
 		if (state.activeIssues.length === 0) {
 			lines.push(ctx.ui.theme.fg("muted", "  (no in-progress issues)"));
 		} else {
 			for (const issue of state.activeIssues.slice(0, 6)) {
-				lines.push(formatIssueLine(ctx, issue));
+				lines.push(formatIssueLine(ctx, issue, { marker: "●", tone: "warning" }));
 			}
 			if (state.activeIssues.length > 6) {
 				lines.push(ctx.ui.theme.fg("muted", `  ... +${state.activeIssues.length - 6} more active issues`));
@@ -419,6 +481,32 @@ function normalizeRoleTag(raw: string): string | null {
 		return `role:${trimmed}`;
 	}
 	return trimmed;
+}
+
+function subagentsDetails(state: SubagentsState) {
+	return {
+		enabled: state.enabled,
+		prefix: state.prefix,
+		issue_root_id: state.issueRootId,
+		issue_role_tag: state.issueRoleTag,
+		sessions: [...state.sessions],
+		ready_issue_ids: state.readyIssues.map((issue) => issue.id),
+		active_issue_ids: state.activeIssues.map((issue) => issue.id),
+		issue_error: state.issueError,
+		session_error: state.sessionError,
+		last_updated_ms: state.lastUpdatedMs,
+	};
+}
+
+function subagentsToolError(message: string, state: SubagentsState) {
+	return {
+		content: [{ type: "text" as const, text: message }],
+		details: {
+			ok: false,
+			error: message,
+			...subagentsDetails(state),
+		},
+	};
 }
 
 export function subagentsUiExtension(pi: ExtensionAPI) {
@@ -468,6 +556,194 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 		ctx.ui.notify(`${message}\n\n${subagentsUsageText()}`, level);
 	};
 
+	const statusSummary = () => {
+		const when = state.lastUpdatedMs == null ? "never" : new Date(state.lastUpdatedMs).toLocaleTimeString();
+		const status = state.enabled ? "enabled" : "disabled";
+		const issueScope = state.issueRootId ?? "(all roots)";
+		const issueRole = state.issueRoleTag ?? "(all roles)";
+		const issueError = state.issueError ? `\nissue_error: ${state.issueError}` : "";
+		const tmuxError = state.sessionError ? `\ntmux_error: ${state.sessionError}` : "";
+		return {
+			level: state.issueError || state.sessionError ? "warning" : "info",
+			text:
+				[
+					`Subagents monitor ${status}`,
+					`prefix: ${state.prefix || "(all sessions)"}`,
+					`issue_root: ${issueScope}`,
+					`issue_role: ${issueRole}`,
+					`sessions: ${state.sessions.length}`,
+					`ready_issues: ${state.readyIssues.length}`,
+					`active_issues: ${state.activeIssues.length}`,
+					`last refresh: ${when}`,
+				].join("\n") + issueError + tmuxError,
+		};
+	};
+
+	const applySubagentsAction = async (
+		params: SubagentsToolParams,
+		ctx: ExtensionContext,
+	): Promise<{ ok: boolean; message: string; level: "info" | "warning" | "error" }> => {
+		switch (params.action) {
+			case "status": {
+				const summary = statusSummary();
+				return { ok: true, message: summary.text, level: summary.level as "info" | "warning" | "error" };
+			}
+			case "on":
+				state.enabled = true;
+				ensurePolling();
+				await refresh(ctx);
+				return { ok: true, message: "Subagents monitor enabled.", level: "info" };
+			case "off":
+				state.enabled = false;
+				stopPolling();
+				renderSubagentsUi(ctx, state);
+				return { ok: true, message: "Subagents monitor disabled.", level: "info" };
+			case "toggle":
+				state.enabled = !state.enabled;
+				if (state.enabled) {
+					ensurePolling();
+					await refresh(ctx);
+				} else {
+					stopPolling();
+					renderSubagentsUi(ctx, state);
+				}
+				return { ok: true, message: `Subagents monitor ${state.enabled ? "enabled" : "disabled"}.`, level: "info" };
+			case "refresh":
+				await refresh(ctx);
+				return { ok: true, message: "Subagents monitor refreshed.", level: "info" };
+			case "set_prefix": {
+				const value = params.prefix?.trim();
+				if (!value) {
+					return { ok: false, message: "Missing prefix value.", level: "error" };
+				}
+				state.prefix = value.toLowerCase() === "clear" ? "" : value;
+				state.enabled = true;
+				ensurePolling();
+				await refresh(ctx);
+				return { ok: true, message: `Subagents prefix set to ${state.prefix || "(all sessions)"}.`, level: "info" };
+			}
+			case "set_root": {
+				const value = params.root_issue_id?.trim();
+				if (!value) {
+					return { ok: false, message: "Missing root issue id.", level: "error" };
+				}
+				state.issueRootId = value.toLowerCase() === "clear" ? null : value;
+				state.enabled = true;
+				ensurePolling();
+				await refresh(ctx);
+				return { ok: true, message: `Subagents root set to ${state.issueRootId ?? "(all roots)"}.`, level: "info" };
+			}
+			case "set_role": {
+				const value = params.role_tag?.trim();
+				if (!value) {
+					return { ok: false, message: "Missing role/tag value.", level: "error" };
+				}
+				state.issueRoleTag = normalizeRoleTag(value);
+				state.enabled = true;
+				ensurePolling();
+				await refresh(ctx);
+				return { ok: true, message: `Subagents issue tag filter set to ${state.issueRoleTag ?? "(all roles)"}.`, level: "info" };
+			}
+			case "spawn": {
+				if (!state.issueRootId) {
+					return {
+						ok: false,
+						message: "Set a root first (`/mu subagents root <root-id>`) before spawning.",
+						level: "error",
+					};
+				}
+
+				let spawnLimit: number | null = null;
+				if (params.count != null && params.count !== "all") {
+					const countNum = typeof params.count === "number" ? params.count : Number.parseInt(String(params.count), 10);
+					const parsed = Math.trunc(countNum);
+					if (!Number.isFinite(parsed) || parsed < 1 || parsed > ISSUE_LIST_LIMIT) {
+						return { ok: false, message: `Spawn count must be 1-${ISSUE_LIST_LIMIT} or 'all'.`, level: "error" };
+					}
+					spawnLimit = parsed;
+				}
+
+				const issueSlices = await listIssueSlices(state.issueRootId, state.issueRoleTag);
+				state.readyIssues = issueSlices.ready;
+				state.activeIssues = issueSlices.active;
+				state.issueError = issueSlices.error;
+				if (issueSlices.error) {
+					state.enabled = true;
+					ensurePolling();
+					renderSubagentsUi(ctx, state);
+					return { ok: false, message: `Cannot spawn: ${issueSlices.error}`, level: "error" };
+				}
+
+				const candidates = spawnLimit == null ? issueSlices.ready : issueSlices.ready.slice(0, spawnLimit);
+				if (candidates.length === 0) {
+					state.enabled = true;
+					ensurePolling();
+					await refresh(ctx);
+					return { ok: true, message: "No ready issues to spawn for current root/tag filter.", level: "info" };
+				}
+
+				const spawnPrefix = state.prefix.length > 0 ? state.prefix : DEFAULT_PREFIX;
+				const tmux = await listTmuxSessions(spawnPrefix);
+				if (tmux.error) {
+					state.sessionError = tmux.error;
+					state.enabled = true;
+					ensurePolling();
+					renderSubagentsUi(ctx, state);
+					return { ok: false, message: `Cannot spawn: ${tmux.error}`, level: "error" };
+				}
+
+				const existingSessions = [...tmux.sessions];
+				const runId = spawnRunId();
+				const launched: string[] = [];
+				const skipped: string[] = [];
+				const failed: string[] = [];
+
+				for (const issue of candidates) {
+					if (issueHasSession(existingSessions, issue.id)) {
+						skipped.push(`${issue.id} (session exists)`);
+						continue;
+					}
+
+					let sessionName = `${spawnPrefix}${runId}-${issue.id}`;
+					if (existingSessions.includes(sessionName)) {
+						let suffix = 1;
+						while (existingSessions.includes(`${sessionName}-${suffix}`)) {
+							suffix += 1;
+						}
+						sessionName = `${sessionName}-${suffix}`;
+					}
+
+					const spawned = await spawnIssueTmuxSession({
+						cwd: ctx.cwd,
+						sessionName,
+						issue,
+					});
+					if (spawned.ok) {
+						existingSessions.push(sessionName);
+						launched.push(`${issue.id} -> ${sessionName}`);
+					} else {
+						failed.push(`${issue.id} (${spawned.error ?? "unknown error"})`);
+					}
+				}
+
+				state.enabled = true;
+				ensurePolling();
+				await refresh(ctx);
+
+				const summary = [
+					`Spawned ${launched.length}/${candidates.length} ready issue sessions.`,
+					launched.length > 0 ? `launched: ${launched.join(", ")}` : "launched: (none)",
+					`skipped: ${skipped.length}`,
+					`failed: ${failed.length}`,
+				];
+				if (failed.length > 0) {
+					summary.push(`failures: ${failed.join("; ")}`);
+				}
+				return { ok: true, message: summary.join("\n"), level: failed.length > 0 ? "warning" : "info" };
+			}
+		}
+	};
+
 	pi.on("session_start", async (_event, ctx) => {
 		activeCtx = ctx;
 		if (state.enabled) {
@@ -500,200 +776,97 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				.split(/\s+/)
 				.filter((token) => token.length > 0);
 
-			if (tokens.length === 0 || tokens[0] === "status") {
-				const when = state.lastUpdatedMs == null ? "never" : new Date(state.lastUpdatedMs).toLocaleTimeString();
-				const status = state.enabled ? "enabled" : "disabled";
-				const issueScope = state.issueRootId ?? "(all roots)";
-				const issueRole = state.issueRoleTag ?? "(all roles)";
-				const issueError = state.issueError ? `\nissue_error: ${state.issueError}` : "";
-				const tmuxError = state.sessionError ? `\ntmux_error: ${state.sessionError}` : "";
-				ctx.ui.notify(
-					[
-						`Subagents monitor ${status}`,
-						`prefix: ${state.prefix || "(all sessions)"}`,
-						`issue_root: ${issueScope}`,
-						`issue_role: ${issueRole}`,
-						`sessions: ${state.sessions.length}`,
-						`ready_issues: ${state.readyIssues.length}`,
-						`active_issues: ${state.activeIssues.length}`,
-						`last refresh: ${when}`,
-					].join("\n") + issueError + tmuxError,
-					state.issueError || state.sessionError ? "warning" : "info",
-				);
-				renderSubagentsUi(ctx, state);
+			const command = tokens[0] ?? "status";
+			let params: SubagentsToolParams;
+			switch (command) {
+				case "status":
+					params = { action: "status" };
+					break;
+				case "on":
+					params = { action: "on" };
+					break;
+				case "off":
+					params = { action: "off" };
+					break;
+				case "toggle":
+					params = { action: "toggle" };
+					break;
+				case "refresh":
+					params = { action: "refresh" };
+					break;
+				case "prefix":
+					params = { action: "set_prefix", prefix: tokens.slice(1).join(" ") };
+					break;
+				case "root":
+					params = { action: "set_root", root_issue_id: tokens.slice(1).join(" ") };
+					break;
+				case "role":
+					params = { action: "set_role", role_tag: tokens.slice(1).join(" ") };
+					break;
+				case "spawn":
+					params = {
+						action: "spawn",
+						count: (() => {
+							const token = tokens[1]?.trim();
+							if (!token || token.toLowerCase() === "all") {
+								return "all";
+							}
+							const parsed = Number.parseInt(token, 10);
+							return Number.isFinite(parsed) ? parsed : Number.NaN;
+						})(),
+					};
+					break;
+				default:
+					notify(ctx, `Unknown subagents command: ${command}`, "error");
+					return;
+			}
+
+			const result = await applySubagentsAction(params, ctx);
+			if (!result.ok) {
+				notify(ctx, result.message, result.level);
 				return;
 			}
+			ctx.ui.notify(result.message, result.level);
+		},
+	});
 
-			switch (tokens[0]) {
-				case "on":
-					state.enabled = true;
-					ensurePolling();
-					await refresh(ctx);
-					ctx.ui.notify("Subagents monitor enabled.", "info");
-					return;
-				case "off":
-					state.enabled = false;
-					stopPolling();
-					renderSubagentsUi(ctx, state);
-					ctx.ui.notify("Subagents monitor disabled.", "info");
-					return;
-				case "toggle":
-					state.enabled = !state.enabled;
-					if (state.enabled) {
-						ensurePolling();
-						await refresh(ctx);
-					} else {
-						stopPolling();
-						renderSubagentsUi(ctx, state);
-					}
-					ctx.ui.notify(`Subagents monitor ${state.enabled ? "enabled" : "disabled"}.`, "info");
-					return;
-				case "refresh": {
-					await refresh(ctx);
-					ctx.ui.notify("Subagents monitor refreshed.", "info");
-					return;
-				}
-				case "prefix": {
-					const value = tokens.slice(1).join(" ").trim();
-					if (!value) {
-						notify(ctx, "Missing prefix value.", "error");
-						return;
-					}
-					state.prefix = value.toLowerCase() === "clear" ? "" : value;
-					state.enabled = true;
-					ensurePolling();
-					await refresh(ctx);
-					ctx.ui.notify(`Subagents prefix set to ${state.prefix || "(all sessions)"}.`, "info");
-					return;
-				}
-				case "root": {
-					const value = tokens.slice(1).join(" ").trim();
-					if (!value) {
-						notify(ctx, "Missing root issue id.", "error");
-						return;
-					}
-					state.issueRootId = value.toLowerCase() === "clear" ? null : value;
-					state.enabled = true;
-					ensurePolling();
-					await refresh(ctx);
-					ctx.ui.notify(`Subagents root set to ${state.issueRootId ?? "(all roots)"}.`, "info");
-					return;
-				}
-				case "role": {
-					const value = tokens.slice(1).join(" ").trim();
-					if (!value) {
-						notify(ctx, "Missing role/tag value.", "error");
-						return;
-					}
-					state.issueRoleTag = normalizeRoleTag(value);
-					state.enabled = true;
-					ensurePolling();
-					await refresh(ctx);
-					ctx.ui.notify(`Subagents issue tag filter set to ${state.issueRoleTag ?? "(all roles)"}.`, "info");
-					return;
-				}
-				case "spawn": {
-					if (!state.issueRootId) {
-						notify(ctx, "Set a root first (`/mu subagents root <root-id>`) before spawning.", "error");
-						return;
-					}
-
-					let spawnLimit: number | null = null;
-					const limitToken = tokens[1]?.trim();
-					if (limitToken && limitToken.toLowerCase() !== "all") {
-						const parsed = Number.parseInt(limitToken, 10);
-						if (!Number.isFinite(parsed) || parsed < 1 || parsed > ISSUE_LIST_LIMIT) {
-							notify(ctx, `Spawn count must be 1-${ISSUE_LIST_LIMIT} or 'all'.`, "error");
-							return;
-						}
-						spawnLimit = parsed;
-					}
-
-					const issueSlices = await listIssueSlices(state.issueRootId, state.issueRoleTag);
-					state.readyIssues = issueSlices.ready;
-					state.activeIssues = issueSlices.active;
-					state.issueError = issueSlices.error;
-					if (issueSlices.error) {
-						state.enabled = true;
-						ensurePolling();
-						renderSubagentsUi(ctx, state);
-						notify(ctx, `Cannot spawn: ${issueSlices.error}`, "error");
-						return;
-					}
-
-					const candidates = spawnLimit == null ? issueSlices.ready : issueSlices.ready.slice(0, spawnLimit);
-					if (candidates.length === 0) {
-						state.enabled = true;
-						ensurePolling();
-						await refresh(ctx);
-						ctx.ui.notify("No ready issues to spawn for current root/tag filter.", "info");
-						return;
-					}
-
-					const spawnPrefix = state.prefix.length > 0 ? state.prefix : DEFAULT_PREFIX;
-					const tmux = await listTmuxSessions(spawnPrefix);
-					if (tmux.error) {
-						state.sessionError = tmux.error;
-						state.enabled = true;
-						ensurePolling();
-						renderSubagentsUi(ctx, state);
-						notify(ctx, `Cannot spawn: ${tmux.error}`, "error");
-						return;
-					}
-
-					const existingSessions = [...tmux.sessions];
-					const runId = spawnRunId();
-					const launched: string[] = [];
-					const skipped: string[] = [];
-					const failed: string[] = [];
-
-					for (const issue of candidates) {
-						if (issueHasSession(existingSessions, issue.id)) {
-							skipped.push(`${issue.id} (session exists)`);
-							continue;
-						}
-
-						let sessionName = `${spawnPrefix}${runId}-${issue.id}`;
-						if (existingSessions.includes(sessionName)) {
-							let suffix = 1;
-							while (existingSessions.includes(`${sessionName}-${suffix}`)) {
-								suffix += 1;
-							}
-							sessionName = `${sessionName}-${suffix}`;
-						}
-
-						const spawned = await spawnIssueTmuxSession({
-							cwd: ctx.cwd,
-							sessionName,
-							issue,
-						});
-						if (spawned.ok) {
-							existingSessions.push(sessionName);
-							launched.push(`${issue.id} -> ${sessionName}`);
-						} else {
-							failed.push(`${issue.id} (${spawned.error ?? "unknown error"})`);
-						}
-					}
-
-					state.enabled = true;
-					ensurePolling();
-					await refresh(ctx);
-
-					const summary = [
-						`Spawned ${launched.length}/${candidates.length} ready issue sessions.`,
-						launched.length > 0 ? `launched: ${launched.join(", ")}` : "launched: (none)",
-						`skipped: ${skipped.length}`,
-						`failed: ${failed.length}`,
-					];
-					if (failed.length > 0) {
-						summary.push(`failures: ${failed.join("; ")}`);
-					}
-					ctx.ui.notify(summary.join("\n"), failed.length > 0 ? "warning" : "info");
-					return;
-				}
-				default:
-					notify(ctx, `Unknown subagents command: ${tokens[0]}`, "error");
+	pi.registerTool({
+		name: "mu_subagents_hud",
+		label: "mu subagents HUD",
+		description:
+			"Control or inspect subagents HUD state, including tmux scope, issue queue filters, and ready-queue spawning.",
+		parameters: {
+			type: "object",
+			properties: {
+				action: {
+					type: "string",
+					enum: ["status", "on", "off", "toggle", "refresh", "set_prefix", "set_root", "set_role", "spawn"],
+				},
+				prefix: { type: "string" },
+				root_issue_id: { type: "string" },
+				role_tag: { type: "string" },
+				count: {
+					anyOf: [{ type: "integer", minimum: 1, maximum: ISSUE_LIST_LIMIT }, { type: "string", enum: ["all"] }],
+				},
+			},
+			required: ["action"],
+			additionalProperties: false,
+		} as unknown as Parameters<ExtensionAPI["registerTool"]>[0]["parameters"],
+		execute: async (_toolCallId, paramsRaw, _signal, _onUpdate, ctx) => {
+			activeCtx = ctx;
+			const params = paramsRaw as SubagentsToolParams;
+			const result = await applySubagentsAction(params, ctx);
+			if (!result.ok) {
+				return subagentsToolError(result.message, state);
 			}
+			return {
+				content: [{ type: "text", text: result.message }],
+				details: {
+					ok: true,
+					action: params.action,
+					...subagentsDetails(state),
+				},
+			};
 		},
 	});
 }
