@@ -2,23 +2,20 @@
 
 Shared agent runtime package for mu.
 
-This package provides reusable runtime pieces for chat, orchestration, and serve-mode tooling, including:
+This package provides reusable runtime pieces for operator sessions and serve-mode tooling, including:
 
 - Messaging operator runtime + backend
 - Command context resolution for operator command proposals
-- Role prompt loading/defaults for operator/orchestrator/worker/reviewer
-- pi CLI/SDK orchestration backends and resource loader helpers
-- Prompt/template helpers used by orchestration roles
+- Operator prompt loading/defaults
+- pi CLI/SDK backend and resource loader helpers
+- Prompt/template helpers
 
 ## Bundled default prompts
 
 Bundled defaults now live as markdown files under `packages/agent/prompts/`:
 
 - `operator.md`
-- `orchestrator.md`
-- `worker.md`
-- `reviewer.md`
-- `soul.md` (shared tail appended to all role prompts)
+- `soul.md` (shared tail appended to the operator prompt)
 
 These are loaded by runtime code and are the single source of truth for default system prompts.
 

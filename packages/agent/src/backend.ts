@@ -18,13 +18,11 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@mariozechner/pi-coding-agent";
-import type { MuRole } from "./mu_roles.js";
-import { orchestratorToolExtensionPaths, workerToolExtensionPaths } from "./extensions/index.js";
+import { operatorExtensionPaths } from "./extensions/index.js";
 import { MU_DEFAULT_THEME_NAME, MU_DEFAULT_THEME_PATH } from "./ui_defaults.js";
 
 export type BackendRunOpts = {
 	issueId: string;
-	role: MuRole;
 	systemPrompt: string;
 	prompt: string;
 	provider: string;
@@ -127,13 +125,11 @@ export class SdkBackend implements BackendRunner {
 		}
 
 		const settingsManager = SettingsManager.inMemory({ theme: MU_DEFAULT_THEME_NAME, quietStartup: true });
-		const roleExtensionPaths =
-			opts.role === "orchestrator" ? orchestratorToolExtensionPaths : workerToolExtensionPaths;
 		const resourceLoader = createMuResourceLoader({
 			cwd: opts.cwd,
 			systemPrompt: opts.systemPrompt,
 			settingsManager,
-			additionalExtensionPaths: roleExtensionPaths,
+			additionalExtensionPaths: operatorExtensionPaths,
 		});
 		await resourceLoader.reload();
 

@@ -16,7 +16,7 @@ export function mainHelp(): string {
 		"",
 		h("Agent quick navigation:"),
 		`  ${dim("Inspect:")}   ${cmd("mu status --pretty")}`,
-		`  ${dim("Work queue:")} ${cmd("mu issues ready --root <root-id> --tag role:worker --pretty")}`,
+		`  ${dim("Work queue:")} ${cmd("mu issues ready --root <root-id> --pretty")}`,
 		`  ${dim("Memory:")}    ${cmd("mu memory search --query <text> --limit 20")}`,
 		`  ${dim("Index:")}     ${cmd("mu memory index status")} ${dim("/ ")} ${cmd("mu memory index rebuild")}`,
 		`  ${dim("Forensics:")} ${cmd("mu store tail events --limit 20")}`,

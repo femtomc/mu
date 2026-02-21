@@ -97,7 +97,7 @@ function operatorSessionHelp(commandName: "serve" | "exec"): string {
 				"",
 				"Examples:",
 				'  mu exec "Investigate failing tests and propose a fix"',
-				'  mu exec "Summarize ready worker issues" --json',
+				'  mu exec "Summarize ready issues" --json',
 			].join("\n") + "\n"
 		);
 	}

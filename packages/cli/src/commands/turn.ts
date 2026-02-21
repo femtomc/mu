@@ -41,6 +41,8 @@ export async function cmdTurn(argv: string[], ctx: TurnCommandCtx, deps: TurnCom
 				"",
 				"Notes:",
 				"  - Requires an existing session id in the selected session directory.",
+				"  - --session-kind accepts operator|cp_operator.",
+				"  - --extension-profile accepts operator|none.",
 				"  - Returns structured JSON turn result.",
 				"",
 				"Examples:",
@@ -63,6 +65,33 @@ export async function cmdTurn(argv: string[], ctx: TurnCommandCtx, deps: TurnCom
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu turn --help"] });
 	}
+
+	const normalizedSessionKind =
+		sessionKind == null
+			? null
+			: sessionKind === "operator" || sessionKind === "cp_operator"
+				? sessionKind
+				: null;
+	if (sessionKind != null && normalizedSessionKind == null) {
+		return jsonError(`invalid --session-kind: ${JSON.stringify(sessionKind)} (supported: operator, cp_operator)`, {
+			pretty,
+			recovery: ["mu turn --session-kind operator --session-id <id> --body <text>"],
+		});
+	}
+
+	const normalizedExtensionProfile =
+		extensionProfile == null
+			? null
+			: extensionProfile === "operator" || extensionProfile === "none"
+				? extensionProfile
+				: null;
+	if (extensionProfile != null && normalizedExtensionProfile == null) {
+		return jsonError(`invalid --extension-profile: ${JSON.stringify(extensionProfile)} (supported: operator, none)`, {
+			pretty,
+			recovery: ["mu turn --extension-profile operator --session-id <id> --body <text>"],
+		});
+	}
+
 	if (!sessionId) {
 		return jsonError("missing --session-id", {
 			pretty,
@@ -78,7 +107,7 @@ export async function cmdTurn(argv: string[], ctx: TurnCommandCtx, deps: TurnCom
 
 	const request: SessionTurnRequest = {
 		session_id: sessionId,
-		session_kind: sessionKind ?? null,
+		session_kind: normalizedSessionKind,
 		body,
 		source: source ?? null,
 		provider: provider ?? null,
@@ -86,7 +115,7 @@ export async function cmdTurn(argv: string[], ctx: TurnCommandCtx, deps: TurnCom
 		thinking: thinking ?? null,
 		session_file: sessionFile ?? null,
 		session_dir: sessionDir ?? null,
-		extension_profile: extensionProfile ?? null,
+		extension_profile: normalizedExtensionProfile,
 	};
 
 	try {

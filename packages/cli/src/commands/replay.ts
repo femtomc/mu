@@ -43,7 +43,7 @@ export async function cmdReplay(
 				"",
 				"Examples:",
 				"  mu replay mu-abc123",
-				"  mu replay mu-root123/mu-worker456",
+				"  mu replay mu-root123/mu-issue456",
 				"  mu replay ~/.mu/workspaces/<workspace-id>/logs/<root-id>/<issue-id>.jsonl",
 				"",
 				"See also: `mu store paths`, `mu guide`",

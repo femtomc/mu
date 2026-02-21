@@ -17,12 +17,12 @@ describe("ForumStore", () => {
 
 		const eventLog = fsEventLog(join(dir, ".mu", "events.jsonl"));
 		const store = new ForumStore(new FsJsonlStore(forumPath), { events: eventLog });
-		const msg = await store.post("issue:mu-abc123", "hello", "worker");
+		const msg = await store.post("issue:mu-abc123", "hello", "operator");
 
 		expect(msg).toMatchObject({
 			topic: "issue:mu-abc123",
 			body: "hello",
-			author: "worker",
+			author: "operator",
 		});
 		expect(Number.isInteger(msg.created_at)).toBe(true);
 		// Seconds since Unix epoch (not ms).
@@ -33,7 +33,7 @@ describe("ForumStore", () => {
 		expect(rows[0]).toMatchObject({
 			topic: "issue:mu-abc123",
 			body: "hello",
-			author: "worker",
+			author: "operator",
 			created_at: msg.created_at,
 		});
 
@@ -130,7 +130,7 @@ describe("ForumStore", () => {
 			{ topic: "alpha", body: "a1", author: "system", created_at: 1 },
 			{ topic: "alpha", body: "a2", author: "system", created_at: 2 },
 			{ topic: "beta", body: "b1", author: "system", created_at: 3 },
-			{ topic: "issue:mu-xyz999", body: "i1", author: "worker", created_at: 4 },
+			{ topic: "issue:mu-xyz999", body: "i1", author: "operator", created_at: 4 },
 		]);
 
 		const all = await store.topics();

@@ -82,9 +82,9 @@ export async function cmdForum<Ctx extends ForumCommandCtx>(
 				"  user:context:<session>     User/session context",
 				"  research:<project>:<topic> Research notes",
 				"",
-				"Daily worker usage:",
-				'  mu forum post issue:<id> -m "claimed, starting implementation" --author worker',
-				'  mu forum post issue:<id> -m "tests passing, closing" --author worker',
+				"Daily operator usage:",
+				'  mu forum post issue:<id> -m "claimed, starting implementation" --author operator',
+				'  mu forum post issue:<id> -m "tests passing, closing" --author operator',
 				"  mu forum read issue:<id> --limit 20",
 				"",
 				"Discover active issue threads:",
@@ -122,9 +122,9 @@ export async function cmdForum<Ctx extends ForumCommandCtx>(
 					"  --json                 Emit full JSON row (default is compact ack)",
 					"",
 					"Examples:",
-					'  mu forum post issue:<id> -m "claimed and starting" --author worker',
-					'  mu forum post issue:<id> -m "blocked on env setup" --author worker',
-					'  mu forum post research:mu:help-audit -m "notes" --author orchestrator --json --pretty',
+					'  mu forum post issue:<id> -m "claimed and starting" --author operator',
+					'  mu forum post issue:<id> -m "blocked on env setup" --author operator',
+					'  mu forum post research:mu:help-audit -m "notes" --author operator --json --pretty',
 				].join("\n") + "\n",
 			);
 		}
@@ -140,7 +140,7 @@ export async function cmdForum<Ctx extends ForumCommandCtx>(
 		if (!msgBody) {
 			return jsonError("missing message (-m/--message)", {
 				pretty,
-				recovery: [`mu forum post ${topic} -m "..." --author worker`],
+				recovery: [`mu forum post ${topic} -m "..." --author operator`],
 			});
 		}
 		if (argv6.length > 0) {

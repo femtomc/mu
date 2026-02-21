@@ -281,7 +281,7 @@ Detailed adapter runbooks live in package READMEs:
 
 | Package | Description |
 |---------|-------------|
-| [`@femtomc/mu-core`](packages/core/README.md) | Types, JSONL persistence, DAG algorithms, event system. Runtime-agnostic core with Node and browser adapters. |
+| [`@femtomc/mu-core`](packages/core/README.md) | Types, JSONL persistence, IDs, and event system primitives. Runtime-agnostic core with Node and browser adapters. |
 | [`@femtomc/mu-agent`](packages/agent/README.md) | Shared agent runtime primitives (operator runtime/backends, skill loading, pi agent backends, and prompt helpers). |
 | [`@femtomc/mu-control-plane`](packages/control-plane/README.md) | Messaging control-plane runtime (Slack/Discord/Telegram adapters, policy/confirmation/idempotency pipeline, outbox + DLQ tooling). |
 | [`@femtomc/mu-issue`](packages/issue/README.md) | Issue store — create, update, close, plus DAG queries (ready leaves, subtree, validate, collapsible). |

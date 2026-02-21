@@ -1,7 +1,7 @@
 {
   "name": "@femtomc/mu-agent",
   "version": "26.2.90",
-  "description": "Shared agent runtime for mu assistant sessions, orchestration roles, and serve extensions.",
+  "description": "Shared operator runtime for mu assistant sessions and serve extensions.",
   "keywords": [
     "mu",
     "agent",

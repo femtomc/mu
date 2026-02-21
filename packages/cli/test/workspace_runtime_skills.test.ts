@@ -22,7 +22,7 @@ test("ensureStoreInitialized seeds bundled starter skills into MU_HOME/skills", 
 		const paths = getStorePaths(repoRoot);
 		await ensureStoreInitialized({ paths });
 
-		for (const skillName of ["planning", "subagents", "reviewer"] as const) {
+		for (const skillName of ["planning", "subagents"] as const) {
 			const skillPath = join(muHome, "skills", skillName, "SKILL.md");
 			const content = await readFile(skillPath, "utf8");
 			expect(content).toContain(`name: ${skillName}`);
@@ -57,7 +57,6 @@ test("ensureStoreInitialized preserves existing user skill files", async () => {
 
 		expect(await readFile(customSkillPath, "utf8")).toBe(customSkill);
 		expect(await readFile(join(muHome, "skills", "planning", "SKILL.md"), "utf8")).toContain("name: planning");
-		expect(await readFile(join(muHome, "skills", "reviewer", "SKILL.md"), "utf8")).toContain("name: reviewer");
 	} finally {
 		if (previousMuHome === undefined) {
 			delete process.env.MU_HOME;
@@ -97,14 +96,12 @@ test("seeded starter skills are discovered and injected into session prompts", a
 		const names = new Set((session?.resourceLoader?.getSkills().skills ?? []).map((skill) => skill.name));
 		expect(names.has("planning")).toBe(true);
 		expect(names.has("subagents")).toBe(true);
-		expect(names.has("reviewer")).toBe(true);
 
 		expect(typeof session?._rebuildSystemPrompt).toBe("function");
 		const prompt = session?._rebuildSystemPrompt?.(["bash", "read", "write", "edit"]) ?? "";
 		expect(prompt).toContain("<available_skills>");
 		expect(prompt).toContain("<name>planning</name>");
 		expect(prompt).toContain("<name>subagents</name>");
-		expect(prompt).toContain("<name>reviewer</name>");
 	} finally {
 		try {
 			session?.dispose();

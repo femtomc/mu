@@ -1,15 +1,12 @@
-import type { Issue, JsonlStore, ValidationResult } from "@femtomc/mu-core";
+import type { Issue, JsonlStore } from "@femtomc/mu-core";
+import { EventLog, IssueSchema, NullEventSink, nowTs, shortId } from "@femtomc/mu-core";
 import {
 	collapsible as dagCollapsible,
-	subtreeIds as dagSubtreeIds,
-	EventLog,
-	IssueSchema,
-	NullEventSink,
-	nowTs,
 	readyLeaves,
-	shortId,
+	subtreeIds as dagSubtreeIds,
+	type ValidationResult,
 	validateDag,
-} from "@femtomc/mu-core";
+} from "./dag.js";
 import {
 	IssueStoreNotFoundError,
 	IssueStoreValidationError,

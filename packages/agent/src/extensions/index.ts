@@ -20,10 +20,3 @@ export const serveExtensionPaths = [resolveBundledExtensionPath("mu-serve")];
  * Operator-mode extension — single facade that bundles operator UI helpers.
  */
 export const operatorExtensionPaths = [resolveBundledExtensionPath("mu-operator")];
-
-/**
- * Orchestrator and worker sessions run with the generic built-in tools
- * (bash/read/write/edit) and invoke `mu` CLI directly.
- */
-export const orchestratorToolExtensionPaths: string[] = [];
-export const workerToolExtensionPaths: string[] = [];

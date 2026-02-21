@@ -143,9 +143,9 @@ describe("subagents HUD tool", () => {
 		expect(details.ok).toBe(true);
 		expect(details.enabled).toBe(false);
 		expect(details.prefix).toBe("mu-sub-");
-		expect(details.issue_role_tag).toBe("role:worker");
+		expect(details.issue_tag_filter).toBeNull();
 		expect(details.issue_root_id).toBeNull();
-		expect(details.spawn_mode).toBe("worker");
+		expect(details.spawn_mode).toBe("operator");
 		expect(details.spawn_paused).toBe(false);
 		expect(details.refresh_seconds).toBe(8);
 		expect(details.stale_after_seconds).toBe(60);
@@ -162,7 +162,7 @@ describe("subagents HUD tool", () => {
 
 		const result = await executeSubagentsTool(tool, { action: "snapshot", snapshot_format: "compact" });
 		expect(textOf(result)).toContain("HUD(subagents)");
-		expect(textOf(result)).toContain("mode=worker");
+		expect(textOf(result)).toContain("mode=operator");
 		expect(textOf(result)).toContain("paused=no");
 	});
 
@@ -197,14 +197,14 @@ describe("subagents HUD tool", () => {
 							title: "Implement outbound-only v1 adapter path",
 							status: "in_progress",
 							priority: 2,
-							tags: ["role:worker"],
+							tags: ["node:agent"],
 						},
 						{
 							id: "mu-b2222222",
 							title: "Validate fallback parser behavior under retries",
 							status: "in_progress",
 							priority: 2,
-							tags: ["role:worker"],
+							tags: ["node:agent"],
 						},
 					]),
 				);
@@ -225,7 +225,7 @@ describe("subagents HUD tool", () => {
 					(line) =>
 						line.startsWith("•") ||
 						line.includes("subagent updates") ||
-						line.includes("active workers") ||
+						line.includes("active operators") ||
 						line.includes("activity refresh failed"),
 				),
 			).toBe(true);

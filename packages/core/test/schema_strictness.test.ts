@@ -34,7 +34,7 @@ test("issue/forum schemas reject unknown fields", async () => {
 	]);
 
 	await writeJsonl(forumPath, [
-		{ topic: "issue:mu-abc123", body: "hello", author: "worker", created_at: 200, extra: "nope" },
+		{ topic: "issue:mu-abc123", body: "hello", author: "operator", created_at: 200, extra: "nope" },
 	]);
 
 	for (const row of await readJsonl(issuesPath)) {

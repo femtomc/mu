@@ -109,11 +109,11 @@ Also inspect repo files directly (read/bash) for implementation constraints.
 
 ```bash
 # 1) Create root planning issue
-mu issues create "<Goal>" --body "<scope + success criteria>" --tag node:root --role orchestrator --pretty
+mu issues create "<Goal>" --body "<scope + success criteria>" --tag node:root --pretty
 
 # 2) Create child work items
-mu issues create "<Subtask A>" --parent <root-id> --role worker --priority 2 --pretty
-mu issues create "<Subtask B>" --parent <root-id> --role worker --priority 2 --pretty
+mu issues create "<Subtask A>" --parent <root-id> --priority 2 --pretty
+mu issues create "<Subtask B>" --parent <root-id> --priority 2 --pretty
 
 # 3) Add dependency edges where needed
 mu issues dep <child-a-id> blocks <child-b-id>

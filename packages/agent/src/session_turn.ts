@@ -1,22 +1,16 @@
 import { getStorePaths } from "@femtomc/mu-core/node";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import {
-	DEFAULT_OPERATOR_SYSTEM_PROMPT,
-	DEFAULT_ORCHESTRATOR_PROMPT,
-	DEFAULT_REVIEWER_PROMPT,
-	DEFAULT_WORKER_PROMPT,
-} from "./default_prompts.js";
-import {
-	operatorExtensionPaths,
-	orchestratorToolExtensionPaths,
-	workerToolExtensionPaths,
-} from "./extensions/index.js";
+import { DEFAULT_OPERATOR_SYSTEM_PROMPT } from "./default_prompts.js";
+import { operatorExtensionPaths } from "./extensions/index.js";
 import { createMuSession, type CreateMuSessionOpts, type MuSession } from "./session_factory.js";
+
+export type SessionKind = "operator" | "cp_operator";
+export type SessionExtensionProfile = "operator" | "none";
 
 export type SessionTurnRequest = {
 	session_id: string;
-	session_kind: string | null;
+	session_kind: SessionKind | null;
 	body: string;
 	source: string | null;
 	provider: string | null;
@@ -24,12 +18,12 @@ export type SessionTurnRequest = {
 	thinking: string | null;
 	session_file: string | null;
 	session_dir: string | null;
-	extension_profile: string | null;
+	extension_profile: SessionExtensionProfile | null;
 };
 
 export type SessionTurnResult = {
 	session_id: string;
-	session_kind: string | null;
+	session_kind: SessionKind | null;
 	session_file: string;
 	context_entry_id: string | null;
 	reply: string;
@@ -61,31 +55,26 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 	return value as Record<string, unknown>;
 }
 
-function normalizeSessionKind(value: string | null): string | null {
+function normalizeSessionKind(value: string | null): SessionKind | null {
 	if (!value) {
 		return null;
 	}
 	const normalized = value.trim().toLowerCase().replaceAll("-", "_");
-	if (normalized === "cpoperator" || normalized === "control_plane_operator") {
+	if (normalized === "cpoperator" || normalized === "control_plane_operator" || normalized === "cp_operator") {
 		return "cp_operator";
 	}
-	return normalized;
+	if (normalized === "operator") {
+		return "operator";
+	}
+	return null;
 }
 
-function normalizeExtensionProfile(
-	value: string | null,
-): "operator" | "worker" | "orchestrator" | "reviewer" | "none" | null {
+function normalizeExtensionProfile(value: string | null): SessionExtensionProfile | null {
 	if (!value) {
 		return null;
 	}
 	const normalized = value.trim().toLowerCase();
-	if (
-		normalized === "operator" ||
-		normalized === "worker" ||
-		normalized === "orchestrator" ||
-		normalized === "reviewer" ||
-		normalized === "none"
-	) {
+	if (normalized === "operator" || normalized === "none") {
 		return normalized;
 	}
 	return null;
@@ -101,19 +90,12 @@ function resolveRepoPath(repoRoot: string, candidate: string): string {
 	return isAbsolute(candidate) ? resolve(candidate) : resolve(repoRoot, candidate);
 }
 
-function defaultSessionDirForKind(repoRoot: string, sessionKind: string | null): string {
+function defaultSessionDirForKind(repoRoot: string, sessionKind: SessionKind | null): string {
 	const storeDir = getStorePaths(repoRoot).storeDir;
 	switch (sessionKind) {
 		case "operator":
 			return join(storeDir, "operator", "sessions");
 		case "cp_operator":
-			return join(storeDir, "control-plane", "operator-sessions");
-		case "orchestrator":
-			return join(storeDir, "orchestrator", "sessions");
-		case "worker":
-			return join(storeDir, "worker", "sessions");
-		case "reviewer":
-			return join(storeDir, "reviewer", "sessions");
 		default:
 			return join(storeDir, "control-plane", "operator-sessions");
 	}
@@ -193,8 +175,8 @@ async function resolveSessionFileById(opts: { sessionDir: string; sessionId: str
 }
 
 function extensionPathsForTurn(opts: {
-	sessionKind: string | null;
-	extensionProfile: "operator" | "worker" | "orchestrator" | "reviewer" | "none" | null;
+	sessionKind: SessionKind | null;
+	extensionProfile: SessionExtensionProfile | null;
 }): string[] {
 	if (opts.extensionProfile === "none") {
 		return [];
@@ -202,42 +184,24 @@ function extensionPathsForTurn(opts: {
 	if (opts.extensionProfile === "operator") {
 		return [...operatorExtensionPaths];
 	}
-	if (opts.extensionProfile === "orchestrator") {
-		return [...orchestratorToolExtensionPaths];
-	}
-	if (opts.extensionProfile === "worker" || opts.extensionProfile === "reviewer") {
-		return [...workerToolExtensionPaths];
-	}
 	if (opts.sessionKind === "operator" || opts.sessionKind === "cp_operator") {
 		return [...operatorExtensionPaths];
-	}
-	if (opts.sessionKind === "orchestrator") {
-		return [...orchestratorToolExtensionPaths];
-	}
-	if (opts.sessionKind === "worker" || opts.sessionKind === "reviewer") {
-		return [...workerToolExtensionPaths];
 	}
 	return [...operatorExtensionPaths];
 }
 
 function systemPromptForTurn(opts: {
-	sessionKind: string | null;
-	extensionProfile: "operator" | "worker" | "orchestrator" | "reviewer" | "none" | null;
+	sessionKind: SessionKind | null;
+	extensionProfile: SessionExtensionProfile | null;
 }): string | undefined {
-	const role = opts.extensionProfile ?? opts.sessionKind;
-	if (role === "operator" || role === "cp_operator") {
+	const profile = opts.extensionProfile ?? opts.sessionKind;
+	if (profile === "none") {
+		return undefined;
+	}
+	if (profile === "operator" || profile === "cp_operator") {
 		return DEFAULT_OPERATOR_SYSTEM_PROMPT;
 	}
-	if (role === "orchestrator") {
-		return DEFAULT_ORCHESTRATOR_PROMPT;
-	}
-	if (role === "reviewer") {
-		return DEFAULT_REVIEWER_PROMPT;
-	}
-	if (role === "worker") {
-		return DEFAULT_WORKER_PROMPT;
-	}
-	return undefined;
+	return DEFAULT_OPERATOR_SYSTEM_PROMPT;
 }
 
 function extractAssistantText(message: unknown): string {
@@ -295,7 +259,7 @@ function safeSessionFile(session: MuSession): string | null {
 async function resolveSessionTarget(opts: {
 	repoRoot: string;
 	request: SessionTurnRequest;
-	normalizedSessionKind: string | null;
+	normalizedSessionKind: SessionKind | null;
 }): Promise<{ sessionFile: string; sessionDir: string }> {
 	const sessionDir = opts.request.session_dir
 		? resolveRepoPath(opts.repoRoot, opts.request.session_dir)
@@ -348,17 +312,27 @@ export function parseSessionTurnRequest(body: Record<string, unknown>): {
 	if (!messageBody) {
 		return { request: null, error: "body (or message/prompt) is required" };
 	}
-	const extensionProfileRaw = nonEmptyString(body.extension_profile);
-	if (extensionProfileRaw && !normalizeExtensionProfile(extensionProfileRaw)) {
+	const sessionKindRaw = nonEmptyString(body.session_kind);
+	const normalizedSessionKind = normalizeSessionKind(sessionKindRaw);
+	if (sessionKindRaw && !normalizedSessionKind) {
 		return {
 			request: null,
-			error: "extension_profile must be one of operator|worker|orchestrator|reviewer|none",
+			error: "session_kind must be one of operator|cp_operator",
+		};
+	}
+
+	const extensionProfileRaw = nonEmptyString(body.extension_profile);
+	const normalizedExtensionProfile = normalizeExtensionProfile(extensionProfileRaw);
+	if (extensionProfileRaw && !normalizedExtensionProfile) {
+		return {
+			request: null,
+			error: "extension_profile must be one of operator|none",
 		};
 	}
 	return {
 		request: {
 			session_id: sessionId,
-			session_kind: nonEmptyString(body.session_kind),
+			session_kind: normalizedSessionKind,
 			body: messageBody,
 			source: nonEmptyString(body.source),
 			provider: nonEmptyString(body.provider),
@@ -366,7 +340,7 @@ export function parseSessionTurnRequest(body: Record<string, unknown>): {
 			thinking: nonEmptyString(body.thinking),
 			session_file: nonEmptyString(body.session_file),
 			session_dir: nonEmptyString(body.session_dir),
-			extension_profile: extensionProfileRaw,
+			extension_profile: normalizedExtensionProfile,
 		},
 		error: null,
 	};

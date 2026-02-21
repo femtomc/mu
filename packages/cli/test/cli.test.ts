@@ -93,8 +93,8 @@ async function expectStoreBootstrapped(dir: string): Promise<void> {
 	const gitignore = await readFile(join(storeDir, ".gitignore"), "utf8");
 	expect(gitignore).toContain("*");
 	expect(gitignore).toContain("!.gitignore");
-	expect(await Bun.file(join(storeDir, "roles", "orchestrator.md")).exists()).toBe(false);
-	expect(await Bun.file(join(storeDir, "roles", "worker.md")).exists()).toBe(false);
+	expect(await Bun.file(join(storeDir, "roles", "operator.md")).exists()).toBe(false);
+	expect(await Bun.file(join(storeDir, "roles", "soul.md")).exists()).toBe(false);
 }
 
 test("mu --help", async () => {
@@ -366,23 +366,21 @@ test("mu init is disabled", async () => {
 	expect(statusHelp.stdout).toContain("If counts look wrong");
 });
 
-test("mu issues/forum help includes orchestrator + worker workflows", async () => {
+test("mu issues/forum help reflects operator-first workflows", async () => {
 	const dir = await mkTempRepo();
 
 	const issuesHelp = await run(["issues", "--help"], { cwd: dir });
 	expect(issuesHelp.exitCode).toBe(0);
-	expect(issuesHelp.stdout).toContain("Worker flow");
-	expect(issuesHelp.stdout).toContain("Orchestrator flow");
+	expect(issuesHelp.stdout).toContain("Operator flow");
+	expect(issuesHelp.stdout).toContain("Planning flow");
 	expect(issuesHelp.stdout).toContain("Dependency semantics");
 	expect(issuesHelp.stdout).toContain("mu issues dep <task-a> blocks <task-b>");
 
 	const createHelp = await run(["issues", "create", "--help"], { cwd: dir });
 	expect(createHelp.exitCode).toBe(0);
 	expect(createHelp.stdout).toContain("--parent <id-or-prefix>");
-	expect(createHelp.stdout).toContain("--role, -r <orchestrator|worker>");
-	expect(createHelp.stdout).toContain(
-		'mu issues create "Implement parser" --parent <root-id> --role worker --priority 2',
-	);
+	expect(createHelp.stdout).not.toContain("--role");
+	expect(createHelp.stdout).toContain('mu issues create "Implement parser" --parent <root-id> --priority 2');
 
 	const depHelp = await run(["issues", "dep", "--help"], { cwd: dir });
 	expect(depHelp.exitCode).toBe(0);
@@ -398,7 +396,7 @@ test("mu issues/forum help includes orchestrator + worker workflows", async () =
 	const forumPostHelp = await run(["forum", "post", "--help"], { cwd: dir });
 	expect(forumPostHelp.exitCode).toBe(0);
 	expect(forumPostHelp.stdout).toContain("--author <NAME>");
-	expect(forumPostHelp.stdout).toContain("--author worker");
+	expect(forumPostHelp.stdout).toContain("--author operator");
 
 	const forumReadHelp = await run(["forum", "read", "--help"], { cwd: dir });
 	expect(forumReadHelp.exitCode).toBe(0);
@@ -677,11 +675,11 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	expect(rows).toHaveLength(1);
 	expect(rows[0].id).toBe(issue.id);
 
-	const posted = await run(["forum", "post", `issue:${issue.id}`, "-m", "hello", "--author", "worker", "--json"], { cwd: dir });
+	const posted = await run(["forum", "post", `issue:${issue.id}`, "-m", "hello", "--author", "operator", "--json"], { cwd: dir });
 	expect(posted.exitCode).toBe(0);
 
 	const msg = JSON.parse(posted.stdout) as any;
-	expect(msg).toMatchObject({ topic: `issue:${issue.id}`, body: "hello", author: "worker" });
+	expect(msg).toMatchObject({ topic: `issue:${issue.id}`, body: "hello", author: "operator" });
 
 	const forumText = await readFile(join(workspaceStoreDir(dir), "forum.jsonl"), "utf8");
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
@@ -783,7 +781,7 @@ test("mu issue/forum mutation interfaces default to compact output with opt-in -
 	expect(undepCompact.exitCode).toBe(0);
 	expect(undepCompact.stdout).toContain("dep removed:");
 
-	const postCompact = await run(["forum", "post", `issue:${createdId}`, "-m", "mutation update", "--author", "worker"], {
+	const postCompact = await run(["forum", "post", `issue:${createdId}`, "-m", "mutation update", "--author", "operator"], {
 		cwd: dir,
 	});
 	expect(postCompact.exitCode).toBe(0);

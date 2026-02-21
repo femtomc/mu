@@ -13,7 +13,7 @@ type IssueDigest = {
 	tags: string[];
 };
 
-type SpawnMode = "worker" | "reviewer" | "researcher";
+type SpawnMode = "operator" | "researcher";
 
 type SubagentsState = {
 	enabled: boolean;
@@ -21,7 +21,7 @@ type SubagentsState = {
 	sessions: string[];
 	sessionError: string | null;
 	issueRootId: string | null;
-	issueRoleTag: string | null;
+	issueTagFilter: string | null;
 	readyIssues: IssueDigest[];
 	activeIssues: IssueDigest[];
 	issueError: string | null;
@@ -63,7 +63,7 @@ type SubagentsToolAction =
 	| "refresh"
 	| "set_prefix"
 	| "set_root"
-	| "set_role"
+	| "set_tag"
 	| "set_mode"
 	| "set_refresh_interval"
 	| "set_stale_after"
@@ -75,7 +75,7 @@ type SubagentsToolParams = {
 	action: SubagentsToolAction;
 	prefix?: string;
 	root_issue_id?: string;
-	role_tag?: string;
+	issue_tag?: string;
 	count?: number | "all";
 	spawn_mode?: string;
 	refresh_seconds?: number;
@@ -85,8 +85,8 @@ type SubagentsToolParams = {
 };
 
 const DEFAULT_PREFIX = "mu-sub-";
-const DEFAULT_ROLE_TAG = "role:worker";
-const DEFAULT_SPAWN_MODE: SpawnMode = "worker";
+const DEFAULT_ISSUE_TAG_FILTER: string | null = null;
+const DEFAULT_SPAWN_MODE: SpawnMode = "operator";
 const ISSUE_LIST_LIMIT = 40;
 const MU_CLI_TIMEOUT_MS = 12_000;
 const DEFAULT_REFRESH_INTERVAL_MS = 8_000;
@@ -128,20 +128,12 @@ function issueHasSession(sessions: readonly string[], issueId: string): boolean 
 
 function buildSubagentPrompt(issue: IssueDigest, mode: SpawnMode): string {
 	switch (mode) {
-		case "worker":
+		case "operator":
 			return [
 				`Work issue ${issue.id} (${truncateOneLine(issue.title, 80)}).`,
 				`First run: mu issues claim ${issue.id}.`,
 				`Keep forum updates in topic issue:${issue.id}.`,
 				"When done, close with an explicit outcome and summary.",
-			].join(" ");
-		case "reviewer":
-			return [
-				`Review issue ${issue.id} (${truncateOneLine(issue.title, 80)}).`,
-				`First run: mu issues claim ${issue.id}.`,
-				"Validate acceptance criteria with concrete checks and evidence.",
-				"Post PASS/FAIL verdict, blockers, and required fixes in topic issue:<id>.",
-				"Close the issue with explicit outcome and review summary.",
 			].join(" ");
 		case "researcher":
 			return [
@@ -197,7 +189,7 @@ function createDefaultState(): SubagentsState {
 		sessions: [],
 		sessionError: null,
 		issueRootId: null,
-		issueRoleTag: DEFAULT_ROLE_TAG,
+		issueTagFilter: DEFAULT_ISSUE_TAG_FILTER,
 		readyIssues: [],
 		activeIssues: [],
 		issueError: null,
@@ -376,7 +368,7 @@ async function listTmuxSessions(prefix: string): Promise<{ sessions: string[]; e
 
 async function listIssueSlices(
 	rootId: string | null,
-	roleTag: string | null,
+	tagFilter: string | null,
 ): Promise<{
 	ready: IssueDigest[];
 	active: IssueDigest[];
@@ -388,9 +380,9 @@ async function listIssueSlices(
 		readyArgs.push("--root", rootId);
 		activeArgs.push("--root", rootId);
 	}
-	if (roleTag) {
-		readyArgs.push("--tag", roleTag);
-		activeArgs.push("--tag", roleTag);
+	if (tagFilter) {
+		readyArgs.push("--tag", tagFilter);
+		activeArgs.push("--tag", tagFilter);
 	}
 
 	const [readyOutcome, activeOutcome] = await Promise.all([runMuCli(readyArgs), runMuCli(activeArgs)]);
@@ -497,7 +489,7 @@ function renderActivitySentence(event: ActivityEvent): { issueId: string; senten
 	if (eventType === "forum.post") {
 		const message = asRecord(payload?.message);
 		const body = typeof message?.body === "string" ? message.body.trim() : "";
-		const author = typeof message?.author === "string" ? message.author.trim() : "worker";
+		const author = typeof message?.author === "string" ? message.author.trim() : "operator";
 		if (body.length === 0) {
 			return null;
 		}
@@ -615,20 +607,17 @@ function computeQueueDrift(
 	};
 }
 
-function normalizeRoleTag(raw: string): string | null {
+function normalizeIssueTag(raw: string): string | null {
 	const trimmed = raw.trim();
 	if (!trimmed || trimmed.toLowerCase() === "clear") {
 		return null;
-	}
-	if (trimmed === "worker" || trimmed === "orchestrator" || trimmed === "reviewer" || trimmed === "researcher") {
-		return `role:${trimmed}`;
 	}
 	return trimmed;
 }
 
 function parseSpawnMode(raw: string): SpawnMode | null {
 	const value = raw.trim().toLowerCase();
-	if (value === "worker" || value === "reviewer" || value === "researcher") {
+	if (value === "operator" || value === "researcher") {
 		return value;
 	}
 	return null;
@@ -668,7 +657,7 @@ function parseSecondsBounded(
 
 function subagentsSnapshot(state: SubagentsState, format: "compact" | "multiline"): string {
 	const issueScope = state.issueRootId ?? "(all roots)";
-	const roleScope = state.issueRoleTag ?? "(all roles)";
+	const tagScope = state.issueTagFilter ?? "(all tags)";
 	const drift = computeQueueDrift(state.sessions, state.activeIssues);
 	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 	const staleCount = drift.activeWithoutSessionIds.length + drift.orphanSessions.length;
@@ -683,7 +672,7 @@ function subagentsSnapshot(state: SubagentsState, format: "compact" | "multiline
 			`health: ${health}`,
 			`prefix: ${state.prefix || "(all sessions)"}`,
 			`issue_root: ${issueScope}`,
-			`issue_role: ${roleScope}`,
+			`issue_tag_filter: ${tagScope}`,
 			`spawn_mode: ${state.spawnMode}`,
 			`spawn_paused: ${paused}`,
 			`queues: ${state.readyIssues.length} ready / ${state.activeIssues.length} active`,
@@ -701,7 +690,7 @@ function subagentsSnapshot(state: SubagentsState, format: "compact" | "multiline
 		"HUD(subagents)",
 		`health=${health}`,
 		`root=${issueScope}`,
-		`role=${roleScope}`,
+		`tag=${tagScope}`,
 		`mode=${state.spawnMode}`,
 		`paused=${paused}`,
 		`ready=${state.readyIssues.length}`,
@@ -725,8 +714,8 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	}
 
 	const issueScope = state.issueRootId ? `root:${state.issueRootId}` : "all-roots";
-	const roleScope = state.issueRoleTag ? state.issueRoleTag : "(all roles)";
-	const scopeCompact = truncateOneLine(`${issueScope} · ${roleScope}`, WIDGET_SCOPE_MAX);
+	const tagScope = state.issueTagFilter ? state.issueTagFilter : "(all tags)";
+	const scopeCompact = truncateOneLine(`${issueScope} · ${tagScope}`, WIDGET_SCOPE_MAX);
 	const prefixCompact = truncateOneLine(state.prefix || "(all sessions)", WIDGET_PREFIX_MAX);
 	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 	const drift = computeQueueDrift(state.sessions, state.activeIssues);
@@ -838,7 +827,7 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 		if (state.activeIssues.length > 0) {
 			lines.push(ctx.ui.theme.fg("muted", "(no recent subagent updates yet)"));
 		} else {
-			lines.push(ctx.ui.theme.fg("muted", "(no active workers)"));
+			lines.push(ctx.ui.theme.fg("muted", "(no active operators)"));
 		}
 	} else {
 		for (const line of activityLines) {
@@ -855,8 +844,8 @@ function subagentsUsageText(): string {
 		"  /mu subagents on|off|toggle|status|refresh|snapshot",
 		"  /mu subagents prefix <text|clear>",
 		"  /mu subagents root <issue-id|clear>",
-		"  /mu subagents role <tag|clear>",
-		"  /mu subagents mode <worker|reviewer|researcher>",
+		"  /mu subagents tag <tag|clear>",
+		"  /mu subagents mode <operator|researcher>",
 		"  /mu subagents refresh-interval <seconds>",
 		"  /mu subagents stale-after <seconds>",
 		"  /mu subagents pause <on|off>",
@@ -870,7 +859,7 @@ function subagentsDetails(state: SubagentsState) {
 		enabled: state.enabled,
 		prefix: state.prefix,
 		issue_root_id: state.issueRootId,
-		issue_role_tag: state.issueRoleTag,
+		issue_tag_filter: state.issueTagFilter,
 		spawn_mode: state.spawnMode,
 		spawn_paused: state.spawnPaused,
 		refresh_seconds: Math.round(state.refreshIntervalMs / 1_000),
@@ -914,7 +903,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 		}
 		const [tmux, issues] = await Promise.all([
 			listTmuxSessions(state.prefix),
-			listIssueSlices(state.issueRootId, state.issueRoleTag),
+			listIssueSlices(state.issueRootId, state.issueTagFilter),
 		]);
 		state.sessions = tmux.sessions;
 		state.sessionError = tmux.error;
@@ -979,7 +968,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 		const when = state.lastUpdatedMs == null ? "never" : new Date(state.lastUpdatedMs).toLocaleTimeString();
 		const status = state.enabled ? "enabled" : "disabled";
 		const issueScope = state.issueRootId ?? "(all roots)";
-		const issueRole = state.issueRoleTag ?? "(all roles)";
+		const issueTag = state.issueTagFilter ?? "(all tags)";
 		const drift = computeQueueDrift(state.sessions, state.activeIssues);
 		const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 		const issueError = state.issueError ? `\nissue_error: ${state.issueError}` : "";
@@ -1005,7 +994,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 					`Subagents monitor ${status}`,
 					`prefix: ${state.prefix || "(all sessions)"}`,
 					`issue_root: ${issueScope}`,
-					`issue_role: ${issueRole}`,
+					`issue_tag_filter: ${issueTag}`,
 					`spawn_mode: ${state.spawnMode}`,
 					`spawn_paused: ${state.spawnPaused ? "yes" : "no"}`,
 					`refresh_seconds: ${Math.round(state.refreshIntervalMs / 1_000)}`,
@@ -1082,18 +1071,18 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				await refresh(ctx);
 				return { ok: true, message: `Subagents root set to ${state.issueRootId ?? "(all roots)"}.`, level: "info" };
 			}
-			case "set_role": {
-				const value = params.role_tag?.trim();
+			case "set_tag": {
+				const value = params.issue_tag?.trim();
 				if (!value) {
-					return { ok: false, message: "Missing role/tag value.", level: "error" };
+					return { ok: false, message: "Missing tag value.", level: "error" };
 				}
-				state.issueRoleTag = normalizeRoleTag(value);
+				state.issueTagFilter = normalizeIssueTag(value);
 				state.enabled = true;
 				ensurePolling();
 				await refresh(ctx);
 				return {
 					ok: true,
-					message: `Subagents issue tag filter set to ${state.issueRoleTag ?? "(all roles)"}.`,
+					message: `Subagents issue tag filter set to ${state.issueTagFilter ?? "(all tags)"}.`,
 					level: "info",
 				};
 			}
@@ -1191,16 +1180,16 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 					changed.push("root_issue_id");
 				}
 
-				if (params.role_tag !== undefined) {
-					if (typeof params.role_tag !== "string") {
-						return { ok: false, message: "role_tag must be a string.", level: "error" };
+				if (params.issue_tag !== undefined) {
+					if (typeof params.issue_tag !== "string") {
+						return { ok: false, message: "issue_tag must be a string.", level: "error" };
 					}
-					const trimmed = params.role_tag.trim();
+					const trimmed = params.issue_tag.trim();
 					if (trimmed.length === 0) {
-						return { ok: false, message: "role_tag must not be empty.", level: "error" };
+						return { ok: false, message: "issue_tag must not be empty.", level: "error" };
 					}
-					state.issueRoleTag = normalizeRoleTag(trimmed);
-					changed.push("role_tag");
+					state.issueTagFilter = normalizeIssueTag(trimmed);
+					changed.push("issue_tag");
 				}
 
 				if (params.spawn_mode !== undefined) {
@@ -1292,7 +1281,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 					spawnLimit = parsed;
 				}
 
-				const issueSlices = await listIssueSlices(state.issueRootId, state.issueRoleTag);
+				const issueSlices = await listIssueSlices(state.issueRootId, state.issueTagFilter);
 				state.readyIssues = issueSlices.ready;
 				state.activeIssues = issueSlices.active;
 				state.issueError = issueSlices.error;
@@ -1400,7 +1389,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 	registerMuSubcommand(pi, {
 		subcommand: "subagents",
 		summary: "Monitor tmux subagent sessions + issue queue, and spawn ready issue sessions",
-		usage: "/mu subagents on|off|toggle|status|refresh|snapshot|prefix|root|role|mode|refresh-interval|stale-after|pause|spawn",
+		usage: "/mu subagents on|off|toggle|status|refresh|snapshot|prefix|root|tag|mode|refresh-interval|stale-after|pause|spawn",
 		handler: async (args, ctx) => {
 			activeCtx = ctx;
 			const tokens = args
@@ -1435,8 +1424,8 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				case "root":
 					params = { action: "set_root", root_issue_id: tokens.slice(1).join(" ") };
 					break;
-				case "role":
-					params = { action: "set_role", role_tag: tokens.slice(1).join(" ") };
+				case "tag":
+					params = { action: "set_tag", issue_tag: tokens.slice(1).join(" ") };
 					break;
 				case "mode":
 					params = { action: "set_mode", spawn_mode: tokens[1] };
@@ -1499,7 +1488,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 						"refresh",
 						"set_prefix",
 						"set_root",
-						"set_role",
+						"set_tag",
 						"set_mode",
 						"set_refresh_interval",
 						"set_stale_after",
@@ -1510,8 +1499,8 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				},
 				prefix: { type: "string" },
 				root_issue_id: { type: "string" },
-				role_tag: { type: "string" },
-				spawn_mode: { type: "string", enum: ["worker", "reviewer", "researcher"] },
+				issue_tag: { type: "string" },
+				spawn_mode: { type: "string", enum: ["operator", "researcher"] },
 				refresh_seconds: { type: "number", minimum: MIN_REFRESH_SECONDS, maximum: MAX_REFRESH_SECONDS },
 				stale_after_seconds: { type: "number", minimum: MIN_STALE_SECONDS, maximum: MAX_STALE_SECONDS },
 				spawn_paused: { type: "boolean" },

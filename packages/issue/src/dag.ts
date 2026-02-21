@@ -1,4 +1,4 @@
-import type { Issue } from "./spec.js";
+import type { Issue } from "@femtomc/mu-core";
 
 export type ValidationResult = {
 	is_final: boolean;
@@ -11,7 +11,7 @@ export type RetryableDagCandidate = {
 };
 
 /**
- * Deterministic DAG reconcile primitives used by orchestrator reconciliation.
+ * Deterministic DAG reconcile primitives used by issue-graph reconciliation.
  *
  * Contract: these helpers are pure functions over the provided issue snapshot and must remain
  * side-effect free so reconcile passes are replayable/idempotent.
@@ -74,7 +74,7 @@ export function subtreeIds(issues: readonly Issue[], rootId: string): string[] {
 }
 
 /**
- * Reconcile selection primitive: the orchestrator must only dispatch from this ready set (or an
+ * Reconcile selection primitive: dispatch should only draw from this ready set (or an
  * equivalent deterministic adapter) to preserve replayability.
  */
 export function readyLeaves(
@@ -124,8 +124,8 @@ export function readyLeaves(
 /**
  * Reconcile retry primitive.
  *
- * Produces a deterministic list of closed nodes that are eligible to be reopened for orchestration.
- * The orchestrator decides whether/when to apply the reopen side effect.
+ * Produces a deterministic list of closed nodes that are eligible to be reopened.
+ * Callers decide whether/when to apply the reopen side effect.
  */
 export function retryableDagCandidates(
 	issues: readonly Issue[],
@@ -180,8 +180,8 @@ export function collapsible(issues: readonly Issue[], rootId: string): Issue[] {
 	const idsInScope = new Set(subtreeIds(issues, rootId));
 	const children = childrenByParent(issues);
 
-	// `refine` is terminal for a closed reviewer node; refinement itself is
-	// orchestrated by root-phase reconcile transitions.
+	// `refine` is terminal for a closed review node; refinement itself is
+	// handled by the caller via DAG reconciliation transitions.
 	const terminalOutcomes = new Set(["success", "skipped", "refine"]);
 	const result: Issue[] = [];
 
@@ -209,8 +209,8 @@ export function collapsible(issues: readonly Issue[], rootId: string): Issue[] {
 /**
  * Reconcile termination primitive.
  *
- * `is_final=false` is a hard signal that orchestrator must continue reconciling (or repair invalid
- * expanded state) before the root run can be considered terminal.
+ * `is_final=false` is a hard signal that callers must continue reconciling
+ * (or repair invalid expanded state) before the root run can be considered terminal.
  */
 export function validateDag(issues: readonly Issue[], rootId: string): ValidationResult {
 	const byId = new Map(issues.map((i) => [i.id, i]));

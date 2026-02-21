@@ -86,16 +86,16 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"Output mode:",
 					"  compact-by-default output for issue reads + mutations; add --json for full records.",
 					"",
-					"Worker flow (single atomic issue):",
-					"  mu issues ready --root <root-id> --tag role:worker",
+					"Operator flow (single issue):",
+					"  mu issues ready --root <root-id>",
 					"  mu issues claim <issue-id>",
 					"  mu issues get <issue-id>",
-					'  mu forum post issue:<issue-id> -m "started work" --author worker',
+					'  mu forum post issue:<issue-id> -m "started work" --author operator',
 					"  mu issues close <issue-id> --outcome success",
 					"",
-					"Orchestrator flow (plan + coordinate + integrate):",
-					'  mu issues create "Root goal" --tag node:root --role orchestrator',
-					'  mu issues create "Implement parser" --parent <root-id> --role worker',
+					"Planning flow (issue DAG decomposition):",
+					'  mu issues create "Root goal" --tag node:root',
+					'  mu issues create "Implement parser" --parent <root-id>',
 					"  mu issues dep <task-a> blocks <task-b>",
 					"  mu issues ready --root <root-id>",
 					"  mu issues validate <root-id>",
@@ -161,7 +161,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"Examples:",
 					"  mu issues list",
 					"  mu issues list --status open --limit 20",
-					"  mu issues list --root mu-abc123 --tag role:worker",
+					"  mu issues list --root mu-abc123 --tag node:agent",
 					"  mu issues list --status open --limit 20 --json --pretty",
 				].join("\n") + "\n",
 			);
@@ -267,14 +267,6 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		return ok(jsonText(issueJson(issue), pretty));
 	}
 
-	function normalizeMuRole(role: string): "orchestrator" | "worker" | null {
-		const trimmed = role.trim();
-		if (trimmed === "orchestrator" || trimmed === "worker") {
-			return trimmed;
-		}
-		return null;
-	}
-
 	async function issuesCreate(argv: string[], ctx: Ctx, pretty: boolean): Promise<IssueCommandRunResult> {
 		if (hasHelpFlag(argv)) {
 			return ok(
@@ -282,21 +274,20 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues create - create a new issue (auto-adds node:agent tag)",
 					"",
 					"Usage:",
-					"  mu issues create <title> [--body TEXT] [--parent ID] [--tag TAG] [--role ROLE] [--priority N] [--json] [--pretty]",
+					"  mu issues create <title> [--body TEXT] [--parent ID] [--tag TAG] [--priority N] [--json] [--pretty]",
 					"",
 					"Options:",
 					"  --body, -b <TEXT>                   Optional issue body",
 					"  --parent <id-or-prefix>             Add <new-issue> parent <parent> edge",
 					"  --tag, -t <TAG>                     Repeatable custom tags",
 					"  --tags <CSV>                        Comma-separated custom tags",
-					"  --role, -r <orchestrator|worker>    Adds role:<role> tag",
 					"  --priority, -p <1..5>               Priority (1 highest urgency, default 3)",
 					"  --json                              Emit full JSON record (default is compact ack)",
 					"  --pretty                            Pretty-print JSON result",
 					"",
 					"Examples:",
-					'  mu issues create "Root planning issue" --tag node:root --role orchestrator',
-					'  mu issues create "Implement parser" --parent <root-id> --role worker --priority 2',
+					'  mu issues create "Root planning issue" --tag node:root',
+					'  mu issues create "Implement parser" --parent <root-id> --priority 2',
 					'  mu issues create "Write tests" -b "Cover error paths" -t area:test --json --pretty',
 				].join("\n") + "\n",
 			);
@@ -317,12 +308,10 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		const { value: parentRaw, rest: argv2 } = getFlagValue(argv1, "--parent");
 		const { values: tags0, rest: argv3 } = getRepeatFlagValues(argv2, ["--tag", "-t"]);
 		const { value: tagsCsvRaw, rest: argv4 } = getFlagValue(argv3, "--tags");
-		const { value: role, rest: argv5 } = getFlagValue(argv4, "--role");
-		const { value: roleShort, rest: argv6 } = getFlagValue(argv5, "-r");
-		const { value: priorityRaw, rest: argv7 } = getFlagValue(argv6, "--priority");
-		const { value: priorityShortRaw, rest: argv8 } = getFlagValue(argv7, "-p");
-		const { present: jsonMode, rest: argv9 } = popFlag(argv8, "--json");
-		const { present: compact, rest: restFinal } = popFlag(argv9, "--compact");
+		const { value: priorityRaw, rest: argv5 } = getFlagValue(argv4, "--priority");
+		const { value: priorityShortRaw, rest: argv6 } = getFlagValue(argv5, "-p");
+		const { present: jsonMode, rest: argv7 } = popFlag(argv6, "--json");
+		const { present: compact, rest: restFinal } = popFlag(argv7, "--compact");
 
 		const priorityValue = priorityRaw ?? priorityShortRaw ?? "3";
 		if (restFinal.length > 0) {
@@ -346,18 +335,6 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			tags.push("node:agent");
 		}
 
-		const roleRaw = role ?? roleShort ?? null;
-		const roleNorm = roleRaw != null ? normalizeMuRole(roleRaw) : null;
-		if (roleRaw != null && roleNorm == null) {
-			return jsonError(`invalid --role: ${JSON.stringify(roleRaw)} (supported: orchestrator, worker)`, {
-				pretty,
-				recovery: [`mu issues create "${title}" --role worker`],
-			});
-		}
-
-		if (roleNorm != null) {
-			tags.push(`role:${roleNorm}`);
-		}
 
 		let parentId: string | null = null;
 		if (parentRaw) {
@@ -392,7 +369,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues update - patch issue fields and routing metadata",
 					"",
 					"Usage:",
-					"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--tags CSV] [--add-tag TAG] [--remove-tag TAG] [--role ROLE] [--json] [--pretty]",
+					"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--tags CSV] [--add-tag TAG] [--remove-tag TAG] [--json] [--pretty]",
 					"",
 					"Options:",
 					"  --title <TEXT>                       Replace title",
@@ -403,13 +380,12 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"  --tags <CSV>                         Replace tags from comma-separated list",
 					"  --add-tag <TAG>                      Repeatable",
 					"  --remove-tag <TAG>                   Repeatable",
-					"  --role <orchestrator|worker>         Rewrites role:* tag",
 					"  --json                               Emit full JSON record (default is compact ack)",
 					"",
 					"Examples:",
 					"  mu issues update <id> --status in_progress",
 					"  mu issues update <id> --add-tag blocked --remove-tag triage",
-					"  mu issues update <id> --role worker --priority 2",
+					"  mu issues update <id> --priority 2",
 					"  mu issues update <id> --status closed --outcome success --json --pretty",
 					"",
 					"At least one field flag is required.",
@@ -438,9 +414,8 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		const { value: tagsRaw, rest: argv5 } = getFlagValue(argv4, "--tags");
 		const { values: addTags, rest: argv6 } = getRepeatFlagValues(argv5, ["--add-tag"]);
 		const { values: removeTags, rest: argv7 } = getRepeatFlagValues(argv6, ["--remove-tag"]);
-		const { value: role, rest: argv8 } = getFlagValue(argv7, "--role");
-		const { present: jsonMode, rest: argv9 } = popFlag(argv8, "--json");
-		const { present: compact, rest } = popFlag(argv9, "--compact");
+		const { present: jsonMode, rest: argv8 } = popFlag(argv7, "--json");
+		const { present: compact, rest } = popFlag(argv8, "--compact");
 
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues update --help"] });
@@ -483,20 +458,6 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			fields.tags = tags;
 		}
 
-		if (role != null) {
-			const normalized = normalizeMuRole(role);
-			if (normalized == null) {
-				return jsonError(`invalid --role: ${JSON.stringify(role)} (supported: orchestrator, worker)`, {
-					pretty,
-					recovery: [`mu issues update ${issueId} --role worker`],
-				});
-			}
-			// Update tags: remove existing role:* tags and add the new one.
-			let currentTags = (fields.tags as string[] | undefined) ?? [...(issue.tags ?? [])];
-			currentTags = currentTags.filter((t) => !t.startsWith("role:"));
-			currentTags.push(`role:${normalized}`);
-			fields.tags = currentTags;
-		}
 
 		const changedFields = Object.keys(fields).sort();
 		if (changedFields.length === 0) {
@@ -522,10 +483,10 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"Usage:",
 					"  mu issues claim <id-or-prefix> [--json] [--pretty]",
 					"",
-					"Typical worker sequence:",
+					"Typical operator sequence:",
 					"  mu issues ready --root <root-id>",
 					"  mu issues claim <id>",
-					'  mu forum post issue:<id> -m "starting" --author worker',
+					'  mu forum post issue:<id> -m "starting" --author operator',
 					"",
 					"Fails unless current status is open.",
 				].join("\n") + "\n",
@@ -816,7 +777,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"Examples:",
 					"  mu issues ready",
 					"  mu issues ready --root <root-id>",
-					"  mu issues ready --root <root-id> --tag role:worker",
+					"  mu issues ready --root <root-id> --tag node:agent",
 					"  mu issues ready --contains parser --limit 20 --json --pretty",
 					"",
 					"Ready means:",

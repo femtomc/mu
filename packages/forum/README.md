@@ -27,7 +27,7 @@ import { ForumStore } from "@femtomc/mu-forum";
 
 const forum = new ForumStore(new InMemoryJsonlStore());
 
-await forum.post("issue:demo", "hello", "worker");
+await forum.post("issue:demo", "hello", "operator");
 console.log(await forum.read("issue:demo"));
 console.log(await forum.topics("issue:"));
 ```

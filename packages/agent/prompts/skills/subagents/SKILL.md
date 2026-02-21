@@ -26,17 +26,17 @@ Issue-first decomposition (required before dispatch):
 
 ```bash
 # Root issue
-mu issues create "Root: <goal>" --tag node:root --role orchestrator
+mu issues create "Root: <goal>" --tag node:root
 
 # Child issues (repeat as needed)
-mu issues create "<child-1 deliverable>" --parent <root-id> --role worker --priority 2
-mu issues create "<child-2 deliverable>" --parent <root-id> --role worker --priority 2
+mu issues create "<child-1 deliverable>" --parent <root-id> --priority 2
+mu issues create "<child-2 deliverable>" --parent <root-id> --priority 2
 
 # Optional ordering constraints
 mu issues dep <child-1> blocks <child-2>
 
 # Verify queue before fan-out
-mu issues ready --root <root-id> --tag role:worker --pretty
+mu issues ready --root <root-id> --pretty
 ```
 
 Dispatch one tmux subagent per ready issue id:
@@ -65,8 +65,8 @@ tmux capture-pane -pt mu-sub-<run-id>-<issue-id> -S -200
 tmux attach -t mu-sub-<run-id>-<issue-id>
 
 # Issue queue visibility (same root used for dispatch)
-mu issues ready --root <root-id> --tag role:worker --pretty
-mu issues list --root <root-id> --status in_progress --tag role:worker --pretty
+mu issues ready --root <root-id> --pretty
+mu issues list --root <root-id> --status in_progress --pretty
 ```
 
 Optional live monitor widget (interactive operator session):
@@ -75,8 +75,8 @@ Optional live monitor widget (interactive operator session):
 /mu subagents on
 /mu subagents prefix mu-sub-
 /mu subagents root <root-id>
-/mu subagents role role:worker
-/mu subagents mode worker
+/mu subagents tag node:agent
+/mu subagents mode operator
 /mu subagents refresh-interval 8
 /mu subagents stale-after 60
 /mu subagents pause off
@@ -93,23 +93,23 @@ Tool contract (preferred when tools are available):
 - Tool: `mu_subagents_hud`
 - Actions:
   - state: `status`, `snapshot`, `on`, `off`, `toggle`, `refresh`
-  - scope: `set_prefix`, `set_root`, `set_role`
+  - scope: `set_prefix`, `set_root`, `set_tag`
   - policy: `set_mode`, `set_refresh_interval`, `set_stale_after`, `set_spawn_paused`
   - orchestration: `spawn`
   - atomic: `update`
 - Key parameters:
   - `prefix`: tmux prefix or `clear`
   - `root_issue_id`: issue root ID or `clear`
-  - `role_tag`: issue tag filter (for example `role:worker`) or `clear`
-  - `spawn_mode`: `worker|reviewer|researcher`
+  - `issue_tag`: issue tag filter (for example `node:agent`) or `clear`
+  - `spawn_mode`: `operator|researcher`
   - `refresh_seconds`: 2..120
   - `stale_after_seconds`: 10..3600
   - `spawn_paused`: boolean
   - `count`: integer 1..40 or `"all"` for spawn
 
 Example tool calls:
-- Configure root + role + mode atomically:
-  - `{"action":"update","root_issue_id":"<root-id>","role_tag":"role:worker","spawn_mode":"worker","spawn_paused":false}`
+- Configure root + tag + mode atomically:
+  - `{"action":"update","root_issue_id":"<root-id>","issue_tag":"node:agent","spawn_mode":"operator","spawn_paused":false}`
 - Tune monitor policy:
   - `{"action":"set_refresh_interval","refresh_seconds":5}`
   - `{"action":"set_stale_after","stale_after_seconds":45}`

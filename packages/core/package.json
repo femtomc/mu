@@ -1,13 +1,12 @@
 {
   "name": "@femtomc/mu-core",
   "version": "26.2.90",
-  "description": "Core primitives for mu: IDs, events, DAG helpers, and persistence interfaces.",
+  "description": "Core primitives for mu: IDs, events, schemas, and persistence interfaces.",
   "keywords": [
     "mu",
     "agent",
     "core",
-    "events",
-    "dag"
+    "events"
   ],
   "type": "module",
   "main": "./dist/index.js",

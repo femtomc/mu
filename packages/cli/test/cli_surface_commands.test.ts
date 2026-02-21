@@ -261,7 +261,7 @@ test("memory index rebuild/status enables index-first query fallback when source
 			join(storeDir, "forum.jsonl"),
 			`${JSON.stringify({
 				topic: "issue:mu-idx-1",
-				author: "worker",
+				author: "operator",
 				body: "index-only-token from forum",
 				created_at: 1_700_000_100_200,
 			})}\n`,
@@ -354,7 +354,7 @@ test("memory search/timeline/stats use direct CLI runtime even when legacy /api/
 		join(storeDir, "forum.jsonl"),
 		`${JSON.stringify({
 			topic: "issue:mu-ctx-1",
-			author: "worker",
+			author: "operator",
 			body: "Investigating reload regression path.",
 			created_at: 1_700_000_000_200,
 		})}\n`,

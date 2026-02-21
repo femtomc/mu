@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { type Issue, IssueSchema } from "@femtomc/mu-core";
 import {
 	collapsible,
-	type Issue,
-	IssueSchema,
 	readyLeaves,
 	retryableDagCandidates,
 	subtreeIds,
 	validateDag,
-} from "@femtomc/mu-core";
+} from "@femtomc/mu-issue";
 
 function mkIssue(overrides: Partial<Issue> & Pick<Issue, "id" | "title">): Issue {
 	const base: Issue = {
@@ -301,7 +300,7 @@ describe("collapsible", () => {
 		expect(out.map((i) => i.id)).toEqual([root.id]);
 	});
 
-	test("review refine outcomes are treated as terminal for collapse", () => {
+	test("refine outcomes are treated as terminal for collapse", () => {
 		const root = mkIssue({
 			id: "root",
 			title: "root",
@@ -322,7 +321,7 @@ describe("collapsible", () => {
 			deps: [{ type: "parent", target: root.id }],
 			status: "closed",
 			outcome: "refine",
-			tags: ["node:agent", "role:reviewer"],
+			tags: ["node:agent"],
 		});
 
 		const out = collapsible([root, execution, review], root.id);

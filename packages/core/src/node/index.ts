@@ -25,7 +25,6 @@ export function fsEventLogFromRepoRoot(repoRoot: string): EventLog {
 	return fsEventLog(getStorePaths(repoRoot).eventsPath);
 }
 
-export * from "../dag.js";
 // Re-export the node-free surface so node code can import from a single place.
 export {
 	EVENT_VERSION,

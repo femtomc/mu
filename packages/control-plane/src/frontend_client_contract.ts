@@ -89,7 +89,7 @@ export function frontendChannelCapabilitiesFromResponse(
 
 export const SessionTurnRequestSchema = z.object({
 	session_id: z.string().trim().min(1),
-	session_kind: z.string().trim().min(1).optional(),
+	session_kind: z.enum(["operator", "cp_operator"]).optional(),
 	body: z.string().trim().min(1),
 	source: z.string().trim().min(1).optional(),
 	provider: z.string().trim().min(1).optional(),
@@ -97,13 +97,13 @@ export const SessionTurnRequestSchema = z.object({
 	thinking: z.string().trim().min(1).optional(),
 	session_file: z.string().trim().min(1).optional(),
 	session_dir: z.string().trim().min(1).optional(),
-	extension_profile: z.enum(["operator", "worker", "orchestrator", "reviewer", "none"]).optional(),
+	extension_profile: z.enum(["operator", "none"]).optional(),
 });
 export type SessionTurnRequest = z.infer<typeof SessionTurnRequestSchema>;
 
 export const SessionTurnResultSchema = z.object({
 	session_id: z.string().trim().min(1),
-	session_kind: z.string().trim().min(1).nullable(),
+	session_kind: z.enum(["operator", "cp_operator"]).nullable(),
 	session_file: z.string().trim().min(1),
 	context_entry_id: z.string().trim().min(1).nullable(),
 	reply: z.string(),
