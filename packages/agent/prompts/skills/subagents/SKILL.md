@@ -1,153 +1,218 @@
 ---
 name: subagents
-description: Break work into issue-tracked shards and dispatch mu subagents in tmux sessions.
+description: Define and run a protocol-driven multi-agent workflow over mu issues, forum, and heartbeats.
 ---
 
-# Subagents
+# Subagents (protocol-driven)
 
-Use this skill when work can be split into independent shards and run concurrently.
+Use this skill when work should decompose and coordinate itself at runtime.
 
-## When to use
+## Core model
 
-- The task can be decomposed into parallelizable parts.
-- Each shard can be specified with a clear prompt and bounded outcome.
-- You need a durable terminal surface to inspect each shard separately.
+Treat this skill as the orchestration protocol spec.
+Do not depend on hardcoded orchestrator/worker role behavior.
 
-## Workflow
+Shared primitives:
 
-1. Create a root issue and decompose into 2–4 actionable child issues in `mu issues`.
-2. Ensure each child has clear acceptance criteria and dependency edges.
-3. Launch one detached tmux session per ready child issue.
-4. Monitor both tmux sessions and issue queue state, then reconcile outputs.
+- `mu issues` = task tree, dependencies, and lifecycle state
+- `mu forum` = durable context/result packets
+- `mu heartbeats` / `mu cron` = wake/scheduling loop
+- `tmux` + subagents HUD = execution surfaces and observability
 
-## Launch pattern
+## Protocol: `subagents.protocol/v1`
 
-Issue-first decomposition (required before dispatch):
+### Primitive: `read_tree`
+
+Before every mutation, inspect root + local node state:
 
 ```bash
-# Root issue
-mu issues create "Root: <goal>" --tag node:root
-
-# Child issues (repeat as needed)
-mu issues create "<child-1 deliverable>" --parent <root-id> --priority 2
-mu issues create "<child-2 deliverable>" --parent <root-id> --priority 2
-
-# Optional ordering constraints
-mu issues dep <child-1> blocks <child-2>
-
-# Verify queue before fan-out
-mu issues ready --root <root-id> --pretty
+mu issues get <issue-id> --pretty
+mu issues children <issue-id> --pretty
+mu issues ready --root <root-id> --tag proto:subagents-v1 --pretty
+mu forum read issue:<issue-id> --limit 20 --pretty
 ```
 
-Dispatch one tmux subagent per ready issue id:
+### Primitive: `spawn` (clean-context child)
+
+Create independent child tasks with scoped context:
+
+```bash
+child_json="$(mu issues create "<title>" \
+  --parent <issue-id> \
+  --body "<prompt + acceptance criteria>" \
+  --tag proto:subagents-v1 \
+  --tag kind:spawn \
+  --tag ctx:clean \
+  --priority 2 \
+  --json)"
+child_id="$(echo "$child_json" | jq -r '.id')"
+mu forum post issue:"$child_id" -m "<task packet>" --author operator
+```
+
+Use dependencies to control timing:
+
+```bash
+mu issues dep <blocker-id> blocks <child-id>
+```
+
+### Primitive: `fork` (inherited-context child)
+
+Create analysis/synthesis children that need sibling outputs.
+Before creation, summarize completed dependency results from
+`mu forum read issue:<dep-id>`. Then create with `kind:fork` + `ctx:inherit`.
+
+### Primitive: `ask` (human input node)
+
+Represent user questions as first-class nodes:
+
+```bash
+ask_json="$(mu issues create "Question: <question>" \
+  --parent <issue-id> \
+  --tag proto:subagents-v1 \
+  --priority 1 \
+  --json)"
+ask_id="$(echo "$ask_json" | jq -r '.id')"
+mu issues update "$ask_id" \
+  --remove-tag node:agent \
+  --add-tag kind:ask \
+  --add-tag ctx:human \
+  --add-tag actor:user
+mu forum post issue:"$ask_id" \
+  -m "QUESTION: <question>\nOPTIONS: <list or free-form>\nReply in this topic, then close this issue." \
+  --author operator
+```
+
+If downstream work depends on the answer:
+
+```bash
+mu issues dep <ask-id> blocks <child-id>
+```
+
+### Primitive: `complete`
+
+Always write a result packet, then close the issue:
+
+```bash
+mu forum post issue:<issue-id> -m "RESULT:\n<result>" --author operator
+mu issues close <issue-id> --outcome success
+```
+
+Use explicit non-success outcomes when needed (`failure`, `needs_work`, `skipped`).
+
+### Primitive: `expand`
+
+When decomposition is needed:
+
+1. Create child work nodes via `spawn` / `fork`.
+2. Create one synthesis child (`kind:synth`, `ctx:inherit`) blocked by all child work nodes.
+3. Close the current node with `mu issues close <issue-id> --outcome expanded`.
+
+This expresses two-phase execution (decompose -> synthesize) as explicit DAG nodes.
+
+### Primitive: `serial`
+
+Encode ordered execution with dependency edges:
+
+```bash
+mu issues dep <step-a> blocks <step-b>
+```
+
+## Required invariants
+
+- **Read-before-act-verify:** every write is followed by a state re-read.
+- **Claim-before-work:** claim issues before doing file work or execution logging.
+- **Scoped authority:** mutate only the current issue + descendants.
+- **Container hygiene:** remove `node:agent` from non-executable root/ask/container nodes.
+- **Idempotent logging:** forum updates should be append-only and resumable.
+- **Explicit outcomes:** every executable issue must close with a concrete outcome.
+
+## Agent control loop (normative)
+
+For a claimed issue `<issue-id>` under `<root-id>`:
+
+1. `read_tree`
+2. Choose exactly one primitive:
+   - Missing user input -> `ask`
+   - Needs decomposition -> `expand` (`spawn`/`fork` children + synth node)
+   - Directly solvable -> `complete`
+3. Apply one primitive
+4. Verify state (`mu issues get`, `children`, `ready`)
+5. Post concise progress to `issue:<issue-id>`
+
+Repeat until the issue is closed.
+
+## Bootstrap template
+
+```bash
+root_json="$(mu issues create "Root: <goal>" --tag node:root --tag proto:subagents-v1 --json)"
+root_id="$(echo "$root_json" | jq -r '.id')"
+mu issues update "$root_id" --remove-tag node:agent
+
+goal_json="$(mu issues create "Goal execution" \
+  --parent "$root_id" \
+  --tag proto:subagents-v1 \
+  --tag kind:goal \
+  --tag ctx:clean \
+  --priority 2 \
+  --json)"
+goal_id="$(echo "$goal_json" | jq -r '.id')"
+
+mu forum post issue:"$goal_id" -m "<goal brief + acceptance criteria>" --author operator
+```
+
+## Autonomous dispatch options
+
+### A) Heartbeat autopilot (preferred)
+
+Let a recurring heartbeat wake an operator prompt that follows this protocol:
+
+```bash
+mu heartbeats create \
+  --title "subagents-v1 <root-id>" \
+  --reason subagents_protocol_v1 \
+  --every-ms 15000 \
+  --prompt "Use skill subagents (protocol v1) for root <root-id>. Claim one ready issue tagged proto:subagents-v1, execute one control-loop pass, and report status. Stop when 'mu issues validate <root-id>' is final."
+```
+
+### B) tmux fan-out
 
 ```bash
 run_id="$(date +%Y%m%d-%H%M%S)"
-
-# Optional: keep one shared server alive for all shards
-mu serve --port 3000
-
-for issue_id in <issue-a> <issue-b> <issue-c>; do
+for issue_id in $(mu issues ready --root <root-id> --tag proto:subagents-v1 --json | jq -r '.[].id' | head -n 3); do
   session="mu-sub-${run_id}-${issue_id}"
   tmux new-session -d -s "$session" \
-    "cd '$PWD' && mu exec 'Work issue ${issue_id}. First: mu issues claim ${issue_id}. Keep forum updates on issue:${issue_id}. Close when complete.' ; rc=\$?; echo __MU_DONE__:\$rc"
+    "cd '$PWD' && mu exec 'Work issue ${issue_id} using subagents.protocol/v1. Claim first, then run one full control loop.' ; rc=\$?; echo __MU_DONE__:\$rc"
 done
 ```
 
-Use `mu exec` for lightweight one-shot subagent work.
-For durable wake loops, use `mu heartbeats ...` / `mu cron ...`.
+## Subagents HUD (optional board)
 
-## Monitoring
-
-```bash
-tmux ls | rg '^mu-sub-'
-tmux capture-pane -pt mu-sub-<run-id>-<issue-id> -S -200
-tmux attach -t mu-sub-<run-id>-<issue-id>
-
-# Issue queue visibility (same root used for dispatch)
-mu issues ready --root <root-id> --pretty
-mu issues list --root <root-id> --status in_progress --pretty
-```
-
-Optional live monitor widget (interactive operator session):
+Use HUD for visibility and bounded spawning. Protocol truth still lives in issues/forum.
 
 ```text
 /mu subagents on
 /mu subagents prefix mu-sub-
 /mu subagents root <root-id>
-/mu subagents tag node:agent
+/mu subagents tag proto:subagents-v1
 /mu subagents mode operator
-/mu subagents refresh-interval 8
-/mu subagents stale-after 60
-/mu subagents pause off
 /mu subagents refresh
-/mu subagents spawn 3
 /mu subagents snapshot
 ```
 
-The widget tracks queue and tmux drift, supports spawn profiles, and can pause spawning.
-Use `snapshot` for a user-facing status summary.
+Tool: `mu_subagents_hud`
 
-Tool contract (preferred when tools are available):
+- Actions: `status`, `snapshot`, `on`, `off`, `toggle`, `refresh`, `set_prefix`, `set_root`, `set_tag`, `set_mode`, `set_refresh_interval`, `set_stale_after`, `set_spawn_paused`, `update`, `spawn`
 
-- Tool: `mu_subagents_hud`
-- Actions:
-  - state: `status`, `snapshot`, `on`, `off`, `toggle`, `refresh`
-  - scope: `set_prefix`, `set_root`, `set_tag`
-  - policy: `set_mode`, `set_refresh_interval`, `set_stale_after`, `set_spawn_paused`
-  - dispatch: `spawn`
-  - atomic: `update`
-- Key parameters:
-  - `prefix`: tmux prefix or `clear`
-  - `root_issue_id`: issue root ID or `clear`
-  - `issue_tag`: issue tag filter (for example `node:agent`) or `clear`
-  - `spawn_mode`: `operator|researcher`
-  - `refresh_seconds`: 2..120
-  - `stale_after_seconds`: 10..3600
-  - `spawn_paused`: boolean
-  - `count`: integer 1..40 or `"all"` for spawn
+## Reconciliation
 
-Example tool calls:
-- Configure root + tag + mode atomically:
-  - `{"action":"update","root_issue_id":"<root-id>","issue_tag":"node:agent","spawn_mode":"operator","spawn_paused":false}`
-- Tune monitor policy:
-  - `{"action":"set_refresh_interval","refresh_seconds":5}`
-  - `{"action":"set_stale_after","stale_after_seconds":45}`
-- Spawn from ready queue:
-  - `{"action":"spawn","count":3}`
+- Run `mu issues validate <root-id>` before declaring completion.
+- Merge synth-node outputs into one final user-facing result.
+- Convert unresolved gaps into new child issues tagged `proto:subagents-v1`.
+- Tear down temporary tmux sessions.
 
-## Handoffs and follow-up turns
+## Safety
 
-With `mu exec`, follow up by issuing another `mu exec` command in the same tmux pane
-(scoped to the same issue id):
-
-```bash
-mu exec "Continue issue <issue-id>. Address feedback: ..."
-```
-
-If you intentionally use long-lived terminal operator sessions (`mu serve`),
-you can hand off with `mu turn`:
-
-```bash
-mu session list --json --pretty
-mu turn --session-kind operator --session-id <session-id> --body "Follow-up question"
-```
-
-Use `--session-kind operator` for terminal/tmux sessions.
-If omitted, `mu turn` defaults to control-plane operator sessions (`cp_operator`).
-
-## Reconciliation checklist
-
-- Collect outputs from each issue-owned shard.
-- Confirm each claimed issue is closed with an explicit outcome.
-- Identify conflicts or overlaps across child issues.
-- Produce one merged plan/result with explicit decisions.
-- Record follow-up tasks in `mu issues` / `mu forum`.
-
-## Safety rules
-
-- Keep shard prompts scoped and explicit.
-- Prefer fewer, higher-quality shards over many noisy shards.
-- Do not overwrite unrelated files across shards.
-- Pause spawning when the queue is unstable or blocked.
-- Tear down temporary tmux sessions when done.
+- Prefer small, reversible child issues.
+- Keep child prompts explicit about deliverables + acceptance criteria.
+- Pause spawning while queue semantics are unclear.
+- Never overwrite unrelated files across shards.
