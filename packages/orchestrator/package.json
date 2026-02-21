@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-orchestrator",
-  "version": "26.2.88",
+  "version": "26.2.89",
   "description": "Long-running execution engine for mu work plans.",
   "keywords": [
     "mu",
