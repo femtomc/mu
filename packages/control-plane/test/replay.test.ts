@@ -62,7 +62,6 @@ function expectCorrelationFields(correlation: Record<string, unknown>): void {
 		"operator_turn_id",
 		"cli_invocation_id",
 		"cli_command_kind",
-		"run_root_id",
 	];
 	for (const key of required) {
 		expect(key in correlation).toBe(true);

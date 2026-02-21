@@ -28,7 +28,6 @@ export const CorrelationMetadataSchema = z.object({
 	operator_turn_id: z.string().min(1).nullable().default(null),
 	cli_invocation_id: z.string().min(1).nullable().default(null),
 	cli_command_kind: z.string().min(1).nullable().default(null),
-	run_root_id: z.string().min(1).nullable().default(null),
 });
 export type CorrelationMetadata = z.infer<typeof CorrelationMetadataSchema>;
 

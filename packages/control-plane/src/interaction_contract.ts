@@ -237,7 +237,6 @@ function makeCommandPayload(command: CommandRecord): Record<string, unknown> {
 		operator_turn_id: command.operator_turn_id,
 		cli_invocation_id: command.cli_invocation_id,
 		cli_command_kind: command.cli_command_kind,
-		run_root_id: command.run_root_id,
 		result: command.result,
 	};
 }
@@ -271,7 +270,6 @@ function baseCommandDetails(command: CommandRecord): InteractionDetail[] {
 	}
 	maybePushDetail(details, "cli_command_kind", "CLI command", command.cli_command_kind, "secondary");
 	maybePushDetail(details, "cli_invocation_id", "CLI invocation", command.cli_invocation_id, "secondary");
-	maybePushDetail(details, "run_root_id", "Run root", command.run_root_id, "secondary");
 	maybePushDetail(details, "operator_session_id", "Operator session", command.operator_session_id, "secondary");
 	maybePushDetail(details, "operator_turn_id", "Operator turn", command.operator_turn_id, "secondary");
 	maybePushDetail(details, "error_code", "Error code", command.error_code, "secondary");

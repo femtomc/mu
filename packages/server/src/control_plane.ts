@@ -600,7 +600,6 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 							errorCode: "cli_validation_failed",
 							trace: {
 								cliCommandKind: record.target_type,
-								runRootId: null,
 							},
 							mutatingEvents: [
 								{
@@ -627,7 +626,6 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 								errorCode: "session_lifecycle_failed",
 								trace: {
 									cliCommandKind: action,
-									runRootId: null,
 								},
 								mutatingEvents: [
 									{
@@ -651,7 +649,6 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 							},
 							trace: {
 								cliCommandKind: action,
-								runRootId: null,
 							},
 							mutatingEvents: [
 								{
@@ -670,7 +667,6 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 							errorCode: err instanceof Error && err.message ? err.message : "session_lifecycle_failed",
 							trace: {
 								cliCommandKind: action,
-								runRootId: null,
 							},
 							mutatingEvents: [
 								{

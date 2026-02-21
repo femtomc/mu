@@ -25,7 +25,7 @@ export type MutationCommandExecutionEvent = {
 
 export type CommandExecutionTrace = Pick<
 	CommandRecordTraceUpdate,
-	"operatorSessionId" | "operatorTurnId" | "cliInvocationId" | "cliCommandKind" | "runRootId"
+	"operatorSessionId" | "operatorTurnId" | "cliInvocationId" | "cliCommandKind"
 >;
 
 export type MutationCommandExecutionResult =

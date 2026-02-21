@@ -175,7 +175,6 @@ describe("direct CLI integrity primitives", () => {
 						stdout: '{"status":"ok"}',
 						stderr: "",
 						exitCode: 0,
-						runRootId: null,
 					};
 				},
 			},

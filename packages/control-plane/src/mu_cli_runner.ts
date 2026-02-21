@@ -38,7 +38,6 @@ export type MuCliInvocationPlan = {
 	commandKind: MuCliCommandKind;
 	argv: string[];
 	timeoutMs: number;
-	runRootId: string | null;
 	mutating: boolean;
 };
 
@@ -167,7 +166,6 @@ export class MuCliCommandSurface {
 						commandKind: "status",
 						argv: [this.#muBinary, "status", "--json"],
 						timeoutMs: this.#readTimeoutMs,
-						runRootId: null,
 						mutating: false,
 					},
 				};
@@ -183,7 +181,6 @@ export class MuCliCommandSurface {
 						commandKind: "ready",
 						argv: [this.#muBinary, "issues", "ready"],
 						timeoutMs: this.#readTimeoutMs,
-						runRootId: null,
 						mutating: false,
 					},
 				};
@@ -203,7 +200,6 @@ export class MuCliCommandSurface {
 						commandKind: "issue_get",
 						argv: [this.#muBinary, "issues", "get", issueId],
 						timeoutMs: this.#readTimeoutMs,
-						runRootId: null,
 						mutating: false,
 					},
 				};
@@ -219,7 +215,6 @@ export class MuCliCommandSurface {
 						commandKind: "issue_list",
 						argv: [this.#muBinary, "issues", "list"],
 						timeoutMs: this.#readTimeoutMs,
-						runRootId: null,
 						mutating: false,
 					},
 				};
@@ -243,7 +238,6 @@ export class MuCliCommandSurface {
 						commandKind: "forum_read",
 						argv: [this.#muBinary, "forum", "read", topic, "--limit", String(limit)],
 						timeoutMs: this.#readTimeoutMs,
-						runRootId: null,
 						mutating: false,
 					},
 				};
@@ -259,7 +253,6 @@ export class MuCliCommandSurface {
 						commandKind: "operator_config_get",
 						argv: [this.#muBinary, "control", "operator", "get", "--json"],
 						timeoutMs: this.#readTimeoutMs,
-						runRootId: null,
 						mutating: false,
 					},
 				};
@@ -279,7 +272,6 @@ export class MuCliCommandSurface {
 						commandKind: "operator_model_list",
 						argv: [this.#muBinary, "control", "operator", "models", ...(provider ? [provider] : []), "--json"],
 						timeoutMs: this.#readTimeoutMs,
-						runRootId: null,
 						mutating: false,
 					},
 				};
@@ -314,7 +306,6 @@ export class MuCliCommandSurface {
 							"--json",
 						],
 						timeoutMs: this.#readTimeoutMs,
-						runRootId: null,
 						mutating: false,
 					},
 				};
@@ -351,7 +342,6 @@ export class MuCliCommandSurface {
 							"--json",
 						],
 						timeoutMs: this.#runTimeoutMs,
-						runRootId: null,
 						mutating: true,
 					},
 				};
@@ -371,7 +361,6 @@ export class MuCliCommandSurface {
 						commandKind: "operator_thinking_set",
 						argv: [this.#muBinary, "control", "operator", "thinking-set", thinking, "--json"],
 						timeoutMs: this.#runTimeoutMs,
-						runRootId: null,
 						mutating: true,
 					},
 				};
@@ -390,7 +379,6 @@ export type MuCliRunResult =
 			stdout: string;
 			stderr: string;
 			exitCode: number;
-			runRootId: string | null;
 	  }
 	| {
 			kind: "failed";
@@ -398,7 +386,6 @@ export type MuCliRunResult =
 			stdout: string;
 			stderr: string;
 			exitCode: number | null;
-			runRootId: string | null;
 	  };
 
 export interface MuCliRunnerLike {
@@ -422,7 +409,6 @@ export class MuCliRunner implements MuCliRunnerLike {
 				stdout: "",
 				stderr: "empty argv",
 				exitCode: null,
-				runRootId: opts.plan.runRootId,
 			};
 		}
 
@@ -443,7 +429,6 @@ export class MuCliRunner implements MuCliRunnerLike {
 				stdout: "",
 				stderr: err instanceof Error ? err.message : "spawn_failed",
 				exitCode: null,
-				runRootId: opts.plan.runRootId,
 			};
 		}
 
@@ -467,7 +452,6 @@ export class MuCliRunner implements MuCliRunnerLike {
 					stdout,
 					stderr,
 					exitCode,
-					runRootId: opts.plan.runRootId,
 				};
 			}
 
@@ -478,7 +462,6 @@ export class MuCliRunner implements MuCliRunnerLike {
 					stdout,
 					stderr,
 					exitCode,
-					runRootId: opts.plan.runRootId,
 				};
 			}
 
@@ -487,7 +470,6 @@ export class MuCliRunner implements MuCliRunnerLike {
 				stdout,
 				stderr,
 				exitCode,
-				runRootId: opts.plan.runRootId,
 			};
 		} finally {
 			clearTimeout(timeout);

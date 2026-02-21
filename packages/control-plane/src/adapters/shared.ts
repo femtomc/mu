@@ -250,7 +250,6 @@ export async function enqueueFallbackPipelineResult(opts: {
 			operator_turn_id: null,
 			cli_invocation_id: null,
 			cli_command_kind: null,
-			run_root_id: null,
 		},
 		metadata: {
 			pipeline_result_kind: opts.result.kind,
@@ -359,7 +358,6 @@ export async function enqueueTelegramOperatorResponse(opts: {
 			operator_turn_id: null,
 			cli_invocation_id: null,
 			cli_command_kind: null,
-			run_root_id: null,
 		},
 		metadata: {
 			pipeline_result_kind: opts.result.kind,

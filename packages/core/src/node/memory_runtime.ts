@@ -728,7 +728,7 @@ async function collectCommandJournal(repoRoot: string, path: string): Promise<Co
 			const channelTenantId = command ? nonEmptyString(command.channel_tenant_id) : null;
 			const channelConversationId = command ? nonEmptyString(command.channel_conversation_id) : null;
 			const actorBindingId = command ? nonEmptyString(command.actor_binding_id) : null;
-			const runId = command ? nonEmptyString(command.run_root_id) : null;
+			const runId = null;
 			const sessionId = command
 				? nonEmptyString(command.operator_session_id) ?? nonEmptyString(command.meta_session_id)
 				: null;
@@ -780,7 +780,7 @@ async function collectCommandJournal(repoRoot: string, path: string): Promise<Co
 			const channelTenantId = correlation ? nonEmptyString(correlation.channel_tenant_id) : null;
 			const channelConversationId = correlation ? nonEmptyString(correlation.channel_conversation_id) : null;
 			const actorBindingId = correlation ? nonEmptyString(correlation.actor_binding_id) : null;
-			const runId = correlation ? nonEmptyString(correlation.run_root_id) : null;
+			const runId = null;
 			const sessionId = correlation
 				? nonEmptyString(correlation.operator_session_id) ?? nonEmptyString(correlation.meta_session_id)
 				: null;
@@ -842,7 +842,7 @@ async function collectOutbox(repoRoot: string, path: string): Promise<ContextIte
 			conversationId: channelConversationId,
 			bindingId: actorBindingId,
 		});
-		const runId = correlation ? nonEmptyString(correlation.run_root_id) : null;
+		const runId = null;
 		const sessionId = correlation
 			? nonEmptyString(correlation.operator_session_id) ?? nonEmptyString(correlation.meta_session_id)
 			: null;

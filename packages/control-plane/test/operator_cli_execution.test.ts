@@ -165,7 +165,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 				stdout: '{"status":"ok"}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: null,
 			},
 		});
 
@@ -191,7 +190,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 
 		expect(confirm.command.cli_invocation_id).toBe("cli-operator-1");
 		expect(confirm.command.cli_command_kind).toBe("operator_model_set");
-		expect(confirm.command.run_root_id).toBeNull();
 		expect(confirm.command.operator_session_id).toBe("operator-session-1");
 		expect(confirm.command.operator_turn_id).toBe("operator-turn-1");
 		expect(harness.cli.plans.length).toBe(1);
@@ -212,7 +210,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 		for (const entry of mutating) {
 			expect(entry.correlation.cli_invocation_id).toBe("cli-operator-1");
 			expect(entry.correlation.cli_command_kind).toBe("operator_model_set");
-			expect(entry.correlation.run_root_id).toBeNull();
 			expect(entry.correlation.operator_session_id).toBe("operator-session-1");
 			expect(entry.correlation.operator_turn_id).toBe("operator-turn-1");
 		}
@@ -230,7 +227,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 				stdout: '{"ok":true}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: null,
 			},
 		});
 
@@ -255,7 +251,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 			throw new Error(`expected completed, got ${confirm.kind}`);
 		}
 		expect(confirm.command.cli_command_kind).toBe("operator_thinking_set");
-		expect(confirm.command.run_root_id).toBeNull();
 		expect(harness.cli.plans.length).toBe(1);
 		expect(harness.cli.plans[0]?.argv).toEqual([
 			"mu",
@@ -279,7 +274,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 				stdout: '{"open_count":2}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: null,
 			},
 		});
 
@@ -312,7 +306,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 				stdout: '{"enabled":true}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: null,
 			},
 		});
 		const configResult = await configHarness.pipeline.handleInbound(mkInbound(configHarness.repoRoot));
@@ -334,7 +327,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 				stdout: '["gpt-5.3-codex"]',
 				stderr: "",
 				exitCode: 0,
-				runRootId: null,
 			},
 		});
 		const listResult = await listHarness.pipeline.handleInbound(mkInbound(listHarness.repoRoot));
@@ -366,7 +358,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 				stdout: "",
 				stderr: "boom",
 				exitCode: 1,
-				runRootId: null,
 			},
 		});
 
@@ -397,7 +388,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 				stdout: "{}",
 				stderr: "",
 				exitCode: 0,
-				runRootId: null,
 			},
 		});
 
@@ -419,7 +409,6 @@ describe("operator + allowlisted mu CLI execution", () => {
 				stdout: "",
 				stderr: "timed out",
 				exitCode: null,
-				runRootId: null,
 			},
 		});
 

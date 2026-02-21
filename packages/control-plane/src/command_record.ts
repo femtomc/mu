@@ -45,7 +45,6 @@ export const CommandRecordSchema = z.object({
 	operator_turn_id: z.string().min(1).nullable().default(null),
 	cli_invocation_id: z.string().min(1).nullable().default(null),
 	cli_command_kind: z.string().min(1).nullable().default(null),
-	run_root_id: z.string().min(1).nullable().default(null),
 	result: JsonObjectSchema.nullable().default(null),
 	replay_of: z.string().nullable().default(null),
 });
@@ -61,7 +60,6 @@ export type CreateAcceptedCommandRecordOpts = {
 	operatorTurnId?: string | null;
 	cliInvocationId?: string | null;
 	cliCommandKind?: string | null;
-	runRootId?: string | null;
 };
 
 function splitTokens(value: string): string[] {
@@ -130,7 +128,6 @@ export function createAcceptedCommandRecord(opts: CreateAcceptedCommandRecordOpt
 		operator_turn_id: opts.operatorTurnId ?? null,
 		cli_invocation_id: opts.cliInvocationId ?? null,
 		cli_command_kind: opts.cliCommandKind ?? null,
-		run_root_id: opts.runRootId ?? null,
 		result: null,
 		replay_of: opts.replayOf ?? null,
 	});
@@ -160,7 +157,6 @@ export function correlationFromCommandRecord(record: CommandRecord): Correlation
 		operator_turn_id: parsed.operator_turn_id ?? null,
 		cli_invocation_id: parsed.cli_invocation_id ?? null,
 		cli_command_kind: parsed.cli_command_kind ?? null,
-		run_root_id: parsed.run_root_id ?? null,
 	});
 }
 
@@ -176,7 +172,6 @@ export type TransitionCommandRecordOpts = {
 	operatorTurnId?: string | null;
 	cliInvocationId?: string | null;
 	cliCommandKind?: string | null;
-	runRootId?: string | null;
 };
 
 export type CommandRecordTraceUpdate = {
@@ -184,7 +179,6 @@ export type CommandRecordTraceUpdate = {
 	operatorTurnId?: string | null;
 	cliInvocationId?: string | null;
 	cliCommandKind?: string | null;
-	runRootId?: string | null;
 };
 
 export function applyCommandRecordTrace(record: CommandRecord, update: CommandRecordTraceUpdate = {}): CommandRecord {
@@ -194,7 +188,6 @@ export function applyCommandRecordTrace(record: CommandRecord, update: CommandRe
 		operator_turn_id: update.operatorTurnId !== undefined ? update.operatorTurnId : record.operator_turn_id,
 		cli_invocation_id: update.cliInvocationId !== undefined ? update.cliInvocationId : record.cli_invocation_id,
 		cli_command_kind: update.cliCommandKind !== undefined ? update.cliCommandKind : record.cli_command_kind,
-		run_root_id: update.runRootId !== undefined ? update.runRootId : record.run_root_id,
 	});
 }
 
@@ -218,7 +211,6 @@ export function transitionCommandRecord(record: CommandRecord, opts: TransitionC
 		operator_turn_id: opts.operatorTurnId !== undefined ? opts.operatorTurnId : current.operator_turn_id,
 		cli_invocation_id: opts.cliInvocationId !== undefined ? opts.cliInvocationId : current.cli_invocation_id,
 		cli_command_kind: opts.cliCommandKind !== undefined ? opts.cliCommandKind : current.cli_command_kind,
-		run_root_id: opts.runRootId !== undefined ? opts.runRootId : current.run_root_id,
 		result: opts.result !== undefined ? opts.result : current.result,
 		terminal_at_ms: isTerminalCommandState(opts.nextState) ? nowMs : current.terminal_at_ms,
 	};

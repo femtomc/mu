@@ -310,7 +310,6 @@ async function createHarness(opts: HarnessOpts = {}): Promise<Harness> {
 		stdout: '{"ok":true}',
 		stderr: "",
 		exitCode: 0,
-		runRootId: "mu-root-operator",
 	};
 
 	const resolvedOperatorBackend =
@@ -767,7 +766,6 @@ describe("channel adapters integrated with control-plane", () => {
 				stdout: '{"status":"ok"}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: null,
 			},
 		});
 
@@ -827,11 +825,9 @@ describe("channel adapters integrated with control-plane", () => {
 			throw new Error(`expected completed, got ${telegramConfirm.pipelineResult?.kind}`);
 		}
 		expect(telegramConfirm.pipelineResult.command.cli_command_kind).toBe("operator_model_set");
-		expect(telegramConfirm.pipelineResult.command.run_root_id).toBeNull();
 		expect(telegramConfirm.pipelineResult.command.operator_session_id).toMatch(/^operator-session-adapter-/);
 		expect(telegramConfirm.pipelineResult.command.operator_turn_id).toBe("operator-turn-adapter");
 		expect(telegramConfirm.outboxRecord?.envelope.correlation.cli_command_kind).toBe("operator_model_set");
-		expect(telegramConfirm.outboxRecord?.envelope.correlation.run_root_id).toBeNull();
 		expect(telegramConfirm.outboxRecord?.envelope.correlation.cli_invocation_id).toBe(
 			telegramConfirm.pipelineResult.command.cli_invocation_id,
 		);
@@ -1042,7 +1038,6 @@ describe("channel adapters integrated with control-plane", () => {
 				stdout: '{"status":"ok"}',
 				stderr: "",
 				exitCode: 0,
-				runRootId: null,
 			},
 		});
 
@@ -1072,7 +1067,6 @@ describe("channel adapters integrated with control-plane", () => {
 			throw new Error(`expected completed, got ${confirm.pipelineResult?.kind}`);
 		}
 		expect(confirm.pipelineResult.command.cli_command_kind).toBe("operator_thinking_set");
-		expect(confirm.pipelineResult.command.run_root_id).toBeNull();
 		expect(confirm.outboxRecord?.envelope.body).toContain("RESULT · COMPLETED");
 		expect(confirm.outboxRecord?.envelope.body).toContain("operator thinking set");
 

@@ -72,7 +72,6 @@ function mkCompletedCliCommand(): CommandRecord {
 		errorCode: null,
 		cliInvocationId: "cli-1",
 		cliCommandKind: "operator_model_set",
-		runRootId: null,
 	});
 	return transitionCommandRecord(inProgress, {
 		nextState: "completed",
@@ -80,7 +79,6 @@ function mkCompletedCliCommand(): CommandRecord {
 		errorCode: null,
 		cliInvocationId: "cli-1",
 		cliCommandKind: "operator_model_set",
-		runRootId: null,
 		result: {
 			z: 1,
 			a: {

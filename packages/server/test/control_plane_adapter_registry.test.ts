@@ -41,7 +41,6 @@ function mkRecord(channel: string): OutboxRecord {
 				operator_turn_id: null,
 				cli_invocation_id: null,
 				cli_command_kind: null,
-				run_root_id: null,
 			},
 			metadata: {},
 		},

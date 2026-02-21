@@ -192,7 +192,6 @@ export class ControlPlaneCommandPipeline {
 			operatorTurnId: outcome.trace?.operatorTurnId,
 			cliInvocationId: outcome.trace?.cliInvocationId,
 			cliCommandKind: outcome.trace?.cliCommandKind,
-			runRootId: outcome.trace?.runRootId,
 		};
 	}
 
@@ -329,7 +328,6 @@ export class ControlPlaneCommandPipeline {
 				trace: {
 					cliInvocationId: invocationId,
 					cliCommandKind: null,
-					runRootId: null,
 				},
 				mutatingEvents: [
 					{
@@ -354,7 +352,6 @@ export class ControlPlaneCommandPipeline {
 				trace: {
 					cliInvocationId: plan.invocationId,
 					cliCommandKind: plan.commandKind,
-					runRootId: plan.runRootId,
 				},
 				mutatingEvents: [
 					{
@@ -394,7 +391,6 @@ export class ControlPlaneCommandPipeline {
 				trace: {
 					cliInvocationId: plan.invocationId,
 					cliCommandKind: plan.commandKind,
-					runRootId: runResult.runRootId,
 				},
 				mutatingEvents: [
 					startEvent,
@@ -407,7 +403,6 @@ export class ControlPlaneCommandPipeline {
 							exit_code: runResult.exitCode,
 							stdout: truncateText(runResult.stdout),
 							stderr: truncateText(runResult.stderr),
-							run_root_id: runResult.runRootId,
 						},
 					},
 				],
@@ -423,12 +418,10 @@ export class ControlPlaneCommandPipeline {
 				exit_code: runResult.exitCode,
 				stdout: truncateText(runResult.stdout),
 				stderr: truncateText(runResult.stderr),
-				run_root_id: runResult.runRootId,
 			},
 			trace: {
 				cliInvocationId: plan.invocationId,
 				cliCommandKind: plan.commandKind,
-				runRootId: runResult.runRootId,
 			},
 			mutatingEvents: [
 				startEvent,
@@ -438,7 +431,6 @@ export class ControlPlaneCommandPipeline {
 						invocation_id: plan.invocationId,
 						command_kind: plan.commandKind,
 						exit_code: runResult.exitCode,
-						run_root_id: runResult.runRootId,
 					},
 				},
 			],
