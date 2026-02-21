@@ -1,25 +1,59 @@
 ---
 name: subagents
-description: Define and run a protocol-driven multi-agent workflow over mu issues, forum, and heartbeats.
+description: Orchestrate issue-driven subagent work with heartbeat supervision and tmux worker fan-out.
 ---
 
-# Subagents (protocol-driven)
+# Subagents
 
-Use this skill when work should decompose and coordinate itself at runtime.
+## Purpose (what this skill is for)
 
-## Core model
+Use this skill for **durable multi-agent orchestration**: work that must keep moving over time, not just one-shot execution.
 
-Treat this skill as the orchestration protocol spec.
-Do not depend on hardcoded orchestrator/worker role behavior.
+This skill combines `mu` primitives into one orchestration model:
 
-Shared primitives:
+- `mu issues` = executable DAG, dependencies, lifecycle state
+- `mu forum` = durable task/result packets
+- `mu heartbeats` / `mu cron` = orchestrator wake cadence
+- `tmux` + `mu exec` = parallel worker execution
+- subagents HUD = observability/control board
 
-- `mu issues` = task tree, dependencies, and lifecycle state
-- `mu forum` = durable context/result packets
-- `mu heartbeats` / `mu cron` = wake/scheduling loop
-- `tmux` + subagents HUD = execution surfaces and observability
+Protocol truth lives in **issues + forum**. HUD/tmux are execution and visibility surfaces.
 
-## Protocol: `subagents.protocol/v1`
+## When to use
+
+- Work can be represented as issue-scoped deliverables with explicit outcomes.
+- Dependencies may unblock over time.
+- You want unattended progress between manual check-ins.
+
+## Success condition
+
+- Each executable issue is claimed, worked, and closed with an explicit outcome.
+- Results are posted in `issue:<id>` forum topics.
+- Root completion is validated via `mu issues validate <root-id>`.
+
+## Dispatch modes
+
+### 1) Heartbeat dispatch (orchestrator cadence)
+
+Use when you want the orchestration loop to keep running over time.
+
+Each heartbeat tick should run **one bounded control-loop pass**:
+
+1. Read queue/tree state.
+2. Choose one primitive (`ask`, `expand`, `complete`, etc.).
+3. Apply one action.
+4. Verify state + log progress.
+5. Exit.
+
+Heartbeat dispatch is the **orchestrator clock**. It should supervise/advance the graph, not run unbounded worker sessions.
+
+### 2) tmux dispatch (parallel workers)
+
+Use when multiple ready leaves should execute concurrently now.
+
+Spawn one tmux session per ready issue. Each worker should claim one issue, run one full issue loop, then exit.
+
+## Protocol: `subagents.protocol/v1` (how the skill executes)
 
 ### Primitive: `read_tree`
 
@@ -30,6 +64,15 @@ mu issues get <issue-id> --pretty
 mu issues children <issue-id> --pretty
 mu issues ready --root <root-id> --tag proto:subagents-v1 --pretty
 mu forum read issue:<issue-id> --limit 20 --pretty
+```
+
+### Primitive: `claim`
+
+Claim before doing work on an executable issue:
+
+```bash
+mu issues claim <issue-id>
+mu forum post issue:<issue-id> -m "START: <plan for this pass>" --author operator
 ```
 
 ### Primitive: `spawn` (clean-context child)
@@ -57,9 +100,9 @@ mu issues dep <blocker-id> blocks <child-id>
 
 ### Primitive: `fork` (inherited-context child)
 
-Create analysis/synthesis children that need sibling outputs.
-Before creation, summarize completed dependency results from
-`mu forum read issue:<dep-id>`. Then create with `kind:fork` + `ctx:inherit`.
+Create analysis/synthesis children that depend on sibling outputs.
+Before creation, summarize dependency results from `mu forum read issue:<dep-id>`.
+Then create with `kind:fork` + `ctx:inherit`.
 
 ### Primitive: `ask` (human input node)
 
@@ -105,9 +148,9 @@ When decomposition is needed:
 
 1. Create child work nodes via `spawn` / `fork`.
 2. Create one synthesis child (`kind:synth`, `ctx:inherit`) blocked by all child work nodes.
-3. Close the current node with `mu issues close <issue-id> --outcome expanded`.
+3. Close current node with `mu issues close <issue-id> --outcome expanded`.
 
-This expresses two-phase execution (decompose -> synthesize) as explicit DAG nodes.
+This encodes decompose→synthesize as explicit DAG nodes.
 
 ### Primitive: `serial`
 
@@ -119,27 +162,42 @@ mu issues dep <step-a> blocks <step-b>
 
 ## Required invariants
 
-- **Read-before-act-verify:** every write is followed by a state re-read.
-- **Claim-before-work:** claim issues before doing file work or execution logging.
-- **Scoped authority:** mutate only the current issue + descendants.
+- **Read-before-act-verify:** every write is followed by a re-read.
+- **Claim-before-work:** claim executable issues before file/work execution.
+- **Scoped authority:** mutate only current issue + descendants.
 - **Container hygiene:** remove `node:agent` from non-executable root/ask/container nodes.
 - **Idempotent logging:** forum updates should be append-only and resumable.
-- **Explicit outcomes:** every executable issue must close with a concrete outcome.
+- **Explicit outcomes:** every executable issue closes with concrete outcome.
 
-## Agent control loop (normative)
+## Control loops
 
-For a claimed issue `<issue-id>` under `<root-id>`:
+### Orchestrator heartbeat tick loop (bounded)
+
+For root `<root-id>`:
+
+1. `read_tree` at root/selected node
+2. Choose exactly one primitive to apply
+3. Apply it
+4. Verify state (`mu issues get`, `children`, `ready`, `validate`)
+5. Post concise progress to forum
+6. Exit tick
+
+Stop automation when `mu issues validate <root-id>` returns final.
+
+### Worker issue loop (single issue pass)
+
+For claimed issue `<issue-id>` under `<root-id>`:
 
 1. `read_tree`
-2. Choose exactly one primitive:
-   - Missing user input -> `ask`
-   - Needs decomposition -> `expand` (`spawn`/`fork` children + synth node)
-   - Directly solvable -> `complete`
-3. Apply one primitive
-4. Verify state (`mu issues get`, `children`, `ready`)
+2. Choose one primitive:
+   - missing input -> `ask`
+   - needs decomposition -> `expand`
+   - directly solvable -> `complete`
+3. Apply primitive
+4. Verify state
 5. Post concise progress to `issue:<issue-id>`
 
-Repeat until the issue is closed.
+Repeat until issue closes.
 
 ## Bootstrap template
 
@@ -160,21 +218,19 @@ goal_id="$(echo "$goal_json" | jq -r '.id')"
 mu forum post issue:"$goal_id" -m "<goal brief + acceptance criteria>" --author operator
 ```
 
-## Autonomous dispatch options
+## Dispatch templates
 
-### A) Heartbeat autopilot (preferred)
-
-Let a recurring heartbeat wake an operator prompt that follows this protocol:
+### A) Heartbeat autopilot (preferred for supervision)
 
 ```bash
 mu heartbeats create \
   --title "subagents-v1 <root-id>" \
   --reason subagents_protocol_v1 \
   --every-ms 15000 \
-  --prompt "Use skill subagents (protocol v1) for root <root-id>. Claim one ready issue tagged proto:subagents-v1, execute one control-loop pass, and report status. Stop when 'mu issues validate <root-id>' is final."
+  --prompt "Use skill subagents for root <root-id>. Run exactly one bounded orchestration pass: claim/work one ready proto:subagents-v1 issue (or perform one orchestration action), verify state, and report status. Stop when 'mu issues validate <root-id>' is final."
 ```
 
-### B) tmux fan-out
+### B) tmux fan-out (parallel workers)
 
 ```bash
 run_id="$(date +%Y%m%d-%H%M%S)"
