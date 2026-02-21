@@ -284,7 +284,7 @@ describe("PiMessagingOperatorBackend", () => {
 				commandText: "Please review this selection",
 				metadata: {
 					client_context: {
-						file: "core/synth/src/runtime.zig",
+						file: "core/xx/src/runtime.zig",
 						line: 42,
 						selection: "const value = compute();",
 					},
@@ -294,7 +294,7 @@ describe("PiMessagingOperatorBackend", () => {
 
 		expect(result).toEqual({ kind: "respond", message: "Context received." });
 		expect(seenPrompt).toContain("Client context (structured preview):");
-		expect(seenPrompt).toContain('"file":"core/synth/src/runtime.zig"');
+		expect(seenPrompt).toContain('"file":"core/xx/src/runtime.zig"');
 	});
 
 	test("runtime injects pending session flash messages and marks them delivered", async () => {

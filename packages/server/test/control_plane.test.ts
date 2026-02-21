@@ -573,11 +573,11 @@ describe("bootstrapControlPlane operator wiring", () => {
 				},
 				body: JSON.stringify({
 					tenant_id: "workspace-1",
-					conversation_id: "buffer:core/synth/src/runtime.zig",
+					conversation_id: "buffer:core/xx/src/runtime.zig",
 					actor_id: "neovim-actor",
 					text: "status",
 					client_context: {
-						file: "core/synth/src/runtime.zig",
+						file: "core/xx/src/runtime.zig",
 						selection: "const x = y + 1;",
 					},
 				}),
