@@ -725,8 +725,9 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	}
 
 	const issueScope = state.issueRootId ? `root:${state.issueRootId}` : "all-roots";
-	const tagScope = state.issueTagFilter ? state.issueTagFilter : "(all tags)";
-	const scopeCompact = truncateOneLine(`${issueScope} · ${tagScope}`, WIDGET_SCOPE_MAX);
+	const tagScope = state.issueTagFilter ? `tag:${state.issueTagFilter}` : null;
+	const scopeLabel = [issueScope, tagScope].filter((value): value is string => value != null).join(" · ");
+	const scopeCompact = truncateOneLine(scopeLabel, WIDGET_SCOPE_MAX);
 	const prefixCompact = truncateOneLine(state.prefix || "(all sessions)", WIDGET_PREFIX_MAX);
 	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 	const drift = computeQueueDrift(state.sessions, state.activeIssues);
@@ -743,57 +744,81 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	const staleAfterSeconds = Math.round(state.staleAfterMs / 1_000);
 	const activityLines = state.activityLines.slice(0, ACTIVITY_LINE_LIMIT);
 
-	ctx.ui.setStatus(
-		"mu-subagents",
-		[
-			ctx.ui.theme.fg("dim", "subagents"),
-			ctx.ui.theme.fg(healthColor, healthLabel),
-			ctx.ui.theme.fg("dim", `mode:${state.spawnMode}`),
-			ctx.ui.theme.fg(pausedColor, `paused:${pausedLabel}`),
-			ctx.ui.theme.fg("dim", `q:${state.readyIssues.length}/${state.activeIssues.length}`),
-			ctx.ui.theme.fg("dim", `tmux:${state.sessions.length}`),
-			ctx.ui.theme.fg(staleCount > 0 ? "warning" : "dim", `drift:${staleCount}`),
-			ctx.ui.theme.fg("muted", truncateOneLine(issueScope, 18)),
-		].join(` ${ctx.ui.theme.fg("muted", "·")} `),
-	);
-	ctx.ui.setStatus(
-		"mu-subagents-meta",
-		`health:${healthLabel} q:${state.readyIssues.length}/${state.activeIssues.length} tmux:${state.sessions.length} drift:${staleCount} refresh:${refreshAge}`,
-	);
+	const statusParts = [
+		ctx.ui.theme.fg("dim", "subagents"),
+		ctx.ui.theme.fg(healthColor, healthLabel),
+		ctx.ui.theme.fg("dim", `mode:${state.spawnMode}`),
+		ctx.ui.theme.fg("dim", `q:${state.readyIssues.length}/${state.activeIssues.length}`),
+		ctx.ui.theme.fg("dim", `tmux:${state.sessions.length}`),
+	];
+	if (state.spawnPaused) {
+		statusParts.push(ctx.ui.theme.fg(pausedColor, `paused:${pausedLabel}`));
+	}
+	if (staleCount > 0) {
+		statusParts.push(ctx.ui.theme.fg("warning", `drift:${staleCount}`));
+	}
+	if (state.issueRootId) {
+		statusParts.push(ctx.ui.theme.fg("muted", truncateOneLine(issueScope, 18)));
+	}
+	ctx.ui.setStatus("mu-subagents", statusParts.join(` ${ctx.ui.theme.fg("muted", "·")} `));
 
-	const lines = [
-		[
-			ctx.ui.theme.fg("accent", ctx.ui.theme.bold("Subagents")),
-			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg(healthColor, healthLabel),
-			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg("accent", `mode:${state.spawnMode}`),
-			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg(pausedColor, `paused:${pausedLabel}`),
-		].join(" "),
-		`${ctx.ui.theme.fg("muted", "scope:")} ${ctx.ui.theme.fg("dim", scopeCompact)} ${ctx.ui.theme.fg("muted", "· prefix:")} ${ctx.ui.theme.fg("dim", prefixCompact)}`,
-		[
-			ctx.ui.theme.fg("muted", "queues:"),
-			ctx.ui.theme.fg("accent", `${state.readyIssues.length}r`),
-			ctx.ui.theme.fg("muted", "/"),
-			ctx.ui.theme.fg("warning", `${state.activeIssues.length}a`),
-			ctx.ui.theme.fg("dim", queueBar),
-			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg("muted", "tmux:"),
-			ctx.ui.theme.fg("dim", `${state.sessions.length}`),
-			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg(staleCount > 0 ? "warning" : "dim", `drift:${staleCount}`),
-		].join(" "),
-		[
-			ctx.ui.theme.fg("muted", "refresh:"),
-			ctx.ui.theme.fg(refreshStale ? "warning" : "dim", refreshAge),
-			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg("muted", "every:"),
-			ctx.ui.theme.fg("dim", `${refreshSeconds}s`),
+	const footerMetaParts = [`q:${state.readyIssues.length}/${state.activeIssues.length}`, `tmux:${state.sessions.length}`];
+	if (staleCount > 0) {
+		footerMetaParts.push(`drift:${staleCount}`);
+	}
+	if (refreshStale) {
+		footerMetaParts.push("refresh:stale");
+	}
+	if (state.issueError || state.sessionError || state.activityError) {
+		footerMetaParts.push("err");
+	}
+	ctx.ui.setStatus("mu-subagents-meta", footerMetaParts.join(" "));
+
+	const titleParts = [
+		ctx.ui.theme.fg("accent", ctx.ui.theme.bold("Subagents")),
+		ctx.ui.theme.fg("muted", "·"),
+		ctx.ui.theme.fg(healthColor, healthLabel),
+		ctx.ui.theme.fg("muted", "·"),
+		ctx.ui.theme.fg("accent", `mode:${state.spawnMode}`),
+	];
+	if (state.spawnPaused) {
+		titleParts.push(ctx.ui.theme.fg("muted", "·"), ctx.ui.theme.fg(pausedColor, `paused:${pausedLabel}`));
+	}
+
+	const queueParts = [
+		ctx.ui.theme.fg("muted", "queues:"),
+		ctx.ui.theme.fg("accent", `${state.readyIssues.length}r`),
+		ctx.ui.theme.fg("muted", "/"),
+		ctx.ui.theme.fg("warning", `${state.activeIssues.length}a`),
+		ctx.ui.theme.fg("dim", queueBar),
+		ctx.ui.theme.fg("muted", "·"),
+		ctx.ui.theme.fg("muted", "tmux:"),
+		ctx.ui.theme.fg("dim", `${state.sessions.length}`),
+	];
+	if (staleCount > 0) {
+		queueParts.push(ctx.ui.theme.fg("muted", "·"), ctx.ui.theme.fg("warning", `drift:${staleCount}`));
+	}
+
+	const refreshParts = [
+		ctx.ui.theme.fg("muted", "refresh:"),
+		ctx.ui.theme.fg(refreshStale ? "warning" : "dim", refreshAge),
+		ctx.ui.theme.fg("muted", "·"),
+		ctx.ui.theme.fg("muted", "every:"),
+		ctx.ui.theme.fg("dim", `${refreshSeconds}s`),
+	];
+	if (refreshStale) {
+		refreshParts.push(
 			ctx.ui.theme.fg("muted", "·"),
 			ctx.ui.theme.fg("muted", "stale:"),
 			ctx.ui.theme.fg("dim", `${staleAfterSeconds}s`),
-		].join(" "),
+		);
+	}
+
+	const lines = [
+		titleParts.join(" "),
+		`${ctx.ui.theme.fg("muted", "scope:")} ${ctx.ui.theme.fg("dim", scopeCompact)} ${ctx.ui.theme.fg("muted", "· prefix:")} ${ctx.ui.theme.fg("dim", prefixCompact)}`,
+		queueParts.join(" "),
+		refreshParts.join(" "),
 	];
 
 	if (state.issueError) {
