@@ -265,6 +265,41 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(result).toEqual({ kind: "respond", message: "Here is some information for you." });
 	});
 
+	test("preserves medium-length responses above 2000 characters", async () => {
+		const long = "A".repeat(2_500);
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: [long],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-long", turnId: "turn-1", commandText: "give me details" }),
+		);
+		expect(result).toEqual({ kind: "respond", message: long });
+	});
+
+	test("caps extremely long responses at operator response max", async () => {
+		const tooLong = "B".repeat(14_000);
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: [tooLong],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-too-long", turnId: "turn-1", commandText: "give me full details" }),
+		);
+		expect(result.kind).toBe("respond");
+		if (result.kind !== "respond") {
+			throw new Error(`expected respond, got ${result.kind}`);
+		}
+		expect(result.message.length).toBe(12_000);
+		expect(result.message).toBe("B".repeat(12_000));
+	});
+
 	test("retries once when the backend session reports a transient agent-busy error", async () => {
 		const listeners = new Set<(event: any) => void>();
 		let promptCalls = 0;

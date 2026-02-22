@@ -26,7 +26,8 @@ export type MessagingOperatorIdentityBinding = {
 type InboundEnvelope = MessagingOperatorInboundEnvelope;
 type IdentityBinding = MessagingOperatorIdentityBinding;
 
-const SAFE_RESPONSE_RE = /^[\s\S]{1,2000}$/;
+const OPERATOR_RESPONSE_MAX_CHARS = 12_000;
+const SAFE_RESPONSE_RE = new RegExp(`^[\\s\\S]{1,${OPERATOR_RESPONSE_MAX_CHARS}}$`);
 
 export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("status") }),
@@ -64,7 +65,7 @@ export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 export type OperatorApprovedCommand = z.infer<typeof OperatorApprovedCommandSchema>;
 
 export const OperatorBackendTurnResultSchema = z.discriminatedUnion("kind", [
-	z.object({ kind: z.literal("respond"), message: z.string().trim().min(1).max(2000) }),
+	z.object({ kind: z.literal("respond"), message: z.string().trim().min(1).max(OPERATOR_RESPONSE_MAX_CHARS) }),
 	z.object({ kind: z.literal("command"), command: OperatorApprovedCommandSchema }),
 ]);
 export type OperatorBackendTurnResult = z.infer<typeof OperatorBackendTurnResultSchema>;
@@ -1124,7 +1125,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			throw new Error("operator_empty_response");
 		}
 
-		const responseMessage = message.slice(0, 2000);
+		const responseMessage = message.slice(0, OPERATOR_RESPONSE_MAX_CHARS);
 		await this.#auditTurn(input, {
 			outcome: "respond",
 			messagePreview: responseMessage,
