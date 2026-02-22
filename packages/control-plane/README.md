@@ -1,8 +1,13 @@
 # @femtomc/mu-control-plane
 
-Operator-first conversational ingress runtime for messaging adapters, idempotent turn handling, and outbox delivery. The messaging operator runtime lives in `@femtomc/mu-agent`.
+Operator-first conversational ingress runtime for messaging adapters,
+idempotent turn handling, and outbox delivery.
+The messaging operator runtime lives in `@femtomc/mu-agent`.
 
-> Breaking model change: command/mutation governance (command parser, policy, confirmation workflow, mutation execution) has been removed from the active control-plane runtime. Ingress now routes conversationally through the operator runtime only.
+> Breaking model change: command/mutation governance (command parser, policy,
+> confirmation workflow, mutation execution) has been removed from the active
+> control-plane runtime. Ingress now routes conversationally through the
+> operator runtime only.
 
 ## First-party messaging adapters
 
@@ -11,24 +16,34 @@ Operator-first conversational ingress runtime for messaging adapters, idempotent
 - Telegram
 - Neovim
 
-All adapters normalize inbound turns into the same operator ingress pipeline and preserve correlation across idempotency/outbox delivery.
+All adapters normalize inbound turns into the same operator ingress pipeline
+and preserve correlation across idempotency/outbox delivery.
 
+## Setup workflows (skills-first)
 
-## Runtime setup checklist
+For adapter onboarding, prefer bundled setup skills (`setup-slack`, `setup-discord`,
+`setup-telegram`, `setup-neovim`). These workflows are agent-first: the agent patches
+config, reloads control-plane, verifies routes/capabilities, and asks users only for
+required external-console steps and secret handoff.
 
-Use `mu store paths --pretty` to resolve `<store>`, then configure `<store>/config.json`:
+Baseline control-plane checks:
 
-- `control_plane.adapters.slack.signing_secret`
-- `control_plane.adapters.slack.bot_token`
-- `control_plane.adapters.discord.signing_secret`
-- `control_plane.adapters.telegram.webhook_secret`
-- `control_plane.adapters.telegram.bot_token`
-- `control_plane.adapters.telegram.bot_username`
-- `control_plane.adapters.neovim.shared_secret`
+```bash
+mu control status --pretty
+mu store paths --pretty
+mu control reload
+mu control identities --all --pretty
+```
 
-After config changes, run `mu control reload` (or `POST /api/control-plane/reload`).
+Adapter config keys (`<store>/config.json`):
 
-Identity binding examples:
+- Slack: `control_plane.adapters.slack.signing_secret`, `bot_token`
+- Discord: `control_plane.adapters.discord.signing_secret`
+- Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`,
+  `bot_username` (optional)
+- Neovim: `control_plane.adapters.neovim.shared_secret`
+
+Identity linking:
 
 ```bash
 mu control link --channel slack --actor-id U123 --tenant-id T123
@@ -36,170 +51,8 @@ mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id>
 mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot
 ```
 
-`mu control link` is currently for Slack/Discord/Telegram. For Neovim, use `:Mu link` from `mu.nvim`.
-
-## Slack bot setup + onboarding runbook
-
-This runbook is for first-time Slack setup where you want `/mu status` working end-to-end from Slack.
-
-### 1) Start `mu` server and confirm route mount
-
-```bash
-mu serve
-# in another shell
-mu control status --pretty
-curl -s http://localhost:3000/api/control-plane/channels | jq '.channels[] | select(.channel=="slack")'
-```
-
-Expected route from channel capabilities: `POST /webhooks/slack`.
-
-### 2) Create Slack app
-
-In Slack API UI:
-
-1. Create app (from scratch) for your workspace.
-2. Open **Basic Information** and copy:
-   - **Signing Secret** (for inbound verification)
-3. Open **OAuth & Permissions** and install app to workspace.
-4. Copy **Bot User OAuth Token** (`xoxb-...`) for outbound Slack delivery.
-   - Without `bot_token`, inbound slash/events can still ACK, but deferred outbound replies/media cannot be delivered.
-
-### 3) Configure scopes and features in Slack app
-
-Minimum practical setup for command flow:
-
-- **Slash Commands**
-  - Command: `/mu`
-  - Request URL: `https://<your-host>/webhooks/slack`
-- **Event Subscriptions**
-  - Enable events
-  - Request URL: `https://<your-host>/webhooks/slack`
-  - Subscribe to bot event: `app_mention`
-- **Interactivity & Shortcuts**
-  - Enable interactivity
-  - Request URL: `https://<your-host>/webhooks/slack`
-
-Recommended bot token scopes:
-
-- `app_mentions:read` (inbound `app_mention` events)
-- `chat:write` (outbound text replies)
-- `files:read` (inbound Slack file download from events)
-- `files:write` (outbound Slack media delivery)
-
-### 4) Wire `mu` config keys
-
-Resolve `<store>` first:
-
-```bash
-mu store paths --pretty
-```
-
-Edit `<store>/config.json`:
-
-```json
-{
-  "version": 1,
-  "control_plane": {
-    "adapters": {
-      "slack": {
-        "signing_secret": "<SLACK_SIGNING_SECRET>",
-        "bot_token": "<SLACK_BOT_TOKEN_OR_NULL>"
-      }
-    }
-  }
-}
-```
-
-Apply config:
-
-```bash
-mu control reload
-mu control status --pretty
-```
-
-Notes:
-
-- `mu control status` marks Slack as configured when `signing_secret` is present.
-- Deferred outbound delivery (including normal text replies and media) requires `bot_token`.
-
-### 5) Link Slack identity to mu operator authorization
-
-Use Slack actor/workspace IDs:
-
-- `actor-id`: Slack user id (for example `U123...`)
-- `tenant-id`: Slack workspace/team id (for example `T123...`)
-
-```bash
-mu control link --channel slack --actor-id U123 --tenant-id T123 --role operator
-mu control identities --pretty
-```
-
-### Secure collaboration channel pattern (single driver, shared observers)
-
-For a shared Slack channel, keep exactly one linked actor as the active bot driver. Everyone else can read bot output and participate in discussion, but only the linked actor should be authorized to drive command/conversational ingress.
-
-Practical rotation flow (handoff from `U_OLD` to `U_NEW` in workspace `T123`):
-
-```bash
-# Inspect current bindings first and identify old binding_id
-mu control identities --pretty
-
-# Remove previous driver binding (admin revoke)
-mu control unlink <old-binding-id> --revoke --reason "driver handoff"
-
-# Link the new driver
-mu control link --channel slack --actor-id U_NEW --tenant-id T123 --role operator
-
-# Re-check effective state
-mu control identities --pretty
-```
-
-Operational guidance:
-
-- Keep one active linked actor per collaboration surface/thread when you want strict control ownership.
-- If multiple actors are linked, each linked actor is authorized; this weakens single-driver control.
-- Use unlink during handoffs/on-call rotation so authorization intent stays explicit and auditable.
-
-Thread behavior in this pattern:
-
-- Replies are anchored to the originating Slack thread (`event.thread_ts` when present; otherwise message timestamp fallback).
-- Linked-driver conversational turns in that thread can route through operator handling.
-- Linked actor conversational turns in-thread route through operator handling and can propose command execution when needed.
-- Unlinked observers are denied with `identity_not_linked` for both conversational and explicit command ingress.
-
-### 6) Smoke tests
-
-1. In Slack, run `/mu status`.
-2. Expect immediate ephemeral ACK and a deferred result message.
-3. Validate runtime/audit:
-
-```bash
-mu control status --pretty
-mu store tail cp_outbox --limit 20 --pretty
-mu store tail cp_adapter_audit --limit 20 --pretty
-```
-
-4. Optional event path check (message events): send `/mu status` and a conversational mention in an event-enabled surface; both should be accepted when actor linkage is valid.
-
-### 7) Troubleshooting (reason-code oriented)
-
-- `missing_slack_signature` / `invalid_slack_signature`
-  - Slack signing secret mismatch or wrong endpoint.
-- `invalid_slack_timestamp` / `stale_slack_timestamp`
-  - malformed or stale signed request timestamp.
-- `unsupported_slack_action_payload`
-  - unsupported interactive payload (currently only the built-in in-thread `Cancel turn` button action is accepted).
-- `slack_bot_token_required`
-  - Slack file download attempted without `control_plane.adapters.slack.bot_token`.
-
-Operational checks:
-
-```bash
-mu control status --pretty
-curl -s http://localhost:3000/api/control-plane/channels | jq '.channels[] | select(.channel=="slack")'
-mu store tail cp_adapter_audit --limit 50 --pretty
-mu store tail cp_outbox --limit 50 --pretty
-```
+`mu control link` currently covers Slack/Discord/Telegram.
+For Neovim, use `:Mu link` from `mu.nvim`.
 
 ## Media support runbook (Slack + Telegram)
 

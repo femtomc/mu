@@ -16,8 +16,10 @@ It talks to the same control-plane channel pipeline as Slack/Discord/Telegram vi
 - Visual-selection context send via `:'<,'>Mu ...`
 - Persistent panel UI (`ui.mode = "panel"`) with `:Mu panel ...`
 - Async timeline polling (`:Mu tail on|off|once|status`)
-- Session turn injection (`:Mu turn <session_id> <message>`) for real in-session turns (reply + context cursor)
-- Legacy flash alias (`:Mu flash <session_id> <message>` -> `POST /api/control-plane/turn`)
+- Session turn injection (`:Mu turn <session_id> <message>`) for real
+  in-session turns (reply + context cursor)
+- Legacy flash alias (`:Mu flash <session_id> <message>` ->
+  `POST /api/control-plane/turn`)
 - `:Mu` command + optional lowercase `:mu` alias
 
 ## Install (local monorepo)
@@ -55,39 +57,43 @@ With `lazy.nvim` in this monorepo checkout:
 }
 ```
 
-## Server setup
+## Setup (skills-first)
 
-Set a Neovim shared secret in `<store>/config.json` (resolve `<store>` with `mu store paths`):
+Prefer bundled setup skill `setup-neovim`. This workflow is agent-first: the agent
+patches config, reloads control-plane, verifies routes/capabilities, and asks the user
+only for required in-editor actions and secret handoff.
 
-```json
-{
-  "version": 1,
-  "control_plane": {
-    "adapters": {
-      "neovim": {
-        "shared_secret": "replace-me"
-      }
-    }
-  }
-}
-```
+From a terminal operator session, ask:
 
-Then reload control-plane:
+- "Use skill `setup-neovim` and complete Neovim channel setup."
+
+Manual fallback (if you are not using the setup skill):
+
+1. Resolve `<store>` with `mu store paths --pretty`.
+2. Set `control_plane.adapters.neovim.shared_secret` in `<store>/config.json`.
+3. Reload control-plane:
 
 ```bash
 mu control reload
 # or POST /api/control-plane/reload
 ```
 
+4. In Neovim, run:
+   - `:Mu channels`
+   - `:Mu link`
+   - `:Mu status`
+
 ## Commands
 
 - `:Mu <text>` — send command text to mu pipeline
-- `:'<,'>Mu <text>` — same, with current visual/range selection included in `client_context.selection`
+- `:'<,'>Mu <text>` — same, with current visual/range selection included
+  in `client_context.selection`
 - `:Mu channels` — inspect channel capability payload
 - `:Mu link` — link Neovim actor identity
 - `:Mu panel [show|hide|clear]` — manage persistent panel window
 - `:Mu tail [on|off|once|status]` — background poll control
-- `:Mu turn <session_id> <message>` — run a real turn in target session (`POST /api/control-plane/turn`)
+- `:Mu turn <session_id> <message>` — run a real turn in target session
+  (`POST /api/control-plane/turn`)
 - `:Mu flash <session_id> <message>` — legacy alias of `:Mu turn`
 - `:Mu help` — help text
 
@@ -105,10 +111,12 @@ If not configured explicitly:
 Requests include editor context (`client_context`) with cwd, repo root, current
 buffer path/filetype, cursor location, and mode.
 
-Session turn targeting expects a `session_id` (for example from `mu session list --pretty` or operator-provided IDs).
+Session turn targeting expects a `session_id` (for example from
+`mu session list --pretty` or operator-provided IDs).
 
 ## Notes
 
 - Requires Neovim with `vim.system` support (Neovim 0.10+).
-- Background updates currently use channel-scoped timeline polling (`channel=neovim`, `channel_tenant_id`, `channel_conversation_id`).
+- Background updates currently use channel-scoped timeline polling
+  (`channel=neovim`, `channel_tenant_id`, `channel_conversation_id`).
 - A dedicated frontend inbox/SSE transport can still be added later for lower-latency delivery.

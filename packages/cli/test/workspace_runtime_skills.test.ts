@@ -12,6 +12,16 @@ async function mkTempRepo(): Promise<string> {
 	return dir;
 }
 
+const STARTER_SKILLS = [
+	"mu",
+	"planning",
+	"subagents",
+	"setup-slack",
+	"setup-discord",
+	"setup-telegram",
+	"setup-neovim",
+] as const;
+
 test("ensureStoreInitialized seeds bundled starter skills into MU_HOME/skills", async () => {
 	const repoRoot = await mkTempRepo();
 	const muHome = await mkdtemp(join(tmpdir(), "mu-cli-skill-home-"));
@@ -22,7 +32,7 @@ test("ensureStoreInitialized seeds bundled starter skills into MU_HOME/skills", 
 		const paths = getStorePaths(repoRoot);
 		await ensureStoreInitialized({ paths });
 
-		for (const skillName of ["planning", "subagents"] as const) {
+		for (const skillName of STARTER_SKILLS) {
 			const skillPath = join(muHome, "skills", skillName, "SKILL.md");
 			const content = await readFile(skillPath, "utf8");
 			expect(content).toContain(`name: ${skillName}`);
@@ -94,14 +104,16 @@ test("seeded starter skills are discovered and injected into session prompts", a
 		})) as unknown as SessionSkillProbe;
 
 		const names = new Set((session?.resourceLoader?.getSkills().skills ?? []).map((skill) => skill.name));
-		expect(names.has("planning")).toBe(true);
-		expect(names.has("subagents")).toBe(true);
+		for (const skillName of STARTER_SKILLS) {
+			expect(names.has(skillName)).toBe(true);
+		}
 
 		expect(typeof session?._rebuildSystemPrompt).toBe("function");
 		const prompt = session?._rebuildSystemPrompt?.(["bash", "read", "write", "edit"]) ?? "";
 		expect(prompt).toContain("<available_skills>");
-		expect(prompt).toContain("<name>planning</name>");
-		expect(prompt).toContain("<name>subagents</name>");
+		for (const skillName of STARTER_SKILLS) {
+			expect(prompt).toContain(`<name>${skillName}</name>`);
+		}
 	} finally {
 		try {
 			session?.dispose();

@@ -45,7 +45,8 @@ Use `--json` (optionally with `--pretty`) when you need full machine records.
 
 
 Use `mu exec` when you want a lightweight one-shot operator response.
-Use `mu heartbeats`/`mu cron` + `mu turn`/`mu session` for durable operator-centric automation loops.
+Use `mu heartbeats`/`mu cron` + `mu turn`/`mu session` for durable
+operator-centric automation loops.
 
 Memory retrieval supports a local memory index:
 
@@ -55,8 +56,10 @@ mu memory index rebuild
 mu memory search --query "reload" --limit 20
 ```
 
-When the index exists, `mu memory search|timeline|stats` run index-first with automatic fallback to direct JSONL scans.
-When the index is missing, memory queries auto-heal it on demand, and `mu serve` performs scheduled stale-index maintenance.
+When the index exists, `mu memory search|timeline|stats` run index-first
+with automatic fallback to direct JSONL scans.
+When the index is missing, memory queries auto-heal it on demand, and
+`mu serve` performs scheduled stale-index maintenance.
 
 ### Programmatic API
 
@@ -78,7 +81,8 @@ mu serve              # Default port: 3000 (operator session)
 mu serve --port 8080  # Custom port
 ```
 
-Type `/exit`, Ctrl+D, or Ctrl+C to leave the operator session. The server keeps running in the background; use `mu stop` to shut it down.
+Type `/exit`, Ctrl+D, or Ctrl+C to leave the operator session.
+The server keeps running in the background; use `mu stop` to shut it down.
 
 In headless environments, use SSH port forwarding as needed.
 
@@ -103,37 +107,42 @@ If `--session-kind` is omitted, `mu turn` defaults to `cp_operator`
 
 In-session `/mu` helpers include:
 
-- `/mu plan ...` (planning HUD: phases, checklist editing, communication state, snapshots; does not inject planning metadata into branding footer)
-- `/mu subagents ...` (subagents HUD: scope filters, spawn profiles, pause policy, refresh/staleness controls, snapshots; does not inject subagents metadata into branding footer)
+- `/mu plan ...` (planning HUD: phases, checklist editing, communication
+  state, snapshots; does not inject planning metadata into branding footer)
+- `/mu subagents ...` (subagents HUD: scope filters, spawn profiles, pause
+  policy, refresh/staleness controls, snapshots; does not inject subagents
+  metadata into branding footer)
 - `/mu events ...` (event tail/watch)
 - `/mu brand ...` (chrome toggle)
 
 Use `mu store paths` to resolve `<store>`, and `mu control status` to inspect current
 config-driven control-plane/operator state.
 
-### Messaging setup quick reference
+### Messaging setup (skills-first)
+
+Prefer bundled setup skills for channel onboarding (`setup-slack`, `setup-discord`,
+`setup-telegram`, `setup-neovim`). These workflows are agent-first: the agent patches
+config, reloads control-plane, verifies routes/capabilities, and asks the user only for
+required external-console steps and secret handoff.
+
+Baseline control-plane commands:
 
 ```bash
-# 1) Inspect adapter readiness + config path
 mu control status --pretty
-
-# 2) Configure adapter secrets in <store>/config.json
 mu store paths --pretty
-
-# 3) Reload adapters
 mu control reload
+mu control identities --all --pretty
+```
 
-# 4) Link identities (examples)
+For manual linking (Slack/Discord/Telegram):
+
+```bash
 mu control link --channel slack --actor-id U123 --tenant-id T123
 mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id>
 mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot
 ```
 
-For Telegram delivery, `control_plane.adapters.telegram.bot_token` must be set in
-`<store>/config.json` so outbox messages can be sent by the bot.
-
-For Neovim, configure `control_plane.adapters.neovim.shared_secret` and use `:Mu link`
-from `mu.nvim`.
+For Neovim identity binding, use `:Mu link` from `mu.nvim`.
 
 ## Tests / Typecheck
 
@@ -147,4 +156,5 @@ bun run typecheck
 ## Runtime
 
 - **Bun runtime** (ESM).
-- Reads/writes workspace-scoped state under `~/.mu/workspaces/<workspace-id>/` (or `$MU_HOME/workspaces/<workspace-id>/`).
+- Reads/writes workspace-scoped state under
+  `~/.mu/workspaces/<workspace-id>/` (or `$MU_HOME/workspaces/<workspace-id>/`).

@@ -1,8 +1,12 @@
 # @femtomc/mu-server
 
-HTTP API server for mu control-plane infrastructure. Powers `mu serve`, messaging frontend transport routes, and control-plane/session coordination endpoints.
+HTTP API server for mu control-plane infrastructure.
+Powers `mu serve`, messaging frontend transport routes, and
+control-plane/session coordination endpoints.
 
-> Scope note: server-routed business query/mutation gateway endpoints have been removed. Business reads/writes are CLI-first, while long-lived runtime coordination (runs/heartbeats/cron) stays server-owned.
+> Scope note: server-routed business query/mutation gateway endpoints have
+> been removed. Business reads/writes are CLI-first, while long-lived runtime
+> coordination (runs/heartbeats/cron) stays server-owned.
 
 ## Installation
 
@@ -141,64 +145,45 @@ Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace
   - `GET /api/control-plane/events`
   - `GET /api/control-plane/events/tail`
 
-## Messaging adapter setup (workspace config)
+## Messaging adapter setup (skills-first)
 
-1) Resolve workspace paths and inspect current readiness:
+For first-time channel onboarding, prefer bundled setup skills from `mu`
+(`setup-slack`, `setup-discord`, `setup-telegram`, `setup-neovim`).
+These workflows are agent-first: the agent patches config, reloads control-plane,
+verifies routes/capabilities, collects IDs from audit where possible, and asks users
+only for required external-console steps and secret handoff.
+
+Baseline status/verification commands:
 
 ```bash
-mu store paths --pretty
 mu control status --pretty
-```
-
-2) Edit `<store>/config.json` and set adapter secrets:
-
-- Slack: `control_plane.adapters.slack.signing_secret`, `bot_token`
-- Discord: `control_plane.adapters.discord.signing_secret`
-- Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`, `bot_username`
-- Neovim: `control_plane.adapters.neovim.shared_secret`
-- Optional operator tuning: `control_plane.operator.timeout_ms` (max wall-time per messaging turn, default `600000`, runtime hard-capped at `600000` for messaging safety).
-
-3) Reload live control-plane runtime:
-
-```bash
+mu store paths --pretty
 mu control reload
-# or POST /api/control-plane/reload
+curl -s http://localhost:3000/api/control-plane/channels | jq '.channels'
+mu control identities --all --pretty
 ```
-
-4) Link identities for channel actors (examples):
-
-```bash
-mu control link --channel slack --actor-id U123 --tenant-id T123
-mu control link --channel discord --actor-id <user-id> --tenant-id <guild-id>
-mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot
-```
-
-For Neovim, use `:Mu link` in `mu.nvim` after configuring `shared_secret`.
 
 ## Media support operations checklist
 
-When validating attachment support end-to-end, use this sequence:
+When validating attachment support end-to-end:
 
-1. Configure adapter secrets/tokens in `<store>/config.json` (Slack/Telegram need bot tokens for media egress).
+1. Ensure Slack/Telegram bot tokens are configured in `<store>/config.json`.
 2. Reload control-plane (`mu control reload`).
-3. Verify `/api/control-plane/channels` media capability flags:
+3. Verify `/api/control-plane/channels` media flags:
    - `media.outbound_delivery`
    - `media.inbound_attachment_download`
-4. Send a text-only control-plane turn and verify normal delivery semantics still hold.
-5. Send attachment-bearing ingress/outbox payloads and verify channel-specific routing:
-   - Slack media upload through `files.upload`
-   - Telegram PNG/JPEG/WEBP images through `sendPhoto`
-   - Telegram SVG/PDF through `sendDocument`
+4. Run one text-only turn and verify normal delivery.
+5. Run one attachment-bearing turn and verify channel-specific routing:
+   - Slack media upload via `files.upload`
+   - Telegram PNG/JPEG/WEBP via `sendPhoto`
+   - Telegram SVG/PDF via `sendDocument`
 
-Operational fallback expectations:
+Operational fallbacks:
 
-- If media upload fails, Telegram delivery falls back to text `sendMessage`.
-- Telegram text delivery chunks long messages into deterministic in-order `sendMessage` calls to stay below API size limits.
-- When outbound metadata includes `telegram_reply_to_message_id`, Telegram delivery anchors replies to the originating chat message.
-- Invalid/non-integer `telegram_reply_to_message_id` metadata is ignored so delivery degrades gracefully to non-anchored sends.
-- Telegram callback action payloads are explicitly unsupported in the conversational-only runtime and return deterministic unsupported-action ACKs.
-- Group/supergroup Telegram freeform text routes conversationally through the operator runtime (subject to identity linking).
-- If Slack/Telegram bot token is missing, channel capability reason codes should report `*_bot_token_missing` and outbound delivery retries rather than hard-crashing runtime.
+- Telegram media upload failure falls back to text `sendMessage`.
+- Telegram long text is deterministically chunked into ordered `sendMessage` calls.
+- `telegram_reply_to_message_id` metadata anchors replies when parseable.
+- Missing Slack/Telegram bot tokens surface capability reason codes (`*_bot_token_missing`) and retry behavior.
 
 ## Running the Server
 

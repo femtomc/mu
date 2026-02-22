@@ -19,6 +19,19 @@ Bundled defaults now live as markdown files under `packages/agent/prompts/`:
 
 These are loaded by runtime code and are the single source of truth for default system prompts.
 
+## Bundled starter skills
+
+Bundled starter skills live under `packages/agent/prompts/skills/` and are bootstrapped
+into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
+
+- `mu`
+- `planning`
+- `subagents`
+- `setup-slack`
+- `setup-discord`
+- `setup-telegram`
+- `setup-neovim`
+
 ## Install
 
 ```bash
