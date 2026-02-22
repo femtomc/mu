@@ -391,7 +391,7 @@ export async function runPipelineForInbound(opts: {
 	metadata?: Record<string, unknown>;
 	forceOutbox?: boolean;
 }): Promise<AdapterPipelineDispatchResult> {
-	const pipelineResult = await opts.pipeline.handleInbound(opts.inbound);
+	const pipelineResult = await opts.pipeline.handleAdapterIngress(opts.inbound);
 	const replyToMessageId = stringId(opts.inbound.metadata?.message_id);
 	const deliveryMetadata =
 		opts.inbound.channel === "telegram" && replyToMessageId

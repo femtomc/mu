@@ -1312,6 +1312,18 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			},
 
 
+			async submitAutonomousIngress(autonomousOpts: {
+				text: string;
+				repoRoot: string;
+				requestId?: string;
+				metadata?: Record<string, unknown>;
+			}): Promise<CommandPipelineResult> {
+				if (!pipeline) {
+					throw new Error("control_plane_pipeline_unavailable");
+				}
+				return await pipeline.handleAutonomousIngress(autonomousOpts);
+			},
+
 			async submitTerminalCommand(terminalOpts: {
 				commandText: string;
 				repoRoot: string;

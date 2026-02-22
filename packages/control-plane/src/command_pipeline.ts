@@ -12,7 +12,11 @@ import {
 } from "./command_record.js";
 import { ConfirmationManager } from "./confirmation_manager.js";
 import { ChannelSchema, type IdentityBinding, IdentityStore, TERMINAL_IDENTITY_BINDING } from "./identity_store.js";
-import { allowsConversationalIngressForInbound } from "./ingress_mode_policy.js";
+import {
+	allowsConversationalIngressForInbound,
+	CONVERSATIONAL_INGRESS_OVERRIDE_ALLOW,
+	CONVERSATIONAL_INGRESS_OVERRIDE_KEY,
+} from "./ingress_mode_policy.js";
 import { type InboundEnvelope, InboundEnvelopeSchema } from "./models.js";
 import { MuCliCommandSurface, MuCliRunner, type MuCliRunnerLike } from "./mu_cli_runner.js";
 import type { MessagingOperatorRuntimeLike } from "./operator_contract.js";
@@ -586,6 +590,42 @@ export class ControlPlaneCommandPipeline {
 		}
 	}
 
+	public async handleAdapterIngress(inboundInput: InboundEnvelope): Promise<CommandPipelineResult> {
+		this.#assertStarted();
+		const inbound = InboundEnvelopeSchema.parse(inboundInput);
+		const binding = this.#resolveBinding(inbound);
+		if (!binding) {
+			return { kind: "denied", reason: "identity_not_linked" };
+		}
+		if (!this.#operator || !allowsConversationalIngressForInbound(inbound.channel, inbound.metadata)) {
+			return await this.handleInbound(inbound);
+		}
+
+		const idempotencyClaim = await this.runtime.claimIdempotency({
+			key: inbound.idempotency_key,
+			fingerprint: inbound.fingerprint,
+			commandId: `ingress-${inbound.request_id}`,
+			ttlMs: idempotencyTtlMs(false),
+			nowMs: Math.trunc(this.#nowMs()),
+		});
+		if (idempotencyClaim.kind === "conflict") {
+			return { kind: "denied", reason: "idempotency_conflict" };
+		}
+		if (idempotencyClaim.kind === "duplicate") {
+			return { kind: "noop", reason: "duplicate_delivery" };
+		}
+
+		const operatorDecision = await this.#operator.handleInbound({ inbound, binding });
+		switch (operatorDecision.kind) {
+			case "response":
+				return { kind: "operator_response", message: operatorDecision.message };
+			case "reject":
+				return { kind: "denied", reason: operatorDecision.reason };
+			case "command":
+				return { kind: "operator_response", message: operatorDecision.commandText };
+		}
+	}
+
 	public async handleInbound(inboundInput: InboundEnvelope): Promise<CommandPipelineResult> {
 		this.#assertStarted();
 		const inbound = InboundEnvelopeSchema.parse(inboundInput);
@@ -843,6 +883,48 @@ export class ControlPlaneCommandPipeline {
 			await this.runtime.journal.appendLifecycle(completed);
 			return { kind: "completed", command: completed };
 		});
+	}
+
+	public async handleAutonomousIngress(opts: {
+		text: string;
+		repoRoot: string;
+		requestId?: string;
+		metadata?: Record<string, unknown>;
+	}): Promise<CommandPipelineResult> {
+		this.#assertStarted();
+
+		const requestId = opts.requestId ?? `autonomous-${crypto.randomUUID()}`;
+		const deliveryId = `autonomous-${crypto.randomUUID()}`;
+		const nowMs = Math.trunc(this.#nowMs());
+		const binding = TERMINAL_IDENTITY_BINDING;
+		const metadata: Record<string, unknown> = {
+			source: "autonomous_ingress",
+			[CONVERSATIONAL_INGRESS_OVERRIDE_KEY]: CONVERSATIONAL_INGRESS_OVERRIDE_ALLOW,
+			...(opts.metadata ?? {}),
+		};
+
+		const inbound = InboundEnvelopeSchema.parse({
+			received_at_ms: nowMs,
+			request_id: requestId,
+			delivery_id: deliveryId,
+			channel: "terminal",
+			channel_tenant_id: "local",
+			channel_conversation_id: "local",
+			actor_id: binding.channel_actor_id,
+			actor_binding_id: binding.binding_id,
+			assurance_tier: binding.assurance_tier,
+			repo_root: opts.repoRoot,
+			command_text: opts.text,
+			scope_required: "cp.read",
+			scope_effective: "cp.read",
+			target_type: "terminal",
+			target_id: "terminal",
+			idempotency_key: `autonomous:${requestId}`,
+			fingerprint: `fp-autonomous-${requestId}`,
+			metadata,
+		});
+
+		return await this.handleInbound(inbound);
 	}
 
 	public async handleTerminalInbound(opts: {

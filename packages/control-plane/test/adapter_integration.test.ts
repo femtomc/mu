@@ -519,7 +519,7 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(harness.deliveries[1]?.body).toContain("RESULT · COMPLETED");
 	});
 
-	test("Slack non-/mu ingress returns guidance noop", async () => {
+	test("Slack slash ingress accepts conversational text without /mu prefix", async () => {
 		const harness = await createHarness();
 		const body = new URLSearchParams({
 			command: "/other",
@@ -541,10 +541,10 @@ describe("channel adapters integrated with control-plane", () => {
 			body,
 		});
 		const result = await harness.slack.ingest(req);
-		expect(result.pipelineResult).toEqual({ kind: "noop", reason: "slack_command_required" });
-		expect(result.outboxRecord).toBeNull();
+		expect(result.pipelineResult?.kind).toBe("completed");
+		expect(result.outboxRecord).not.toBeNull();
 		const ack = (await result.response.json()) as { text?: string };
-		expect(ack.text).toContain("command-only");
+		expect(ack.text).toContain("RESULT · COMPLETED");
 	});
 
 	test("Slack interactive confirm action normalizes to /mu confirm <id>", async () => {
@@ -964,8 +964,9 @@ describe("channel adapters integrated with control-plane", () => {
 				requestId: "operator-slack-req-1",
 			}),
 		);
-		expect(slackSubmit.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
-		expect(slackSubmit.outboxRecord).toBeNull();
+		expect(slackSubmit.pipelineResult?.kind).toBe("operator_response");
+		expect(slackSubmit.outboxRecord).not.toBeNull();
+		expect(slackSubmit.outboxRecord?.envelope.body).toContain("/mu operator model set openai-codex gpt-5.3-codex high");
 
 		const discordSubmit = await harness.discord.ingest(
 			discordRequest({
@@ -975,8 +976,9 @@ describe("channel adapters integrated with control-plane", () => {
 				text: "please update the operator model",
 			}),
 		);
-		expect(discordSubmit.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
-		expect(discordSubmit.outboxRecord).toBeNull();
+		expect(discordSubmit.pipelineResult?.kind).toBe("operator_response");
+		expect(discordSubmit.outboxRecord).not.toBeNull();
+		expect(discordSubmit.outboxRecord?.envelope.body).toContain("/mu operator model set openai-codex gpt-5.3-codex high");
 
 		const telegramSubmit = await harness.telegram.ingest(
 			telegramMessageRequest({
@@ -986,52 +988,13 @@ describe("channel adapters integrated with control-plane", () => {
 			}),
 		);
 
-		expect(telegramSubmit.pipelineResult?.kind).toBe("awaiting_confirmation");
-		if (telegramSubmit.pipelineResult?.kind !== "awaiting_confirmation") {
-			throw new Error(`expected awaiting_confirmation, got ${telegramSubmit.pipelineResult?.kind}`);
+		expect(telegramSubmit.pipelineResult?.kind).toBe("operator_response");
+		if (telegramSubmit.pipelineResult?.kind !== "operator_response") {
+			throw new Error(`expected operator_response, got ${telegramSubmit.pipelineResult?.kind}`);
 		}
 		expect(telegramSubmit.outboxRecord).not.toBeNull();
-
-		const telegramCommandId =
-			telegramSubmit.pipelineResult?.kind === "awaiting_confirmation"
-				? telegramSubmit.pipelineResult.command.command_id
-				: "";
-
-		const telegramConfirm = await harness.telegram.ingest(
-			telegramCallbackRequest({
-				secret: "telegram-secret",
-				updateId: 301,
-				callbackId: "operator-telegram-confirm",
-				data: `confirm:${telegramCommandId}`,
-			}),
-		);
-
-		expect(telegramConfirm.pipelineResult?.kind).toBe("completed");
-		if (telegramConfirm.pipelineResult?.kind !== "completed") {
-			throw new Error(`expected completed, got ${telegramConfirm.pipelineResult?.kind}`);
-		}
-		expect(telegramConfirm.pipelineResult.command.cli_command_kind).toBe("operator_model_set");
-		expect(telegramConfirm.pipelineResult.command.operator_session_id).toMatch(/^operator-session-adapter-/);
-		expect(telegramConfirm.pipelineResult.command.operator_turn_id).toBe("operator-turn-adapter");
-		expect(telegramConfirm.outboxRecord?.envelope.correlation.cli_command_kind).toBe("operator_model_set");
-		expect(telegramConfirm.outboxRecord?.envelope.correlation.cli_invocation_id).toBe(
-			telegramConfirm.pipelineResult.command.cli_invocation_id,
-		);
-
-		expect(harness.cliPlans.length).toBe(1);
-		for (const plan of harness.cliPlans) {
-			expect(plan.commandKind).toBe("operator_model_set");
-			expect(plan.argv).toEqual([
-				"mu",
-				"control",
-				"operator",
-				"set",
-				"openai-codex",
-				"gpt-5.3-codex",
-				"high",
-				"--json",
-			]);
-		}
+		expect(telegramSubmit.outboxRecord?.envelope.body).toContain("/mu operator model set openai-codex gpt-5.3-codex high");
+		expect(harness.cliPlans.length).toBe(0);
 	});
 
 	test("chat-style Telegram messages route through operator with conversation session continuity", async () => {
@@ -1115,8 +1078,8 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(harness.deliveries[0]?.body).toBe("Hey from Telegram operator.");
 	});
 
-	test("Telegram group freeform text is deterministic no-op with explicit command guidance", async () => {
-		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Should not run for group freeform." }]);
+	test("Telegram group freeform text routes through operator conversationally", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Group conversational turn handled." }]);
 		const harness = await createHarness({
 			operatorBackend: backend,
 		});
@@ -1129,14 +1092,13 @@ describe("channel adapters integrated with control-plane", () => {
 				chatType: "group",
 			}),
 		);
-		expect(ignored.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
-		expect(ignored.outboxRecord).toBeNull();
-		expect(backend.turns.length).toBe(0);
-		const ignoredAck = (await ignored.response.json()) as { method?: string; chat_id?: string; text?: string };
-		expect(ignoredAck.method).toBe("sendMessage");
+		expect(ignored.pipelineResult?.kind).toBe("operator_response");
+		expect(ignored.outboxRecord).not.toBeNull();
+		expect(backend.turns.length).toBe(1);
+		const ignoredAck = (await ignored.response.json()) as { method?: string; chat_id?: string; action?: string };
+		expect(ignoredAck.method).toBe("sendChatAction");
 		expect(ignoredAck.chat_id).toBe("tg-chat-1");
-		expect(ignoredAck.text).toContain("IGNORED");
-		expect(ignoredAck.text).toContain("/mu <command>");
+		expect(ignoredAck.action).toBe("typing");
 	});
 
 	test("Telegram group explicit /mu command remains actionable", async () => {
@@ -1348,38 +1310,12 @@ describe("channel adapters integrated with control-plane", () => {
 				text: "please increase operator thinking",
 			}),
 		);
-		expect(submit.pipelineResult?.kind).toBe("awaiting_confirmation");
-		if (submit.pipelineResult?.kind !== "awaiting_confirmation") {
-			throw new Error(`expected awaiting_confirmation, got ${submit.pipelineResult?.kind}`);
+		expect(submit.pipelineResult?.kind).toBe("operator_response");
+		if (submit.pipelineResult?.kind !== "operator_response") {
+			throw new Error(`expected operator_response, got ${submit.pipelineResult?.kind}`);
 		}
-		expect(submit.pipelineResult.command.command_args).toEqual(["high"]);
-
-		const confirm = await harness.telegram.ingest(
-			telegramCallbackRequest({
-				secret: "telegram-secret",
-				updateId: 901,
-				callbackId: "operator-start-confirm",
-				data: `confirm:${submit.pipelineResult.command.command_id}`,
-			}),
-		);
-		expect(confirm.pipelineResult?.kind).toBe("completed");
-		if (confirm.pipelineResult?.kind !== "completed") {
-			throw new Error(`expected completed, got ${confirm.pipelineResult?.kind}`);
-		}
-		expect(confirm.pipelineResult.command.cli_command_kind).toBe("operator_thinking_set");
-		expect(confirm.outboxRecord?.envelope.body).toContain("RESULT · COMPLETED");
-		expect(confirm.outboxRecord?.envelope.body).toContain("operator thinking set");
-
-		expect(harness.cliPlans.length).toBe(1);
-		expect(harness.cliPlans[0]?.commandKind).toBe("operator_thinking_set");
-		expect(harness.cliPlans[0]?.argv).toEqual([
-			"mu",
-			"control",
-			"operator",
-			"thinking-set",
-			"high",
-			"--json",
-		]);
+		expect(submit.outboxRecord?.envelope.body).toContain("/mu operator thinking set high");
+		expect(harness.cliPlans.length).toBe(0);
 	});
 
 	test("Slack linked actor app_mention events route to conversational operator with thread metadata", async () => {
@@ -1506,7 +1442,7 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(backend.turns.length).toBe(1);
 	});
 
-	test("Slack app_mention callbacks keep /mu idempotent, ignore unlinked mentions, and ignore non-mention events", async () => {
+	test("Slack app_mention callbacks route conversationally, enforce linkage on mentions, and ignore non-mention events", async () => {
 		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator should not run for unlinked mentions." }]);
 		const harness = await createHarness({ operatorBackend: backend });
 		const mkEventReq = () =>
@@ -1530,15 +1466,13 @@ describe("channel adapters integrated with control-plane", () => {
 			});
 
 		const first = await harness.slack.ingest(mkEventReq());
-		expect(first.pipelineResult?.kind).toBe("completed");
+		expect(first.pipelineResult?.kind).toBe("operator_response");
 		const duplicate = await harness.slack.ingest(mkEventReq());
-		expect(duplicate.pipelineResult?.kind).toBe("completed");
-		if (first.pipelineResult?.kind !== "completed" || duplicate.pipelineResult?.kind !== "completed") {
-			throw new Error("expected completed results for first+duplicate event callbacks");
-		}
+		expect(duplicate.pipelineResult).toEqual({ kind: "noop", reason: "duplicate_delivery" });
 		expect(first.outboxRecord?.envelope.metadata.slack_thread_ts).toBe("1700000000.000");
+		expect(duplicate.outboxRecord).not.toBeNull();
+		expect(duplicate.outboxRecord?.envelope.body).toContain("duplicate_delivery");
 		expect(duplicate.outboxRecord?.envelope.metadata.slack_thread_ts).toBe("1700000000.000");
-		expect(duplicate.pipelineResult.command.command_id).toBe(first.pipelineResult.command.command_id);
 
 		const ignoredUnlinkedMention = await harness.slack.ingest(
 			slackEventRequest({
@@ -1560,8 +1494,8 @@ describe("channel adapters integrated with control-plane", () => {
 				},
 			}),
 		);
-		expect(ignoredUnlinkedMention.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
-		expect(ignoredUnlinkedMention.outboxRecord).toBeNull();
+		expect(ignoredUnlinkedMention.pipelineResult).toEqual({ kind: "denied", reason: "identity_not_linked" });
+		expect(ignoredUnlinkedMention.outboxRecord?.envelope.body).toContain("identity_not_linked");
 
 		const deniedUnlinkedCommand = await harness.slack.ingest(
 			slackEventRequest({
@@ -1607,7 +1541,7 @@ describe("channel adapters integrated with control-plane", () => {
 		);
 		expect(ignoredNonMention.pipelineResult).toEqual({ kind: "noop", reason: "not_command" });
 		expect(ignoredNonMention.outboxRecord).toBeNull();
-		expect(backend.turns.length).toBe(0);
+		expect(backend.turns.length).toBe(1);
 	});
 
 	test("Slack file-bearing events download/store allowed attachments and tolerate download failures", async () => {

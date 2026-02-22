@@ -6,8 +6,8 @@ import {
 
 describe("ingress mode policy conversational override", () => {
 	test("keeps strict defaults for command-only channels", () => {
-		expect(allowsConversationalIngressForInbound("slack", {})).toBe(false);
-		expect(allowsConversationalIngressForInbound("discord", { [CONVERSATIONAL_INGRESS_OVERRIDE_KEY]: true })).toBe(false);
+		expect(allowsConversationalIngressForInbound("neovim", {})).toBe(false);
+		expect(allowsConversationalIngressForInbound("terminal", { [CONVERSATIONAL_INGRESS_OVERRIDE_KEY]: true })).toBe(false);
 	});
 
 	test("allows explicit per-inbound metadata override for command-only channels", () => {

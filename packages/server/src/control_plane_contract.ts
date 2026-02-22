@@ -148,6 +148,12 @@ export type ControlPlaneHandle = {
 		config: ControlPlaneConfig;
 		reason: string;
 	}): Promise<TelegramGenerationReloadResult>;
+	submitAutonomousIngress?(opts: {
+		text: string;
+		repoRoot: string;
+		requestId?: string;
+		metadata?: Record<string, unknown>;
+	}): Promise<CommandPipelineResult>;
 	submitTerminalCommand?(opts: {
 		commandText: string;
 		repoRoot: string;

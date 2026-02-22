@@ -597,28 +597,13 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		const channelId = parsedAction.kind === "ok" ? parsedAction.channelId : (form.get("channel_id") ?? "unknown-channel");
 		const actorId = parsedAction.kind === "ok" ? parsedAction.actorId : (form.get("user_id") ?? "unknown-user");
 		const command = (form.get("command") ?? "").trim();
-		const text = form.get("text") ?? "";
-		if (parsedAction.kind !== "ok" && command !== "/mu") {
-			return acceptedIngressResult({
-				channel: this.spec.channel,
-				reason: "slack_command_required",
-				response: jsonResponse(
-					{
-						response_type: "ephemeral",
-						text: "Slack ingress is command-only on this route. Use `/mu <command>` for actionable requests.",
-					},
-					{ status: 200 },
-				),
-				inbound: null,
-				pipelineResult: { kind: "noop", reason: "slack_command_required" },
-				outboxRecord: null,
-			});
-		}
+		const text = (form.get("text") ?? "").trim();
 		const triggerId =
 			parsedAction.kind === "ok"
 				? parsedAction.triggerId
 				: (form.get("trigger_id") ?? form.get("command_ts") ?? sha256Hex(rawBody).slice(0, 24));
-		const normalizedText = parsedAction.kind === "ok" ? parsedAction.normalizedText : normalizeSlashMuCommand(text);
+		const normalizedText =
+			parsedAction.kind === "ok" ? parsedAction.normalizedText : normalizeSlashMuCommand(text.length > 0 ? text : command);
 		const stableSource = `${teamId}:${channelId}:${actorId}:${triggerId}:${normalizedText}`;
 		const stableId = sha256Hex(stableSource).slice(0, 32);
 		const requestIdHeader = req.headers.get("x-slack-request-id");
@@ -758,32 +743,6 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		}
 
 		const isExplicitCommand = normalizedText.startsWith("/mu");
-		const linkedBinding = this.#pipeline.identities.resolveActive({
-			channel: this.spec.channel,
-			channelTenantId: teamId,
-			channelActorId: actorId,
-		});
-		if (!isExplicitCommand && !linkedBinding) {
-			await this.#appendAudit({
-				requestId,
-				deliveryId,
-				teamId,
-				channelId,
-				actorId,
-				commandText: normalizedText.length > 0 ? normalizedText : "/mu",
-				event: "slack.event.ignored",
-				reason: "channel_requires_explicit_command",
-				metadata: { event_type: eventType, event_id: eventId, linked_actor: false },
-			});
-			return acceptedIngressResult({
-				channel: this.spec.channel,
-				reason: "channel_requires_explicit_command",
-				response: jsonResponse({ ok: true }, { status: 200 }),
-				inbound: null,
-				pipelineResult: { kind: "noop", reason: "channel_requires_explicit_command" },
-				outboxRecord: null,
-			});
-		}
 
 		const triggerId = typeof event.event_ts === "string" ? event.event_ts : eventId;
 		const threadTsCandidate = [event.thread_ts, event.ts].find(

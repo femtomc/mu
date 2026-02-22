@@ -162,8 +162,8 @@ Thread behavior in this pattern:
 
 - Replies are anchored to the originating Slack thread (`event.thread_ts` when present; otherwise message timestamp fallback).
 - Linked-driver conversational turns in that thread can route through operator handling.
-- Observer freeform messages remain non-executable by default (no operator run) unless that observer is linked.
-- Explicit `/mu ...` commands from unlinked observers are denied with `identity_not_linked`.
+- Linked actor conversational turns in-thread route through operator handling and can propose command execution when needed.
+- Unlinked observers are denied with `identity_not_linked` for both conversational and explicit command ingress.
 
 ### 6) Smoke tests
 
@@ -178,7 +178,7 @@ mu store tail cp_outbox --limit 20 --pretty
 mu store tail cp_adapter_audit --limit 20 --pretty
 ```
 
-4. Optional event path check (message events): send `/mu status` as text in an event-enabled surface and verify acceptance. Non-command text should no-op by policy.
+4. Optional event path check (message events): send `/mu status` and a conversational mention in an event-enabled surface; both should be accepted when actor linkage is valid.
 
 ### 7) Troubleshooting (reason-code oriented)
 
@@ -186,10 +186,8 @@ mu store tail cp_adapter_audit --limit 20 --pretty
   - Slack signing secret mismatch or wrong endpoint.
 - `invalid_slack_timestamp` / `stale_slack_timestamp`
   - malformed or stale signed request timestamp.
-- `slack_command_required`
-  - slash payload not using `/mu` command.
 - `channel_requires_explicit_command`
-  - event message was freeform text; Slack ingress is explicit-command only.
+  - ingress arrived on a command-only channel without conversational override metadata.
 - `unsupported_slack_action_payload`
   - interactive payload did not match `confirm:<id>` or `cancel:<id>`.
 - `slack_bot_token_required`
@@ -266,29 +264,23 @@ Telegram delivery chooses API method by attachment type/mime:
 
 If Telegram media upload rejects an attachment, delivery falls back to text-only `sendMessage` so the command result is still visible.
 
-### Slack UX contract: explicit commands + confirmation actions
+### Slack UX contract: conversational ingress + confirmation actions
 
-Slack ingress currently supports two accepted payload families on `/webhooks/slack`:
+Slack ingress supports two accepted payload families on `/webhooks/slack`:
 
-- Slash commands (`application/x-www-form-urlencoded`), where `command` must be `/mu`
-- Events API callbacks (`application/json`) where `type=event_callback` and `event.type=app_mention`
+- Slash command payloads (`application/x-www-form-urlencoded`), including conversational text in `text`.
+- Events API callbacks (`application/json`) where `type=event_callback` and `event.type=app_mention`.
 
-For both DMs and channels, `/mu` slash command execution remains explicit:
-
-- Accepted slash command text must normalize to `/mu ...`
-- Slack slash payloads with `command != /mu` are deterministic no-op with reason `slack_command_required`
-- Slack event callbacks accept `app_mention` only; other event types are deterministic no-op (`unsupported_slack_event`)
+Slack event callbacks still accept `app_mention` only; other event types are deterministic no-op (`unsupported_slack_event`).
 
 #### Linked vs unlinked actor semantics (Slack collaborative contract)
 
-Slack keeps `/mu` parity while allowing safe mention-triggered conversational ingress for linked event actors:
+Slack uses linkage (not command prefix) as the primary authorization gate for mentions:
 
-- **Linked actor + app mention containing explicit `/mu ...`**: command enters normal policy/confirmation pipeline.
-- **Unlinked actor + app mention containing explicit `/mu ...`**: deterministic deny with `identity_not_linked`.
-- **Linked actor + non-`/mu` app mention text**: adapter sets `metadata.mu_conversational_ingress = "allow"`, so the turn routes through operator conversational handling.
-- **Unlinked actor + non-`/mu` app mention text**: deterministic no-op with `channel_requires_explicit_command` (no operator execution).
+- **Linked actor + app mention**: turn routes through the operator conversational runtime (explicit command-like text is treated as normal conversational input on this ingress path).
+- **Unlinked actor + app mention**: deterministic deny with `identity_not_linked`.
 
-This preserves explicit `/mu` behavior while enabling linked Slack `@mu ...` conversational turns without creating an implicit path for unlinked actors.
+This keeps `/mu` parity while removing command-prefix assumptions from conversational mention UX.
 
 Slack conversational retries (same `event_id`) are deduplicated for a short TTL so at-least-once delivery does not fan out duplicate long-running operator turns.
 Slack conversational context is scoped per linked actor + channel + `slack_thread_ts` (top-level mentions use the mention message timestamp), so separate threads do not share operator memory.
@@ -335,7 +327,6 @@ Unsupported/invalid action payloads (including malformed IDs or unknown action v
 Slack responses should stay concise and deterministic:
 
 - ACK path (slash command immediate response): one-line status + short guidance, ephemeral
-- Non-command guidance: "Slack ingress is command-only on this route. Use `/mu <command>` for actionable requests."
 - Error surface: include canonical reason code in contract metadata and concise user text in rendered body
 
 Behavioral invariant: interactive confirm/cancel buttons are convenience UI only; `/mu confirm <id>` and `/mu cancel <id>` remain the source-of-truth fallback paths.
@@ -353,8 +344,7 @@ Callback payload schema for inline confirmation buttons is intentionally narrow 
 Behavioral invariants:
 
 - Inline `Confirm`/`Cancel` buttons are convenience UI over the same command contract; `/mu confirm <id>` and `/mu cancel <id>` remain valid fallback parity paths.
-- Private chats may use conversational freeform turns via the operator runtime.
-- Group/supergroup chats require explicit `/mu ...` commands; freeform text is deterministic no-op with guidance.
+- Private, group, and supergroup chats may use conversational freeform turns via the operator runtime.
 - Outbound text keeps deterministic order when chunked; chunks are emitted in-order and preserve full body reconstruction.
 - Reply anchoring uses `telegram_reply_to_message_id` when parseable; invalid anchor metadata gracefully falls back to non-anchored sends.
 - Attachment-ingest failures preserve deterministic audit metadata while user-visible guidance is mapped to concise recovery copy.

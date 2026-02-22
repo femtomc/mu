@@ -264,7 +264,7 @@ describe("operator + allowlisted mu CLI execution", () => {
 		]);
 	});
 
-	test("command-only channels stay strict by default for non-command conversational turns", async () => {
+	test("conversational channels route non-command turns through operator by default", async () => {
 		const harness = await createPipeline({
 			scopes: ["cp.read"],
 			channel: "slack",
@@ -287,11 +287,11 @@ describe("operator + allowlisted mu CLI execution", () => {
 			}),
 		);
 
-		expect(result).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
+		expect(result.kind).toBe("operator_response");
 		expect(harness.cli.plans.length).toBe(0);
 	});
 
-	test("command-only channels can opt into conversational routing with explicit inbound metadata override", async () => {
+	test("conversational channels also accept explicit ingress override metadata", async () => {
 		const harness = await createPipeline({
 			scopes: ["cp.read"],
 			channel: "slack",

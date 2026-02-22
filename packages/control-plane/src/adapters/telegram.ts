@@ -138,14 +138,6 @@ function normalizeTelegramMessageCommand(text: string, botUsername: string | nul
 	return trimmed;
 }
 
-function isTelegramGroupLikeChatType(chatType: unknown): boolean {
-	return chatType === "group" || chatType === "supergroup";
-}
-
-function isExplicitTelegramMuCommand(text: string): boolean {
-	return /^\/mu(?:\s+.*)?$/i.test(text.trim());
-}
-
 function normalizeTelegramCallbackData(data: string): string | null {
 	const trimmed = data.trim();
 	const confirmMatch = /^confirm:([^\s:]+)$/i.exec(trimmed);
@@ -848,20 +840,6 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 					response: jsonResponse({ ok: true, result: "ignored_unsupported_update" }, { status: 200 }),
 					inbound: null,
 					pipelineResult: { kind: "noop", reason: "not_command" },
-					outboxRecord: null,
-				});
-			}
-			if (isTelegramGroupLikeChatType(chatType) && !isExplicitTelegramMuCommand(commandText)) {
-				return acceptedIngressResult({
-					channel: this.spec.channel,
-					reason: "telegram_group_requires_explicit_command",
-					response: telegramWebhookMethodResponse({
-						method: "sendMessage",
-						chat_id: conversationId,
-						text: "IGNORED · Group chats require an explicit `/mu <command>` request.",
-					}),
-					inbound: null,
-					pipelineResult: { kind: "noop", reason: "channel_requires_explicit_command" },
 					outboxRecord: null,
 				});
 			}

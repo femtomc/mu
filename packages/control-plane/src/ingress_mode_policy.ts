@@ -6,8 +6,8 @@ export const CONVERSATIONAL_INGRESS_OVERRIDE_KEY = "mu_conversational_ingress";
 export const CONVERSATIONAL_INGRESS_OVERRIDE_ALLOW = "allow";
 
 const CHANNEL_INGRESS_MODE: Record<Channel, IngressMode> = {
-	slack: "command_only",
-	discord: "command_only",
+	slack: "conversational",
+	discord: "conversational",
 	telegram: "conversational",
 	neovim: "command_only",
 	terminal: "command_only",

@@ -699,7 +699,7 @@ describe("mu-server", () => {
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
-			submitTerminalCommand: async () => ({ kind: "operator_response", message: "autonomous ack" }),
+			submitAutonomousIngress: async () => ({ kind: "operator_response", message: "autonomous ack" }),
 			notifyOperators: async (notifyOpts) => {
 				const wakeId = notifyOpts.wake?.wakeId ?? "wake-unknown";
 				const dedupeKey = notifyOpts.dedupeKey;
@@ -852,11 +852,11 @@ describe("mu-server", () => {
 	});
 
 	test("operator wake invokes autonomous wake turn path and emits deterministic decision telemetry", async () => {
-		const wakeTurns: Array<{ commandText: string; requestId?: string }> = [];
+		const wakeTurns: Array<{ text: string; requestId?: string }> = [];
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
-			submitTerminalCommand: async (turnOpts) => {
+			submitAutonomousIngress: async (turnOpts) => {
 				wakeTurns.push(turnOpts);
 				return { kind: "operator_response", message: "autonomous ack" };
 			},
@@ -921,11 +921,11 @@ describe("mu-server", () => {
 			typeof decisionPayload.turn_request_id === "string" ? decisionPayload.turn_request_id : undefined;
 		expect(wakeTurn?.requestId).toBe(decisionTurnRequestId);
 		expect(wakeTurn?.requestId).toBe(`wake-turn-${decisionPayload.wake_id as string}`);
-		expect(wakeTurn?.commandText).toContain("Autonomous wake turn triggered by heartbeat/cron scheduler.");
-		expect(wakeTurn?.commandText).toContain(`wake_id=${decisionPayload.wake_id as string}`);
-		expect(wakeTurn?.commandText).toContain("wake_source=heartbeat_program");
-		expect(wakeTurn?.commandText).toContain(`program_id=${heartbeatProgramId}`);
-		expect(wakeTurn?.commandText).toContain(heartbeatPrompt);
+		expect(wakeTurn?.text).toContain("Autonomous wake turn triggered by heartbeat/cron scheduler.");
+		expect(wakeTurn?.text).toContain(`wake_id=${decisionPayload.wake_id as string}`);
+		expect(wakeTurn?.text).toContain("wake_source=heartbeat_program");
+		expect(wakeTurn?.text).toContain(`program_id=${heartbeatProgramId}`);
+		expect(wakeTurn?.text).toContain(heartbeatPrompt);
 
 		expect(decisionPayload.dedupe_key).toBe(`heartbeat-program:${heartbeatProgramId}`);
 		expect(decisionPayload.wake_turn_outcome).toBe("triggered");
@@ -959,7 +959,7 @@ describe("mu-server", () => {
 	});
 
 	test("operator wake runs wake→turn→outbound exactly once under repeated wake triggers", async () => {
-		const wakeTurns: Array<{ commandText: string; requestId?: string }> = [];
+		const wakeTurns: Array<{ text: string; requestId?: string }> = [];
 		const notifyCalls: Array<{
 			dedupeKey: string;
 			wakeId: string | null;
@@ -970,7 +970,7 @@ describe("mu-server", () => {
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
-			submitTerminalCommand: async (turnOpts) => {
+			submitAutonomousIngress: async (turnOpts) => {
 				wakeTurns.push(turnOpts);
 				return { kind: "operator_response", message: "autonomous ack" };
 			},
@@ -1230,7 +1230,7 @@ describe("mu-server", () => {
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
-			submitTerminalCommand: async () => ({ kind: "operator_response", message: "ack" }),
+			submitAutonomousIngress: async () => ({ kind: "operator_response", message: "ack" }),
 			notifyOperators: async () => ({ queued: 0, duplicate: 0, skipped: 0, decisions: [] }),
 			stop: async () => {},
 		};
@@ -1305,7 +1305,7 @@ describe("mu-server", () => {
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
-			submitTerminalCommand: async () => ({ kind: "operator_response", message: "ack" }),
+			submitAutonomousIngress: async () => ({ kind: "operator_response", message: "ack" }),
 			notifyOperators: async () => ({ queued: 0, duplicate: 0, skipped: 0, decisions: [] }),
 			stop: async () => {},
 		};
@@ -1412,7 +1412,7 @@ describe("mu-server", () => {
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
-			submitTerminalCommand: async () => ({ kind: "operator_response", message: "ack" }),
+			submitAutonomousIngress: async () => ({ kind: "operator_response", message: "ack" }),
 			notifyOperators: async () => ({ queued: 0, duplicate: 0, skipped: 0, decisions: [] }),
 			stop: async () => {},
 		};

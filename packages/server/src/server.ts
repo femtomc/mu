@@ -147,7 +147,7 @@ function extractWakeTurnReply(turnResult: CommandPipelineResult): string | null 
 	return compact.length > 0 ? compact : null;
 }
 
-function buildWakeTurnCommandText(opts: {
+function buildWakeTurnIngressText(opts: {
 	wakeId: string;
 	message: string;
 	payload: Record<string, unknown>;
@@ -175,7 +175,7 @@ function buildWakeTurnCommandText(opts: {
 		"",
 		`payload=${payloadSnapshot}`,
 		"",
-		"If action is needed, produce exactly one `/mu ...` command. If no action is needed, return a short operator response that can be broadcast verbatim.",
+		"Respond conversationally with exactly one concise operator message suitable for immediate broadcast.",
 	].join("\n");
 }
 
@@ -233,7 +233,8 @@ function createServer(options: ServerOptions = {}) {
 		const sourceTsMs = numberField(opts.payload, "source_ts_ms");
 
 		let decision: WakeDecision;
-		if (typeof controlPlaneProxy.submitTerminalCommand !== "function") {
+		const autonomousIngress = controlPlaneProxy.submitAutonomousIngress;
+		if (typeof autonomousIngress !== "function") {
 			decision = {
 				outcome: "fallback",
 				reason: "control_plane_unavailable",
@@ -245,14 +246,21 @@ function createServer(options: ServerOptions = {}) {
 		} else {
 			const turnRequestId = `wake-turn-${wakeId}`;
 			try {
-				const turnResult = await controlPlaneProxy.submitTerminalCommand({
-					commandText: buildWakeTurnCommandText({
-						wakeId,
-						message: opts.message,
-						payload: opts.payload,
-					}),
+				const ingressText = buildWakeTurnIngressText({
+					wakeId,
+					message: opts.message,
+					payload: opts.payload,
+				});
+				const turnResult = await autonomousIngress({
+					text: ingressText,
 					repoRoot: context.repoRoot,
 					requestId: turnRequestId,
+					metadata: {
+						wake_id: wakeId,
+						wake_source: wakeSource,
+						program_id: programId,
+						source_ts_ms: sourceTsMs,
+					},
 				});
 				if (turnResult.kind === "noop" || turnResult.kind === "invalid") {
 					decision = {
@@ -500,6 +508,20 @@ function createServer(options: ServerOptions = {}) {
 		setWakeDeliveryObserver(observer) {
 			const handle = reloadManager.getControlPlaneCurrent();
 			handle?.setWakeDeliveryObserver?.(observer ?? null);
+		},
+		async submitAutonomousIngress(opts) {
+			const handle = reloadManager.getControlPlaneCurrent();
+			if (handle?.submitAutonomousIngress) {
+				return await handle.submitAutonomousIngress(opts);
+			}
+			if (handle?.submitTerminalCommand) {
+				return await handle.submitTerminalCommand({
+					commandText: opts.text,
+					repoRoot: opts.repoRoot,
+					requestId: opts.requestId,
+				});
+			}
+			throw new Error("control_plane_unavailable");
 		},
 		async submitTerminalCommand(opts) {
 			const handle = reloadManager.getControlPlaneCurrent();

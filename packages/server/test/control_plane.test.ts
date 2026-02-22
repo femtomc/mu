@@ -1154,7 +1154,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		}
 	});
 
-	test("Slack webhook chat messages are command-only no-op and do not route to operator backend", async () => {
+	test("Slack webhook chat messages route through operator for linked actors", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
@@ -1189,8 +1189,8 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(response.status).toBe(200);
 
 		const body = (await response.json()) as { text?: string };
-		expect(body.text).toContain("channel_requires_explicit_command");
-		expect(backend.turns).toBe(0);
+		expect(body.text).toContain("Operator · CHAT · RESPONDED");
+		expect(backend.turns).toBe(1);
 	});
 
 	test("Slack outbound delivery retries when bot token is missing", async () => {
@@ -1199,7 +1199,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 
 		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
-			config: configWith({ slackSecret: "slack-secret", slackBotToken: null }),
+			config: configWith({ slackSecret: "slack-secret", slackBotToken: null, operatorEnabled: false }),
 		});
 		expect(handle).not.toBeNull();
 		if (!handle) {
@@ -1360,6 +1360,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 				config: configWith({
 					telegramSecret: "telegram-secret",
 					telegramBotToken: "telegram-token",
+					operatorEnabled: false,
 				}),
 			});
 			expect(handle).not.toBeNull();
@@ -1565,7 +1566,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		}
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { text?: string };
-		expect(body.text).toContain("channel_requires_explicit_command");
+		expect(body.text).toContain("unmapped_command");
 		expect(body.text).not.toContain("Operator · CHAT");
 		expect(backend.turns).toBe(0);
 	});
@@ -1661,13 +1662,13 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(calls).toEqual(["reload", "update"]);
 	});
 
-	test("unsupported freeform slack text is ignored", async () => {
+	test("freeform slack text without operator routing is deterministically denied as unmapped command", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
 		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
-			config: configWith({ slackSecret: "slack-secret" }),
+			config: configWith({ slackSecret: "slack-secret", operatorEnabled: false }),
 		});
 		expect(handle).not.toBeNull();
 		if (!handle) {
@@ -1690,13 +1691,9 @@ describe("bootstrapControlPlane operator wiring", () => {
 		}
 		expect(response.status).toBe(200);
 		const ignoredBody = (await response.json()) as { text?: string };
-		expect(ignoredBody.text).toContain("ACK · IGNORED");
-		expect(ignoredBody.text).toContain("channel_requires_explicit_command");
+		expect(ignoredBody.text).toContain("DENIED");
+		expect(ignoredBody.text).toContain("unmapped_command");
 
-		await Bun.sleep(150);
-		const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
-		await outbox.load();
-		expect(outbox.records().length).toBe(0);
 	});
 
 	test("bootstrap cleanup releases writer lock when startup fails", async () => {
