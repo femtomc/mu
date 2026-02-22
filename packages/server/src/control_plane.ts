@@ -93,11 +93,23 @@ function emptyNotifyOperatorsResult(): NotifyOperatorsResult {
 
 export { detectAdapters };
 
+type TelegramInlineKeyboardButton = {
+	text: string;
+	callback_data: string;
+};
+
+type TelegramInlineKeyboardMarkup = {
+	inline_keyboard: TelegramInlineKeyboardButton[][];
+};
+
 export type TelegramSendMessagePayload = {
 	chat_id: string;
 	text: string;
 	parse_mode?: "Markdown";
 	disable_web_page_preview?: boolean;
+	reply_markup?: TelegramInlineKeyboardMarkup;
+	reply_to_message_id?: number;
+	allow_sending_without_reply?: boolean;
 };
 
 type SlackApiOkResponse = {
@@ -112,12 +124,16 @@ export type TelegramSendPhotoPayload = {
 	chat_id: string;
 	photo: string;
 	caption?: string;
+	reply_to_message_id?: number;
+	allow_sending_without_reply?: boolean;
 };
 
 export type TelegramSendDocumentPayload = {
 	chat_id: string;
 	document: string;
 	caption?: string;
+	reply_to_message_id?: number;
+	allow_sending_without_reply?: boolean;
 };
 
 type TelegramMediaMethod = "sendPhoto" | "sendDocument";
@@ -191,6 +207,76 @@ export function buildTelegramSendMessagePayload(opts: {
 	};
 }
 
+const TELEGRAM_MESSAGE_MAX_LEN = 4_096;
+
+function maybeParseTelegramMessageId(value: unknown): number | null {
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return Math.trunc(value);
+	}
+	if (typeof value === "string" && /^-?\d+$/.test(value.trim())) {
+		const parsed = Number.parseInt(value.trim(), 10);
+		if (Number.isFinite(parsed)) {
+			return parsed;
+		}
+	}
+	return null;
+}
+
+export function splitTelegramMessageText(text: string, maxLen: number = TELEGRAM_MESSAGE_MAX_LEN): string[] {
+	if (text.length <= maxLen) {
+		return [text];
+	}
+	const chunks: string[] = [];
+	let cursor = 0;
+	while (cursor < text.length) {
+		const end = Math.min(text.length, cursor + maxLen);
+		if (end === text.length) {
+			chunks.push(text.slice(cursor));
+			break;
+		}
+		const window = text.slice(cursor, end);
+		const splitAtNewline = window.lastIndexOf("\n");
+		const splitPoint = splitAtNewline >= Math.floor(maxLen * 0.5) ? cursor + splitAtNewline + 1 : end;
+		chunks.push(text.slice(cursor, splitPoint));
+		cursor = splitPoint;
+	}
+	return chunks;
+}
+
+function telegramReplyMarkupForOutboxRecord(record: OutboxRecord): TelegramInlineKeyboardMarkup | undefined {
+	const interactionMessage = record.envelope.metadata?.interaction_message;
+	if (!interactionMessage || typeof interactionMessage !== "object") {
+		return undefined;
+	}
+	const rawActions = (interactionMessage as { actions?: unknown }).actions;
+	if (!Array.isArray(rawActions) || rawActions.length === 0) {
+		return undefined;
+	}
+
+	const row: TelegramInlineKeyboardButton[] = [];
+	for (const action of rawActions) {
+		if (!action || typeof action !== "object") {
+			continue;
+		}
+		const candidate = action as { label?: unknown; command?: unknown };
+		if (typeof candidate.label !== "string" || typeof candidate.command !== "string") {
+			continue;
+		}
+		const normalized = candidate.command.trim().replace(/^\/mu\s+/i, "");
+		const confirm = /^confirm\s+([^\s]+)$/i.exec(normalized);
+		if (confirm?.[1]) {
+			row.push({ text: candidate.label, callback_data: `confirm:${confirm[1]}` });
+			continue;
+		}
+		const cancel = /^cancel\s+([^\s]+)$/i.exec(normalized);
+		if (cancel?.[1]) {
+			row.push({ text: candidate.label, callback_data: `cancel:${cancel[1]}` });
+		}
+	}
+
+	return row.length > 0 ? { inline_keyboard: [row] } : undefined;
+}
+
 async function postTelegramMessage(botToken: string, payload: TelegramSendMessagePayload): Promise<Response> {
 	return await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
 		method: "POST",
@@ -255,44 +341,85 @@ function parseRetryDelayMs(res: Response): number | undefined {
 	return parsed * 1000;
 }
 
+async function sendTelegramTextChunks(opts: {
+	botToken: string;
+	basePayload: TelegramSendMessagePayload;
+	fallbackToPlainOnMarkdownError: boolean;
+}): Promise<{ ok: true } | { ok: false; response: Response; body: string }> {
+	const chunks = splitTelegramMessageText(opts.basePayload.text);
+	for (const [index, chunk] of chunks.entries()) {
+		const payload: TelegramSendMessagePayload = {
+			...opts.basePayload,
+			text: chunk,
+			...(index === 0 ? {} : { reply_markup: undefined, reply_to_message_id: undefined, allow_sending_without_reply: undefined }),
+		};
+		let res = await postTelegramMessage(opts.botToken, payload);
+		if (!res.ok && res.status === 400 && payload.parse_mode && opts.fallbackToPlainOnMarkdownError) {
+			const plainPayload = buildTelegramSendMessagePayload({
+				chatId: payload.chat_id,
+				text: payload.text,
+				richFormatting: false,
+			});
+			res = await postTelegramMessage(opts.botToken, {
+				...plainPayload,
+				...(payload.reply_markup ? { reply_markup: payload.reply_markup } : {}),
+				...(payload.reply_to_message_id != null
+					? {
+							reply_to_message_id: payload.reply_to_message_id,
+							allow_sending_without_reply: payload.allow_sending_without_reply,
+						}
+					: {}),
+			});
+		}
+		if (!res.ok) {
+			return { ok: false, response: res, body: await res.text().catch(() => "") };
+		}
+	}
+	return { ok: true };
+}
+
 export async function deliverTelegramOutboxRecord(opts: {
 	botToken: string;
 	record: OutboxRecord;
 }): Promise<OutboxDeliveryHandlerResult> {
 	const { botToken, record } = opts;
-	const fallbackMessagePayload = buildTelegramSendMessagePayload({
-		chatId: record.envelope.channel_conversation_id,
-		text: record.envelope.body,
-		richFormatting: true,
-	});
+	const replyMarkup = telegramReplyMarkupForOutboxRecord(record);
+	const replyToMessageId = maybeParseTelegramMessageId(record.envelope.metadata?.telegram_reply_to_message_id);
+	const fallbackMessagePayload = {
+		...buildTelegramSendMessagePayload({
+			chatId: record.envelope.channel_conversation_id,
+			text: record.envelope.body,
+			richFormatting: true,
+		}),
+		...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+		...(replyToMessageId != null
+			? {
+					reply_to_message_id: replyToMessageId,
+					allow_sending_without_reply: true,
+				}
+			: {}),
+	};
 
 	const firstAttachment = record.envelope.attachments?.[0] ?? null;
 	if (!firstAttachment) {
-		let res = await postTelegramMessage(botToken, fallbackMessagePayload);
-		if (!res.ok && res.status === 400 && fallbackMessagePayload.parse_mode) {
-			res = await postTelegramMessage(
-				botToken,
-				buildTelegramSendMessagePayload({
-					chatId: record.envelope.channel_conversation_id,
-					text: record.envelope.body,
-					richFormatting: false,
-				}),
-			);
-		}
-		if (res.ok) {
+		const sent = await sendTelegramTextChunks({
+			botToken,
+			basePayload: fallbackMessagePayload,
+			fallbackToPlainOnMarkdownError: true,
+		});
+		if (sent.ok) {
 			return { kind: "delivered" };
 		}
-		const responseBody = await res.text().catch(() => "");
-		if (res.status === 429 || res.status >= 500) {
+		if (sent.response.status === 429 || sent.response.status >= 500) {
 			return {
 				kind: "retry",
-				error: `telegram sendMessage ${res.status}: ${responseBody}`,
-				retryDelayMs: parseRetryDelayMs(res),
+				error: `telegram sendMessage ${sent.response.status}: ${sent.body}`,
+				retryDelayMs: parseRetryDelayMs(sent.response),
 			};
 		}
 		return {
 			kind: "retry",
-			error: `telegram sendMessage ${res.status}: ${responseBody}`,
+			error: `telegram sendMessage ${sent.response.status}: ${sent.body}`,
 		};
 	}
 
@@ -314,11 +441,23 @@ export async function deliverTelegramOutboxRecord(opts: {
 					chat_id: record.envelope.channel_conversation_id,
 					photo: firstAttachment.reference.file_id,
 					caption: mediaCaption,
+					...(replyToMessageId != null
+						? {
+								reply_to_message_id: replyToMessageId,
+								allow_sending_without_reply: true,
+							}
+						: {}),
 				}
 				: {
 					chat_id: record.envelope.channel_conversation_id,
 					document: firstAttachment.reference.file_id,
 					caption: mediaCaption,
+					...(replyToMessageId != null
+						? {
+								reply_to_message_id: replyToMessageId,
+								allow_sending_without_reply: true,
+							}
+						: {}),
 				},
 		);
 	} else {
@@ -340,6 +479,10 @@ export async function deliverTelegramOutboxRecord(opts: {
 		if (mediaCaption.length > 0) {
 			form.append("caption", mediaCaption);
 		}
+		if (replyToMessageId != null) {
+			form.append("reply_to_message_id", String(replyToMessageId));
+			form.append("allow_sending_without_reply", "true");
+		}
 		form.append(mediaField, new Blob([body], { type: contentType }), filename);
 		mediaResponse = await postTelegramApiMultipart(botToken, mediaMethod, form);
 	}
@@ -357,26 +500,38 @@ export async function deliverTelegramOutboxRecord(opts: {
 		};
 	}
 
-	const fallbackPlainPayload = buildTelegramSendMessagePayload({
-		chatId: record.envelope.channel_conversation_id,
-		text: record.envelope.body,
-		richFormatting: false,
+	const fallbackPlainPayload = {
+		...buildTelegramSendMessagePayload({
+			chatId: record.envelope.channel_conversation_id,
+			text: record.envelope.body,
+			richFormatting: false,
+		}),
+		...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+		...(replyToMessageId != null
+			? {
+					reply_to_message_id: replyToMessageId,
+					allow_sending_without_reply: true,
+				}
+			: {}),
+	};
+	const fallbackSent = await sendTelegramTextChunks({
+		botToken,
+		basePayload: fallbackPlainPayload,
+		fallbackToPlainOnMarkdownError: false,
 	});
-	const fallbackRes = await postTelegramMessage(botToken, fallbackPlainPayload);
-	if (fallbackRes.ok) {
+	if (fallbackSent.ok) {
 		return { kind: "delivered" };
 	}
-	const fallbackBody = await fallbackRes.text().catch(() => "");
-	if (fallbackRes.status === 429 || fallbackRes.status >= 500) {
+	if (fallbackSent.response.status === 429 || fallbackSent.response.status >= 500) {
 		return {
 			kind: "retry",
-			error: `telegram media fallback sendMessage ${fallbackRes.status}: ${fallbackBody}`,
-			retryDelayMs: parseRetryDelayMs(fallbackRes),
+			error: `telegram media fallback sendMessage ${fallbackSent.response.status}: ${fallbackSent.body}`,
+			retryDelayMs: parseRetryDelayMs(fallbackSent.response),
 		};
 	}
 	return {
 		kind: "retry",
-		error: `telegram media fallback sendMessage ${fallbackRes.status}: ${fallbackBody} (media_error=${mediaMethod} ${mediaResponse.status}: ${mediaBody})`,
+		error: `telegram media fallback sendMessage ${fallbackSent.response.status}: ${fallbackSent.body} (media_error=${mediaMethod} ${mediaResponse.status}: ${mediaBody})`,
 	};
 }
 

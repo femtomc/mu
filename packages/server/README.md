@@ -189,6 +189,13 @@ When validating attachment support end-to-end, use this sequence:
 Operational fallback expectations:
 
 - If media upload fails, Telegram delivery falls back to text `sendMessage`.
+- Telegram text delivery chunks long messages into deterministic in-order `sendMessage` calls to stay below API size limits.
+- When outbound metadata includes `telegram_reply_to_message_id`, Telegram delivery anchors replies to the originating chat message.
+- Invalid/non-integer `telegram_reply_to_message_id` metadata is ignored so delivery degrades gracefully to non-anchored sends.
+- Awaiting-confirmation envelopes include Telegram inline `Confirm`/`Cancel` callback buttons when interaction metadata provides confirmation actions.
+- Telegram callback payloads are contract-limited to `confirm:<command_id>` and `cancel:<command_id>`; unsupported payloads are explicitly rejected.
+- Callback buttons keep parity with command fallback: `/mu confirm <id>` and `/mu cancel <id>` remain valid.
+- Group/supergroup Telegram freeform text is deterministic no-op with guidance; explicit `/mu ...` commands stay actionable.
 - If Slack/Telegram bot token is missing, channel capability reason codes should report `*_bot_token_missing` and outbound delivery retries rather than hard-crashing runtime.
 
 ## Running the Server

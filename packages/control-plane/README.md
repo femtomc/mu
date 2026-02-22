@@ -96,10 +96,30 @@ Telegram delivery chooses API method by attachment type/mime:
 
 If Telegram media upload rejects an attachment, delivery falls back to text-only `sendMessage` so the command result is still visible.
 
+### Telegram UX v2 callback/gating/chunking contract
+
+Callback payload schema for inline confirmation buttons is intentionally narrow and deterministic:
+
+- Supported callback payloads:
+  - `confirm:<command_id>`
+  - `cancel:<command_id>`
+- `<command_id>` must not include whitespace or additional `:` separators.
+- Any other callback payload is rejected with `unsupported_telegram_callback` and an explicit callback ACK.
+
+Behavioral invariants:
+
+- Inline `Confirm`/`Cancel` buttons are convenience UI over the same command contract; `/mu confirm <id>` and `/mu cancel <id>` remain valid fallback parity paths.
+- Private chats may use conversational freeform turns via the operator runtime.
+- Group/supergroup chats require explicit `/mu ...` commands; freeform text is deterministic no-op with guidance.
+- Outbound text keeps deterministic order when chunked; chunks are emitted in-order and preserve full body reconstruction.
+- Reply anchoring uses `telegram_reply_to_message_id` when parseable; invalid anchor metadata gracefully falls back to non-anchored sends.
+- Attachment-ingest failures preserve deterministic audit metadata while user-visible guidance is mapped to concise recovery copy.
+
 ### Text-only fallback invariants
 
 - Existing text-only envelopes (no `attachments`) continue to use channel text endpoints (`chat.postMessage` for Slack, `sendMessage` for Telegram).
 - Optional `attachments` remain backward-compatible at schema level; text-only payloads do not require migration.
+- Telegram UX v2 callback + group-gating behavior is backward-compatible with existing command flows because `/mu confirm|cancel <id>` and explicit `/mu ...` command ingress semantics are unchanged.
 
 ## Adapter contract (v1)
 
@@ -144,6 +164,8 @@ Policy evaluators:
 - `summarizeInboundAttachmentPolicy(...)`
 
 Both evaluators return deterministic allow/deny decisions and reason codes suitable for adapter audit/event logging.
+
+For Telegram inbound media, attachment retrieval/policy failures are also converted into concise conversational guidance (while preserving raw deterministic audit reason codes in metadata) so users can recover by retrying with supported files or plain text.
 
 ## Inbound attachment store + retention lifecycle
 

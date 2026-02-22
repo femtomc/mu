@@ -138,6 +138,14 @@ function normalizeTelegramMessageCommand(text: string, botUsername: string | nul
 	return trimmed;
 }
 
+function isTelegramGroupLikeChatType(chatType: unknown): boolean {
+	return chatType === "group" || chatType === "supergroup";
+}
+
+function isExplicitTelegramMuCommand(text: string): boolean {
+	return /^\/mu(?:\s+.*)?$/i.test(text.trim());
+}
+
 function normalizeTelegramCallbackData(data: string): string | null {
 	const trimmed = data.trim();
 	const confirmMatch = /^confirm:([^\s:]+)$/i.exec(trimmed);
@@ -215,6 +223,52 @@ function syntheticTelegramAttachmentPrompt(attachments: readonly TelegramMessage
 		})
 		.join("; ");
 	return `Telegram attachment message (no text/caption): ${summary}`;
+}
+
+function humanizeTelegramAttachmentFailureReason(reason: string): string {
+	if (reason === "telegram_bot_token_missing") {
+		return "Attachment download is not configured for Telegram yet.";
+	}
+	if (reason.startsWith("telegram_get_file_")) {
+		return "Telegram did not provide attachment metadata (getFile failed).";
+	}
+	if (reason === "telegram_get_file_missing_path") {
+		return "Telegram returned incomplete attachment metadata (missing file path).";
+	}
+	if (reason.startsWith("telegram_file_download_")) {
+		return "Telegram attachment download failed.";
+	}
+	if (reason.startsWith("inbound_attachment_")) {
+		return `Attachment blocked by inbound policy (${reason}).`;
+	}
+	return `Attachment could not be processed (${reason}).`;
+}
+
+function buildTelegramAttachmentFailurePrompt(opts: {
+	attachments: readonly TelegramMessageAttachmentCandidate[];
+	audit: readonly Record<string, unknown>[];
+}): string | null {
+	const reasons: string[] = [];
+	for (const row of opts.audit) {
+		if (!row || typeof row !== "object") {
+			continue;
+		}
+		const kind = typeof row.kind === "string" ? row.kind : null;
+		if (kind !== "download_failed" && kind !== "pre_deny" && kind !== "post_deny") {
+			continue;
+		}
+		const reason = typeof row.reason === "string" ? row.reason : null;
+		if (!reason) {
+			continue;
+		}
+		reasons.push(humanizeTelegramAttachmentFailureReason(reason));
+	}
+	if (reasons.length === 0) {
+		return null;
+	}
+	const attachmentSummary = syntheticTelegramAttachmentPrompt(opts.attachments);
+	const guidance = Array.from(new Set(reasons)).join(" ");
+	return `${attachmentSummary}\nAttachment ingest issue: ${guidance} Please resend as text, or retry with a supported file type/size.`;
 }
 
 export const TelegramControlPlaneAdapterSpec = ControlPlaneAdapterSpecSchema.parse({
@@ -784,7 +838,8 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			const rawCommand = rawText.trim().length > 0 ? rawText : rawCaption;
 			commandText = normalizeTelegramMessageCommand(rawCommand, this.#botUsername);
 			metadata.message_id = stringId(message.message_id);
-			metadata.chat_type = (message.chat as Record<string, unknown> | undefined)?.type ?? null;
+			const chatType = (message.chat as Record<string, unknown> | undefined)?.type ?? null;
+			metadata.chat_type = chatType;
 			metadata.telegram_attachment_count = attachmentCandidates.length;
 			if (rawCommand.trim().length === 0 && attachmentCandidates.length === 0) {
 				return acceptedIngressResult({
@@ -793,6 +848,20 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 					response: jsonResponse({ ok: true, result: "ignored_unsupported_update" }, { status: 200 }),
 					inbound: null,
 					pipelineResult: { kind: "noop", reason: "not_command" },
+					outboxRecord: null,
+				});
+			}
+			if (isTelegramGroupLikeChatType(chatType) && !isExplicitTelegramMuCommand(commandText)) {
+				return acceptedIngressResult({
+					channel: this.spec.channel,
+					reason: "telegram_group_requires_explicit_command",
+					response: telegramWebhookMethodResponse({
+						method: "sendMessage",
+						chat_id: conversationId,
+						text: "IGNORED · Group chats require an explicit `/mu <command>` request.",
+					}),
+					inbound: null,
+					pipelineResult: { kind: "noop", reason: "channel_requires_explicit_command" },
 					outboxRecord: null,
 				});
 			}
@@ -810,7 +879,11 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 					metadata.inbound_attachments = attachmentResult.descriptors;
 				}
 				if (commandText.trim().length === 0) {
-					commandText = syntheticTelegramAttachmentPrompt(attachmentCandidates);
+					commandText =
+						buildTelegramAttachmentFailurePrompt({
+							attachments: attachmentCandidates,
+							audit: attachmentResult.audit,
+						}) ?? syntheticTelegramAttachmentPrompt(attachmentCandidates);
 				}
 			}
 		} else {

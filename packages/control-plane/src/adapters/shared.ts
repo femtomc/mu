@@ -392,11 +392,16 @@ export async function runPipelineForInbound(opts: {
 	forceOutbox?: boolean;
 }): Promise<AdapterPipelineDispatchResult> {
 	const pipelineResult = await opts.pipeline.handleInbound(opts.inbound);
+	const replyToMessageId = stringId(opts.inbound.metadata?.message_id);
+	const deliveryMetadata =
+		opts.inbound.channel === "telegram" && replyToMessageId
+			? { ...(opts.metadata ?? {}), telegram_reply_to_message_id: replyToMessageId }
+			: opts.metadata;
 	let outboxRecord = await enqueueDeferredPipelineResult({
 		outbox: opts.outbox,
 		result: pipelineResult,
 		nowMs: opts.nowMs,
-		metadata: opts.metadata,
+		metadata: deliveryMetadata,
 	});
 
 	if (!outboxRecord && opts.inbound.channel === "telegram" && pipelineResult.kind === "operator_response") {
@@ -405,7 +410,7 @@ export async function runPipelineForInbound(opts: {
 			inbound: opts.inbound,
 			result: pipelineResult,
 			nowMs: opts.nowMs,
-			metadata: opts.metadata,
+			metadata: deliveryMetadata,
 		});
 	}
 
@@ -415,7 +420,7 @@ export async function runPipelineForInbound(opts: {
 			inbound: opts.inbound,
 			result: pipelineResult,
 			nowMs: opts.nowMs,
-			metadata: opts.metadata,
+			metadata: deliveryMetadata,
 		});
 	}
 

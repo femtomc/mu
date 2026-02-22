@@ -181,12 +181,13 @@ function telegramMessageRequest(opts: {
 	photo?: Array<{ file_id: string; file_unique_id?: string; file_size?: number; width?: number; height?: number }>;
 	messageId?: number;
 	chatId?: string;
+	chatType?: "private" | "group" | "supergroup";
 	actorId?: string;
 }): Request {
 	const message: Record<string, unknown> = {
 		message_id: opts.messageId ?? opts.updateId,
 		from: { id: opts.actorId ?? "telegram-actor" },
-		chat: { id: opts.chatId ?? "tg-chat-1", type: "private" },
+		chat: { id: opts.chatId ?? "tg-chat-1", type: opts.chatType ?? "private" },
 	};
 	if (typeof opts.text === "string") {
 		message.text = opts.text;
@@ -395,7 +396,7 @@ async function createHarness(opts: HarnessOpts = {}): Promise<Harness> {
 		webhookSecret: "telegram-secret",
 		tenantId: "telegram-bot",
 		botUsername: "mu_bot",
-		botToken: opts.telegramBotToken ?? "telegram-bot-token",
+		botToken: opts.telegramBotToken === undefined ? "telegram-bot-token" : opts.telegramBotToken,
 		fetchImpl: opts.telegramFetchImpl,
 		pipeline,
 		outbox,
@@ -750,6 +751,67 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(harness.deliveries[1]?.body).toContain("RESULT · COMPLETED");
 	});
 
+	test("Telegram callback payload validation rejects unsupported callback data", async () => {
+		const harness = await createHarness();
+		const invalid = await harness.telegram.ingest(
+			telegramCallbackRequest({
+				secret: "telegram-secret",
+				updateId: 102,
+				callbackId: "cb-invalid",
+				data: "confirm:mu-123:extra",
+			}),
+		);
+		expect(invalid.accepted).toBe(false);
+		expect(invalid.reason).toBe("unsupported_telegram_callback");
+		const ack = (await invalid.response.json()) as {
+			method?: string;
+			callback_query_id?: string;
+			text?: string;
+		};
+		expect(ack.method).toBe("answerCallbackQuery");
+		expect(ack.callback_query_id).toBe("cb-invalid");
+		expect(ack.text).toBe("Unsupported action.");
+	});
+
+	test("Telegram confirm/cancel command fallback stays in parity with callback buttons", async () => {
+		const harness = await createHarness();
+		const submit = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 103,
+				text: "/mu issue close mu-321",
+			}),
+		);
+		expect(submit.pipelineResult?.kind).toBe("awaiting_confirmation");
+		if (submit.pipelineResult?.kind !== "awaiting_confirmation") {
+			throw new Error(`expected awaiting_confirmation, got ${submit.pipelineResult?.kind}`);
+		}
+		const commandId = submit.pipelineResult.command.command_id;
+
+		const cancelViaCommand = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 104,
+				text: `/mu cancel ${commandId}`,
+			}),
+		);
+		expect(cancelViaCommand.pipelineResult?.kind).toBe("cancelled");
+		if (cancelViaCommand.pipelineResult?.kind !== "cancelled") {
+			throw new Error(`expected cancelled, got ${cancelViaCommand.pipelineResult?.kind}`);
+		}
+		expect(cancelViaCommand.pipelineResult.command.command_id).toBe(commandId);
+
+		const deniedCallback = await harness.telegram.ingest(
+			telegramCallbackRequest({
+				secret: "telegram-secret",
+				updateId: 105,
+				callbackId: "cb-parity-cancelled",
+				data: `confirm:${commandId}`,
+			}),
+		);
+		expect(deniedCallback.pipelineResult).toEqual({ kind: "denied", reason: "confirmation_invalid_state" });
+	});
+
 	test("Telegram operator requests can safely trigger model updates with correlation", async () => {
 		const harness = await createHarness({
 			operatorResult: {
@@ -929,6 +991,47 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(harness.deliveries[0]?.body).toBe("Hey from Telegram operator.");
 	});
 
+	test("Telegram group freeform text is deterministic no-op with explicit command guidance", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Should not run for group freeform." }]);
+		const harness = await createHarness({
+			operatorBackend: backend,
+		});
+
+		const ignored = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 701,
+				text: "hey team what is status",
+				chatType: "group",
+			}),
+		);
+		expect(ignored.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
+		expect(ignored.outboxRecord).toBeNull();
+		expect(backend.turns.length).toBe(0);
+		const ignoredAck = (await ignored.response.json()) as { method?: string; chat_id?: string; text?: string };
+		expect(ignoredAck.method).toBe("sendMessage");
+		expect(ignoredAck.chat_id).toBe("tg-chat-1");
+		expect(ignoredAck.text).toContain("IGNORED");
+		expect(ignoredAck.text).toContain("/mu <command>");
+	});
+
+	test("Telegram group explicit /mu command remains actionable", async () => {
+		const harness = await createHarness();
+		const result = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 702,
+				text: "/mu status",
+				chatType: "supergroup",
+			}),
+		);
+		expect(result.pipelineResult?.kind).toBe("completed");
+		if (result.pipelineResult?.kind !== "completed") {
+			throw new Error(`expected completed, got ${result.pipelineResult?.kind}`);
+		}
+		expect(result.inbound?.command_text).toBe("/mu status");
+	});
+
 	test("Telegram document + caption routes conversationally and stores inbound attachment metadata", async () => {
 		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Got the file." }]);
 		const harness = await createHarness({
@@ -1004,7 +1107,7 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(backend.turns[0]?.inbound.command_text).toContain("type=photo");
 	});
 
-	test("Telegram attachment download failures preserve conversational turn with audit metadata", async () => {
+	test("Telegram attachment getFile failures preserve conversational turn, audit metadata, and human guidance", async () => {
 		const backend = new QueueOperatorBackend([{ kind: "respond", message: "I could not fetch the attachment." }]);
 		const harness = await createHarness({
 			operatorBackend: backend,
@@ -1023,8 +1126,81 @@ describe("channel adapters integrated with control-plane", () => {
 		);
 		expect(result.pipelineResult?.kind).toBe("operator_response");
 		expect(result.inbound?.attachments ?? []).toHaveLength(0);
+		expect(backend.turns[0]?.inbound.command_text).toContain("Attachment ingest issue:");
+		expect(backend.turns[0]?.inbound.command_text).toContain("getFile failed");
 		const audit = backend.turns[0]?.inbound.metadata.inbound_attachment_audit as Array<Record<string, unknown>> | undefined;
 		expect(audit?.[0]?.kind).toBe("download_failed");
+		expect(audit?.[0]?.reason).toBe("telegram_get_file_500");
+	});
+
+	test("Telegram attachment ingest reports missing bot token with user-facing guidance", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Attachment unavailable." }]);
+		const harness = await createHarness({
+			operatorBackend: backend,
+			telegramBotToken: null,
+			telegramFetchImpl: (async () => {
+				throw new Error("fetch should not run when bot token is missing");
+			}) as unknown as typeof fetch,
+		});
+		const result = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 923,
+				document: { file_id: "doc-no-token", mime_type: "application/pdf", file_size: 50 },
+			}),
+		);
+		expect(result.pipelineResult?.kind).toBe("operator_response");
+		expect(backend.turns[0]?.inbound.command_text).toContain("Attachment download is not configured for Telegram yet");
+		const audit = backend.turns[0]?.inbound.metadata.inbound_attachment_audit as Array<Record<string, unknown>> | undefined;
+		expect(audit?.[0]?.reason).toBe("telegram_bot_token_missing");
+	});
+
+	test("Telegram attachment ingest reports file download errors with user-facing guidance", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Attachment unavailable." }]);
+		const harness = await createHarness({
+			operatorBackend: backend,
+			telegramFetchImpl: (async (input) => {
+				const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+				if (url.includes("/getFile")) {
+					return new Response(JSON.stringify({ ok: true, result: { file_path: "docs/fail.pdf" } }), {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					});
+				}
+				if (url.includes("/file/bot")) {
+					return new Response("download boom", { status: 502 });
+				}
+				throw new Error(`unexpected fetch ${url}`);
+			}) as typeof fetch,
+		});
+		const result = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 924,
+				document: { file_id: "doc-download-fail", mime_type: "application/pdf", file_size: 50 },
+			}),
+		);
+		expect(result.pipelineResult?.kind).toBe("operator_response");
+		expect(backend.turns[0]?.inbound.command_text).toContain("Telegram attachment download failed");
+		const audit = backend.turns[0]?.inbound.metadata.inbound_attachment_audit as Array<Record<string, unknown>> | undefined;
+		expect(audit?.[0]?.reason).toBe("telegram_file_download_502");
+	});
+
+	test("Telegram attachment policy deny keeps audit metadata and explains policy block", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Attachment blocked." }]);
+		const harness = await createHarness({ operatorBackend: backend });
+		const result = await harness.telegram.ingest(
+			telegramMessageRequest({
+				secret: "telegram-secret",
+				updateId: 925,
+				document: { file_id: "doc-policy-deny", mime_type: "application/x-msdownload", file_size: 10 },
+			}),
+		);
+		expect(result.pipelineResult?.kind).toBe("operator_response");
+		expect(backend.turns[0]?.inbound.command_text).toContain("Attachment blocked by inbound policy");
+		const audit = backend.turns[0]?.inbound.metadata.inbound_attachment_audit as Array<Record<string, unknown>> | undefined;
+		expect(audit?.[0]?.kind).toBe("pre_deny");
+		expect(audit?.[0]?.reason).toBe("inbound_attachment_unsupported_mime");
 	});
 
 	test("Telegram operator path can update thinking level through confirmation", async () => {

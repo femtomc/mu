@@ -22,6 +22,7 @@ import {
 	type ControlPlaneSessionLifecycle,
 	containsTelegramMathNotation,
 	renderTelegramMarkdown,
+	splitTelegramMessageText,
 } from "../src/control_plane.js";
 
 const handlesToCleanup = new Set<ControlPlaneHandle>();
@@ -216,6 +217,7 @@ function configWith(opts: {
 function mkTelegramOutboxRecord(opts: {
 	body?: string;
 	attachments?: Array<Record<string, unknown>>;
+	metadata?: Record<string, unknown>;
 }) {
 	return OutboxRecordSchema.parse({
 		outbox_id: "out-test-1",
@@ -255,7 +257,7 @@ function mkTelegramOutboxRecord(opts: {
 				cli_invocation_id: null,
 				cli_command_kind: null,
 			},
-			metadata: {},
+			metadata: opts.metadata ?? {},
 		},
 		created_at_ms: 1_000,
 		updated_at_ms: 1_000,
@@ -380,6 +382,15 @@ describe("telegram markdown rendering", () => {
 		expect(payload.text).toBe(text);
 		expect(payload.parse_mode).toBeUndefined();
 		expect(payload.disable_web_page_preview).toBeUndefined();
+	});
+
+	test("splitTelegramMessageText uses deterministic boundaries", () => {
+		const text = `alpha\n${"x".repeat(20)}\nomega`;
+		const chunksA = splitTelegramMessageText(text, 16);
+		const chunksB = splitTelegramMessageText(text, 16);
+		expect(chunksA).toEqual(chunksB);
+		expect(chunksA.every((chunk) => chunk.length <= 16)).toBe(true);
+		expect(chunksA.join("")).toBe(text);
 	});
 });
 
@@ -522,6 +533,166 @@ describe("telegram outbound media delivery", () => {
 			expect(calls.some((url) => url.includes("/sendMessage"))).toBe(true);
 			expect(calls.some((url) => url.includes("/sendDocument"))).toBe(false);
 			expect(calls.some((url) => url.includes("/sendPhoto"))).toBe(false);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("markdown fallback retries without parse_mode on Telegram sendMessage 400", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (!url.includes("/sendMessage")) {
+				throw new Error(`unexpected fetch: ${url}`);
+			}
+			const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+			payloads.push(body);
+			if (body.parse_mode === "Markdown") {
+				return new Response(JSON.stringify({ ok: false, description: "Bad Request: cannot parse entities" }), {
+					status: 400,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+
+		try {
+			const record = mkTelegramOutboxRecord({
+				body: "Hello **world**",
+				metadata: { telegram_reply_to_message_id: 55 },
+			});
+			const result = await deliverTelegramOutboxRecord({
+				botToken: "telegram-token",
+				record,
+			});
+			expect(result.kind).toBe("delivered");
+			expect(payloads).toHaveLength(2);
+			expect(payloads[0]?.parse_mode).toBe("Markdown");
+			expect(payloads[1]?.parse_mode).toBeUndefined();
+			expect(payloads[1]?.disable_web_page_preview).toBeUndefined();
+			expect(payloads[1]?.reply_to_message_id).toBe(55);
+			expect(payloads[1]?.allow_sending_without_reply).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("maps awaiting-confirmation actions to Telegram inline callback buttons", async () => {
+		const payloads: unknown[] = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (!url.includes("/sendMessage")) {
+				throw new Error(`unexpected fetch: ${url}`);
+			}
+			if (init?.body && typeof init.body === "string") {
+				payloads.push(JSON.parse(init.body));
+			}
+			return new Response(JSON.stringify({ ok: true }), { status: 200 });
+		}) as typeof fetch;
+
+		try {
+			const record = mkTelegramOutboxRecord({
+				body: "confirm or cancel",
+				metadata: {
+					interaction_message: {
+						actions: [
+							{ label: "Confirm", command: "/mu confirm mu-abc123" },
+							{ label: "Cancel", command: "/mu cancel mu-abc123" },
+						],
+					},
+				},
+			});
+			const result = await deliverTelegramOutboxRecord({ botToken: "telegram-token", record });
+			expect(result.kind).toBe("delivered");
+			expect(payloads).toHaveLength(1);
+			expect(payloads[0]).toMatchObject({
+				reply_markup: {
+					inline_keyboard: [[
+						{ text: "Confirm", callback_data: "confirm:mu-abc123" },
+						{ text: "Cancel", callback_data: "cancel:mu-abc123" },
+					]],
+				},
+			});
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("anchors Telegram text delivery to source message when metadata is present", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.includes("/sendMessage")) {
+				payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			throw new Error(`unexpected fetch: ${url}`);
+		}) as typeof fetch;
+		try {
+			const record = mkTelegramOutboxRecord({ body: "anchored response", metadata: { telegram_reply_to_message_id: "77" } });
+			const result = await deliverTelegramOutboxRecord({ botToken: "telegram-token", record });
+			expect(result.kind).toBe("delivered");
+			expect(payloads).toHaveLength(1);
+			expect(payloads[0]?.reply_to_message_id).toBe(77);
+			expect(payloads[0]?.allow_sending_without_reply).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("invalid Telegram reply anchor metadata gracefully falls back to non-anchored sendMessage", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.includes("/sendMessage")) {
+				payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			throw new Error(`unexpected fetch: ${url}`);
+		}) as typeof fetch;
+		try {
+			const record = mkTelegramOutboxRecord({
+				body: "invalid anchor fallback",
+				metadata: { telegram_reply_to_message_id: "not-an-int" },
+			});
+			const result = await deliverTelegramOutboxRecord({ botToken: "telegram-token", record });
+			expect(result.kind).toBe("delivered");
+			expect(payloads).toHaveLength(1);
+			expect(payloads[0]?.reply_to_message_id).toBeUndefined();
+			expect(payloads[0]?.allow_sending_without_reply).toBeUndefined();
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("splits long Telegram text into ordered sendMessage chunks", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.includes("/sendMessage")) {
+				payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			throw new Error(`unexpected fetch: ${url}`);
+		}) as typeof fetch;
+		try {
+			const body = `${"x".repeat(4_500)}\n${"y".repeat(300)}`;
+			const record = mkTelegramOutboxRecord({ body, metadata: { telegram_reply_to_message_id: 9 } });
+			const result = await deliverTelegramOutboxRecord({ botToken: "telegram-token", record });
+			expect(result.kind).toBe("delivered");
+			expect(payloads.length).toBeGreaterThan(1);
+			expect(String(payloads[0]?.text ?? "").length).toBeLessThanOrEqual(4_096);
+			expect(payloads[0]?.reply_to_message_id).toBe(9);
+			expect(payloads[1]?.reply_to_message_id).toBeUndefined();
+			expect(payloads.map((entry) => String(entry.text ?? "")).join("")).toBe(body);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
@@ -979,6 +1150,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			expect(telegramApiCalls.length).toBeGreaterThan(0);
 			expect(telegramApiCalls[0]?.body?.chat_id).toBe("tg-chat-1");
 			expect(typeof telegramApiCalls[0]?.body?.text).toBe("string");
+			expect(telegramApiCalls[0]?.body?.reply_to_message_id).toBe(101);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
@@ -1048,6 +1220,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			}
 			expect(telegramApiCalls.length).toBeGreaterThan(0);
 			expect(telegramApiCalls[0]?.body?.text).toContain("slow operator response");
+			expect(telegramApiCalls[0]?.body?.reply_to_message_id).toBe(202);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
