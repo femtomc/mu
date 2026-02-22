@@ -748,18 +748,22 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		return out;
 	}
 
-	async function reloadRunningControlPlaneForOperatorUpdate(ctx: Ctx): Promise<{
+	async function reloadRunningControlPlane(opts: {
+		ctx: Ctx;
+		reason: string;
+		missingServerMessage: string;
+	}): Promise<{
 		attempted: boolean;
 		ok: boolean;
 		message: string;
 		payload: Record<string, unknown> | null;
 	}> {
-		const running = await detectRunningServer(ctx.repoRoot);
+		const running = await detectRunningServer(opts.ctx.repoRoot);
 		if (!running) {
 			return {
 				attempted: false,
 				ok: false,
-				message: "no running server detected; start `mu serve` to apply immediately",
+				message: opts.missingServerMessage,
 				payload: null,
 			};
 		}
@@ -769,7 +773,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 			response = await fetch(`${running.url}/api/control-plane/reload`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ reason: "cli_control_operator_update" }),
+				body: JSON.stringify({ reason: opts.reason }),
 				signal: AbortSignal.timeout(10_000),
 			});
 		} catch (err) {
@@ -804,6 +808,19 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 			message: "control-plane reload applied",
 			payload: asRecord(payload),
 		};
+	}
+
+	async function reloadRunningControlPlaneForOperatorUpdate(ctx: Ctx): Promise<{
+		attempted: boolean;
+		ok: boolean;
+		message: string;
+		payload: Record<string, unknown> | null;
+	}> {
+		return await reloadRunningControlPlane({
+			ctx,
+			reason: "cli_control_operator_update",
+			missingServerMessage: "no running server detected; start `mu serve` to apply immediately",
+		});
 	}
 
 	async function controlOperator(argv: string[], ctx: Ctx, pretty: boolean): Promise<ControlCommandRunResult> {
@@ -1260,20 +1277,25 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 	async function controlReload(argv: string[], ctx: Ctx, pretty: boolean): Promise<ControlCommandRunResult> {
 		if (hasHelpFlag(argv)) {
 			return ok(
-				["mu control reload - schedule process reload", "", "Usage:", "  mu control reload [--pretty]"].join("\n") +
+				["mu control reload - trigger running server control-plane reload", "", "Usage:", "  mu control reload [--pretty]"].join("\n") +
 					"\n",
 			);
 		}
 		if (argv.length > 0) {
 			return jsonError(`unknown args: ${argv.join(" ")}`, { pretty, recovery: ["mu control reload --help"] });
 		}
-		const { createProcessSessionLifecycle } = await import("@femtomc/mu-server");
-		const lifecycle = createProcessSessionLifecycle({ repoRoot: ctx.repoRoot });
-		const result = await lifecycle.reload();
-		if (!result.ok) {
-			return jsonError(`reload failed: ${result.message}`, { pretty, recovery: ["mu control status"] });
+		const reload = await reloadRunningControlPlane({
+			ctx,
+			reason: "cli_control_reload",
+			missingServerMessage: "no running server found; start `mu serve` first",
+		});
+		if (!reload.ok) {
+			return jsonError(`reload failed: ${reload.message}`, {
+				pretty,
+				recovery: ["mu serve", "mu control status"],
+			});
 		}
-		return ok(jsonText(result, pretty));
+		return ok(jsonText(reload.payload ?? { ok: true, message: reload.message }, pretty));
 	}
 
 	async function controlUpdate(argv: string[], ctx: Ctx, pretty: boolean): Promise<ControlCommandRunResult> {

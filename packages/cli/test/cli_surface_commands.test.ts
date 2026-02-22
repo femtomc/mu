@@ -105,6 +105,64 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 	}
 });
 
+test("control reload uses running server API and does not schedule local process restart", async () => {
+	const dir = await mkTempRepo();
+	const seen: Array<{ method: string; path: string; body: unknown }> = [];
+
+	const server = Bun.serve({
+		port: 0,
+		fetch: async (req) => {
+			const url = new URL(req.url);
+			if (url.pathname === "/healthz") {
+				return Response.json({ ok: true });
+			}
+			if (url.pathname === "/api/control-plane/reload") {
+				let body: unknown = null;
+				try {
+					body = await req.json();
+				} catch {
+					body = null;
+				}
+				seen.push({ method: req.method, path: url.pathname, body });
+				return Response.json({ ok: true, reason: (body as { reason?: string } | null)?.reason ?? null });
+			}
+			return Response.json({ error: "not found" }, { status: 404 });
+		},
+	});
+
+	const discovery = join(getStorePaths(dir).storeDir, "control-plane", "server.json");
+	await writeFile(
+		discovery,
+		`${JSON.stringify({ pid: process.pid, port: server.port, url: `http://localhost:${server.port}` })}\n`,
+		"utf8",
+	);
+
+	try {
+		const result = await run(["control", "reload", "--pretty"], { cwd: dir });
+		expect(result.exitCode).toBe(0);
+		const payload = JSON.parse(result.stdout) as { ok: boolean; reason: string };
+		expect(payload.ok).toBe(true);
+		expect(payload.reason).toBe("cli_control_reload");
+		expect(seen).toHaveLength(1);
+		expect(seen[0]?.method).toBe("POST");
+		expect(result.stdout).not.toContain("restarting process");
+	} finally {
+		server.stop(true);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("control reload errors when no running server is detected", async () => {
+	const dir = await mkTempRepo();
+	try {
+		const result = await run(["control", "reload"], { cwd: dir });
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toContain("no running server found");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("control-plane/memory read interfaces default to compact output with opt-in --json", async () => {
 	const dir = await mkTempRepo();
 	const storeDir = getStorePaths(dir).storeDir;
