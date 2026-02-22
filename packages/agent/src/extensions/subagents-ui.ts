@@ -537,6 +537,11 @@ function renderActivitySentence(event: ActivityEvent): { issueId: string; senten
 	return null;
 }
 
+function isActivityEndpointUnavailable(errorMessage: string): boolean {
+	const normalized = errorMessage.toLowerCase();
+	return normalized.includes("mu server 404") && normalized.includes("not found");
+}
+
 async function fetchRecentActivity(opts: {
 	issueIds: readonly string[];
 }): Promise<ActivitySummary> {
@@ -551,6 +556,9 @@ async function fetchRecentActivity(opts: {
 		});
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
+		if (isActivityEndpointUnavailable(message)) {
+			return { lines: [], error: null };
+		}
 		return { lines: [], error: `activity refresh failed: ${truncateOneLine(message, 60)}` };
 	}
 
@@ -661,7 +669,10 @@ function subagentsSnapshot(state: SubagentsState, format: "compact" | "multiline
 	const drift = computeQueueDrift(state.sessions, state.activeIssues);
 	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 	const staleCount = drift.activeWithoutSessionIds.length + drift.orphanSessions.length;
-	const health = state.issueError || state.sessionError || refreshStale || staleCount > 0 ? "degraded" : "healthy";
+	const health =
+		state.issueError || state.sessionError || state.activityError || refreshStale || staleCount > 0
+			? "degraded"
+			: "healthy";
 	const refreshAge = formatRefreshAge(state.lastUpdatedMs);
 	const paused = state.spawnPaused ? "yes" : "no";
 	const refreshSeconds = Math.round(state.refreshIntervalMs / 1_000);
@@ -720,7 +731,7 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 	const drift = computeQueueDrift(state.sessions, state.activeIssues);
 	const staleCount = drift.activeWithoutSessionIds.length + drift.orphanSessions.length;
-	const hasError = Boolean(state.sessionError || state.issueError || refreshStale || staleCount > 0);
+	const hasError = Boolean(state.sessionError || state.issueError || state.activityError || refreshStale || staleCount > 0);
 	const healthColor: "success" | "warning" = hasError ? "warning" : "success";
 	const healthLabel = hasError ? "degraded" : "healthy";
 	const queueTotal = state.readyIssues.length + state.activeIssues.length;

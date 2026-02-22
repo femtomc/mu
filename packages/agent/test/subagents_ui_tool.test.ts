@@ -239,6 +239,69 @@ describe("subagents HUD tool", () => {
 		}
 	});
 
+	test("treats missing activity endpoint as non-fatal", async () => {
+		const { api, tools } = createExtensionApiMock();
+		subagentsUiExtension(api as unknown as Parameters<typeof subagentsUiExtension>[0]);
+
+		const tool = tools.get("mu_subagents_hud");
+		if (!tool) {
+			throw new Error("mu_subagents_hud tool missing");
+		}
+
+		const originalSpawn = Bun.spawn;
+		const originalFetch = globalThis.fetch;
+		const originalServerUrl = Bun.env.MU_SERVER_URL;
+		Bun.env.MU_SERVER_URL = "http://127.0.0.1:3000";
+		(globalThis as { fetch: typeof fetch }).fetch = ((async () =>
+			new Response(JSON.stringify({ error: "Not Found" }), {
+				status: 404,
+				headers: { "Content-Type": "application/json" },
+			})) as unknown) as typeof fetch;
+		(Bun as { spawn: typeof Bun.spawn }).spawn = ((opts: { cmd: string[] }) => {
+			const cmd = opts.cmd;
+			if (cmd[0] === "tmux" && cmd[1] === "ls") {
+				return fakeProcess("");
+			}
+			if (cmd[0] === "mu" && cmd.includes("ready")) {
+				return fakeProcess(
+					JSON.stringify([
+						{
+							id: "mu-a1111111",
+							title: "Draft rollout sequence",
+							status: "open",
+							priority: 2,
+							tags: ["node:agent"],
+						},
+					]),
+				);
+			}
+			if (cmd[0] === "mu" && cmd.includes("in_progress")) {
+				return fakeProcess("[]\n");
+			}
+			return fakeProcess("", "unexpected command", 1);
+		}) as typeof Bun.spawn;
+
+		try {
+			const uiHarness = createInteractiveUiContext();
+			await executeSubagentsTool(tool, { action: "set_root", root_issue_id: "mu-81fa6563" }, uiHarness.ctx);
+
+			const lines = uiHarness.getWidgetLines() ?? [];
+			expect(lines.some((line) => line.includes("activity refresh failed"))).toBe(false);
+			expect(lines.some((line) => line.includes("(no active operators)"))).toBe(true);
+
+			const statusLine = uiHarness.getStatus("mu-subagents") ?? "";
+			expect(statusLine).toContain("healthy");
+		} finally {
+			(Bun as { spawn: typeof Bun.spawn }).spawn = originalSpawn;
+			(globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+			if (originalServerUrl === undefined) {
+				delete Bun.env.MU_SERVER_URL;
+			} else {
+				Bun.env.MU_SERVER_URL = originalServerUrl;
+			}
+		}
+	});
+
 	test("returns structured validation errors without spawning external commands", async () => {
 		const { api, tools } = createExtensionApiMock();
 		subagentsUiExtension(api as unknown as Parameters<typeof subagentsUiExtension>[0]);

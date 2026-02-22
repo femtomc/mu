@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-core",
-  "version": "26.2.92",
+  "version": "26.2.93",
   "description": "Core primitives for mu: IDs, events, schemas, and persistence interfaces.",
   "keywords": [
     "mu",

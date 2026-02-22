@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu-issue",
-  "version": "26.2.92",
+  "version": "26.2.93",
   "description": "Work item store with dependency graph helpers for mu.",
   "keywords": [
     "mu",
