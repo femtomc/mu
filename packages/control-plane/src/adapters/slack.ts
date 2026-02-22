@@ -14,6 +14,7 @@ import {
 	DEFAULT_INBOUND_ATTACHMENT_POLICY,
 } from "../inbound_attachment_policy.js";
 import { InboundAttachmentStore, toInboundAttachmentReference } from "../inbound_attachment_store.js";
+import { CONVERSATIONAL_INGRESS_OVERRIDE_ALLOW, CONVERSATIONAL_INGRESS_OVERRIDE_KEY } from "../ingress_mode_policy.js";
 import { InboundEnvelopeSchema, type AttachmentDescriptor } from "../models.js";
 import type { ControlPlaneOutbox } from "../outbox.js";
 import {
@@ -474,7 +475,13 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			});
 		}
 
-		if (!rawText.startsWith("/mu")) {
+		const isExplicitCommand = rawText.startsWith("/mu");
+		const linkedBinding = this.#pipeline.identities.resolveActive({
+			channel: this.spec.channel,
+			channelTenantId: teamId,
+			channelActorId: actorId,
+		});
+		if (!isExplicitCommand && !linkedBinding) {
 			await this.#appendAudit({
 				requestId,
 				deliveryId,
@@ -484,7 +491,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				commandText: rawText.length > 0 ? rawText : "/mu",
 				event: "slack.event.ignored",
 				reason: "channel_requires_explicit_command",
-				metadata: { event_type: eventType, event_id: eventId },
+				metadata: { event_type: eventType, event_id: eventId, linked_actor: false },
 			});
 			return acceptedIngressResult({
 				channel: this.spec.channel,
@@ -652,6 +659,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				source: "slack:event_callback",
 				event_id: eventId,
 				trigger_id: triggerId,
+				...(!isExplicitCommand ? { [CONVERSATIONAL_INGRESS_OVERRIDE_KEY]: CONVERSATIONAL_INGRESS_OVERRIDE_ALLOW } : {}),
 				...(threadTsCandidate ? { slack_thread_ts: threadTsCandidate } : {}),
 			},
 		});

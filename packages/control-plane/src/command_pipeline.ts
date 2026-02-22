@@ -12,7 +12,7 @@ import {
 } from "./command_record.js";
 import { ConfirmationManager } from "./confirmation_manager.js";
 import { ChannelSchema, type IdentityBinding, IdentityStore, TERMINAL_IDENTITY_BINDING } from "./identity_store.js";
-import { allowsConversationalIngress } from "./ingress_mode_policy.js";
+import { allowsConversationalIngressForInbound } from "./ingress_mode_policy.js";
 import { type InboundEnvelope, InboundEnvelopeSchema } from "./models.js";
 import { MuCliCommandSurface, MuCliRunner, type MuCliRunnerLike } from "./mu_cli_runner.js";
 import type { MessagingOperatorRuntimeLike } from "./operator_contract.js";
@@ -541,7 +541,7 @@ export class ControlPlaneCommandPipeline {
 			return { kind: "result", result: { kind: "noop", reason: parsed.reason } };
 		}
 
-		if (!allowsConversationalIngress(inbound.channel)) {
+		if (!allowsConversationalIngressForInbound(inbound.channel, inbound.metadata)) {
 			return { kind: "result", result: { kind: "noop", reason: "channel_requires_explicit_command" } };
 		}
 
@@ -677,7 +677,7 @@ export class ControlPlaneCommandPipeline {
 			auth.reason === "unmapped_command" &&
 			this.#operator &&
 			operatorTrace == null &&
-			allowsConversationalIngress(inbound.channel)
+			allowsConversationalIngressForInbound(inbound.channel, inbound.metadata)
 		) {
 			const fallback = await this.#operator.handleInbound({ inbound, binding });
 			switch (fallback.kind) {
@@ -707,7 +707,7 @@ export class ControlPlaneCommandPipeline {
 		}
 
 		if (auth.kind === "deny") {
-			if (auth.reason === "unmapped_command" && !allowsConversationalIngress(inbound.channel)) {
+			if (auth.reason === "unmapped_command" && !allowsConversationalIngressForInbound(inbound.channel, inbound.metadata)) {
 				return { kind: "noop", reason: "channel_requires_explicit_command" };
 			}
 			return { kind: "denied", reason: auth.reason };

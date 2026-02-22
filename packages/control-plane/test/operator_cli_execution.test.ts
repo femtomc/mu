@@ -11,6 +11,7 @@ import {
 } from "@femtomc/mu-agent";
 import {
 	buildControlPlanePolicy,
+	CONVERSATIONAL_INGRESS_OVERRIDE_KEY,
 	ControlPlaneCommandPipeline,
 	ControlPlaneRuntime,
 	IdentityStore,
@@ -95,6 +96,7 @@ async function createPipeline(opts: {
 	scopes: string[];
 	backendResult: OperatorBackendTurnResult;
 	cliRunResult: MuCliRunResult;
+	channel?: "telegram" | "slack";
 }): Promise<{
 	repoRoot: string;
 	pipeline: ControlPlaneCommandPipeline;
@@ -137,7 +139,7 @@ async function createPipeline(opts: {
 	await identities.link({
 		bindingId: "binding-1",
 		operatorId: "operator-1",
-		channel: "telegram",
+		channel: opts.channel ?? "telegram",
 		channelTenantId: "tenant-1",
 		channelActorId: "actor-1",
 		scopes: opts.scopes,
@@ -260,6 +262,67 @@ describe("operator + allowlisted mu CLI execution", () => {
 			"high",
 			"--json",
 		]);
+	});
+
+	test("command-only channels stay strict by default for non-command conversational turns", async () => {
+		const harness = await createPipeline({
+			scopes: ["cp.read"],
+			channel: "slack",
+			backendResult: {
+				kind: "respond",
+				message: "hello from operator",
+			},
+			cliRunResult: {
+				kind: "completed",
+				stdout: "{}",
+				stderr: "",
+				exitCode: 0,
+			},
+		});
+
+		const result = await harness.pipeline.handleInbound(
+			mkInbound(harness.repoRoot, {
+				channel: "slack",
+				command_text: "hello there",
+			}),
+		);
+
+		expect(result).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
+		expect(harness.cli.plans.length).toBe(0);
+	});
+
+	test("command-only channels can opt into conversational routing with explicit inbound metadata override", async () => {
+		const harness = await createPipeline({
+			scopes: ["cp.read"],
+			channel: "slack",
+			backendResult: {
+				kind: "respond",
+				message: "hello from operator",
+			},
+			cliRunResult: {
+				kind: "completed",
+				stdout: "{}",
+				stderr: "",
+				exitCode: 0,
+			},
+		});
+
+		const result = await harness.pipeline.handleInbound(
+			mkInbound(harness.repoRoot, {
+				channel: "slack",
+				command_text: "hello there",
+				metadata: {
+					[CONVERSATIONAL_INGRESS_OVERRIDE_KEY]: "allow",
+				},
+			}),
+		);
+
+		expect(result.kind).toBe("operator_response");
+		if (result.kind !== "operator_response") {
+			throw new Error(`expected operator_response, got ${result.kind}`);
+		}
+		expect(result.message).toContain("hello from operator");
+		expect(harness.cli.plans.length).toBe(0);
 	});
 
 	test("operator readonly status queries execute through allowlisted mu CLI", async () => {

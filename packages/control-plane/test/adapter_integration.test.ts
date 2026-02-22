@@ -1382,31 +1382,42 @@ describe("channel adapters integrated with control-plane", () => {
 		]);
 	});
 
-	test("Slack non-command turns are deterministic no-op with guidance", async () => {
-		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Should not be used in Slack command-only mode." }]);
+	test("Slack linked actor freeform events route to conversational operator with thread metadata", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator response." }]);
 		const harness = await createHarness({
 			operatorBackend: backend,
 		});
 
 		const chat = await harness.slack.ingest(
-			slackRequest({
+			slackEventRequest({
 				secret: "slack-secret",
 				timestampSec: Math.trunc(harness.clock.now / 1000),
-				text: "hey there",
-				channelId: "journey-room",
-				triggerId: "journey-1",
 				requestId: "journey-req-1",
+				body: {
+					type: "event_callback",
+					team_id: "team-1",
+					event_id: "EvLinked1",
+					event: {
+						type: "message",
+						channel: "journey-room",
+						user: "slack-actor",
+						text: "hey there",
+						event_ts: "1700000000.500",
+						ts: "1700000000.500",
+					},
+				},
 			}),
 		);
-		expect(chat.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
-		expect(chat.outboxRecord).toBeNull();
-		const chatAck = (await chat.response.json()) as { text?: string };
-		expect(chatAck.text).toContain("IGNORED");
-		expect(backend.turns.length).toBe(0);
+		expect(chat.pipelineResult?.kind).toBe("operator_response");
+		expect(chat.inbound?.metadata.slack_thread_ts).toBe("1700000000.500");
+		expect(backend.turns.length).toBe(1);
+		expect(backend.turns[0]?.inbound.metadata.mu_conversational_ingress).toBe("allow");
+		expect(backend.turns[0]?.inbound.metadata.slack_thread_ts).toBe("1700000000.500");
 	});
 
-	test("Slack event callbacks enforce explicit /mu and keep duplicates idempotent", async () => {
-		const harness = await createHarness();
+	test("Slack event callbacks keep /mu idempotent and ignore unlinked freeform", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator should not run for unlinked freeform." }]);
+		const harness = await createHarness({ operatorBackend: backend });
 		const mkEventReq = () =>
 			slackEventRequest({
 				secret: "slack-secret",
@@ -1422,6 +1433,7 @@ describe("channel adapters integrated with control-plane", () => {
 						user: "slack-actor",
 						text: "/mu status",
 						event_ts: "1700000000.100",
+						thread_ts: "1700000000.000",
 					},
 				},
 			});
@@ -1433,6 +1445,8 @@ describe("channel adapters integrated with control-plane", () => {
 		if (first.pipelineResult?.kind !== "completed" || duplicate.pipelineResult?.kind !== "completed") {
 			throw new Error("expected completed results for first+duplicate event callbacks");
 		}
+		expect(first.outboxRecord?.envelope.metadata.slack_thread_ts).toBe("1700000000.000");
+		expect(duplicate.outboxRecord?.envelope.metadata.slack_thread_ts).toBe("1700000000.000");
 		expect(duplicate.pipelineResult.command.command_id).toBe(first.pipelineResult.command.command_id);
 
 		const ignored = await harness.slack.ingest(
@@ -1447,15 +1461,40 @@ describe("channel adapters integrated with control-plane", () => {
 					event: {
 						type: "message",
 						channel: "chan-1",
-						user: "slack-actor",
+						user: "unlinked-user",
 						text: "status",
 						event_ts: "1700000000.101",
+						thread_ts: "1700000000.001",
 					},
 				},
 			}),
 		);
 		expect(ignored.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
 		expect(ignored.outboxRecord).toBeNull();
+
+		const deniedUnlinkedCommand = await harness.slack.ingest(
+			slackEventRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(harness.clock.now / 1000),
+				requestId: "evt-req-3",
+				body: {
+					type: "event_callback",
+					team_id: "team-1",
+					event_id: "Ev125",
+					event: {
+						type: "message",
+						channel: "chan-1",
+						user: "unlinked-user",
+						text: "/mu status",
+						event_ts: "1700000000.102",
+						thread_ts: "1700000000.001",
+					},
+				},
+			}),
+		);
+		expect(deniedUnlinkedCommand.pipelineResult).toEqual({ kind: "denied", reason: "identity_not_linked" });
+		expect(deniedUnlinkedCommand.outboxRecord).toBeNull();
+		expect(backend.turns.length).toBe(0);
 	});
 
 	test("Slack file-bearing events download/store allowed attachments and tolerate download failures", async () => {

@@ -131,6 +131,39 @@ mu control link --channel slack --actor-id U123 --tenant-id T123 --role operator
 mu control identities --pretty
 ```
 
+### Secure collaboration channel pattern (single driver, shared observers)
+
+For a shared Slack channel, keep exactly one linked actor as the active bot driver. Everyone else can read bot output and participate in discussion, but only the linked actor should be authorized to drive command/conversational ingress.
+
+Practical rotation flow (handoff from `U_OLD` to `U_NEW` in workspace `T123`):
+
+```bash
+# Inspect current bindings first and identify old binding_id
+mu control identities --pretty
+
+# Remove previous driver binding (admin revoke)
+mu control unlink <old-binding-id> --revoke --reason "driver handoff"
+
+# Link the new driver
+mu control link --channel slack --actor-id U_NEW --tenant-id T123 --role operator
+
+# Re-check effective state
+mu control identities --pretty
+```
+
+Operational guidance:
+
+- Keep one active linked actor per collaboration surface/thread when you want strict control ownership.
+- If multiple actors are linked, each linked actor is authorized; this weakens single-driver control.
+- Use unlink during handoffs/on-call rotation so authorization intent stays explicit and auditable.
+
+Thread behavior in this pattern:
+
+- Replies are anchored to the originating Slack thread (`event.thread_ts` when present; otherwise message timestamp fallback).
+- Linked-driver conversational turns in that thread can route through operator handling.
+- Observer freeform messages remain non-executable by default (no operator run) unless that observer is linked.
+- Explicit `/mu ...` commands from unlinked observers are denied with `identity_not_linked`.
+
 ### 6) Smoke tests
 
 1. In Slack, run `/mu status`.
@@ -237,11 +270,41 @@ Slack ingress currently supports two accepted payload families on `/webhooks/sla
 - Slash commands (`application/x-www-form-urlencoded`), where `command` must be `/mu`
 - Events API callbacks (`application/json`) where `type=event_callback` and `event.type=message`
 
-For both DMs and channels, command execution is explicit-command only:
+For both DMs and channels, `/mu` command execution remains explicit:
 
-- Accepted command text must normalize to `/mu ...`
-- Non-command freeform turns are deterministic no-op with reason `channel_requires_explicit_command`
+- Accepted slash command text must normalize to `/mu ...`
 - Slack slash payloads with `command != /mu` are deterministic no-op with reason `slack_command_required`
+- Slack event callbacks can opt into conversational routing for linked actors only (see below)
+
+#### Linked vs unlinked actor semantics (Slack collaborative contract)
+
+Slack keeps `/mu` parity while allowing safe conversational ingress for linked event actors:
+
+- **Linked actor + explicit `/mu ...`**: command enters normal policy/confirmation pipeline.
+- **Unlinked actor + explicit `/mu ...`**: deterministic deny with `identity_not_linked`.
+- **Linked actor + non-`/mu` event callback text**: adapter sets `metadata.mu_conversational_ingress = "allow"`, so the turn routes through operator conversational handling.
+- **Unlinked actor + non-`/mu` freeform**: deterministic no-op with `channel_requires_explicit_command` (no operator execution).
+
+This preserves explicit `/mu` behavior while enabling linked Slack conversational turns without creating an implicit path for unlinked actors.
+
+Recommended secure collaboration mode: keep a single linked actor for the shared channel/thread, and rotate ownership via `mu control unlink` + `mu control link` when responsibility changes.
+
+Override escape hatch (explicit opt-in, per inbound envelope):
+
+- Command-only channels remain strict by default.
+- Adapters may explicitly set `metadata.mu_conversational_ingress = "allow"` on a specific inbound envelope to route that one turn through conversational operator handling.
+- Any other value (including booleans) is ignored.
+- Slash command semantics are unchanged.
+
+#### Slack thread anchoring contract
+
+Slack reply anchoring is deterministic and source-preserving:
+
+- Event callback path: if present, `event.thread_ts` is used; else `event.ts` is used.
+- Interactive payload path: first non-empty value in `container.thread_ts`, `container.message_ts`, `message.thread_ts`, `message.ts` is used.
+- The selected anchor is persisted as `metadata.slack_thread_ts` and outbound delivery uses that as `thread_ts`.
+
+If no usable thread timestamp is present, delivery degrades to non-threaded channel send without changing command lifecycle semantics.
 
 #### Confirmation action payload contract (for Slack interactive surfaces)
 
