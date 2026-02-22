@@ -277,6 +277,14 @@ function buildOperatorFailureFallbackMessage(code: string): string {
 	].join("\n");
 }
 
+function isAgentBusyError(err: unknown): boolean {
+	if (!(err instanceof Error)) {
+		return false;
+	}
+	const text = err.message.trim().toLowerCase();
+	return text.includes("agent is already processing");
+}
+
 function conversationKey(inbound: InboundEnvelope, binding: IdentityBinding): string {
 	return `${inbound.channel}:${inbound.channel_tenant_id}:${inbound.channel_conversation_id}:${binding.binding_id}`;
 }
@@ -1045,15 +1053,26 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			}
 		});
 
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			setTimeout(() => reject(new Error("pi operator timeout")), this.#timeoutMs);
-		});
+		const promptText = buildOperatorPrompt(input);
+		const promptOnce = async (): Promise<void> => {
+			const timeoutPromise = new Promise<never>((_, reject) => {
+				setTimeout(() => reject(new Error("pi operator timeout")), this.#timeoutMs);
+			});
+			await Promise.race([session.prompt(promptText, { expandPromptTemplates: false }), timeoutPromise]);
+		};
 
 		try {
-			await Promise.race([
-				session.prompt(buildOperatorPrompt(input), { expandPromptTemplates: false }),
-				timeoutPromise,
-			]);
+			try {
+				await promptOnce();
+			} catch (err) {
+				if (!isAgentBusyError(err)) {
+					throw err;
+				}
+				await session.agent.waitForIdle();
+				assistantText = "";
+				capturedCommand = null;
+				await promptOnce();
+			}
 		} catch (err) {
 			await this.#auditTurn(input, {
 				outcome: "error",

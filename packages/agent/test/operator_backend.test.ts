@@ -265,6 +265,51 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(result).toEqual({ kind: "respond", message: "Here is some information for you." });
 	});
 
+	test("retries once when the backend session reports a transient agent-busy error", async () => {
+		const listeners = new Set<(event: any) => void>();
+		let promptCalls = 0;
+		let idleWaitCalls = 0;
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () => ({
+				subscribe(listener) {
+					listeners.add(listener);
+					return () => {
+						listeners.delete(listener);
+					};
+				},
+				async prompt() {
+					promptCalls += 1;
+					if (promptCalls === 1) {
+						throw new Error("Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.");
+					}
+					for (const listener of listeners) {
+						listener({
+							type: "message_end",
+							message: {
+								role: "assistant",
+								text: "Recovered response.",
+							},
+						});
+					}
+				},
+				dispose() {},
+				async bindExtensions() {},
+				agent: {
+					async waitForIdle() {
+						idleWaitCalls += 1;
+					},
+				},
+			}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-busy-retry", turnId: "turn-1", commandText: "hello" }),
+		);
+		expect(result).toEqual({ kind: "respond", message: "Recovered response." });
+		expect(promptCalls).toBe(2);
+		expect(idleWaitCalls).toBe(1);
+	});
+
 	test("includes client context previews in the operator prompt", async () => {
 		let seenPrompt = "";
 		const backend = new PiMessagingOperatorBackend({
