@@ -1382,7 +1382,7 @@ describe("channel adapters integrated with control-plane", () => {
 		]);
 	});
 
-	test("Slack linked actor freeform events route to conversational operator with thread metadata", async () => {
+	test("Slack linked actor app_mention events route to conversational operator with thread metadata", async () => {
 		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator response." }]);
 		const harness = await createHarness({
 			operatorBackend: backend,
@@ -1398,10 +1398,10 @@ describe("channel adapters integrated with control-plane", () => {
 					team_id: "team-1",
 					event_id: "EvLinked1",
 					event: {
-						type: "message",
+						type: "app_mention",
 						channel: "journey-room",
 						user: "slack-actor",
-						text: "hey there",
+						text: "<@U_APP> hey there",
 						event_ts: "1700000000.500",
 						ts: "1700000000.500",
 					},
@@ -1409,14 +1409,18 @@ describe("channel adapters integrated with control-plane", () => {
 			}),
 		);
 		expect(chat.pipelineResult?.kind).toBe("operator_response");
+		expect(chat.inbound?.command_text).toBe("hey there");
 		expect(chat.inbound?.metadata.slack_thread_ts).toBe("1700000000.500");
+		expect(chat.outboxRecord?.envelope.body).toContain("Operator response.");
+		expect(chat.outboxRecord?.envelope.metadata?.interaction_render_mode).toBe("chat_plain");
 		expect(backend.turns.length).toBe(1);
+		expect(backend.turns[0]?.inbound.command_text).toBe("hey there");
 		expect(backend.turns[0]?.inbound.metadata.mu_conversational_ingress).toBe("allow");
 		expect(backend.turns[0]?.inbound.metadata.slack_thread_ts).toBe("1700000000.500");
 	});
 
-	test("Slack event callbacks keep /mu idempotent and ignore unlinked freeform", async () => {
-		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator should not run for unlinked freeform." }]);
+	test("Slack app_mention callbacks keep /mu idempotent, ignore unlinked mentions, and ignore non-mention events", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator should not run for unlinked mentions." }]);
 		const harness = await createHarness({ operatorBackend: backend });
 		const mkEventReq = () =>
 			slackEventRequest({
@@ -1428,10 +1432,10 @@ describe("channel adapters integrated with control-plane", () => {
 					team_id: "team-1",
 					event_id: "Ev123",
 					event: {
-						type: "message",
+						type: "app_mention",
 						channel: "chan-1",
 						user: "slack-actor",
-						text: "/mu status",
+						text: "<@U_APP> /mu status",
 						event_ts: "1700000000.100",
 						thread_ts: "1700000000.000",
 					},
@@ -1449,7 +1453,7 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(duplicate.outboxRecord?.envelope.metadata.slack_thread_ts).toBe("1700000000.000");
 		expect(duplicate.pipelineResult.command.command_id).toBe(first.pipelineResult.command.command_id);
 
-		const ignored = await harness.slack.ingest(
+		const ignoredUnlinkedMention = await harness.slack.ingest(
 			slackEventRequest({
 				secret: "slack-secret",
 				timestampSec: Math.trunc(harness.clock.now / 1000),
@@ -1459,18 +1463,18 @@ describe("channel adapters integrated with control-plane", () => {
 					team_id: "team-1",
 					event_id: "Ev124",
 					event: {
-						type: "message",
+						type: "app_mention",
 						channel: "chan-1",
 						user: "unlinked-user",
-						text: "status",
+						text: "<@U_APP> status",
 						event_ts: "1700000000.101",
 						thread_ts: "1700000000.001",
 					},
 				},
 			}),
 		);
-		expect(ignored.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
-		expect(ignored.outboxRecord).toBeNull();
+		expect(ignoredUnlinkedMention.pipelineResult).toEqual({ kind: "noop", reason: "channel_requires_explicit_command" });
+		expect(ignoredUnlinkedMention.outboxRecord).toBeNull();
 
 		const deniedUnlinkedCommand = await harness.slack.ingest(
 			slackEventRequest({
@@ -1482,10 +1486,10 @@ describe("channel adapters integrated with control-plane", () => {
 					team_id: "team-1",
 					event_id: "Ev125",
 					event: {
-						type: "message",
+						type: "app_mention",
 						channel: "chan-1",
 						user: "unlinked-user",
-						text: "/mu status",
+						text: "<@U_APP> /mu status",
 						event_ts: "1700000000.102",
 						thread_ts: "1700000000.001",
 					},
@@ -1493,7 +1497,29 @@ describe("channel adapters integrated with control-plane", () => {
 			}),
 		);
 		expect(deniedUnlinkedCommand.pipelineResult).toEqual({ kind: "denied", reason: "identity_not_linked" });
-		expect(deniedUnlinkedCommand.outboxRecord).toBeNull();
+		expect(deniedUnlinkedCommand.outboxRecord?.envelope.body).toContain("identity_not_linked");
+
+		const ignoredNonMention = await harness.slack.ingest(
+			slackEventRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(harness.clock.now / 1000),
+				requestId: "evt-req-4",
+				body: {
+					type: "event_callback",
+					team_id: "team-1",
+					event_id: "Ev126",
+					event: {
+						type: "message",
+						channel: "chan-1",
+						user: "slack-actor",
+						text: "/mu status",
+						event_ts: "1700000000.103",
+					},
+				},
+			}),
+		);
+		expect(ignoredNonMention.pipelineResult).toEqual({ kind: "noop", reason: "not_command" });
+		expect(ignoredNonMention.outboxRecord).toBeNull();
 		expect(backend.turns.length).toBe(0);
 	});
 
@@ -1519,10 +1545,10 @@ describe("channel adapters integrated with control-plane", () => {
 					team_id: "team-1",
 					event_id: "Ev200",
 					event: {
-						type: "message",
+						type: "app_mention",
 						channel: "chan-1",
 						user: "slack-actor",
-						text: "/mu status",
+						text: "<@U_APP> /mu status",
 						event_ts: "1700000000.200",
 						files: [
 							{

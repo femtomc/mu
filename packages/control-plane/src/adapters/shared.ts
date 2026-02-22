@@ -312,7 +312,7 @@ export async function enqueueDeferredPipelineResult(opts: {
 	return decision.record;
 }
 
-export async function enqueueTelegramOperatorResponse(opts: {
+export async function enqueueOperatorResponse(opts: {
 	outbox: ControlPlaneOutbox;
 	inbound: InboundEnvelope;
 	result: Extract<CommandPipelineResult, { kind: "operator_response" }>;
@@ -368,7 +368,7 @@ export async function enqueueTelegramOperatorResponse(opts: {
 		},
 	};
 
-	const dedupeKey = `telegram:operator:${opts.inbound.request_id}`;
+	const dedupeKey = `${opts.inbound.channel}:operator:${opts.inbound.request_id}`;
 	const decision = await opts.outbox.enqueue({
 		dedupeKey,
 		envelope,
@@ -404,8 +404,8 @@ export async function runPipelineForInbound(opts: {
 		metadata: deliveryMetadata,
 	});
 
-	if (!outboxRecord && opts.inbound.channel === "telegram" && pipelineResult.kind === "operator_response") {
-		outboxRecord = await enqueueTelegramOperatorResponse({
+	if (!outboxRecord && pipelineResult.kind === "operator_response") {
+		outboxRecord = await enqueueOperatorResponse({
 			outbox: opts.outbox,
 			inbound: opts.inbound,
 			result: pipelineResult,

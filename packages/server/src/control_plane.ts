@@ -173,6 +173,38 @@ export function renderTelegramMarkdown(text: string): string {
 	return out.join("\n");
 }
 
+/**
+ * Slack mrkdwn does not support Markdown headings.
+ * Normalize common heading markers while preserving fenced blocks.
+ */
+export function renderSlackMarkdown(text: string): string {
+	const normalized = text.replaceAll("\r\n", "\n");
+	const lines = normalized.split("\n");
+	const out: string[] = [];
+	let inFence = false;
+
+	for (const line of lines) {
+		const trimmed = line.trimStart();
+		if (trimmed.startsWith("```")) {
+			inFence = !inFence;
+			out.push(line);
+			continue;
+		}
+		if (inFence) {
+			out.push(line);
+			continue;
+		}
+
+		let next = line;
+		next = next.replace(/^#{1,6}\s+(.+)$/, "*$1*");
+		next = next.replace(/\*\*(.+?)\*\*/g, "*$1*");
+		next = next.replace(/__(.+?)__/g, "_$1_");
+		out.push(next);
+	}
+
+	return out.join("\n");
+}
+
 const TELEGRAM_MATH_PATTERNS: readonly RegExp[] = [
 	/\$\$[\s\S]+?\$\$/m,
 	/(^|[^\\])\$[^$\n]+\$/m,
@@ -277,7 +309,7 @@ export function splitSlackMessageText(text: string, maxLen: number = SLACK_MESSA
 	return chunks;
 }
 
-function slackBlocksForOutboxRecord(record: OutboxRecord): SlackLayoutBlock[] | undefined {
+function slackBlocksForOutboxRecord(record: OutboxRecord, body: string): SlackLayoutBlock[] | undefined {
 	const interactionMessage = record.envelope.metadata?.interaction_message;
 	if (!interactionMessage || typeof interactionMessage !== "object") {
 		return undefined;
@@ -320,7 +352,7 @@ function slackBlocksForOutboxRecord(record: OutboxRecord): SlackLayoutBlock[] | 
 		return undefined;
 	}
 	return [
-		{ type: "section", text: { type: "mrkdwn", text: record.envelope.body } },
+		{ type: "section", text: { type: "mrkdwn", text: body } },
 		{ type: "actions", elements: buttons },
 	];
 }
@@ -650,8 +682,9 @@ export async function deliverSlackOutboxRecord(opts: {
 }): Promise<OutboxDeliveryHandlerResult> {
 	const { botToken, record } = opts;
 	const attachments = record.envelope.attachments ?? [];
-	const textChunks = splitSlackMessageText(record.envelope.body);
-	const blocks = slackBlocksForOutboxRecord(record);
+	const renderedBody = renderSlackMarkdown(record.envelope.body);
+	const textChunks = splitSlackMessageText(renderedBody);
+	const blocks = slackBlocksForOutboxRecord(record, renderedBody);
 	const threadTs = slackThreadTsFromMetadata(record.envelope.metadata);
 	if (attachments.length === 0) {
 		for (const [index, chunk] of textChunks.entries()) {

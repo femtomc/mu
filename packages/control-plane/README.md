@@ -72,13 +72,14 @@ Minimum practical setup for command flow:
 - **Event Subscriptions**
   - Enable events
   - Request URL: `https://<your-host>/webhooks/slack`
-  - Subscribe to bot event: `message`
+  - Subscribe to bot event: `app_mention`
 - **Interactivity & Shortcuts**
   - Enable interactivity
   - Request URL: `https://<your-host>/webhooks/slack`
 
 Recommended bot token scopes:
 
+- `app_mentions:read` (inbound `app_mention` events)
 - `chat:write` (outbound text replies)
 - `files:read` (inbound Slack file download from events)
 - `files:write` (outbound Slack media delivery)
@@ -268,24 +269,26 @@ If Telegram media upload rejects an attachment, delivery falls back to text-only
 Slack ingress currently supports two accepted payload families on `/webhooks/slack`:
 
 - Slash commands (`application/x-www-form-urlencoded`), where `command` must be `/mu`
-- Events API callbacks (`application/json`) where `type=event_callback` and `event.type=message`
+- Events API callbacks (`application/json`) where `type=event_callback` and `event.type=app_mention`
 
-For both DMs and channels, `/mu` command execution remains explicit:
+For both DMs and channels, `/mu` slash command execution remains explicit:
 
 - Accepted slash command text must normalize to `/mu ...`
 - Slack slash payloads with `command != /mu` are deterministic no-op with reason `slack_command_required`
-- Slack event callbacks can opt into conversational routing for linked actors only (see below)
+- Slack event callbacks accept `app_mention` only; other event types are deterministic no-op (`unsupported_slack_event`)
 
 #### Linked vs unlinked actor semantics (Slack collaborative contract)
 
-Slack keeps `/mu` parity while allowing safe conversational ingress for linked event actors:
+Slack keeps `/mu` parity while allowing safe mention-triggered conversational ingress for linked event actors:
 
-- **Linked actor + explicit `/mu ...`**: command enters normal policy/confirmation pipeline.
-- **Unlinked actor + explicit `/mu ...`**: deterministic deny with `identity_not_linked`.
-- **Linked actor + non-`/mu` event callback text**: adapter sets `metadata.mu_conversational_ingress = "allow"`, so the turn routes through operator conversational handling.
-- **Unlinked actor + non-`/mu` freeform**: deterministic no-op with `channel_requires_explicit_command` (no operator execution).
+- **Linked actor + app mention containing explicit `/mu ...`**: command enters normal policy/confirmation pipeline.
+- **Unlinked actor + app mention containing explicit `/mu ...`**: deterministic deny with `identity_not_linked`.
+- **Linked actor + non-`/mu` app mention text**: adapter sets `metadata.mu_conversational_ingress = "allow"`, so the turn routes through operator conversational handling.
+- **Unlinked actor + non-`/mu` app mention text**: deterministic no-op with `channel_requires_explicit_command` (no operator execution).
 
-This preserves explicit `/mu` behavior while enabling linked Slack conversational turns without creating an implicit path for unlinked actors.
+This preserves explicit `/mu` behavior while enabling linked Slack `@mu ...` conversational turns without creating an implicit path for unlinked actors.
+
+Conversational operator replies are delivered as plain chat bodies (not wrapped control-plane lifecycle scaffolding). Slack output applies light markdown normalization (for example, `### Heading` → `*Heading*`) for better mrkdwn rendering.
 
 Recommended secure collaboration mode: keep a single linked actor for the shared channel/thread, and rotate ownership via `mu control unlink` + `mu control link` when responsibility changes.
 

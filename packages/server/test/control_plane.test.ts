@@ -21,6 +21,7 @@ import {
 	type ControlPlaneHandle,
 	type ControlPlaneSessionLifecycle,
 	containsTelegramMathNotation,
+	renderSlackMarkdown,
 	renderTelegramMarkdown,
 	splitSlackMessageText,
 	splitTelegramMessageText,
@@ -405,6 +406,21 @@ describe("telegram markdown rendering", () => {
 		expect(rendered).toContain('const raw = "**not-bold**";');
 	});
 
+	test("renderSlackMarkdown normalizes headings while preserving fenced code blocks", () => {
+		const input = [
+			"### Capability summary",
+			"Operator says **all good** and __ready__.",
+			"```md",
+			"### keep as-is",
+			"```",
+		].join("\n");
+
+		const rendered = renderSlackMarkdown(input);
+		expect(rendered).toContain("*Capability summary*");
+		expect(rendered).toContain("Operator says *all good* and _ready_.");
+		expect(rendered).toContain("### keep as-is");
+	});
+
 	test("buildTelegramSendMessagePayload toggles parse_mode for rich formatting", () => {
 		const rich = buildTelegramSendMessagePayload({
 			chatId: "123",
@@ -722,6 +738,33 @@ describe("telegram outbound media delivery", () => {
 					],
 				},
 			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("normalizes markdown headings before Slack chat.postMessage delivery", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== "https://slack.com/api/chat.postMessage") {
+				throw new Error(`unexpected fetch: ${url}`);
+			}
+			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+			return new Response(JSON.stringify({ ok: true, ts: "10.02a" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+		try {
+			const result = await deliverSlackOutboxRecord({
+				botToken: "xoxb-test-token",
+				record: mkSlackOutboxRecord({ body: "### Heading\n- one\n- two" }),
+			});
+			expect(result.kind).toBe("delivered");
+			expect(payloads).toHaveLength(1);
+			expect(payloads[0]?.text).toBe("*Heading*\n- one\n- two");
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

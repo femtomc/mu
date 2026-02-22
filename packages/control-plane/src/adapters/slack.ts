@@ -120,6 +120,14 @@ function parseSlackEventFiles(value: unknown): SlackEventFile[] {
 	return out;
 }
 
+function normalizeSlackEventCommandText(eventType: string, text: string): string {
+	const trimmed = text.trim();
+	if (eventType !== "app_mention") {
+		return trimmed;
+	}
+	return trimmed.replace(/^(?:<@[^>\s]+>\s*)+/, "").trim();
+}
+
 type SlackActionParseResult =
 	| { kind: "none" }
 	| {
@@ -452,15 +460,16 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		const eventType = typeof event.type === "string" ? event.type : "";
 		const channelId = typeof event.channel === "string" ? event.channel : "unknown-channel";
 		const actorId = typeof event.user === "string" ? event.user : "unknown-user";
-		const rawText = typeof event.text === "string" ? event.text.trim() : "";
-		if (eventType !== "message") {
+		const rawText = typeof event.text === "string" ? event.text : "";
+		const normalizedText = normalizeSlackEventCommandText(eventType, rawText);
+		if (eventType !== "app_mention") {
 			await this.#appendAudit({
 				requestId,
 				deliveryId,
 				teamId,
 				channelId,
 				actorId,
-				commandText: rawText.length > 0 ? rawText : "/mu",
+				commandText: normalizedText.length > 0 ? normalizedText : "/mu",
 				event: "slack.event.ignored",
 				reason: "unsupported_slack_event",
 				metadata: { event_type: eventType, event_id: eventId },
@@ -475,7 +484,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			});
 		}
 
-		const isExplicitCommand = rawText.startsWith("/mu");
+		const isExplicitCommand = normalizedText.startsWith("/mu");
 		const linkedBinding = this.#pipeline.identities.resolveActive({
 			channel: this.spec.channel,
 			channelTenantId: teamId,
@@ -488,7 +497,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				teamId,
 				channelId,
 				actorId,
-				commandText: rawText.length > 0 ? rawText : "/mu",
+				commandText: normalizedText.length > 0 ? normalizedText : "/mu",
 				event: "slack.event.ignored",
 				reason: "channel_requires_explicit_command",
 				metadata: { event_type: eventType, event_id: eventId, linked_actor: false },
@@ -529,7 +538,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 					teamId,
 					channelId,
 					actorId,
-					commandText: rawText,
+					commandText: normalizedText,
 					event: "slack.file.pre_download.deny",
 					reason: pre.reason,
 					metadata: { event_id: eventId, file_id: file.id, ...pre.audit },
@@ -543,7 +552,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 					teamId,
 					channelId,
 					actorId,
-					commandText: rawText,
+					commandText: normalizedText,
 					event: "slack.file.download.skipped",
 					reason: "slack_bot_token_required",
 					metadata: { event_id: eventId, file_id: file.id },
@@ -569,7 +578,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 					teamId,
 					channelId,
 					actorId,
-					commandText: rawText,
+					commandText: normalizedText,
 					event: "slack.file.download.failed",
 					reason: err instanceof Error ? err.message : "download_failed",
 					metadata: { event_id: eventId, file_id: file.id },
@@ -614,7 +623,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 					teamId,
 					channelId,
 					actorId,
-					commandText: rawText,
+					commandText: normalizedText,
 					event: "slack.file.post_download.deny",
 					reason: post.reason,
 					metadata: { event_id: eventId, file_id: file.id, ...post.audit },
@@ -646,13 +655,13 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			actor_binding_id: bindingHint.actorBindingId,
 			assurance_tier: bindingHint.assuranceTier,
 			repo_root: this.#pipeline.runtime.paths.repoRoot,
-			command_text: rawText,
+			command_text: normalizedText,
 			scope_required: "cp.read",
 			scope_effective: "cp.read",
 			target_type: "status",
 			target_id: channelId,
 			idempotency_key: `slack-idem-event-${eventId}`,
-			fingerprint: `slack-fp-event-${sha256Hex(rawText.toLowerCase())}`,
+			fingerprint: `slack-fp-event-${sha256Hex(normalizedText.toLowerCase())}`,
 			attachments: attachments.length > 0 ? attachments : undefined,
 			metadata: {
 				adapter: this.spec.channel,
@@ -670,7 +679,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			teamId,
 			channelId,
 			actorId,
-			commandText: rawText,
+			commandText: normalizedText,
 			event: "slack.event.accepted",
 			metadata: { event_id: eventId, attachment_count: attachments.length },
 		});
@@ -687,6 +696,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				event_id: eventId,
 				...(threadTsCandidate ? { slack_thread_ts: threadTsCandidate } : {}),
 			},
+			forceOutbox: true,
 		});
 
 		return acceptedIngressResult({
