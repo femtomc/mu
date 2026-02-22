@@ -120,34 +120,11 @@ function summarizeTelegramCallbackAck(text: string): string {
 	return "Processed request.";
 }
 
-function normalizeTelegramMessageCommand(text: string, botUsername: string | null): string {
-	const trimmed = text.trim();
-	const botTarget = botUsername ? botUsername.replace(/^@/, "").toLowerCase() : null;
-	const mentionMatch = /^\/mu@([a-z0-9_]+)(?:\s+(.*))?$/i.exec(trimmed);
-	if (mentionMatch) {
-		const mentioned = mentionMatch[1]!.toLowerCase();
-		if (botTarget && mentioned !== botTarget) {
-			return trimmed;
-		}
-		const suffix = (mentionMatch[2] ?? "").trim();
-		return suffix.length > 0 ? `/mu ${suffix}` : "/mu";
-	}
-	if (trimmed.startsWith("/mu")) {
-		return trimmed;
-	}
-	return trimmed;
+function normalizeTelegramMessageCommand(text: string, _botUsername: string | null): string {
+	return text.trim();
 }
 
-function normalizeTelegramCallbackData(data: string): string | null {
-	const trimmed = data.trim();
-	const confirmMatch = /^confirm:([^\s:]+)$/i.exec(trimmed);
-	if (confirmMatch?.[1]) {
-		return `/mu confirm ${confirmMatch[1]}`;
-	}
-	const cancelMatch = /^cancel:([^\s:]+)$/i.exec(trimmed);
-	if (cancelMatch?.[1]) {
-		return `/mu cancel ${cancelMatch[1]}`;
-	}
+function normalizeTelegramCallbackData(_data: string): string | null {
 	return null;
 }
 
@@ -803,7 +780,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 					response: telegramWebhookMethodResponse({
 						method: "answerCallbackQuery",
 						callback_query_id: sourceId,
-						text: "Unsupported action.",
+						text: "Interactive actions are no longer supported.",
 						show_alert: false,
 					}),
 				});

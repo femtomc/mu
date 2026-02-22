@@ -154,10 +154,5 @@ export type ControlPlaneHandle = {
 		requestId?: string;
 		metadata?: Record<string, unknown>;
 	}): Promise<CommandPipelineResult>;
-	submitTerminalCommand?(opts: {
-		commandText: string;
-		repoRoot: string;
-		requestId?: string;
-	}): Promise<CommandPipelineResult>;
 	stop(): Promise<void>;
 };

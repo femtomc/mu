@@ -1,5 +1,18 @@
 import { z } from "zod";
-import { CommandStateSchema } from "./command_state.js";
+
+export const CorrelationStateSchema = z.enum([
+	"accepted",
+	"awaiting_confirmation",
+	"queued",
+	"in_progress",
+	"deferred",
+	"completed",
+	"failed",
+	"cancelled",
+	"expired",
+	"dead_letter",
+]);
+export type CorrelationState = z.infer<typeof CorrelationStateSchema>;
 
 export const CONTROL_PLANE_SCHEMA_VERSION = 1;
 
@@ -22,7 +35,7 @@ export const CorrelationMetadataSchema = z.object({
 	target_type: z.string().min(1),
 	target_id: z.string().min(1),
 	attempt: z.number().int().nonnegative(),
-	state: CommandStateSchema,
+	state: CorrelationStateSchema,
 	error_code: z.string().nullable(),
 	operator_session_id: z.string().min(1).nullable().default(null),
 	operator_turn_id: z.string().min(1).nullable().default(null),

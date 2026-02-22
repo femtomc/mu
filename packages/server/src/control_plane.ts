@@ -11,7 +11,6 @@ import {
 	type ControlPlaneSignalObserver,
 	type GenerationTelemetryRecorder,
 	getControlPlanePaths,
-	type MutationCommandExecutionResult,
 	type OutboxDeliveryHandlerResult,
 	type OutboxRecord,
 	TelegramControlPlaneAdapterSpec,
@@ -311,52 +310,8 @@ export function splitSlackMessageText(text: string, maxLen: number = SLACK_MESSA
 	return chunks;
 }
 
-function slackBlocksForOutboxRecord(record: OutboxRecord, body: string): SlackLayoutBlock[] | undefined {
-	const interactionMessage = record.envelope.metadata?.interaction_message;
-	if (!interactionMessage || typeof interactionMessage !== "object") {
-		return undefined;
-	}
-	const rawActions = (interactionMessage as { actions?: unknown }).actions;
-	if (!Array.isArray(rawActions) || rawActions.length === 0) {
-		return undefined;
-	}
-	const buttons: SlackMessageButtonElement[] = [];
-	for (const action of rawActions) {
-		if (!action || typeof action !== "object") {
-			continue;
-		}
-		const candidate = action as { label?: unknown; command?: unknown };
-		if (typeof candidate.label !== "string" || typeof candidate.command !== "string") {
-			continue;
-		}
-		const normalized = candidate.command.trim().replace(/^\/mu\s+/i, "");
-		const confirm = /^confirm\s+([^\s]+)$/i.exec(normalized);
-		if (confirm?.[1]) {
-			buttons.push({
-				type: "button",
-				text: { type: "plain_text", text: candidate.label },
-				value: `confirm:${confirm[1]}`,
-				action_id: `confirm_${confirm[1]}`,
-			});
-			continue;
-		}
-		const cancel = /^cancel\s+([^\s]+)$/i.exec(normalized);
-		if (cancel?.[1]) {
-			buttons.push({
-				type: "button",
-				text: { type: "plain_text", text: candidate.label },
-				value: `cancel:${cancel[1]}`,
-				action_id: `cancel_${cancel[1]}`,
-			});
-		}
-	}
-	if (buttons.length === 0) {
-		return undefined;
-	}
-	return [
-		{ type: "section", text: { type: "mrkdwn", text: body } },
-		{ type: "actions", elements: buttons },
-	];
+function slackBlocksForOutboxRecord(_record: OutboxRecord, _body: string): SlackLayoutBlock[] | undefined {
+	return undefined;
 }
 
 function slackThreadTsFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
@@ -378,38 +333,8 @@ function slackStatusMessageTsFromMetadata(metadata: Record<string, unknown> | un
 	return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function telegramReplyMarkupForOutboxRecord(record: OutboxRecord): TelegramInlineKeyboardMarkup | undefined {
-	const interactionMessage = record.envelope.metadata?.interaction_message;
-	if (!interactionMessage || typeof interactionMessage !== "object") {
-		return undefined;
-	}
-	const rawActions = (interactionMessage as { actions?: unknown }).actions;
-	if (!Array.isArray(rawActions) || rawActions.length === 0) {
-		return undefined;
-	}
-
-	const row: TelegramInlineKeyboardButton[] = [];
-	for (const action of rawActions) {
-		if (!action || typeof action !== "object") {
-			continue;
-		}
-		const candidate = action as { label?: unknown; command?: unknown };
-		if (typeof candidate.label !== "string" || typeof candidate.command !== "string") {
-			continue;
-		}
-		const normalized = candidate.command.trim().replace(/^\/mu\s+/i, "");
-		const confirm = /^confirm\s+([^\s]+)$/i.exec(normalized);
-		if (confirm?.[1]) {
-			row.push({ text: candidate.label, callback_data: `confirm:${confirm[1]}` });
-			continue;
-		}
-		const cancel = /^cancel\s+([^\s]+)$/i.exec(normalized);
-		if (cancel?.[1]) {
-			row.push({ text: candidate.label, callback_data: `cancel:${cancel[1]}` });
-		}
-	}
-
-	return row.length > 0 ? { inline_keyboard: [row] } : undefined;
+function telegramReplyMarkupForOutboxRecord(_record: OutboxRecord): TelegramInlineKeyboardMarkup | undefined {
+	return undefined;
 }
 
 async function postTelegramMessage(botToken: string, payload: TelegramSendMessagePayload): Promise<Response> {
@@ -935,98 +860,6 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		pipeline = new ControlPlaneCommandPipeline({
 			runtime,
 			operator,
-			mutationExecutor: async (record): Promise<MutationCommandExecutionResult | null> => {
-				if (record.target_type === "reload" || record.target_type === "update") {
-					if (record.command_args.length > 0) {
-						return {
-							terminalState: "failed",
-							errorCode: "cli_validation_failed",
-							trace: {
-								cliCommandKind: record.target_type,
-							},
-							mutatingEvents: [
-								{
-									eventType: "session.lifecycle.command.failed",
-									payload: {
-										action: record.target_type,
-										reason: "unexpected_args",
-										args: record.command_args,
-									},
-								},
-							],
-						};
-					}
-
-					const action = record.target_type;
-					const executeLifecycleAction =
-						action === "reload" ? opts.sessionLifecycle.reload : opts.sessionLifecycle.update;
-
-					try {
-						const lifecycle = await executeLifecycleAction();
-						if (!lifecycle.ok) {
-							return {
-								terminalState: "failed",
-								errorCode: "session_lifecycle_failed",
-								trace: {
-									cliCommandKind: action,
-								},
-								mutatingEvents: [
-									{
-										eventType: "session.lifecycle.command.failed",
-										payload: {
-											action,
-											reason: lifecycle.message,
-											details: lifecycle.details ?? null,
-										},
-									},
-								],
-							};
-						}
-						return {
-							terminalState: "completed",
-							result: {
-								ok: true,
-								action,
-								message: lifecycle.message,
-								details: lifecycle.details ?? null,
-							},
-							trace: {
-								cliCommandKind: action,
-							},
-							mutatingEvents: [
-								{
-									eventType: `session.lifecycle.command.${action}`,
-									payload: {
-										action,
-										message: lifecycle.message,
-										details: lifecycle.details ?? null,
-									},
-								},
-							],
-						};
-					} catch (err) {
-						return {
-							terminalState: "failed",
-							errorCode: err instanceof Error && err.message ? err.message : "session_lifecycle_failed",
-							trace: {
-								cliCommandKind: action,
-							},
-							mutatingEvents: [
-								{
-									eventType: "session.lifecycle.command.failed",
-									payload: {
-										action,
-										reason: err instanceof Error && err.message ? err.message : "session_lifecycle_failed",
-									},
-								},
-							],
-						};
-					}
-				}
-
-
-				return null;
-			},
 		});
 		await pipeline.start();
 
@@ -1324,16 +1157,6 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 				return await pipeline.handleAutonomousIngress(autonomousOpts);
 			},
 
-			async submitTerminalCommand(terminalOpts: {
-				commandText: string;
-				repoRoot: string;
-				requestId?: string;
-			}): Promise<CommandPipelineResult> {
-				if (!pipeline) {
-					throw new Error("control_plane_pipeline_unavailable");
-				}
-				return await pipeline.handleTerminalInbound(terminalOpts);
-			},
 
 			async stop(): Promise<void> {
 				wakeDeliveryObserver = null;

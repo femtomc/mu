@@ -125,18 +125,7 @@ describe("mu-server", () => {
 		const serverFromRuntime = createServerFromRuntime(runtime, { port: 3011 });
 		expect(serverFromRuntime.port).toBe(3011);
 
-		const reload = await runtime.controlPlane.submitTerminalCommand?.({
-			commandText: "/mu reload",
-			repoRoot: tempDir,
-		});
-		expect(reload?.kind).toBe("completed");
-
-		const update = await runtime.controlPlane.submitTerminalCommand?.({
-			commandText: "/mu update",
-			repoRoot: tempDir,
-		});
-		expect(update?.kind).toBe("completed");
-		expect(calls).toEqual(["reload", "update"]);
+		expect(calls).toEqual([]);
 
 		await runtime.controlPlane.stop();
 	});
@@ -309,7 +298,7 @@ describe("mu-server", () => {
 			configured: true,
 			active: true,
 			frontend: true,
-			ingress_mode: "command_only",
+			ingress_mode: "conversational",
 		});
 		expect(byChannel.get("neovim")?.verification?.kind).toBe("shared_secret_header");
 		expect(byChannel.get("neovim")?.media.outbound_delivery).toMatchObject({

@@ -114,7 +114,7 @@ const SOURCE_BOUNDARY_RULES: SourceBoundaryRule[] = [
 	},
 	{
 		file: "packages/control-plane/src/command_pipeline.ts",
-		description: "command pipeline is isolated from mu-agent runtime package",
+		description: "command pipeline stays control-plane local and operator-contract based",
 		forbiddenTokens: [
 			{
 				token: "@femtomc/mu-agent",
@@ -127,8 +127,8 @@ const SOURCE_BOUNDARY_RULES: SourceBoundaryRule[] = [
 				reason: "pipeline should depend on operator runtime interface contract",
 			},
 			{
-				token: "DefaultCommandContextResolver",
-				reason: "pipeline should use internal command-context seam",
+				token: "claimIdempotency",
+				reason: "pipeline should enforce idempotent ingress handling",
 			},
 		],
 	},

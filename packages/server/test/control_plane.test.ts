@@ -655,94 +655,6 @@ describe("telegram outbound media delivery", () => {
 		}
 	});
 
-	test("maps awaiting-confirmation actions to Telegram inline callback buttons", async () => {
-		const payloads: unknown[] = [];
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (!url.includes("/sendMessage")) {
-				throw new Error(`unexpected fetch: ${url}`);
-			}
-			if (init?.body && typeof init.body === "string") {
-				payloads.push(JSON.parse(init.body));
-			}
-			return new Response(JSON.stringify({ ok: true }), { status: 200 });
-		}) as typeof fetch;
-
-		try {
-			const record = mkTelegramOutboxRecord({
-				body: "confirm or cancel",
-				metadata: {
-					interaction_message: {
-						actions: [
-							{ label: "Confirm", command: "/mu confirm mu-abc123" },
-							{ label: "Cancel", command: "/mu cancel mu-abc123" },
-						],
-					},
-				},
-			});
-			const result = await deliverTelegramOutboxRecord({ botToken: "telegram-token", record });
-			expect(result.kind).toBe("delivered");
-			expect(payloads).toHaveLength(1);
-			expect(payloads[0]).toMatchObject({
-				reply_markup: {
-					inline_keyboard: [[
-						{ text: "Confirm", callback_data: "confirm:mu-abc123" },
-						{ text: "Cancel", callback_data: "cancel:mu-abc123" },
-					]],
-				},
-			});
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
-	test("maps awaiting-confirmation actions to Slack message buttons", async () => {
-		const payloads: Array<Record<string, unknown>> = [];
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (url !== "https://slack.com/api/chat.postMessage") {
-				throw new Error(`unexpected fetch: ${url}`);
-			}
-			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-			return new Response(JSON.stringify({ ok: true, ts: "10.01" }), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			});
-		}) as typeof fetch;
-		try {
-			const result = await deliverSlackOutboxRecord({
-				botToken: "xoxb-test-token",
-				record: mkSlackOutboxRecord({
-					body: "confirm or cancel",
-					metadata: {
-						interaction_message: {
-							actions: [
-								{ label: "Confirm", command: "/mu confirm mu-abc123" },
-								{ label: "Cancel", command: "/mu cancel mu-abc123" },
-							],
-						},
-					},
-				}),
-			});
-			expect(result.kind).toBe("delivered");
-			expect(payloads).toHaveLength(1);
-			expect(payloads[0]?.blocks).toMatchObject([
-				{ type: "section" },
-				{
-					type: "actions",
-					elements: [
-						{ type: "button", text: { type: "plain_text", text: "Confirm" }, value: "confirm:mu-abc123" },
-						{ type: "button", text: { type: "plain_text", text: "Cancel" }, value: "cancel:mu-abc123" },
-					],
-				},
-			]);
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
 	test("normalizes markdown headings before Slack chat.postMessage delivery", async () => {
 		const payloads: Array<Record<string, unknown>> = [];
 		const originalFetch = globalThis.fetch;
@@ -963,6 +875,10 @@ describe("bootstrapControlPlane operator wiring", () => {
 		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
 			config: configWith({ neovimSecret: "neovim-secret" }),
+			operatorBackend: new StaticOperatorBackend({
+				kind: "respond",
+				message: "Neovim operator response.",
+			}),
 		});
 		expect(handle).not.toBeNull();
 		if (!handle) {
@@ -1004,11 +920,11 @@ describe("bootstrapControlPlane operator wiring", () => {
 		};
 		expect(payload.ok).toBe(true);
 		expect(payload.accepted).toBe(true);
-		expect(payload.result.kind).toBe("completed");
+		expect(payload.result.kind).toBe("operator_response");
 		expect(payload.ack.length).toBeGreaterThan(0);
 		expect(payload.interaction.payload).toBeDefined();
 		const interactionPayload = payload.interaction.payload ?? {};
-		expect(interactionPayload.target_type).toBe("status");
+		expect(typeof interactionPayload.message).toBe("string");
 	});
 
 	test("notifyOperators fans out across mixed bindings and skips unsupported/unconfigured channels deterministically", async () => {
@@ -1199,7 +1115,11 @@ describe("bootstrapControlPlane operator wiring", () => {
 
 		const handle = await bootstrapControlPlaneForTest({
 			repoRoot,
-			config: configWith({ slackSecret: "slack-secret", slackBotToken: null, operatorEnabled: false }),
+			config: configWith({ slackSecret: "slack-secret", slackBotToken: null }),
+			operatorBackend: new StaticOperatorBackend({
+				kind: "respond",
+				message: "status response",
+			}),
 		});
 		expect(handle).not.toBeNull();
 		if (!handle) {
@@ -1566,7 +1486,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		}
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { text?: string };
-		expect(body.text).toContain("unmapped_command");
+		expect(body.text).toContain("operator_unavailable");
 		expect(body.text).not.toContain("Operator · CHAT");
 		expect(backend.turns).toBe(0);
 	});
@@ -1622,47 +1542,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(responseBody).toContain("operator_backend_error");
 	});
 
-	test("terminal reload/update commands route through session lifecycle", async () => {
-		const repoRoot = await mkRepoRoot();
-		const calls: string[] = [];
-
-		const handle = await bootstrapControlPlaneForTest({
-			repoRoot,
-			config: configWith({}),
-			sessionLifecycle: {
-				reload: async () => {
-					calls.push("reload");
-					return { ok: true, action: "reload", message: "reload scheduled" };
-				},
-				update: async () => {
-					calls.push("update");
-					return { ok: true, action: "update", message: "update scheduled" };
-				},
-			},
-			terminalEnabled: true,
-		});
-		expect(handle).not.toBeNull();
-		if (!handle) {
-			throw new Error("expected control plane handle");
-		}
-		handlesToCleanup.add(handle);
-
-		const reloadResult = await handle.submitTerminalCommand?.({
-			commandText: "/mu reload",
-			repoRoot,
-		});
-		expect(reloadResult?.kind).toBe("completed");
-
-		const updateResult = await handle.submitTerminalCommand?.({
-			commandText: "/update",
-			repoRoot,
-		});
-		expect(updateResult?.kind).toBe("completed");
-
-		expect(calls).toEqual(["reload", "update"]);
-	});
-
-	test("freeform slack text without operator routing is deterministically denied as unmapped command", async () => {
+	test("freeform slack text without operator routing is deterministically denied as operator unavailable", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
@@ -1692,7 +1572,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(response.status).toBe(200);
 		const ignoredBody = (await response.json()) as { text?: string };
 		expect(ignoredBody.text).toContain("DENIED");
-		expect(ignoredBody.text).toContain("unmapped_command");
+		expect(ignoredBody.text).toContain("operator_unavailable");
 
 	});
 

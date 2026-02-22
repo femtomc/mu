@@ -40,6 +40,6 @@ describe("control-plane modular boundaries", () => {
 		expect(source).not.toContain("@femtomc/mu-agent");
 		expect(packageJson.dependencies?.["@femtomc/mu-agent"]).toBeUndefined();
 		expect(source).toContain("MessagingOperatorRuntimeLike");
-		expect(source).toContain("DefaultCommandContextResolver");
+		expect(source).toContain("claimIdempotency");
 	});
 });

@@ -1,6 +1,8 @@
 # @femtomc/mu-control-plane
 
-Control-plane command pipeline for messaging ingress, policy/confirmation safety, idempotency, and outbox delivery. The messaging operator runtime lives in `@femtomc/mu-agent`.
+Operator-first conversational ingress runtime for messaging adapters, idempotent turn handling, and outbox delivery. The messaging operator runtime lives in `@femtomc/mu-agent`.
+
+> Breaking model change: command/mutation governance (command parser, policy, confirmation workflow, mutation execution) has been removed from the active control-plane runtime. Ingress now routes conversationally through the operator runtime only.
 
 ## First-party messaging adapters
 
@@ -9,7 +11,7 @@ Control-plane command pipeline for messaging ingress, policy/confirmation safety
 - Telegram
 - Neovim
 
-All adapters normalize inbound commands into the same control-plane pipeline and preserve correlation across command journal and outbox delivery.
+All adapters normalize inbound turns into the same operator ingress pipeline and preserve correlation across idempotency/outbox delivery.
 
 
 ## Runtime setup checklist
@@ -173,7 +175,6 @@ Thread behavior in this pattern:
 
 ```bash
 mu control status --pretty
-mu store tail cp_commands --limit 20 --pretty
 mu store tail cp_outbox --limit 20 --pretty
 mu store tail cp_adapter_audit --limit 20 --pretty
 ```
@@ -186,10 +187,8 @@ mu store tail cp_adapter_audit --limit 20 --pretty
   - Slack signing secret mismatch or wrong endpoint.
 - `invalid_slack_timestamp` / `stale_slack_timestamp`
   - malformed or stale signed request timestamp.
-- `channel_requires_explicit_command`
-  - ingress arrived on a command-only channel without conversational override metadata.
 - `unsupported_slack_action_payload`
-  - interactive payload did not match `confirm:<id>` or `cancel:<id>`.
+  - interactive button payloads are no longer accepted on Slack ingress.
 - `slack_bot_token_required`
   - Slack file download attempted without `control_plane.adapters.slack.bot_token`.
 
@@ -262,98 +261,35 @@ Telegram delivery chooses API method by attachment type/mime:
 - SVG (`image/svg+xml` or `.svg`) routes to `sendDocument` (not `sendPhoto`)
 - PDF routes to `sendDocument`
 
-If Telegram media upload rejects an attachment, delivery falls back to text-only `sendMessage` so the command result is still visible.
+If Telegram media upload rejects an attachment, delivery falls back to text-only `sendMessage` so the operator reply is still visible.
 
-### Slack UX contract: conversational ingress + confirmation actions
+### Slack + Telegram UX contract (conversational ingress only)
 
-Slack ingress supports two accepted payload families on `/webhooks/slack`:
+Both Slack and Telegram ingress are conversational-first:
 
-- Slash command payloads (`application/x-www-form-urlencoded`), including conversational text in `text`.
-- Events API callbacks (`application/json`) where `type=event_callback` and `event.type=app_mention`.
+- Linked actors route inbound turns through the operator runtime.
+- Unlinked actors are denied with `identity_not_linked`.
+- Slack supports slash payloads and `app_mention` event callbacks.
+- Telegram supports private/group/supergroup message text/caption ingress.
 
-Slack event callbacks still accept `app_mention` only; other event types are deterministic no-op (`unsupported_slack_event`).
+Interactive confirmation payloads (`confirm:<id>` / `cancel:<id>`) are no longer part of the active runtime contract. Adapters treat those payloads as unsupported.
 
-#### Linked vs unlinked actor semantics (Slack collaborative contract)
+Slack behavior details:
 
-Slack uses linkage (not command prefix) as the primary authorization gate for mentions:
+- Conversational retries (`event_id`) are deduplicated for a short TTL.
+- Context is thread-scoped via `slack_thread_ts`.
+- With bot token configured, long turns use one in-thread progress anchor and in-place updates (`chat.update`).
 
-- **Linked actor + app mention**: turn routes through the operator conversational runtime (explicit command-like text is treated as normal conversational input on this ingress path).
-- **Unlinked actor + app mention**: deterministic deny with `identity_not_linked`.
+Telegram behavior details:
 
-This keeps `/mu` parity while removing command-prefix assumptions from conversational mention UX.
-
-Slack conversational retries (same `event_id`) are deduplicated for a short TTL so at-least-once delivery does not fan out duplicate long-running operator turns.
-Slack conversational context is scoped per linked actor + channel + `slack_thread_ts` (top-level mentions use the mention message timestamp), so separate threads do not share operator memory.
-When Slack bot token delivery is configured, conversational mention turns post an in-thread progress anchor and outbox delivery updates that anchor in-place with final output (`chat.update`) to reduce thread noise while preserving liveness.
-Long-running turns also emit lightweight in-place progress checkpoints (for example, operator turn started + periodic heartbeat) and deterministic adapter audit rows (`slack.progress_checkpoint.*`, `slack.operator_turn.*`).
-Conversational operator replies are delivered as plain chat bodies (not wrapped control-plane lifecycle scaffolding). Slack output applies light markdown normalization (for example, `### Heading` → `*Heading*`) for better mrkdwn rendering.
-
-Recommended secure collaboration mode: keep a single linked actor for the shared channel/thread, and rotate ownership via `mu control unlink` + `mu control link` when responsibility changes.
-
-Override escape hatch (explicit opt-in, per inbound envelope):
-
-- Command-only channels remain strict by default.
-- Adapters may explicitly set `metadata.mu_conversational_ingress = "allow"` on a specific inbound envelope to route that one turn through conversational operator handling.
-- Any other value (including booleans) is ignored.
-- Slash command semantics are unchanged.
-
-#### Slack thread anchoring contract
-
-Slack reply anchoring is deterministic and source-preserving:
-
-- Event callback path: if present, `event.thread_ts` is used; else `event.ts` is used.
-- Interactive payload path: first non-empty value in `container.thread_ts`, `container.message_ts`, `message.thread_ts`, `message.ts` is used.
-- The selected anchor is persisted as `metadata.slack_thread_ts` and outbound delivery uses that as `thread_ts`.
-
-If no usable thread timestamp is present, delivery degrades to non-threaded channel send without changing command lifecycle semantics.
-
-#### Confirmation action payload contract (for Slack interactive surfaces)
-
-To preserve parity with typed command semantics, interactive confirmation payloads must normalize to the same command pair:
-
-- `confirm:<command_id>` → `/mu confirm <command_id>`
-- `cancel:<command_id>` → `/mu cancel <command_id>`
-
-`<command_id>` constraints:
-
-- non-empty
-- no whitespace
-- no additional `:` separators
-
-Unsupported/invalid action payloads (including malformed IDs or unknown action verbs) must be treated as deterministic no-op, with explicit audit reason `unsupported_slack_action_payload`, and must not mutate command lifecycle state.
-
-#### Slack ACK/error/guidance copy style
-
-Slack responses should stay concise and deterministic:
-
-- ACK path (slash command immediate response): one-line status + short guidance, ephemeral
-- Error surface: include canonical reason code in contract metadata and concise user text in rendered body
-
-Behavioral invariant: interactive confirm/cancel buttons are convenience UI only; `/mu confirm <id>` and `/mu cancel <id>` remain the source-of-truth fallback paths.
-
-### Telegram callback/gating/chunking contract
-
-Callback payload schema for inline confirmation buttons is intentionally narrow and deterministic:
-
-- Supported callback payloads:
-  - `confirm:<command_id>`
-  - `cancel:<command_id>`
-- `<command_id>` must not include whitespace or additional `:` separators.
-- Any other callback payload is rejected with `unsupported_telegram_callback` and an explicit callback ACK.
-
-Behavioral invariants:
-
-- Inline `Confirm`/`Cancel` buttons are convenience UI over the same command contract; `/mu confirm <id>` and `/mu cancel <id>` remain valid fallback parity paths.
-- Private, group, and supergroup chats may use conversational freeform turns via the operator runtime.
-- Outbound text keeps deterministic order when chunked; chunks are emitted in-order and preserve full body reconstruction.
-- Reply anchoring uses `telegram_reply_to_message_id` when parseable; invalid anchor metadata gracefully falls back to non-anchored sends.
-- Attachment-ingest failures preserve deterministic audit metadata while user-visible guidance is mapped to concise recovery copy.
+- Callback payloads that previously represented confirm/cancel now return deterministic unsupported-action ACKs.
+- Outbound text remains deterministically chunked.
+- Reply anchoring (`telegram_reply_to_message_id`) is preserved when parseable.
 
 ### Text-only fallback invariants
 
 - Existing text-only envelopes (no `attachments`) continue to use channel text endpoints (`chat.postMessage` for Slack, `sendMessage` for Telegram).
 - Optional `attachments` remain schema-compatible; text-only payloads continue to work without changes.
-- Telegram callback + group-gating behavior keeps the same command flow semantics because `/mu confirm|cancel <id>` and explicit `/mu ...` command ingress semantics are unchanged.
 
 ## Adapter contract
 
@@ -425,10 +361,10 @@ Control-plane responses now use a deterministic interaction contract (`interacti
 - `speaker`: `user | operator | mu_system | mu_tool` (`operator` is presented as Operator)
 - `intent`: `chat | ack | lifecycle | result | error`
 - `status`: `info | success | warning | error`
-- `state`: normalized lifecycle state (`awaiting_confirmation`, `completed`, etc.)
+- `state`: normalized interaction state (`responded`, `ignored`, `denied`, etc.)
 - `summary`: concise one-line summary
 - `details`: deterministic key/value details with `primary` vs `secondary` importance
-- `actions`: suggested next commands (for example `/mu confirm <id>`)
+- `actions`: optional suggested follow-ups (typically empty in current runtime)
 - `transition`: optional `from -> to` state transition
 - `payload`: structured JSON for expandable detail in rich clients
 
@@ -441,19 +377,18 @@ Outbox metadata stores the structured contract alongside rendered text (`interac
 `interaction_contract_version`, `interaction_render_mode`) so follow-on channel renderers can build richer,
 collapsible UI while preserving deterministic serialization.
 
-## Messaging operator + safe CLI triggers
+## Messaging operator runtime
 
-`MessagingOperatorRuntime` (from `@femtomc/mu-agent`) is the user-facing operator runtime that sits outside execution dispatch. It translates conversational channel input into approved command proposals and routes them through the same policy/idempotency/confirmation pipeline.
+`MessagingOperatorRuntime` (from `@femtomc/mu-agent`) is the user-facing runtime for conversational ingress.
 
-CLI execution is constrained through an explicit allowlist (`MuCliCommandSurface`) and a non-shell runner (`MuCliRunner`).
-Operator proposals can bridge readonly status/info queries (`status`, `ready`, `issue list`, `issue get`, `forum read`, `operator config get`, `operator model list`, `operator thinking list`) and mutating operator configuration actions (`operator model set`, `operator thinking set`). Mutations still require confirmation and are correlated end-to-end via:
+The control-plane pipeline now focuses on:
 
-- `operator_session_id`
-- `operator_turn_id`
-- `cli_invocation_id`
-- `cli_command_kind`
+- identity-link authorization,
+- idempotent dedupe/conflict handling,
+- operator turn execution,
+- deterministic outbox delivery.
 
-Unsafe or ambiguous requests are rejected with explicit reasons (`context_missing`, `context_ambiguous`, `context_unauthorized`, `cli_validation_failed`, etc.).
+Legacy command parsing/confirmation/mutation execution is no longer part of the active control-plane runtime.
 
 ## Frontend client helpers
 

@@ -514,21 +514,7 @@ function createServer(options: ServerOptions = {}) {
 			if (handle?.submitAutonomousIngress) {
 				return await handle.submitAutonomousIngress(opts);
 			}
-			if (handle?.submitTerminalCommand) {
-				return await handle.submitTerminalCommand({
-					commandText: opts.text,
-					repoRoot: opts.repoRoot,
-					requestId: opts.requestId,
-				});
-			}
 			throw new Error("control_plane_unavailable");
-		},
-		async submitTerminalCommand(opts) {
-			const handle = reloadManager.getControlPlaneCurrent();
-			if (!handle?.submitTerminalCommand) {
-				throw new Error("control_plane_unavailable");
-			}
-			return await handle.submitTerminalCommand(opts);
 		},
 		async stop() {
 			const handle = reloadManager.getControlPlaneCurrent();

@@ -1,7 +1,5 @@
 import type { AdapterIngressResult } from "../adapter_contract.js";
 import type { CommandPipelineResult, ControlPlaneCommandPipeline } from "../command_pipeline.js";
-import { type CommandRecord, correlationFromCommandRecord } from "../command_record.js";
-import type { CommandState } from "../command_state.js";
 import { assuranceTierForChannel, type Channel, ChannelSchema } from "../identity_store.js";
 import { formatAdapterAckMessage, presentPipelineResultMessage } from "../interaction_contract.js";
 import { type AssuranceTier, type InboundEnvelope, type OutboundEnvelope } from "../models.js";
@@ -146,32 +144,14 @@ export function resolveBindingHint(
 	};
 }
 
-export function commandFromPipelineResult(result: CommandPipelineResult): CommandRecord | null {
-	switch (result.kind) {
-		case "awaiting_confirmation":
-		case "completed":
-		case "cancelled":
-		case "expired":
-		case "deferred":
-		case "failed":
-			return result.command;
-		default:
-			return null;
-	}
-}
-
 export function outboundKindForPipelineResult(result: CommandPipelineResult): OutboundEnvelope["kind"] {
 	switch (result.kind) {
-		case "awaiting_confirmation":
-		case "cancelled":
-		case "expired":
-		case "deferred":
-			return "lifecycle";
-		case "completed":
+		case "operator_response":
 			return "result";
-		case "failed":
+		case "denied":
+		case "invalid":
 			return "error";
-		default:
+		case "noop":
 			return "ack";
 	}
 }
@@ -182,28 +162,28 @@ export function pipelineResultErrorCode(result: CommandPipelineResult): string |
 		case "invalid":
 		case "noop":
 			return result.reason;
-		case "failed":
-			return result.reason;
 		default:
 			return null;
 	}
 }
 
-export function syntheticStateForPipelineResult(result: CommandPipelineResult): CommandState {
+export function syntheticStateForPipelineResult(result: CommandPipelineResult):
+	| "completed"
+	| "failed"
+	| "deferred"
+	| "cancelled"
+	| "expired"
+	| "awaiting_confirmation"
+	| "accepted"
+	| "queued"
+	| "in_progress"
+	| "dead_letter" {
 	switch (result.kind) {
-		case "awaiting_confirmation":
-			return "awaiting_confirmation";
-		case "deferred":
-			return "deferred";
-		case "cancelled":
-			return "cancelled";
-		case "expired":
-			return "expired";
-		case "failed":
 		case "denied":
 		case "invalid":
 			return "failed";
-		default:
+		case "noop":
+		case "operator_response":
 			return "completed";
 	}
 }
@@ -262,48 +242,6 @@ export async function enqueueFallbackPipelineResult(opts: {
 	};
 
 	const dedupeKey = `fallback:${opts.inbound.channel}:${opts.inbound.request_id}`;
-	const decision = await opts.outbox.enqueue({
-		dedupeKey,
-		envelope,
-		nowMs: opts.nowMs,
-	});
-	return decision.record;
-}
-
-export async function enqueueDeferredPipelineResult(opts: {
-	outbox: ControlPlaneOutbox;
-	result: CommandPipelineResult;
-	nowMs: number;
-	metadata?: Record<string, unknown>;
-}): Promise<OutboxRecord | null> {
-	const command = commandFromPipelineResult(opts.result);
-	if (!command) {
-		return null;
-	}
-	const correlation = correlationFromCommandRecord(command);
-	const presented = presentPipelineResultMessage(opts.result);
-	const interactionRenderMode = command.channel === "telegram" ? "compact" : "detailed";
-	const envelopeBody = interactionRenderMode === "compact" ? presented.compact : presented.detailed;
-	const envelope: OutboundEnvelope = {
-		v: 1,
-		ts_ms: opts.nowMs,
-		channel: command.channel,
-		channel_tenant_id: command.channel_tenant_id,
-		channel_conversation_id: command.channel_conversation_id,
-		request_id: command.request_id,
-		response_id: `resp-${sha256Hex(`${command.command_id}:${command.state}:${opts.nowMs}`).slice(0, 20)}`,
-		kind: outboundKindForPipelineResult(opts.result),
-		body: envelopeBody,
-		correlation,
-		metadata: {
-			pipeline_result_kind: opts.result.kind,
-			interaction_contract_version: presented.message.v,
-			interaction_message: presented.message,
-			interaction_render_mode: interactionRenderMode,
-			...(opts.metadata ?? {}),
-		},
-	};
-	const dedupeKey = `${command.channel}:${command.command_id}:${opts.result.kind}:${command.state}`;
 	const decision = await opts.outbox.enqueue({
 		dedupeKey,
 		envelope,
@@ -397,14 +335,9 @@ export async function runPipelineForInbound(opts: {
 		opts.inbound.channel === "telegram" && replyToMessageId
 			? { ...(opts.metadata ?? {}), telegram_reply_to_message_id: replyToMessageId }
 			: opts.metadata;
-	let outboxRecord = await enqueueDeferredPipelineResult({
-		outbox: opts.outbox,
-		result: pipelineResult,
-		nowMs: opts.nowMs,
-		metadata: deliveryMetadata,
-	});
 
-	if (!outboxRecord && pipelineResult.kind === "operator_response") {
+	let outboxRecord: OutboxRecord | null = null;
+	if (pipelineResult.kind === "operator_response") {
 		outboxRecord = await enqueueOperatorResponse({
 			outbox: opts.outbox,
 			inbound: opts.inbound,

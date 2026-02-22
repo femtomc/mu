@@ -9,8 +9,8 @@ const CHANNEL_INGRESS_MODE: Record<Channel, IngressMode> = {
 	slack: "conversational",
 	discord: "conversational",
 	telegram: "conversational",
-	neovim: "command_only",
-	terminal: "command_only",
+	neovim: "conversational",
+	terminal: "conversational",
 };
 
 export function ingressModeForChannel(channel: Channel): IngressMode {
