@@ -762,17 +762,7 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	}
 	ctx.ui.setStatus("mu-subagents", statusParts.join(` ${ctx.ui.theme.fg("muted", "·")} `));
 
-	const footerMetaParts = [`q:${state.readyIssues.length}/${state.activeIssues.length}`, `tmux:${state.sessions.length}`];
-	if (staleCount > 0) {
-		footerMetaParts.push(`drift:${staleCount}`);
-	}
-	if (refreshStale) {
-		footerMetaParts.push("refresh:stale");
-	}
-	if (state.issueError || state.sessionError || state.activityError) {
-		footerMetaParts.push("err");
-	}
-	ctx.ui.setStatus("mu-subagents-meta", footerMetaParts.join(" "));
+	ctx.ui.setStatus("mu-subagents-meta", undefined);
 
 	const titleParts = [
 		ctx.ui.theme.fg("accent", ctx.ui.theme.bold("Subagents")),

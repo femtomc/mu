@@ -119,7 +119,7 @@ describe("branding footer HUD integration", () => {
 		}
 	});
 
-	test("retains subagents HUD marker behavior", async () => {
+	test("does not render subagents HUD markers in branding footer", async () => {
 		const { api, handlers } = createExtensionApiMock();
 		brandingExtension(api as unknown as Parameters<typeof brandingExtension>[0]);
 
@@ -136,14 +136,14 @@ describe("branding footer HUD integration", () => {
 		}
 
 		setActiveHudMode("subagents");
-		uiHarness.extensionStatuses.set("mu-subagents-meta", "health:healthy q:1/0 tmux:1");
+		uiHarness.extensionStatuses.set("mu-subagents-meta", "q:1/0 tmux:1");
 		const rendered = renderFooterLine({
 			footerFactory,
 			theme: uiHarness.theme,
 			extensionStatuses: uiHarness.extensionStatuses,
 		});
-		expect(rendered).toContain("hud:subagents");
-		expect(rendered).toContain("health:healthy");
+		expect(rendered).not.toContain("hud:subagents");
+		expect(rendered).not.toContain("q:1/0");
 
 		const shutdown = handlers.get("session_shutdown");
 		if (shutdown) {
