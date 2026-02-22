@@ -196,10 +196,8 @@ Operational fallback expectations:
 - Telegram text delivery chunks long messages into deterministic in-order `sendMessage` calls to stay below API size limits.
 - When outbound metadata includes `telegram_reply_to_message_id`, Telegram delivery anchors replies to the originating chat message.
 - Invalid/non-integer `telegram_reply_to_message_id` metadata is ignored so delivery degrades gracefully to non-anchored sends.
-- Awaiting-confirmation envelopes include Telegram inline `Confirm`/`Cancel` callback buttons when interaction metadata provides confirmation actions.
-- Telegram callback payloads are contract-limited to `confirm:<command_id>` and `cancel:<command_id>`; unsupported payloads are explicitly rejected.
-- Callback buttons keep parity with command fallback: `/mu confirm <id>` and `/mu cancel <id>` remain valid.
-- Group/supergroup Telegram freeform text is deterministic no-op with guidance; explicit `/mu ...` commands stay actionable.
+- Telegram callback action payloads are explicitly unsupported in the conversational-only runtime and return deterministic unsupported-action ACKs.
+- Group/supergroup Telegram freeform text routes conversationally through the operator runtime (subject to identity linking).
 - If Slack/Telegram bot token is missing, channel capability reason codes should report `*_bot_token_missing` and outbound delivery retries rather than hard-crashing runtime.
 
 ## Running the Server

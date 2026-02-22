@@ -274,7 +274,7 @@ function buildOperatorFailureFallbackMessage(code: string): string {
 	return [
 		"I ran into an internal operator formatting/runtime issue and could not complete that turn safely.",
 		`Code: ${code}`,
-		"You can retry, or use an explicit /mu command (for example: /mu status or /mu issue list).",
+		"You can retry this request in plain conversational text.",
 	].join("\n");
 }
 

@@ -238,7 +238,7 @@ Telegram:
 
 - `control_plane.adapters.telegram.webhook_secret`
 - `control_plane.adapters.telegram.bot_token`
-- `control_plane.adapters.telegram.bot_username` (recommended for command normalization)
+- `control_plane.adapters.telegram.bot_username` (optional; kept for compatibility)
 
 Apply config updates with:
 

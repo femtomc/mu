@@ -516,7 +516,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				response: jsonResponse(
 					{
 						response_type: "ephemeral",
-						text: "Unsupported Slack action payload. Use `/mu confirm <id>` or `/mu cancel <id>`.",
+						text: "Unsupported Slack action payload. Interactive confirm/cancel actions are no longer available; send a new message instead.",
 					},
 					{ status: 200 },
 				),
