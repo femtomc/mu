@@ -115,9 +115,11 @@ export type TelegramSendMessagePayload = {
 type SlackApiOkResponse = {
 	ok: boolean;
 	error?: string;
+	ts?: string;
 };
 
 type SlackChatPostMessageResponse = SlackApiOkResponse;
+type SlackChatUpdateResponse = SlackApiOkResponse;
 type SlackFileUploadResponse = SlackApiOkResponse;
 
 export type TelegramSendPhotoPayload = {
@@ -365,6 +367,15 @@ function slackThreadTsFromMetadata(metadata: Record<string, unknown> | undefined
 		}
 	}
 	return undefined;
+}
+
+function slackStatusMessageTsFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
+	const value = metadata?.slack_status_message_ts;
+	if (typeof value !== "string") {
+		return undefined;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function telegramReplyMarkupForOutboxRecord(record: OutboxRecord): TelegramInlineKeyboardMarkup | undefined {
@@ -661,7 +672,7 @@ export async function deliverTelegramOutboxRecord(opts: {
 
 async function postSlackJson<T extends SlackApiOkResponse>(opts: {
 	botToken: string;
-	method: "chat.postMessage";
+	method: "chat.postMessage" | "chat.update";
 	payload: Record<string, unknown>;
 }): Promise<{ response: Response; payload: T | null }> {
 	const response = await fetch(`https://slack.com/api/${opts.method}`, {
@@ -686,8 +697,43 @@ export async function deliverSlackOutboxRecord(opts: {
 	const textChunks = splitSlackMessageText(renderedBody);
 	const blocks = slackBlocksForOutboxRecord(record, renderedBody);
 	const threadTs = slackThreadTsFromMetadata(record.envelope.metadata);
+	const statusMessageTs = slackStatusMessageTsFromMetadata(record.envelope.metadata);
 	if (attachments.length === 0) {
+		let chunkStartIndex = 0;
+		if (statusMessageTs && textChunks.length > 0) {
+			const updated = await postSlackJson<SlackChatUpdateResponse>({
+				botToken,
+				method: "chat.update",
+				payload: {
+					channel: record.envelope.channel_conversation_id,
+					ts: statusMessageTs,
+					text: textChunks[0],
+					unfurl_links: false,
+					unfurl_media: false,
+					...(blocks ? { blocks } : {}),
+				},
+			});
+			if (updated.response.ok && updated.payload?.ok) {
+				chunkStartIndex = 1;
+			} else {
+				const status = updated.response.status;
+				const err = updated.payload?.error ?? "unknown_error";
+				if (status === 429 || status >= 500) {
+					return {
+						kind: "retry",
+						error: `slack chat.update ${status}: ${err}`,
+						retryDelayMs: parseRetryDelayMs(updated.response),
+					};
+				}
+				if (err !== "message_not_found" && err !== "cant_update_message") {
+					return { kind: "retry", error: `slack chat.update ${status}: ${err}` };
+				}
+			}
+		}
 		for (const [index, chunk] of textChunks.entries()) {
+			if (index < chunkStartIndex) {
+				continue;
+			}
 			const delivered = await postSlackJson<SlackChatPostMessageResponse>({
 				botToken,
 				method: "chat.postMessage",

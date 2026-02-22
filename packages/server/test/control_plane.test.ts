@@ -797,6 +797,42 @@ describe("telegram outbound media delivery", () => {
 		}
 	});
 
+	test("updates Slack in-thread status card when slack_status_message_ts metadata is present", async () => {
+		const calls: Array<{ url: string; payload: Record<string, unknown> }> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== "https://slack.com/api/chat.update" && url !== "https://slack.com/api/chat.postMessage") {
+				throw new Error(`unexpected fetch: ${url}`);
+			}
+			const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+			calls.push({ url, payload });
+			return new Response(JSON.stringify({ ok: true, ts: "10.20" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+		try {
+			const result = await deliverSlackOutboxRecord({
+				botToken: "xoxb-test-token",
+				record: mkSlackOutboxRecord({
+					body: "final output",
+					metadata: {
+						slack_thread_ts: "171.0002",
+						slack_status_message_ts: "171.0003",
+					},
+				}),
+			});
+			expect(result.kind).toBe("delivered");
+			expect(calls).toHaveLength(1);
+			expect(calls[0]?.url).toBe("https://slack.com/api/chat.update");
+			expect(calls[0]?.payload.ts).toBe("171.0003");
+			expect(calls[0]?.payload.text).toBe("final output");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	test("splits long Slack text into deterministic ordered chunks", async () => {
 		const payloads: Array<Record<string, unknown>> = [];
 		const body = `${"A".repeat(3_490)}\n${"B".repeat(3_490)}\n${"C".repeat(300)}`;

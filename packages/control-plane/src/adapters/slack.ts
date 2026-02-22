@@ -308,6 +308,92 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		this.#pruneConversationalEventDedupe(nowMs);
 	}
 
+	async #postProgressAnchor(opts: {
+		requestId: string;
+		deliveryId: string;
+		teamId: string;
+		channelId: string;
+		actorId: string;
+		commandText: string;
+		threadTs?: string;
+		eventId: string;
+	}): Promise<string | null> {
+		if (!this.#botToken) {
+			await this.#appendAudit({
+				requestId: opts.requestId,
+				deliveryId: opts.deliveryId,
+				teamId: opts.teamId,
+				channelId: opts.channelId,
+				actorId: opts.actorId,
+				commandText: opts.commandText.length > 0 ? opts.commandText : "/mu",
+				event: "slack.progress_anchor.skipped",
+				reason: "slack_bot_token_required",
+				metadata: { event_id: opts.eventId },
+			});
+			return null;
+		}
+
+		const payload = {
+			channel: opts.channelId,
+			text: "INFO mu · ACK · ACCEPTED\nWorking this request in-thread. I will update this message with final output.",
+			unfurl_links: false,
+			unfurl_media: false,
+			...(opts.threadTs ? { thread_ts: opts.threadTs } : {}),
+		};
+
+		try {
+			const response = await this.#fetchImpl("https://slack.com/api/chat.postMessage", {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${this.#botToken}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(payload),
+			});
+			const body = (await response.json().catch(() => null)) as
+				| { ok?: boolean; error?: string; ts?: string }
+				| null;
+			if (response.ok && body?.ok === true && typeof body.ts === "string" && body.ts.trim().length > 0) {
+				await this.#appendAudit({
+					requestId: opts.requestId,
+					deliveryId: opts.deliveryId,
+					teamId: opts.teamId,
+					channelId: opts.channelId,
+					actorId: opts.actorId,
+					commandText: opts.commandText.length > 0 ? opts.commandText : "/mu",
+					event: "slack.progress_anchor.sent",
+					metadata: { event_id: opts.eventId, progress_anchor_ts: body.ts.trim() },
+				});
+				return body.ts.trim();
+			}
+			await this.#appendAudit({
+				requestId: opts.requestId,
+				deliveryId: opts.deliveryId,
+				teamId: opts.teamId,
+				channelId: opts.channelId,
+				actorId: opts.actorId,
+				commandText: opts.commandText.length > 0 ? opts.commandText : "/mu",
+				event: "slack.progress_anchor.failed",
+				reason: body?.error ?? `http_${response.status}`,
+				metadata: { event_id: opts.eventId, http_status: response.status },
+			});
+			return null;
+		} catch (err) {
+			await this.#appendAudit({
+				requestId: opts.requestId,
+				deliveryId: opts.deliveryId,
+				teamId: opts.teamId,
+				channelId: opts.channelId,
+				actorId: opts.actorId,
+				commandText: opts.commandText.length > 0 ? opts.commandText : "/mu",
+				event: "slack.progress_anchor.failed",
+				reason: err instanceof Error ? err.message : "progress_anchor_failed",
+				metadata: { event_id: opts.eventId },
+			});
+			return null;
+		}
+	}
+
 	public async ingest(req: Request): Promise<AdapterIngressResult> {
 		if (req.method !== "POST") {
 			return rejectedIngressResult({
@@ -557,6 +643,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		const bindingHint = resolveBindingHint(this.#pipeline, this.spec.channel, teamId, actorId);
 		const nowMs = Math.trunc(this.#nowMs());
 		const conversationalEventKey = `slack:${teamId}:${eventId}`;
+		let progressAnchorTs: string | null = null;
 		if (!isExplicitCommand) {
 			const duplicateReason = this.#isDuplicateConversationalEvent(conversationalEventKey, nowMs);
 			if (duplicateReason) {
@@ -585,6 +672,16 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				});
 			}
 			this.#conversationalEventInFlight.add(conversationalEventKey);
+			progressAnchorTs = await this.#postProgressAnchor({
+				requestId,
+				deliveryId,
+				teamId,
+				channelId,
+				actorId,
+				commandText: normalizedText,
+				threadTs: threadTsCandidate,
+				eventId,
+			});
 		}
 		const attachments: AttachmentDescriptor[] = [];
 		for (const file of parseSlackEventFiles(event.files)) {
@@ -738,6 +835,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				trigger_id: triggerId,
 				...(!isExplicitCommand ? { [CONVERSATIONAL_INGRESS_OVERRIDE_KEY]: CONVERSATIONAL_INGRESS_OVERRIDE_ALLOW } : {}),
 				...(threadTsCandidate ? { slack_thread_ts: threadTsCandidate } : {}),
+				...(progressAnchorTs ? { slack_status_message_ts: progressAnchorTs } : {}),
 			},
 		});
 
@@ -749,7 +847,11 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			actorId,
 			commandText: normalizedText,
 			event: "slack.event.accepted",
-			metadata: { event_id: eventId, attachment_count: attachments.length },
+			metadata: {
+				event_id: eventId,
+				attachment_count: attachments.length,
+				...(progressAnchorTs ? { progress_anchor_ts: progressAnchorTs } : {}),
+			},
 		});
 
 		try {
@@ -764,6 +866,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 					source: "slack:event_callback",
 					event_id: eventId,
 					...(threadTsCandidate ? { slack_thread_ts: threadTsCandidate } : {}),
+					...(progressAnchorTs ? { slack_status_message_ts: progressAnchorTs } : {}),
 				},
 				forceOutbox: true,
 			});

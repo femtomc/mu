@@ -1419,6 +1419,51 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(backend.turns[0]?.inbound.metadata.slack_thread_ts).toBe("1700000000.500");
 	});
 
+	test("Slack conversational app_mention sets a progress anchor metadata pointer when bot token is configured", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator response." }]);
+		const harness = await createHarness({
+			operatorBackend: backend,
+			slackBotToken: "xoxb-progress-test",
+			slackFetchImpl: async (input, init) => {
+				const url = String(input);
+				if (url !== "https://slack.com/api/chat.postMessage") {
+					throw new Error(`unexpected fetch: ${url}`);
+				}
+				const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+				expect(payload.channel).toBe("journey-room");
+				expect(payload.thread_ts).toBe("1700000000.700");
+				return new Response(JSON.stringify({ ok: true, ts: "1700000000.701" }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			},
+		});
+
+		const chat = await harness.slack.ingest(
+			slackEventRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(harness.clock.now / 1000),
+				requestId: "journey-req-progress",
+				body: {
+					type: "event_callback",
+					team_id: "team-1",
+					event_id: "EvLinkedProgress1",
+					event: {
+						type: "app_mention",
+						channel: "journey-room",
+						user: "slack-actor",
+						text: "<@U_APP> hey there",
+						event_ts: "1700000000.700",
+						ts: "1700000000.700",
+					},
+				},
+			}),
+		);
+		expect(chat.pipelineResult?.kind).toBe("operator_response");
+		expect(chat.outboxRecord?.envelope.metadata?.slack_status_message_ts).toBe("1700000000.701");
+		expect(backend.turns.length).toBe(1);
+	});
+
 	test("Slack conversational app_mention retries with same event_id are deduped", async () => {
 		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator once." }]);
 		const harness = await createHarness({ operatorBackend: backend });
