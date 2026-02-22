@@ -287,13 +287,78 @@ describe("subagents HUD tool", () => {
 
 			const lines = uiHarness.getWidgetLines() ?? [];
 			expect(lines.some((line) => line.includes("activity refresh failed"))).toBe(false);
-			expect(lines.some((line) => line.includes("(no active operators)"))).toBe(true);
+			expect(lines.some((line) => line.includes("ready mu-a1111111"))).toBe(true);
 
 			const statusLine = uiHarness.getStatus("mu-subagents") ?? "";
 			expect(statusLine).toContain("healthy");
 		} finally {
 			(Bun as { spawn: typeof Bun.spawn }).spawn = originalSpawn;
 			(globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+			if (originalServerUrl === undefined) {
+				delete Bun.env.MU_SERVER_URL;
+			} else {
+				Bun.env.MU_SERVER_URL = originalServerUrl;
+			}
+		}
+	});
+
+	test("falls back to forum topic activity when event API is unavailable", async () => {
+		const { api, tools } = createExtensionApiMock();
+		subagentsUiExtension(api as unknown as Parameters<typeof subagentsUiExtension>[0]);
+
+		const tool = tools.get("mu_subagents_hud");
+		if (!tool) {
+			throw new Error("mu_subagents_hud tool missing");
+		}
+
+		const originalSpawn = Bun.spawn;
+		const originalServerUrl = Bun.env.MU_SERVER_URL;
+		delete Bun.env.MU_SERVER_URL;
+		(Bun as { spawn: typeof Bun.spawn }).spawn = ((opts: { cmd: string[] }) => {
+			const cmd = opts.cmd;
+			if (cmd[0] === "tmux" && cmd[1] === "ls") {
+				return fakeProcess("mu-sub-20260222-mu-a1111111: 1 windows (created)");
+			}
+			if (cmd[0] === "mu" && cmd.includes("ready")) {
+				return fakeProcess("[]\n");
+			}
+			if (cmd[0] === "mu" && cmd.includes("in_progress")) {
+				return fakeProcess(
+					JSON.stringify([
+						{
+							id: "mu-a1111111",
+							title: "Implement dynamic activity feed",
+							status: "in_progress",
+							priority: 1,
+							tags: ["node:agent"],
+						},
+					]),
+				);
+			}
+			if (cmd[0] === "mu" && cmd[1] === "forum" && cmd[2] === "read") {
+				return fakeProcess(
+					JSON.stringify([
+						{
+							topic: "issue:mu-a1111111",
+							body: "START: Worker claimed this issue and is implementing updates.",
+							author: "worker",
+							created_at: Math.floor(Date.now() / 1000),
+						},
+					]),
+				);
+			}
+			return fakeProcess("", "unexpected command", 1);
+		}) as typeof Bun.spawn;
+
+		try {
+			const uiHarness = createInteractiveUiContext();
+			await executeSubagentsTool(tool, { action: "set_root", root_issue_id: "mu-81fa6563" }, uiHarness.ctx);
+
+			const lines = uiHarness.getWidgetLines() ?? [];
+			expect(lines.some((line) => line.includes("worker:"))).toBe(true);
+			expect(lines.some((line) => line.includes("mu-a1111111"))).toBe(true);
+		} finally {
+			(Bun as { spawn: typeof Bun.spawn }).spawn = originalSpawn;
 			if (originalServerUrl === undefined) {
 				delete Bun.env.MU_SERVER_URL;
 			} else {

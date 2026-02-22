@@ -54,6 +54,12 @@ type ActivitySummary = {
 	error: string | null;
 };
 
+type ForumReadMessage = {
+	author: string;
+	body: string;
+	createdAtMs: number | null;
+};
+
 type SubagentsToolAction =
 	| "status"
 	| "snapshot"
@@ -101,6 +107,7 @@ const WIDGET_SUMMARY_MAX = 76;
 const WIDGET_ERROR_MAX = 72;
 const ACTIVITY_EVENT_LIMIT = 180;
 const ACTIVITY_LINE_LIMIT = 4;
+const FORUM_ACTIVITY_ISSUE_LIMIT = 8;
 
 function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\"'\"'")}'`;
@@ -279,6 +286,48 @@ function parseIssueArray(label: string, jsonText: string): { issues: IssueDigest
 		return left.id.localeCompare(right.id);
 	});
 	return { issues, error: null };
+}
+
+function parseForumReadLatest(label: string, jsonText: string): { message: ForumReadMessage | null; error: string | null } {
+	const trimmed = jsonText.trim();
+	if (trimmed.length === 0) {
+		return { message: null, error: null };
+	}
+
+	let parsed: unknown = null;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch {
+		return { message: null, error: `${label}: invalid JSON output from mu forum read` };
+	}
+	if (!Array.isArray(parsed)) {
+		return { message: null, error: `${label}: expected JSON array output from mu forum read` };
+	}
+	const first = parsed[0];
+	if (!first || typeof first !== "object" || Array.isArray(first)) {
+		return { message: null, error: null };
+	}
+	const row = first as Record<string, unknown>;
+	const body = typeof row.body === "string" ? row.body.trim() : "";
+	if (body.length === 0) {
+		return { message: null, error: null };
+	}
+	const authorRaw = typeof row.author === "string" ? row.author.trim() : "";
+	const createdAtRaw = row.created_at;
+	const createdAtSec =
+		typeof createdAtRaw === "number" && Number.isFinite(createdAtRaw)
+			? Math.trunc(createdAtRaw)
+			: typeof createdAtRaw === "string" && /^\d+$/.test(createdAtRaw.trim())
+				? Number.parseInt(createdAtRaw.trim(), 10)
+				: null;
+	return {
+		message: {
+			author: authorRaw.length > 0 ? authorRaw : "operator",
+			body,
+			createdAtMs: createdAtSec != null && Number.isFinite(createdAtSec) ? createdAtSec * 1_000 : null,
+		},
+		error: null,
+	};
 }
 
 async function runMuCli(args: string[]): Promise<MuCliOutcome> {
@@ -542,58 +591,97 @@ function isActivityEndpointUnavailable(errorMessage: string): boolean {
 	return normalized.includes("mu server 404") && normalized.includes("not found");
 }
 
+async function fetchRecentForumActivity(issueIds: readonly string[]): Promise<string[]> {
+	const uniqueIssueIds = Array.from(
+		new Set(issueIds.map((issueId) => issueId.trim()).filter((issueId) => issueId.length > 0)),
+	).slice(0, FORUM_ACTIVITY_ISSUE_LIMIT);
+	if (uniqueIssueIds.length === 0) {
+		return [];
+	}
+
+	const reads = await Promise.all(
+		uniqueIssueIds.map(async (issueId) => {
+			const outcome = await runMuCli(["forum", "read", `issue:${issueId}`, "--limit", "1", "--json"]);
+			if (outcome.exitCode !== 0 || outcome.error || outcome.timedOut) {
+				return null;
+			}
+			const parsed = parseForumReadLatest(`forum:${issueId}`, outcome.stdout);
+			if (parsed.error || !parsed.message) {
+				return null;
+			}
+			return {
+				issueId,
+				tsMs: parsed.message.createdAtMs ?? 0,
+				line: `${eventAgeLabel(parsed.message.createdAtMs ?? undefined)} ${issueId} ${parsed.message.author}: ${truncateOneLine(parsed.message.body, 54)}`,
+			};
+		}),
+	);
+
+	return reads
+		.filter((row): row is { issueId: string; tsMs: number; line: string } => row != null)
+		.sort((left, right) => right.tsMs - left.tsMs)
+		.slice(0, ACTIVITY_LINE_LIMIT)
+		.map((row) => row.line);
+}
+
 async function fetchRecentActivity(opts: {
 	issueIds: readonly string[];
 }): Promise<ActivitySummary> {
-	if (!muServerUrl()) {
-		return { lines: [], error: null };
+	let endpointError: string | null = null;
+	const hasServerUrl = Boolean(muServerUrl());
+	if (hasServerUrl) {
+		let events: ActivityEvent[];
+		try {
+			events = await fetchMuJson<ActivityEvent[]>(`/api/control-plane/events?limit=${ACTIVITY_EVENT_LIMIT}`, {
+				timeoutMs: 4_000,
+			});
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (!isActivityEndpointUnavailable(message)) {
+				endpointError = `activity refresh failed: ${truncateOneLine(message, 60)}`;
+			}
+			events = [];
+		}
+
+		if (Array.isArray(events) && events.length > 0) {
+			const tracked = new Set(opts.issueIds.map((issueId) => issueId.trim()).filter((issueId) => issueId.length > 0));
+			const seenIssueIds = new Set<string>();
+			const lines: string[] = [];
+			const sorted = [...events].sort((left, right) => {
+				const leftTs = typeof left.ts_ms === "number" ? left.ts_ms : 0;
+				const rightTs = typeof right.ts_ms === "number" ? right.ts_ms : 0;
+				return rightTs - leftTs;
+			});
+
+			for (const event of sorted) {
+				const rendered = renderActivitySentence(event);
+				if (!rendered) {
+					continue;
+				}
+				if (tracked.size > 0 && !tracked.has(rendered.issueId)) {
+					continue;
+				}
+				if (seenIssueIds.has(rendered.issueId)) {
+					continue;
+				}
+				seenIssueIds.add(rendered.issueId);
+				lines.push(`${eventAgeLabel(event.ts_ms)} ${rendered.sentence}`);
+				if (lines.length >= ACTIVITY_LINE_LIMIT) {
+					break;
+				}
+			}
+			if (lines.length > 0) {
+				return { lines, error: null };
+			}
+		}
 	}
 
-	let events: ActivityEvent[];
-	try {
-		events = await fetchMuJson<ActivityEvent[]>(`/api/control-plane/events?limit=${ACTIVITY_EVENT_LIMIT}`, {
-			timeoutMs: 4_000,
-		});
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		if (isActivityEndpointUnavailable(message)) {
-			return { lines: [], error: null };
-		}
-		return { lines: [], error: `activity refresh failed: ${truncateOneLine(message, 60)}` };
+	const forumLines = await fetchRecentForumActivity(opts.issueIds);
+	if (forumLines.length > 0) {
+		return { lines: forumLines, error: null };
 	}
 
-	if (!Array.isArray(events) || events.length === 0) {
-		return { lines: [], error: null };
-	}
-
-	const tracked = new Set(opts.issueIds.map((issueId) => issueId.trim()).filter((issueId) => issueId.length > 0));
-	const seenIssueIds = new Set<string>();
-	const lines: string[] = [];
-	const sorted = [...events].sort((left, right) => {
-		const leftTs = typeof left.ts_ms === "number" ? left.ts_ms : 0;
-		const rightTs = typeof right.ts_ms === "number" ? right.ts_ms : 0;
-		return rightTs - leftTs;
-	});
-
-	for (const event of sorted) {
-		const rendered = renderActivitySentence(event);
-		if (!rendered) {
-			continue;
-		}
-		if (tracked.size > 0 && !tracked.has(rendered.issueId)) {
-			continue;
-		}
-		if (seenIssueIds.has(rendered.issueId)) {
-			continue;
-		}
-		seenIssueIds.add(rendered.issueId);
-		lines.push(`${eventAgeLabel(event.ts_ms)} ${rendered.sentence}`);
-		if (lines.length >= ACTIVITY_LINE_LIMIT) {
-			break;
-		}
-	}
-
-	return { lines, error: null };
+	return { lines: [], error: endpointError };
 }
 
 function computeQueueDrift(
@@ -613,6 +701,31 @@ function computeQueueDrift(
 		activeWithoutSessionIds,
 		orphanSessions,
 	};
+}
+
+function queueFallbackActivityLines(state: SubagentsState): string[] {
+	const lines: string[] = [];
+	for (const issue of state.activeIssues) {
+		if (lines.length >= ACTIVITY_LINE_LIMIT) {
+			break;
+		}
+		lines.push(`active ${issue.id}: ${truncateOneLine(issue.title, 52)}`);
+	}
+	for (const issue of state.readyIssues) {
+		if (lines.length >= ACTIVITY_LINE_LIMIT) {
+			break;
+		}
+		lines.push(`ready ${issue.id}: ${truncateOneLine(issue.title, 52)}`);
+	}
+	if (lines.length === 0 && state.sessions.length > 0) {
+		const sessionPreview = state.sessions
+			.slice(0, 2)
+			.map((sessionName) => truncateOneLine(sessionName, 28))
+			.join(", ");
+		const suffix = state.sessions.length > 2 ? ` +${state.sessions.length - 2} more` : "";
+		lines.push(`tmux active: ${sessionPreview}${suffix}`);
+	}
+	return lines;
 }
 
 function normalizeIssueTag(raw: string): string | null {
@@ -850,8 +963,11 @@ function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	if (state.activityError) {
 		lines.push(ctx.ui.theme.fg("warning", truncateOneLine(state.activityError, WIDGET_ERROR_MAX)));
 	} else if (activityLines.length === 0) {
-		if (state.activeIssues.length > 0) {
-			lines.push(ctx.ui.theme.fg("muted", "(no recent subagent updates yet)"));
+		const fallbackLines = queueFallbackActivityLines(state);
+		if (fallbackLines.length > 0) {
+			for (const line of fallbackLines) {
+				lines.push(`${ctx.ui.theme.fg("muted", "•")} ${ctx.ui.theme.fg("text", truncateOneLine(line, WIDGET_SUMMARY_MAX))}`);
+			}
 		} else {
 			lines.push(ctx.ui.theme.fg("muted", "(no active operators)"));
 		}
@@ -937,7 +1053,7 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 		state.activeIssues = issues.active;
 		state.issueError = issues.error;
 
-		const trackedIssueIds = (state.activeIssues.length > 0 ? state.activeIssues : state.readyIssues)
+		const trackedIssueIds = [...state.activeIssues, ...state.readyIssues]
 			.slice(0, 8)
 			.map((issue) => issue.id);
 		const activity = await fetchRecentActivity({ issueIds: trackedIssueIds });
