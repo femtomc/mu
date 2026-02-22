@@ -289,6 +289,7 @@ Slack keeps `/mu` parity while allowing safe mention-triggered conversational in
 This preserves explicit `/mu` behavior while enabling linked Slack `@mu ...` conversational turns without creating an implicit path for unlinked actors.
 
 Slack conversational retries (same `event_id`) are deduplicated for a short TTL so at-least-once delivery does not fan out duplicate long-running operator turns.
+Slack conversational context is scoped per linked actor + channel + `slack_thread_ts` (top-level mentions use the mention message timestamp), so separate threads do not share operator memory.
 Conversational operator replies are delivered as plain chat bodies (not wrapped control-plane lifecycle scaffolding). Slack output applies light markdown normalization (for example, `### Heading` → `*Heading*`) for better mrkdwn rendering.
 
 Recommended secure collaboration mode: keep a single linked actor for the shared channel/thread, and rotate ownership via `mu control unlink` + `mu control link` when responsibility changes.

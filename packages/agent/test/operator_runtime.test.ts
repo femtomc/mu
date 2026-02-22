@@ -25,6 +25,24 @@ function mkInbound(conversationId: string): MessagingOperatorInboundEnvelope {
 	};
 }
 
+function mkSlackInbound(opts: {
+	conversationId: string;
+	requestId: string;
+	threadTs?: string;
+}): MessagingOperatorInboundEnvelope {
+	return {
+		channel: "slack",
+		channel_tenant_id: "team-1",
+		channel_conversation_id: opts.conversationId,
+		request_id: opts.requestId,
+		repo_root: "/repo",
+		command_text: "hello",
+		target_type: "status",
+		target_id: opts.conversationId,
+		metadata: opts.threadTs ? { slack_thread_ts: opts.threadTs } : {},
+	};
+}
+
 function mkBinding(): MessagingOperatorIdentityBinding {
 	return {
 		binding_id: "binding-1",
@@ -80,6 +98,51 @@ test("MessagingOperatorRuntime reuses persisted conversation session ids across 
 	await runtime2.stop();
 
 	expect(seenSessionIds).toEqual(["session-1", "session-1", "session-2"]);
+});
+
+test("MessagingOperatorRuntime isolates Slack conversation sessions by thread_ts", async () => {
+	const backend: MessagingOperatorBackend = {
+		runTurn: async () => ({ kind: "respond", message: "ok" }),
+	};
+	const store = new InMemoryConversationSessionStore();
+	let seq = 0;
+	const runtime = new MessagingOperatorRuntime({
+		backend,
+		sessionIdFactory: () => `session-${++seq}`,
+		conversationSessionStore: store,
+	});
+
+	const firstThread = await runtime.handleInbound({
+		inbound: mkSlackInbound({ conversationId: "channel-1", requestId: "req-1", threadTs: "1700.100" }),
+		binding: mkBinding(),
+	});
+	expect(firstThread.operatorSessionId).toBe("session-1");
+
+	const secondThread = await runtime.handleInbound({
+		inbound: mkSlackInbound({ conversationId: "channel-1", requestId: "req-2", threadTs: "1700.200" }),
+		binding: mkBinding(),
+	});
+	expect(secondThread.operatorSessionId).toBe("session-2");
+
+	const firstThreadAgain = await runtime.handleInbound({
+		inbound: mkSlackInbound({ conversationId: "channel-1", requestId: "req-3", threadTs: "1700.100" }),
+		binding: mkBinding(),
+	});
+	expect(firstThreadAgain.operatorSessionId).toBe("session-1");
+
+	const noThread = await runtime.handleInbound({
+		inbound: mkSlackInbound({ conversationId: "channel-1", requestId: "req-4" }),
+		binding: mkBinding(),
+	});
+	expect(noThread.operatorSessionId).toBe("session-3");
+
+	const noThreadAgain = await runtime.handleInbound({
+		inbound: mkSlackInbound({ conversationId: "channel-1", requestId: "req-5" }),
+		binding: mkBinding(),
+	});
+	expect(noThreadAgain.operatorSessionId).toBe("session-3");
+
+	await runtime.stop();
 });
 
 test("JsonFileConversationSessionStore persists mappings across store instances", async () => {

@@ -285,8 +285,27 @@ function isAgentBusyError(err: unknown): boolean {
 	return text.includes("agent is already processing");
 }
 
+function slackThreadScope(inbound: InboundEnvelope): string | null {
+	if (inbound.channel !== "slack") {
+		return null;
+	}
+	const metadata = inbound.metadata;
+	const candidate = [metadata.slack_thread_ts, metadata.slack_message_ts, metadata.thread_ts].find(
+		(value) => typeof value === "string" && value.trim().length > 0,
+	);
+	if (typeof candidate !== "string") {
+		return null;
+	}
+	return candidate.trim();
+}
+
 function conversationKey(inbound: InboundEnvelope, binding: IdentityBinding): string {
-	return `${inbound.channel}:${inbound.channel_tenant_id}:${inbound.channel_conversation_id}:${binding.binding_id}`;
+	const base = `${inbound.channel}:${inbound.channel_tenant_id}:${inbound.channel_conversation_id}:${binding.binding_id}`;
+	const slackThread = slackThreadScope(inbound);
+	if (!slackThread) {
+		return base;
+	}
+	return `${base}:thread:${slackThread}`;
 }
 
 type SessionFlashPromptMessage = {
