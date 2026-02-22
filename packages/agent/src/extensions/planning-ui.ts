@@ -428,7 +428,7 @@ function renderPlanningUi(ctx: ExtensionContext, state: PlanningUiState): void {
 		const shownSteps = state.steps.slice(0, WIDGET_STEP_LIMIT);
 		for (let index = 0; index < shownSteps.length; index += 1) {
 			const step = shownSteps[index]!;
-			const mark = step.done ? ctx.ui.theme.fg("success", "☑") : ctx.ui.theme.fg("muted", "☐");
+			const mark = step.done ? ctx.ui.theme.fg("success", "[x]") : ctx.ui.theme.fg("muted", "[ ]");
 			const labelText = shortLabel(step.label, "(empty)", WIDGET_STEP_LABEL_MAX);
 			const label = step.done ? ctx.ui.theme.fg("dim", labelText) : ctx.ui.theme.fg("text", labelText);
 			lines.push(`${mark} ${ctx.ui.theme.fg("muted", `${index + 1}.`)} ${label}`);

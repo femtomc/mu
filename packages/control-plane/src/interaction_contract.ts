@@ -70,11 +70,11 @@ export type PresentedControlPlaneMessage = {
 	detailed: string;
 };
 
-const SPEAKER_VIEW: Record<InteractionSpeaker, { icon: string; label: string }> = {
-	user: { icon: "👤", label: "User" },
-	operator: { icon: "🤖", label: "Operator" },
-	mu_system: { icon: "🧭", label: "mu" },
-	mu_tool: { icon: "🛠️", label: "mu tool" },
+const SPEAKER_VIEW: Record<InteractionSpeaker, { label: string }> = {
+	user: { label: "User" },
+	operator: { label: "Operator" },
+	mu_system: { label: "mu" },
+	mu_tool: { label: "mu tool" },
 };
 
 const INTENT_VIEW: Record<InteractionIntent, string> = {
@@ -86,10 +86,10 @@ const INTENT_VIEW: Record<InteractionIntent, string> = {
 };
 
 const STATUS_VIEW: Record<InteractionStatus, string> = {
-	info: "ℹ️",
-	success: "✅",
-	warning: "⚠️",
-	error: "❌",
+	info: "INFO",
+	success: "OK",
+	warning: "WARN",
+	error: "ERROR",
 };
 
 const REASON_LABELS: Record<string, string> = {
@@ -488,7 +488,7 @@ export function renderInteractionMessage(
 	const message = ControlPlaneInteractionMessageSchema.parse(input);
 	const mode = opts.mode ?? "detailed";
 	const speaker = SPEAKER_VIEW[message.speaker];
-	const header = `${STATUS_VIEW[message.status]} ${speaker.icon} ${speaker.label} · ${INTENT_VIEW[message.intent]} · ${stateLabel(message.state)}`;
+	const header = `${STATUS_VIEW[message.status]} ${speaker.label} · ${INTENT_VIEW[message.intent]} · ${stateLabel(message.state)}`;
 
 	const lines: string[] = [header, message.summary];
 
@@ -553,5 +553,5 @@ export function formatAdapterAckMessage(result: CommandPipelineResult, opts: { d
 	if (!opts.deferred) {
 		return presented.compact;
 	}
-	return `${presented.compact}\n⏱ Delivery: detailed update queued via outbox.`;
+	return `${presented.compact}\nDelivery: detailed update queued via outbox.`;
 }
