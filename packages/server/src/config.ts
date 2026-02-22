@@ -27,6 +27,7 @@ export type MuConfig = {
 			provider: string | null;
 			model: string | null;
 			thinking: string | null;
+			timeout_ms: number;
 		};
 		memory_index: {
 			enabled: boolean;
@@ -59,6 +60,7 @@ export type MuConfigPatch = {
 			provider?: string | null;
 			model?: string | null;
 			thinking?: string | null;
+			timeout_ms?: number;
 		};
 		memory_index?: {
 			enabled?: boolean;
@@ -97,6 +99,7 @@ export type MuConfigPresence = {
 			provider: boolean;
 			model: boolean;
 			thinking: boolean;
+			timeout_ms: number;
 		};
 		memory_index: {
 			enabled: boolean;
@@ -130,6 +133,7 @@ export const DEFAULT_MU_CONFIG: MuConfig = {
 			provider: null,
 			model: null,
 			thinking: null,
+			timeout_ms: 600_000,
 		},
 		memory_index: {
 			enabled: true,
@@ -239,6 +243,13 @@ export function normalizeMuConfig(input: unknown): MuConfig {
 		if ("thinking" in operator) {
 			next.control_plane.operator.thinking = normalizeNullableString(operator.thinking);
 		}
+		if ("timeout_ms" in operator) {
+			next.control_plane.operator.timeout_ms = normalizeInteger(
+				operator.timeout_ms,
+				next.control_plane.operator.timeout_ms,
+				{ min: 1_000, max: 7_200_000 },
+			);
+		}
 	}
 
 	const memoryIndex = asRecord(controlPlane.memory_index);
@@ -343,6 +354,13 @@ function normalizeMuConfigPatch(input: unknown): MuConfigPatch {
 		if ("thinking" in operator) {
 			patch.control_plane.operator.thinking = normalizeNullableString(operator.thinking);
 		}
+		if ("timeout_ms" in operator) {
+			patch.control_plane.operator.timeout_ms = normalizeInteger(
+				operator.timeout_ms,
+				DEFAULT_MU_CONFIG.control_plane.operator.timeout_ms,
+				{ min: 1_000, max: 7_200_000 },
+			);
+		}
 		if (Object.keys(patch.control_plane.operator).length === 0) {
 			delete patch.control_plane.operator;
 		}
@@ -423,6 +441,13 @@ export function applyMuConfigPatch(base: MuConfig, patchInput: unknown): MuConfi
 		}
 		if ("thinking" in operator) {
 			next.control_plane.operator.thinking = operator.thinking ?? null;
+		}
+		if ("timeout_ms" in operator && typeof operator.timeout_ms === "number" && Number.isFinite(operator.timeout_ms)) {
+			next.control_plane.operator.timeout_ms = normalizeInteger(
+				operator.timeout_ms,
+				next.control_plane.operator.timeout_ms,
+				{ min: 1_000, max: 7_200_000 },
+			);
 		}
 	}
 
@@ -519,6 +544,7 @@ export function muConfigPresence(config: MuConfig): MuConfigPresence {
 				provider: isPresent(config.control_plane.operator.provider),
 				model: isPresent(config.control_plane.operator.model),
 				thinking: isPresent(config.control_plane.operator.thinking),
+				timeout_ms: config.control_plane.operator.timeout_ms,
 			},
 			memory_index: {
 				enabled: config.control_plane.memory_index.enabled,

@@ -1419,6 +1419,38 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(backend.turns[0]?.inbound.metadata.slack_thread_ts).toBe("1700000000.500");
 	});
 
+	test("Slack conversational app_mention retries with same event_id are deduped", async () => {
+		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator once." }]);
+		const harness = await createHarness({ operatorBackend: backend });
+		const mkEventReq = (requestId: string) =>
+			slackEventRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(harness.clock.now / 1000),
+				requestId,
+				body: {
+					type: "event_callback",
+					team_id: "team-1",
+					event_id: "EvConvDup1",
+					event: {
+						type: "app_mention",
+						channel: "chan-1",
+						user: "slack-actor",
+						text: "<@U_APP> hello",
+						event_ts: "1700000000.150",
+						thread_ts: "1700000000.000",
+					},
+				},
+			});
+
+		const first = await harness.slack.ingest(mkEventReq("evt-conv-1"));
+		expect(first.pipelineResult?.kind).toBe("operator_response");
+		expect(first.outboxRecord?.envelope.metadata.slack_thread_ts).toBe("1700000000.000");
+		const duplicate = await harness.slack.ingest(mkEventReq("evt-conv-2"));
+		expect(duplicate.pipelineResult).toEqual({ kind: "noop", reason: "duplicate_slack_event" });
+		expect(duplicate.outboxRecord).toBeNull();
+		expect(backend.turns.length).toBe(1);
+	});
+
 	test("Slack app_mention callbacks keep /mu idempotent, ignore unlinked mentions, and ignore non-mention events", async () => {
 		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator should not run for unlinked mentions." }]);
 		const harness = await createHarness({ operatorBackend: backend });

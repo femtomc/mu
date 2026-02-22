@@ -128,6 +128,9 @@ function normalizeSlackEventCommandText(eventType: string, text: string): string
 	return trimmed.replace(/^(?:<@[^>\s]+>\s*)+/, "").trim();
 }
 
+const CONVERSATIONAL_EVENT_DEDUPE_TTL_MS = 10 * 60 * 1_000;
+const CONVERSATIONAL_EVENT_DEDUPE_MAX = 4_096;
+
 type SlackActionParseResult =
 	| { kind: "none" }
 	| {
@@ -214,6 +217,8 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 	readonly #inboundAttachmentPolicy: InboundAttachmentPolicy;
 	readonly #inboundAttachmentStore: InboundAttachmentStore | null;
 	readonly #adapterAudit: AdapterAuditLog | null;
+	readonly #conversationalEventInFlight = new Set<string>();
+	readonly #conversationalEventSeenUntilMs = new Map<string, number>();
 
 	public constructor(opts: SlackControlPlaneAdapterOpts) {
 		this.#pipeline = opts.pipeline;
@@ -268,6 +273,39 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		} catch {
 			// Adapter audit must never break ingress.
 		}
+	}
+
+	#pruneConversationalEventDedupe(nowMs: number): void {
+		for (const [key, expiresAtMs] of this.#conversationalEventSeenUntilMs.entries()) {
+			if (expiresAtMs <= nowMs) {
+				this.#conversationalEventSeenUntilMs.delete(key);
+			}
+		}
+		if (this.#conversationalEventSeenUntilMs.size <= CONVERSATIONAL_EVENT_DEDUPE_MAX) {
+			return;
+		}
+		const byExpiry = [...this.#conversationalEventSeenUntilMs.entries()].sort((a, b) => a[1] - b[1]);
+		while (this.#conversationalEventSeenUntilMs.size > CONVERSATIONAL_EVENT_DEDUPE_MAX && byExpiry.length > 0) {
+			const [key] = byExpiry.shift()!;
+			this.#conversationalEventSeenUntilMs.delete(key);
+		}
+	}
+
+	#isDuplicateConversationalEvent(key: string, nowMs: number): "in_flight" | "seen" | null {
+		this.#pruneConversationalEventDedupe(nowMs);
+		if (this.#conversationalEventInFlight.has(key)) {
+			return "in_flight";
+		}
+		const seenUntil = this.#conversationalEventSeenUntilMs.get(key);
+		if (seenUntil && seenUntil > nowMs) {
+			return "seen";
+		}
+		return null;
+	}
+
+	#markConversationalEventSeen(key: string, nowMs: number): void {
+		this.#conversationalEventSeenUntilMs.set(key, nowMs + CONVERSATIONAL_EVENT_DEDUPE_TTL_MS);
+		this.#pruneConversationalEventDedupe(nowMs);
 	}
 
 	public async ingest(req: Request): Promise<AdapterIngressResult> {
@@ -518,6 +556,36 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		) as string | undefined;
 		const bindingHint = resolveBindingHint(this.#pipeline, this.spec.channel, teamId, actorId);
 		const nowMs = Math.trunc(this.#nowMs());
+		const conversationalEventKey = `slack:${teamId}:${eventId}`;
+		if (!isExplicitCommand) {
+			const duplicateReason = this.#isDuplicateConversationalEvent(conversationalEventKey, nowMs);
+			if (duplicateReason) {
+				await this.#appendAudit({
+					requestId,
+					deliveryId,
+					teamId,
+					channelId,
+					actorId,
+					commandText: normalizedText.length > 0 ? normalizedText : "/mu",
+					event: "slack.event.ignored",
+					reason: "duplicate_slack_event",
+					metadata: {
+						event_id: eventId,
+						event_type: eventType,
+						duplicate_reason: duplicateReason,
+					},
+				});
+				return acceptedIngressResult({
+					channel: this.spec.channel,
+					reason: "duplicate_slack_event",
+					response: jsonResponse({ ok: true }, { status: 200 }),
+					inbound: null,
+					pipelineResult: { kind: "noop", reason: "duplicate_slack_event" },
+					outboxRecord: null,
+				});
+			}
+			this.#conversationalEventInFlight.add(conversationalEventKey);
+		}
 		const attachments: AttachmentDescriptor[] = [];
 		for (const file of parseSlackEventFiles(event.files)) {
 			const pre = evaluateInboundAttachmentPreDownload(
@@ -684,27 +752,34 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			metadata: { event_id: eventId, attachment_count: attachments.length },
 		});
 
-		const dispatched = await runPipelineForInbound({
-			pipeline: this.#pipeline,
-			outbox: this.#outbox,
-			inbound,
-			nowMs,
-			metadata: {
-				adapter: this.spec.channel,
-				delivery_id: deliveryId,
-				source: "slack:event_callback",
-				event_id: eventId,
-				...(threadTsCandidate ? { slack_thread_ts: threadTsCandidate } : {}),
-			},
-			forceOutbox: true,
-		});
+		try {
+			const dispatched = await runPipelineForInbound({
+				pipeline: this.#pipeline,
+				outbox: this.#outbox,
+				inbound,
+				nowMs,
+				metadata: {
+					adapter: this.spec.channel,
+					delivery_id: deliveryId,
+					source: "slack:event_callback",
+					event_id: eventId,
+					...(threadTsCandidate ? { slack_thread_ts: threadTsCandidate } : {}),
+				},
+				forceOutbox: true,
+			});
 
-		return acceptedIngressResult({
-			channel: this.spec.channel,
-			response: jsonResponse({ ok: true }, { status: 200 }),
-			inbound,
-			pipelineResult: dispatched.pipelineResult,
-			outboxRecord: dispatched.outboxRecord,
-		});
+			return acceptedIngressResult({
+				channel: this.spec.channel,
+				response: jsonResponse({ ok: true }, { status: 200 }),
+				inbound,
+				pipelineResult: dispatched.pipelineResult,
+				outboxRecord: dispatched.outboxRecord,
+			});
+		} finally {
+			if (!isExplicitCommand) {
+				this.#conversationalEventInFlight.delete(conversationalEventKey);
+				this.#markConversationalEventSeen(conversationalEventKey, Math.trunc(this.#nowMs()));
+			}
+		}
 	}
 }

@@ -35,6 +35,7 @@ export function buildMessagingOperatorRuntime(opts: {
 			provider: opts.config.operator.provider ?? undefined,
 			model: opts.config.operator.model ?? undefined,
 			thinking: opts.config.operator.thinking ?? undefined,
+			timeoutMs: opts.config.operator.timeout_ms,
 			extensionPaths: operatorExtensionPaths,
 		});
 	const conversationSessionStore = new JsonFileConversationSessionStore(

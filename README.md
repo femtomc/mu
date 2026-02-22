@@ -224,13 +224,15 @@ Slack example:
       "enabled": true,
       "provider": null,
       "model": null,
-      "thinking": null
+      "thinking": null,
+      "timeout_ms": 600000
     }
   }
 }
 ```
 
 Use `mu control status` plus `<store>/config.json` edits to configure adapters, then reload control-plane (`POST /api/control-plane/reload` or `mu control reload`).
+`control_plane.operator.timeout_ms` controls maximum operator turn wall time (default `600000`).
 
 When adapters are active, `mu serve` prints mounted routes:
 

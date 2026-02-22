@@ -665,6 +665,8 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		const boolOr = (value: unknown, fallback: boolean): boolean => (typeof value === "boolean" ? value : fallback);
 		const strOrNull = (value: unknown): string | null =>
 			typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+		const intOr = (value: unknown, fallback: number): number =>
+			typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
 
 		const adapters: { channel: string; configured: boolean }[] = [
 			{ channel: "slack", configured: present(slackCfg.signing_secret) },
@@ -678,6 +680,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 			provider: strOrNull(operatorCfg.provider),
 			model: strOrNull(operatorCfg.model),
 			thinking: strOrNull(operatorCfg.thinking),
+			timeout_ms: intOr(operatorCfg.timeout_ms, 600_000),
 		};
 
 		const payload = {
@@ -713,6 +716,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		out += `  provider             ${operator.provider ?? "(default)"}\n`;
 		out += `  model                ${operator.model ?? "(default)"}\n`;
 		out += `  thinking             ${operator.thinking ?? "(default)"}\n`;
+		out += `  timeout_ms           ${operator.timeout_ms}\n`;
 		out += "  Use `mu serve` for direct terminal operator access.\n";
 
 		return ok(out);

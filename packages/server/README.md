@@ -91,6 +91,9 @@ Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace
         "memory_index": {
           "enabled": true,
           "every_ms": 300000
+        },
+        "operator": {
+          "timeout_ms": 600000
         }
       }
     }
@@ -153,6 +156,7 @@ mu control status --pretty
 - Discord: `control_plane.adapters.discord.signing_secret`
 - Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`, `bot_username`
 - Neovim: `control_plane.adapters.neovim.shared_secret`
+- Optional operator tuning: `control_plane.operator.timeout_ms` (max wall-time per messaging turn, default `600000`).
 
 3) Reload live control-plane runtime:
 
