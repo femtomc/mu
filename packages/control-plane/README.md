@@ -218,6 +218,8 @@ Inbound attachment download policy currently allows:
 - `image/jpeg`
 - `image/webp`
 - `text/plain`
+- `text/markdown`
+- `text/x-markdown`
 
 Constraints:
 
@@ -391,7 +393,7 @@ This keeps adapter behavior consistent and makes it easier to add new surfaces w
 
 `inbound_attachment_policy.ts` codifies deterministic security controls for downloaded inbound files:
 
-- Allowlist MIME types: `application/pdf`, `image/svg+xml`, `image/png`, `image/jpeg`, `image/webp`, `text/plain`
+- Allowlist MIME types: `application/pdf`, `image/svg+xml`, `image/png`, `image/jpeg`, `image/webp`, `text/plain`, `text/markdown`, `text/x-markdown`
 - Max size: `10 MiB` per attachment
 - Channel download mode defaults: Slack + Telegram enabled, others disabled
 - Malware hook policy: quarantine-on-suspect behavior with deterministic deny reason codes

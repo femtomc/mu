@@ -11,6 +11,8 @@ export const DEFAULT_INBOUND_ATTACHMENT_ALLOWED_MIME_TYPES = [
 	"image/jpeg",
 	"image/webp",
 	"text/plain",
+	"text/markdown",
+	"text/x-markdown",
 ] as const;
 
 export type InboundAttachmentPolicyReason =

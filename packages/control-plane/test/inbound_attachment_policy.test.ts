@@ -18,7 +18,9 @@ describe("inbound attachment policy", () => {
 			"image/png",
 			"image/svg+xml",
 			"image/webp",
+			"text/markdown",
 			"text/plain",
+			"text/x-markdown",
 		]);
 		expect(summary.channel_modes.telegram).toBe("enabled");
 		expect(summary.channel_modes.slack).toBe("enabled");
@@ -47,6 +49,16 @@ describe("inbound attachment policy", () => {
 		});
 		expect(oversize).toMatchObject({ kind: "deny", reason: "inbound_attachment_oversize" });
 		expect(oversize.audit.reason_code).toBe("inbound_attachment_oversize");
+
+		const markdown = evaluateInboundAttachmentPreDownload({
+			channel: "slack",
+			adapter: "slack",
+			attachment_id: "att-3",
+			channel_file_id: "file-3",
+			declared_mime_type: "text/markdown",
+			declared_size_bytes: 128,
+		});
+		expect(markdown).toMatchObject({ kind: "allow", reason: null });
 	});
 
 	test("post-download enforces malware/content-hash checks deterministically", () => {
