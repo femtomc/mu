@@ -120,6 +120,9 @@ export class ControlPlaneCommandPipeline {
 			case "response":
 				return { kind: "operator_response", message: normalizeOperatorMessage(decision.message) };
 			case "reject":
+				if (decision.reason === "operator_cancelled") {
+					return { kind: "noop", reason: "operator_cancelled" };
+				}
 				return { kind: "denied", reason: decision.reason };
 			case "command":
 				return { kind: "operator_response", message: normalizeOperatorMessage(decision.commandText) };

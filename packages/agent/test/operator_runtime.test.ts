@@ -172,3 +172,143 @@ test("JsonFileConversationSessionStore persists mappings across store instances"
 		await rm(dir, { recursive: true, force: true });
 	}
 });
+
+test("MessagingOperatorRuntime includes classified backend failure codes in fallback responses", async () => {
+	const scenarios = [
+		{ backendMessage: "pi operator timeout", expectedCode: "operator_timeout" },
+		{ backendMessage: "operator_empty_response", expectedCode: "operator_empty_response" },
+		{
+			backendMessage:
+				"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+			expectedCode: "operator_busy",
+		},
+		{ backendMessage: "Request aborted", expectedCode: "operator_cancelled" },
+		{ backendMessage: "some unknown backend crash", expectedCode: "operator_backend_error" },
+	] as const;
+
+	for (const [index, scenario] of scenarios.entries()) {
+		const runtime = new MessagingOperatorRuntime({
+			backend: {
+				runTurn: async () => {
+					throw new Error(scenario.backendMessage);
+				},
+			},
+			sessionIdFactory: () => `session-${index + 1}`,
+			turnIdFactory: () => `turn-${index + 1}`,
+		});
+		try {
+			const decision = await runtime.handleInbound({ inbound: mkInbound(`chat-${index + 1}`), binding: mkBinding() });
+			expect(decision.kind).toBe("response");
+			if (decision.kind !== "response") {
+				throw new Error(`expected response decision, got ${decision.kind}`);
+			}
+			expect(decision.message).toContain(`Code: ${scenario.expectedCode}`);
+		} finally {
+			await runtime.stop();
+		}
+	}
+});
+
+test("MessagingOperatorRuntime routes explicit cancel directives to backend abortSession", async () => {
+	let abortCalls = 0;
+	let runTurnCalls = 0;
+	const runtime = new MessagingOperatorRuntime({
+		backend: {
+			runTurn: async () => {
+				runTurnCalls += 1;
+				return { kind: "respond", message: "unexpected" };
+			},
+			abortSession: async () => {
+				abortCalls += 1;
+				return true;
+			},
+		},
+		sessionIdFactory: () => "session-cancel",
+		turnIdFactory: () => "turn-cancel",
+	});
+	try {
+		const decision = await runtime.handleInbound({
+			inbound: {
+				...mkInbound("chat-cancel"),
+				command_text: "/mu cancel",
+			},
+			binding: mkBinding(),
+		});
+		expect(decision.kind).toBe("response");
+		if (decision.kind !== "response") {
+			throw new Error(`expected response decision, got ${decision.kind}`);
+		}
+		expect(decision.message).toContain("Cancelled the in-flight operator turn");
+		expect(abortCalls).toBe(1);
+		expect(runTurnCalls).toBe(0);
+	} finally {
+		await runtime.stop();
+	}
+});
+
+test("MessagingOperatorRuntime reports when cancel finds no active turn", async () => {
+	const runtime = new MessagingOperatorRuntime({
+		backend: {
+			runTurn: async () => ({ kind: "respond", message: "unexpected" }),
+			abortSession: async () => false,
+		},
+		sessionIdFactory: () => "session-cancel-none",
+		turnIdFactory: () => "turn-cancel-none",
+	});
+	try {
+		const decision = await runtime.handleInbound({
+			inbound: {
+				...mkInbound("chat-cancel-none"),
+				command_text: "cancel",
+			},
+			binding: mkBinding(),
+		});
+		expect(decision.kind).toBe("response");
+		if (decision.kind !== "response") {
+			throw new Error(`expected response decision, got ${decision.kind}`);
+		}
+		expect(decision.message).toContain("No in-flight operator turn");
+	} finally {
+		await runtime.stop();
+	}
+});
+
+test("MessagingOperatorRuntime suppresses cancelled-turn follow-up output after explicit cancel", async () => {
+	let runTurnCalls = 0;
+	const runtime = new MessagingOperatorRuntime({
+		backend: {
+			runTurn: async () => {
+				runTurnCalls += 1;
+				throw new Error("Request aborted");
+			},
+			abortSession: async () => true,
+		},
+		sessionIdFactory: () => "session-cancel-suppress",
+		turnIdFactory: () => `turn-cancel-suppress-${runTurnCalls + 1}`,
+	});
+	try {
+		const cancelDecision = await runtime.handleInbound({
+			inbound: {
+				...mkInbound("chat-cancel-suppress"),
+				command_text: "/mu cancel",
+			},
+			binding: mkBinding(),
+		});
+		expect(cancelDecision.kind).toBe("response");
+
+		const cancelledTurnDecision = await runtime.handleInbound({
+			inbound: {
+				...mkInbound("chat-cancel-suppress"),
+				command_text: "continue",
+			},
+			binding: mkBinding(),
+		});
+		expect(cancelledTurnDecision.kind).toBe("reject");
+		if (cancelledTurnDecision.kind !== "reject") {
+			throw new Error(`expected reject decision, got ${cancelledTurnDecision.kind}`);
+		}
+		expect(cancelledTurnDecision.reason).toBe("operator_cancelled");
+	} finally {
+		await runtime.stop();
+	}
+});

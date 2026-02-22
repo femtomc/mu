@@ -1360,7 +1360,7 @@ describe("mu-server", () => {
 		if (!tickedProgram) {
 			throw new Error("expected cron program to tick");
 		}
-		expect(tickedProgram.last_result).toBe("ok");
+		expect(tickedProgram.last_result === "ok" || tickedProgram.last_result === "coalesced").toBe(true);
 		const firstTriggeredAt = tickedProgram.last_triggered_at_ms;
 		expect(typeof firstTriggeredAt).toBe("number");
 

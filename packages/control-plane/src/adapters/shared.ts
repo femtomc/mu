@@ -348,13 +348,16 @@ export async function runPipelineForInbound(opts: {
 	}
 
 	if (!outboxRecord && opts.forceOutbox) {
-		outboxRecord = await enqueueFallbackPipelineResult({
-			outbox: opts.outbox,
-			inbound: opts.inbound,
-			result: pipelineResult,
-			nowMs: opts.nowMs,
-			metadata: deliveryMetadata,
-		});
+		const suppressForcedFallback = pipelineResult.kind === "noop" && pipelineResult.reason === "operator_cancelled";
+		if (!suppressForcedFallback) {
+			outboxRecord = await enqueueFallbackPipelineResult({
+				outbox: opts.outbox,
+				inbound: opts.inbound,
+				result: pipelineResult,
+				nowMs: opts.nowMs,
+				metadata: deliveryMetadata,
+			});
+		}
 	}
 
 	return {

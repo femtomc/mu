@@ -188,7 +188,7 @@ mu store tail cp_adapter_audit --limit 20 --pretty
 - `invalid_slack_timestamp` / `stale_slack_timestamp`
   - malformed or stale signed request timestamp.
 - `unsupported_slack_action_payload`
-  - interactive button payloads are no longer accepted on Slack ingress.
+  - unsupported interactive payload (currently only the built-in in-thread `Cancel turn` button action is accepted).
 - `slack_bot_token_required`
   - Slack file download attempted without `control_plane.adapters.slack.bot_token`.
 
@@ -272,13 +272,18 @@ Both Slack and Telegram ingress are conversational-first:
 - Slack supports slash payloads and `app_mention` event callbacks.
 - Telegram supports private/group/supergroup message text/caption ingress.
 
-Interactive confirmation payloads (`confirm:<id>` / `cancel:<id>`) are no longer part of the active runtime contract. Adapters treat those payloads as unsupported.
+Interactive confirmation payloads (`confirm:<id>` / `cancel:<id>`) are no longer part of the active runtime contract. Adapters treat those payloads as unsupported (except Slack's built-in in-thread `Cancel turn` button action).
 
 Slack behavior details:
 
 - Conversational retries (`event_id`) are deduplicated for a short TTL.
 - Context is thread-scoped via `slack_thread_ts`.
 - With bot token configured, long turns use one in-thread progress anchor and in-place updates (`chat.update`).
+- Progress updates now include request summary + coarse phase (`analyzing`, `reasoning`, `executing`, `delayed`) instead of elapsed-seconds-only heartbeats.
+- Delayed runs include deterministic operator guidance (for example, run `/mu status` in parallel when a turn is taking unusually long).
+- Progress anchors include an interactive `Cancel turn` button (Slack block action `mu_cancel_turn`) that routes through the same cancel path as text directives.
+- Explicit cancel directives (`cancel`, `/mu cancel`, `/mu abort`) abort the active in-thread operator turn when one is running.
+- When a turn is explicitly cancelled, the cancelled turn's terminal fallback message is suppressed to avoid duplicate "cancelled" chatter in the thread.
 
 Telegram behavior details:
 

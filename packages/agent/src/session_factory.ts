@@ -24,6 +24,7 @@ export type CreateMuSessionOpts = {
 export type MuSession = {
 	subscribe: (listener: (event: any) => void) => () => void;
 	prompt: (text: string, options?: { expandPromptTemplates?: boolean }) => Promise<void>;
+	abort?: () => Promise<void>;
 	dispose: () => void;
 	bindExtensions: (bindings: any) => Promise<void>;
 	agent: { waitForIdle: () => Promise<void> };

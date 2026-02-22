@@ -156,7 +156,7 @@ mu control status --pretty
 - Discord: `control_plane.adapters.discord.signing_secret`
 - Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`, `bot_username`
 - Neovim: `control_plane.adapters.neovim.shared_secret`
-- Optional operator tuning: `control_plane.operator.timeout_ms` (max wall-time per messaging turn, default `600000`).
+- Optional operator tuning: `control_plane.operator.timeout_ms` (max wall-time per messaging turn, default `600000`, runtime hard-capped at `600000` for messaging safety).
 
 3) Reload live control-plane runtime:
 

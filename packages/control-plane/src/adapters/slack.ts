@@ -129,13 +129,220 @@ function normalizeSlackEventCommandText(eventType: string, text: string): string
 const CONVERSATIONAL_EVENT_DEDUPE_TTL_MS = 10 * 60 * 1_000;
 const CONVERSATIONAL_EVENT_DEDUPE_MAX = 4_096;
 
-type SlackActionParseResult = { kind: "none" } | { kind: "unsupported"; reason: "unsupported_slack_action_payload" };
+type SlackActionPayloadCancelTurn = {
+	kind: "cancel_turn";
+	teamId: string;
+	channelId: string;
+	actorId: string;
+	triggerId: string;
+	actionTs: string;
+	messageTs: string;
+	threadTs: string | null;
+	responseUrl: string | null;
+};
 
-function parseSlackActionPayload(payloadRaw: string | null): SlackActionParseResult {
+export type SlackActionParseResult =
+	| { kind: "none" }
+	| { kind: "cancel_turn"; payload: SlackActionPayloadCancelTurn }
+	| { kind: "unsupported"; reason: "unsupported_slack_action_payload" };
+
+export const SLACK_CANCEL_ACTION_ID = "mu_cancel_turn";
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return null;
+	}
+	return value as Record<string, unknown>;
+}
+
+function nonEmptyString(value: unknown): string | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function firstRecordWithActionId(value: unknown, actionId: string): Record<string, unknown> | null {
+	if (!Array.isArray(value)) {
+		return null;
+	}
+	for (const item of value) {
+		const rec = asRecord(item);
+		if (!rec) {
+			continue;
+		}
+		if (nonEmptyString(rec.action_id) === actionId) {
+			return rec;
+		}
+	}
+	return null;
+}
+
+export function parseSlackActionPayload(payloadRaw: string | null): SlackActionParseResult {
 	if (!payloadRaw || payloadRaw.trim().length === 0) {
 		return { kind: "none" };
 	}
-	return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+
+	let payload: Record<string, unknown> | null = null;
+	try {
+		payload = asRecord(JSON.parse(payloadRaw));
+	} catch {
+		return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+	}
+	if (!payload) {
+		return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+	}
+
+	if (nonEmptyString(payload.type) !== "block_actions") {
+		return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+	}
+
+	const cancelAction = firstRecordWithActionId(payload.actions, SLACK_CANCEL_ACTION_ID);
+	if (!cancelAction) {
+		return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+	}
+
+	const team = asRecord(payload.team);
+	const channel = asRecord(payload.channel);
+	const user = asRecord(payload.user);
+	const container = asRecord(payload.container);
+	const message = asRecord(payload.message);
+
+	const teamId = nonEmptyString(team?.id) ?? nonEmptyString(user?.team_id);
+	const channelId = nonEmptyString(channel?.id) ?? nonEmptyString(container?.channel_id);
+	const actorId = nonEmptyString(user?.id);
+	const triggerId =
+		nonEmptyString(payload.trigger_id) ??
+		nonEmptyString(cancelAction.action_ts) ??
+		nonEmptyString(container?.message_ts);
+	const messageTs = nonEmptyString(container?.message_ts) ?? nonEmptyString(message?.ts);
+	if (!teamId || !channelId || !actorId || !triggerId || !messageTs) {
+		return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+	}
+
+	const threadTs = nonEmptyString(message?.thread_ts) ?? nonEmptyString(message?.ts) ?? null;
+	const actionTs = nonEmptyString(cancelAction.action_ts) ?? triggerId;
+
+	return {
+		kind: "cancel_turn",
+		payload: {
+			kind: "cancel_turn",
+			teamId,
+			channelId,
+			actorId,
+			triggerId,
+			actionTs,
+			messageTs,
+			threadTs,
+			responseUrl: nonEmptyString(payload.response_url),
+		},
+	};
+}
+
+const SLACK_PROGRESS_REQUEST_PREVIEW_MAX_CHARS = 96;
+const SLACK_PROGRESS_DELAY_NOTICE_MS = 2 * 60 * 1_000;
+const SLACK_PROGRESS_RETRY_HINT_MS = 8 * 60 * 1_000;
+
+function compactSingleLine(text: string): string {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+function summarizeSlackRequest(commandText: string): string {
+	const compact = compactSingleLine(commandText);
+	if (compact.length === 0) {
+		return "(request text unavailable)";
+	}
+	if (compact.length <= SLACK_PROGRESS_REQUEST_PREVIEW_MAX_CHARS) {
+		return compact;
+	}
+	return `${compact.slice(0, SLACK_PROGRESS_REQUEST_PREVIEW_MAX_CHARS - 1)}…`;
+}
+
+function progressPhaseForElapsedMs(elapsedMs: number): { stage: string; phase: string } {
+	if (elapsedMs < 15_000) {
+		return { stage: "working_heartbeat.analyzing", phase: "Analyzing the request" };
+	}
+	if (elapsedMs < 90_000) {
+		return { stage: "working_heartbeat.reasoning", phase: "Reasoning about the best approach" };
+	}
+	if (elapsedMs < 4 * 60 * 1_000) {
+		return { stage: "working_heartbeat.executing", phase: "Running tools and validating results" };
+	}
+	return { stage: "working_heartbeat.delayed", phase: "Still running long-tail steps" };
+}
+
+export function buildSlackProgressActionBlocks(statusText: string): Record<string, unknown>[] {
+	return [
+		{
+			type: "section",
+			text: {
+				type: "mrkdwn",
+				text: statusText,
+			},
+		},
+		{
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: SLACK_CANCEL_ACTION_ID,
+					text: {
+						type: "plain_text",
+						text: "Cancel turn",
+						emoji: true,
+					},
+					style: "danger",
+					value: "cancel_turn",
+					confirm: {
+						title: { type: "plain_text", text: "Cancel this turn?" },
+						text: {
+							type: "plain_text",
+							text: "The current in-thread operator turn will be aborted.",
+							emoji: true,
+						},
+						confirm: { type: "plain_text", text: "Cancel turn", emoji: true },
+						deny: { type: "plain_text", text: "Keep running", emoji: true },
+					},
+				},
+			],
+		},
+	];
+}
+
+export function formatSlackWorkingHeartbeat(opts: {
+	commandText: string;
+	elapsedMs: number;
+}): {
+	text: string;
+	stage: string;
+} {
+	const elapsedSec = Math.max(1, Math.trunc(opts.elapsedMs / 1000));
+	const phase = progressPhaseForElapsedMs(opts.elapsedMs);
+	const lines = [
+		"INFO mu · ACK · WORKING",
+		`Phase: ${phase.phase}`,
+		`Request: ${summarizeSlackRequest(opts.commandText)}`,
+		`Elapsed: ${elapsedSec}s`,
+	];
+	if (opts.elapsedMs >= SLACK_PROGRESS_DELAY_NOTICE_MS) {
+		lines.push("This is taking longer than expected, but the turn is still active.");
+	}
+	if (opts.elapsedMs >= SLACK_PROGRESS_RETRY_HINT_MS) {
+		lines.push("If this seems stuck, run `/mu status` in parallel, or send `cancel` / `/mu cancel` to abort this thread turn.");
+	}
+	return {
+		text: lines.join("\n"),
+		stage: phase.stage,
+	};
+}
+
+function formatSlackOperatorTurnStartText(commandText: string): string {
+	return [
+		"INFO mu · ACK · WORKING",
+		"Running the operator turn now.",
+		`Request: ${summarizeSlackRequest(commandText)}`,
+	].join("\n");
 }
 
 export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
@@ -266,9 +473,15 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			return null;
 		}
 
+		const progressText = [
+			"INFO mu · ACK · ACCEPTED",
+			"Working this request in-thread. I will update this message with final output.",
+			`Request: ${summarizeSlackRequest(opts.commandText)}`,
+		].join("\n");
 		const payload = {
 			channel: opts.channelId,
-			text: "INFO mu · ACK · ACCEPTED\nWorking this request in-thread. I will update this message with final output.",
+			text: progressText,
+			blocks: buildSlackProgressActionBlocks(progressText),
 			unfurl_links: false,
 			unfurl_media: false,
 			...(opts.threadTs ? { thread_ts: opts.threadTs } : {}),
@@ -337,6 +550,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		eventId: string;
 		statusMessageTs: string;
 		text: string;
+		blocks?: Record<string, unknown>[];
 		stage: string;
 		elapsedMs?: number;
 		tick?: number;
@@ -355,6 +569,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 					channel: opts.channelId,
 					ts: opts.statusMessageTs,
 					text: opts.text,
+					...(opts.blocks ? { blocks: opts.blocks } : {}),
 					unfurl_links: false,
 					unfurl_media: false,
 				}),
@@ -438,8 +653,10 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			}
 			tick += 1;
 			const elapsedMs = Math.max(0, Math.trunc(this.#nowMs()) - opts.startedAtMs);
-			const elapsedSec = Math.max(1, Math.trunc(elapsedMs / 1000));
-			const text = `INFO mu · ACK · WORKING\nStill working on this request (${elapsedSec}s elapsed).`;
+			const heartbeat = formatSlackWorkingHeartbeat({
+				commandText: opts.commandText,
+				elapsedMs,
+			});
 			await this.#updateProgressAnchor({
 				requestId: opts.requestId,
 				deliveryId: opts.deliveryId,
@@ -449,8 +666,9 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				commandText: opts.commandText,
 				eventId: opts.eventId,
 				statusMessageTs: opts.statusMessageTs,
-				text,
-				stage: "working_heartbeat",
+				text: heartbeat.text,
+				blocks: buildSlackProgressActionBlocks(heartbeat.text),
+				stage: heartbeat.stage,
 				elapsedMs,
 				tick,
 			});
@@ -516,13 +734,100 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				response: jsonResponse(
 					{
 						response_type: "ephemeral",
-						text: "Unsupported Slack action payload. Interactive confirm/cancel actions are no longer available; send a new message instead.",
+						text: "Unsupported Slack action payload. Use slash/app-mention ingress or the built-in Cancel turn button.",
 					},
 					{ status: 200 },
 				),
 				inbound: null,
 				pipelineResult: { kind: "noop", reason: parsedAction.reason },
 				outboxRecord: null,
+			});
+		}
+
+		if (parsedAction.kind === "cancel_turn") {
+			const action = parsedAction.payload;
+			const normalizedText = "cancel";
+			const stableSource = `${action.teamId}:${action.channelId}:${action.actorId}:${action.triggerId}:${action.actionTs}:${action.messageTs}:${normalizedText}`;
+			const stableId = sha256Hex(stableSource).slice(0, 32);
+			const requestIdHeader = req.headers.get("x-slack-request-id");
+			const requestId =
+				requestIdHeader && requestIdHeader.trim().length > 0
+					? `slack-req-${requestIdHeader.trim()}`
+					: `slack-req-action-${stableId}`;
+			const deliveryId = `slack-delivery-action-${stableId}`;
+			const bindingHint = resolveBindingHint(this.#pipeline, this.spec.channel, action.teamId, action.actorId);
+			const nowMs = Math.trunc(this.#nowMs());
+			const inbound = InboundEnvelopeSchema.parse({
+				v: 1,
+				received_at_ms: nowMs,
+				request_id: requestId,
+				delivery_id: deliveryId,
+				channel: this.spec.channel,
+				channel_tenant_id: action.teamId,
+				channel_conversation_id: action.channelId,
+				actor_id: action.actorId,
+				actor_binding_id: bindingHint.actorBindingId,
+				assurance_tier: bindingHint.assuranceTier,
+				repo_root: this.#pipeline.runtime.paths.repoRoot,
+				command_text: normalizedText,
+				scope_required: "cp.read",
+				scope_effective: "cp.read",
+				target_type: "status",
+				target_id: action.channelId,
+				idempotency_key: `slack-idem-action-${stableId}`,
+				fingerprint: `slack-fp-action-${sha256Hex(normalizedText)}`,
+				metadata: {
+					adapter: this.spec.channel,
+					source: "slack:action_payload",
+					action_id: SLACK_CANCEL_ACTION_ID,
+					action_ts: action.actionTs,
+					trigger_id: action.triggerId,
+					slack_message_ts: action.messageTs,
+					...(action.threadTs ? { slack_thread_ts: action.threadTs } : {}),
+					slack_status_message_ts: action.messageTs,
+					response_url: action.responseUrl,
+				},
+			});
+
+			await this.#appendAudit({
+				requestId,
+				deliveryId,
+				teamId: action.teamId,
+				channelId: action.channelId,
+				actorId: action.actorId,
+				commandText: normalizedText,
+				event: "slack.action.accepted",
+				metadata: {
+					action_id: SLACK_CANCEL_ACTION_ID,
+					message_ts: action.messageTs,
+					thread_ts: action.threadTs,
+				},
+			});
+
+			const dispatched = await runPipelineForInbound({
+				pipeline: this.#pipeline,
+				outbox: this.#outbox,
+				inbound,
+				nowMs,
+				metadata: {
+					adapter: this.spec.channel,
+					delivery_id: deliveryId,
+					source: "slack:action_payload",
+					action_id: SLACK_CANCEL_ACTION_ID,
+					action_ts: action.actionTs,
+					slack_message_ts: action.messageTs,
+					...(action.threadTs ? { slack_thread_ts: action.threadTs } : {}),
+					slack_status_message_ts: action.messageTs,
+				},
+				forceOutbox: true,
+			});
+
+			return acceptedIngressResult({
+				channel: this.spec.channel,
+				response: textResponse("", { status: 200 }),
+				inbound,
+				pipelineResult: dispatched.pipelineResult,
+				outboxRecord: dispatched.outboxRecord,
 			});
 		}
 
@@ -898,6 +1203,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				})
 			: null;
 		if (progressAnchorTs) {
+			const turnStartText = formatSlackOperatorTurnStartText(normalizedText);
 			await this.#updateProgressAnchor({
 				requestId,
 				deliveryId,
@@ -907,7 +1213,8 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				commandText: normalizedText,
 				eventId,
 				statusMessageTs: progressAnchorTs,
-				text: "INFO mu · ACK · WORKING\nRunning the operator turn now.",
+				text: turnStartText,
+				blocks: buildSlackProgressActionBlocks(turnStartText),
 				stage: "operator_turn_start",
 				elapsedMs: 0,
 				tick: 0,
@@ -944,6 +1251,28 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				},
 				forceOutbox: true,
 			});
+
+			if (
+				progressAnchorTs &&
+				dispatched.pipelineResult.kind === "noop" &&
+				dispatched.pipelineResult.reason === "operator_cancelled"
+			) {
+				await this.#updateProgressAnchor({
+					requestId,
+					deliveryId,
+					teamId,
+					channelId,
+					actorId,
+					commandText: normalizedText,
+					eventId,
+					statusMessageTs: progressAnchorTs,
+					text: "INFO mu · ACK · CANCELLED\nThis operator turn was cancelled.",
+					blocks: [],
+					stage: "operator_turn_cancelled",
+					elapsedMs: Math.max(0, Math.trunc(this.#nowMs()) - turnStartedAtMs),
+					tick: undefined,
+				});
+			}
 
 			await this.#appendAudit({
 				requestId,

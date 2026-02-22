@@ -5,6 +5,7 @@ export type MessagingOperatorRejectReason =
 	| "operator_disabled"
 	| "operator_action_disallowed"
 	| "operator_invalid_output"
+	| "operator_cancelled"
 	| "context_missing"
 	| "context_ambiguous"
 	| "context_unauthorized"

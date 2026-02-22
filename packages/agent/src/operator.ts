@@ -28,6 +28,8 @@ type IdentityBinding = MessagingOperatorIdentityBinding;
 
 const OPERATOR_RESPONSE_MAX_CHARS = 12_000;
 const SAFE_RESPONSE_RE = new RegExp(`^[\\s\\S]{1,${OPERATOR_RESPONSE_MAX_CHARS}}$`);
+const OPERATOR_TIMEOUT_MIN_MS = 1_000;
+const OPERATOR_TIMEOUT_HARD_CAP_MS = 10 * 60 * 1_000;
 
 export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("status") }),
@@ -79,6 +81,7 @@ export type OperatorBackendTurnInput = {
 
 export interface MessagingOperatorBackend {
 	runTurn(input: OperatorBackendTurnInput): Promise<OperatorBackendTurnResult>;
+	abortSession?(sessionId: string): Promise<boolean> | boolean;
 	dispose?(): void | Promise<void>;
 }
 
@@ -101,6 +104,7 @@ export type OperatorDecision =
 				| "operator_disabled"
 				| "operator_action_disallowed"
 				| "operator_invalid_output"
+				| "operator_cancelled"
 				| "context_missing"
 				| "context_ambiguous"
 				| "context_unauthorized"
@@ -271,11 +275,50 @@ function defaultTurnId(): string {
 }
 
 function buildOperatorFailureFallbackMessage(code: string): string {
+	const reasonLine =
+		code === "operator_timeout"
+			? "The operator turn exceeded the messaging timeout before a safe response was produced."
+			: code === "operator_busy"
+				? "Another operator turn is already in progress for this conversation."
+				: code === "operator_empty_response"
+					? "The operator completed without a usable response payload."
+					: code === "operator_cancelled"
+						? "The operator turn was cancelled before completion."
+						: "An internal operator runtime/formatting error interrupted the turn.";
 	return [
-		"I ran into an internal operator formatting/runtime issue and could not complete that turn safely.",
+		"I could not complete that turn safely.",
 		`Code: ${code}`,
+		reasonLine,
 		"You can retry this request in plain conversational text.",
 	].join("\n");
+}
+
+function classifyBackendFailureCode(err: unknown): string {
+	if (!(err instanceof Error)) {
+		return "operator_backend_error";
+	}
+	const message = err.message.trim().toLowerCase();
+	if (message.includes("pi operator timeout") || message.includes("operator timeout")) {
+		return "operator_timeout";
+	}
+	if (message.includes("operator_empty_response")) {
+		return "operator_empty_response";
+	}
+	if (message.includes("agent is already processing")) {
+		return "operator_busy";
+	}
+	if (message.includes("aborted") || message.includes("cancelled")) {
+		return "operator_cancelled";
+	}
+	return "operator_backend_error";
+}
+
+function parseOperatorControlDirective(commandText: string): "cancel" | null {
+	const normalized = commandText.trim().toLowerCase();
+	if (normalized === "cancel" || normalized === "abort" || normalized === "/mu cancel" || normalized === "/mu abort") {
+		return "cancel";
+	}
+	return null;
 }
 
 function isAgentBusyError(err: unknown): boolean {
@@ -554,6 +597,7 @@ export class MessagingOperatorRuntime {
 	readonly #turnIdFactory: () => string;
 	readonly #conversationSessionStore: MessagingOperatorConversationSessionStore | null;
 	readonly #sessionByConversation = new Map<string, string>();
+	readonly #suppressedCancelledTurnsBySession = new Map<string, number>();
 
 	public constructor(opts: MessagingOperatorRuntimeOpts) {
 		this.#backend = opts.backend;
@@ -596,6 +640,24 @@ export class MessagingOperatorRuntime {
 		return created;
 	}
 
+	#markSuppressedCancelledTurn(sessionId: string): void {
+		const next = (this.#suppressedCancelledTurnsBySession.get(sessionId) ?? 0) + 1;
+		this.#suppressedCancelledTurnsBySession.set(sessionId, next);
+	}
+
+	#consumeSuppressedCancelledTurn(sessionId: string): boolean {
+		const current = this.#suppressedCancelledTurnsBySession.get(sessionId) ?? 0;
+		if (current <= 0) {
+			return false;
+		}
+		if (current === 1) {
+			this.#suppressedCancelledTurnsBySession.delete(sessionId);
+			return true;
+		}
+		this.#suppressedCancelledTurnsBySession.set(sessionId, current - 1);
+		return true;
+	}
+
 	public async handleInbound(opts: { inbound: InboundEnvelope; binding: IdentityBinding }): Promise<OperatorDecision> {
 		const sessionId = await this.#resolveSessionId(opts.inbound, opts.binding);
 		const turnId = this.#turnIdFactory();
@@ -612,6 +674,22 @@ export class MessagingOperatorRuntime {
 			return {
 				kind: "reject",
 				reason: "operator_disabled",
+				operatorSessionId: sessionId,
+				operatorTurnId: turnId,
+			};
+		}
+
+		const controlDirective = parseOperatorControlDirective(opts.inbound.command_text);
+		if (controlDirective === "cancel") {
+			const aborted = (await this.#backend.abortSession?.(sessionId)) ?? false;
+			if (aborted) {
+				this.#markSuppressedCancelledTurn(sessionId);
+			}
+			return {
+				kind: "response",
+				message: aborted
+					? "Cancelled the in-flight operator turn for this conversation."
+					: "No in-flight operator turn is active for this conversation.",
 				operatorSessionId: sessionId,
 				operatorTurnId: turnId,
 			};
@@ -660,9 +738,18 @@ export class MessagingOperatorRuntime {
 				}
 			}
 		} catch (err) {
+			const failureCode = classifyBackendFailureCode(err);
+			if (failureCode === "operator_cancelled" && this.#consumeSuppressedCancelledTurn(sessionId)) {
+				return {
+					kind: "reject",
+					reason: "operator_cancelled",
+					operatorSessionId: sessionId,
+					operatorTurnId: turnId,
+				};
+			}
 			return {
 				kind: "response",
-				message: buildOperatorFailureFallbackMessage("operator_backend_error"),
+				message: buildOperatorFailureFallbackMessage(failureCode),
 				operatorSessionId: sessionId,
 				operatorTurnId: turnId,
 			};
@@ -710,6 +797,7 @@ export class MessagingOperatorRuntime {
 
 	public async stop(): Promise<void> {
 		this.#sessionByConversation.clear();
+		this.#suppressedCancelledTurnsBySession.clear();
 		await this.#backend.dispose?.();
 		await this.#conversationSessionStore?.stop?.();
 	}
@@ -891,13 +979,15 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 	readonly #persistSessions: boolean;
 	readonly #sessionDirForRepoRoot: (repoRoot: string) => string;
 	readonly #sessions = new Map<string, PiOperatorSessionRecord>();
+	readonly #activePromptCountsBySession = new Map<string, number>();
 
 	public constructor(opts: PiMessagingOperatorBackendOpts = {}) {
 		this.#provider = opts.provider;
 		this.#model = opts.model;
 		this.#thinking = opts.thinking ?? "minimal";
 		this.#systemPrompt = opts.systemPrompt ?? DEFAULT_OPERATOR_SYSTEM_PROMPT;
-		this.#timeoutMs = Math.max(1_000, Math.trunc(opts.timeoutMs ?? 90_000));
+		const requestedTimeoutMs = Math.max(OPERATOR_TIMEOUT_MIN_MS, Math.trunc(opts.timeoutMs ?? 90_000));
+		this.#timeoutMs = Math.min(requestedTimeoutMs, OPERATOR_TIMEOUT_HARD_CAP_MS);
 		this.#extensionPaths = opts.extensionPaths ?? [];
 		this.#sessionFactory = opts.sessionFactory ?? createMuSession;
 		this.#nowMs = opts.nowMs ?? Date.now;
@@ -918,6 +1008,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			return;
 		}
 		this.#sessions.delete(sessionId);
+		this.#activePromptCountsBySession.delete(sessionId);
 		try {
 			entry.session.dispose();
 		} catch {
@@ -941,6 +1032,20 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			const [sessionId] = byOldestUse.shift()!;
 			this.#disposeSession(sessionId);
 		}
+	}
+
+	#incrementActivePrompt(sessionId: string): void {
+		const next = (this.#activePromptCountsBySession.get(sessionId) ?? 0) + 1;
+		this.#activePromptCountsBySession.set(sessionId, next);
+	}
+
+	#decrementActivePrompt(sessionId: string): void {
+		const current = this.#activePromptCountsBySession.get(sessionId) ?? 0;
+		if (current <= 1) {
+			this.#activePromptCountsBySession.delete(sessionId);
+			return;
+		}
+		this.#activePromptCountsBySession.set(sessionId, current - 1);
 	}
 
 	#sessionPersistence(repoRoot: string, sessionId: string): CreateMuSessionOpts["session"] | undefined {
@@ -1039,6 +1144,27 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		}
 	}
 
+	public async abortSession(sessionId: string): Promise<boolean> {
+		const activeCount = this.#activePromptCountsBySession.get(sessionId) ?? 0;
+		if (activeCount <= 0) {
+			return false;
+		}
+		const record = this.#sessions.get(sessionId);
+		if (!record) {
+			return false;
+		}
+		const abortFn = (record.session as MuSession & { abort?: () => Promise<void> }).abort;
+		if (!abortFn) {
+			return false;
+		}
+		try {
+			await abortFn.call(record.session);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	public async runTurn(input: OperatorBackendTurnInput): Promise<OperatorBackendTurnResult> {
 		const sessionRecord = await this.#resolveSession(input.sessionId, input.inbound.repo_root);
 		const session = sessionRecord.session;
@@ -1075,12 +1201,29 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 
 		const promptText = buildOperatorPrompt(input);
 		const promptOnce = async (): Promise<void> => {
+			let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 			const timeoutPromise = new Promise<never>((_, reject) => {
-				setTimeout(() => reject(new Error("pi operator timeout")), this.#timeoutMs);
+				timeoutHandle = setTimeout(() => {
+					const abortFn = (session as MuSession & { abort?: () => Promise<void> }).abort;
+					if (abortFn) {
+						void abortFn.call(session).catch(() => {
+							// Best effort abort on timeout.
+						});
+					}
+					reject(new Error("pi operator timeout"));
+				}, this.#timeoutMs);
 			});
-			await Promise.race([session.prompt(promptText, { expandPromptTemplates: false }), timeoutPromise]);
+			try {
+				await Promise.race([session.prompt(promptText, { expandPromptTemplates: false }), timeoutPromise]);
+			} finally {
+				if (timeoutHandle) {
+					clearTimeout(timeoutHandle);
+					timeoutHandle = null;
+				}
+			}
 		};
 
+		this.#incrementActivePrompt(input.sessionId);
 		try {
 			try {
 				await promptOnce();
@@ -1101,6 +1244,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			});
 			throw err;
 		} finally {
+			this.#decrementActivePrompt(input.sessionId);
 			unsub();
 			sessionRecord.lastUsedAtMs = Math.trunc(this.#nowMs());
 		}

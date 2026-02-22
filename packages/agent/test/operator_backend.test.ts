@@ -55,6 +55,7 @@ type StubSessionOpts = {
 	onDispose?: () => void;
 	onBind?: () => void;
 	onPrompt?: (text: string) => void;
+	onAbort?: () => Promise<void> | void;
 };
 
 function makeStubSession(opts: StubSessionOpts): MuSession {
@@ -95,6 +96,9 @@ function makeStubSession(opts: StubSessionOpts): MuSession {
 					},
 				});
 			}
+		},
+		async abort() {
+			await opts.onAbort?.();
 		},
 		dispose() {
 			opts.onDispose?.();
@@ -462,6 +466,72 @@ describe("PiMessagingOperatorBackend", () => {
 			mkInput({ sessionId: "session-other-tool", turnId: "turn-1", commandText: "status" }),
 		);
 		expect(result).toEqual({ kind: "respond", message: "The repo has 5 open issues." });
+	});
+
+	test("timeout path aborts the active session turn", async () => {
+		let abortCalls = 0;
+		const backend = new PiMessagingOperatorBackend({
+			timeoutMs: 25,
+			sessionFactory: async () => ({
+				subscribe() {
+					return () => {};
+				},
+				async prompt() {
+					await new Promise<void>(() => {});
+				},
+				async abort() {
+					abortCalls += 1;
+				},
+				dispose() {},
+				async bindExtensions() {},
+				agent: {
+					async waitForIdle() {},
+				},
+			}),
+		});
+
+		await expect(
+			backend.runTurn(mkInput({ sessionId: "session-timeout", turnId: "turn-1", commandText: "hang" })),
+		).rejects.toThrow("pi operator timeout");
+		expect(abortCalls).toBeGreaterThanOrEqual(1);
+	});
+
+	test("abortSession interrupts an in-flight turn for the target session", async () => {
+		let rejectPrompt: ((err: Error) => void) | null = null;
+		let abortCalls = 0;
+		let promptStartedResolve: (() => void) | null = null;
+		const promptStarted = new Promise<void>((resolve) => {
+			promptStartedResolve = resolve;
+		});
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () => ({
+				subscribe() {
+					return () => {};
+				},
+				async prompt() {
+					promptStartedResolve?.();
+					await new Promise<void>((_, reject) => {
+						rejectPrompt = (err: Error) => reject(err);
+					});
+				},
+				async abort() {
+					abortCalls += 1;
+					rejectPrompt?.(new Error("Request aborted"));
+				},
+				dispose() {},
+				async bindExtensions() {},
+				agent: {
+					async waitForIdle() {},
+				},
+			}),
+		});
+
+		const run = backend.runTurn(mkInput({ sessionId: "session-abort", turnId: "turn-1", commandText: "wait" }));
+		await promptStarted;
+		expect(await backend.abortSession("session-abort")).toBe(true);
+		await expect(run).rejects.toThrow("Request aborted");
+		expect(abortCalls).toBe(1);
+		expect(await backend.abortSession("session-abort")).toBe(false);
 	});
 
 	test("evicts idle sessions based on ttl", async () => {
