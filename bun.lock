@@ -17,7 +17,7 @@
     },
     "packages/agent": {
       "name": "@femtomc/mu-agent",
-      "version": "26.2.95",
+      "version": "26.2.96",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
         "@mariozechner/pi-agent-core": "^0.53.0",
@@ -28,7 +28,7 @@
     },
     "packages/cli": {
       "name": "@femtomc/mu",
-      "version": "26.2.95",
+      "version": "26.2.96",
       "bin": {
         "mu": "./dist/cli.js",
       },
@@ -46,7 +46,7 @@
     },
     "packages/control-plane": {
       "name": "@femtomc/mu-control-plane",
-      "version": "26.2.95",
+      "version": "26.2.96",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
         "zod": "^4.1.9",
@@ -54,28 +54,28 @@
     },
     "packages/core": {
       "name": "@femtomc/mu-core",
-      "version": "26.2.95",
+      "version": "26.2.96",
       "dependencies": {
         "zod": "^4.1.9",
       },
     },
     "packages/forum": {
       "name": "@femtomc/mu-forum",
-      "version": "26.2.95",
+      "version": "26.2.96",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
       },
     },
     "packages/issue": {
       "name": "@femtomc/mu-issue",
-      "version": "26.2.95",
+      "version": "26.2.96",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
       },
     },
     "packages/server": {
       "name": "@femtomc/mu-server",
-      "version": "26.2.95",
+      "version": "26.2.96",
       "bin": {
         "mu-server": "./dist/cli.js",
       },
@@ -693,7 +693,7 @@
 
     "@isaacs/cliui/wrap-ansi/ansi-styles": ["ansi-styles@6.2.3", "", {}, "sha512-4Dj6M28JB+oAH8kFkTLUo+a2jwOFkuqb3yucU0CANcRRUbxS0cP0nZYCGjcc3BNXwRIsUVmDGgzawme7zvJHvg=="],
 
-    "rimraf/glob/minimatch": ["minimatch@9.0.5", "", { "dependencies": { "brace-expansion": "^2.0.1" } }, "sha512-G6T0ZX48xgozx7587koeX9Ys2NYy6Gmv//P89sEte9V9whIapMNF4idKxnW2QtCcLiTWlb/wfCabAtAFWhhBow=="],
+    "rimraf/glob/minimatch": ["minimatch@9.0.6", "", { "dependencies": { "brace-expansion": "^5.0.2" } }, "sha512-kQAVowdR33euIqeA0+VZTDqU+qo1IeVY+hrKYtZMio3Pg0P0vuh/kwRylLUddJhB6pf3q/botcOvRtx4IN1wqQ=="],
 
     "rimraf/glob/path-scurry": ["path-scurry@1.11.1", "", { "dependencies": { "lru-cache": "^10.2.0", "minipass": "^5.0.0 || ^6.0.2 || ^7.0.0" } }, "sha512-Xa4Nw17FS9ApQFJ9umLiJS4orGjm7ZzwUrwamcGQuHSzDyth9boKDaycYdDcZDuqYATXw4HFXgaqWTctW/v1HA=="],
 
@@ -703,10 +703,6 @@
 
     "@aws-sdk/credential-provider-sso/@aws-sdk/token-providers/@aws-sdk/nested-clients/@aws-sdk/util-endpoints": ["@aws-sdk/util-endpoints@3.993.0", "", { "dependencies": { "@aws-sdk/types": "^3.973.1", "@smithy/types": "^4.12.0", "@smithy/url-parser": "^4.2.8", "@smithy/util-endpoints": "^3.2.8", "tslib": "^2.6.2" } }, "sha512-j6vioBeRZ4eHX4SWGvGPpwGg/xSOcK7f1GL0VM+rdf3ZFTIsUEhCFmD78B+5r2PgztcECSzEfvHQX01k8dPQPw=="],
 
-    "rimraf/glob/minimatch/brace-expansion": ["brace-expansion@2.0.2", "", { "dependencies": { "balanced-match": "^1.0.0" } }, "sha512-Jt0vHyM+jmUBqojB7E1NIYadt0vI0Qxjxd2TErW94wDz+E2LAm5vKMXXwg6ZZBTHPuUlDgQHKXvjGBdfcF1ZDQ=="],
-
     "rimraf/glob/path-scurry/lru-cache": ["lru-cache@10.4.3", "", {}, "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ=="],
-
-    "rimraf/glob/minimatch/brace-expansion/balanced-match": ["balanced-match@1.0.2", "", {}, "sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw=="],
   }
 }
