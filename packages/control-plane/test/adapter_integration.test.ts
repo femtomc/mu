@@ -112,6 +112,30 @@ function slackRequest(opts: {
 	});
 }
 
+function slackActionRequest(opts: {
+	secret: string;
+	timestampSec: number;
+	payload: Record<string, unknown>;
+	requestId?: string;
+}): Request {
+	const body = new URLSearchParams({ payload: JSON.stringify(opts.payload) }).toString();
+	const timestamp = String(opts.timestampSec);
+	const signature = `v0=${hmac(opts.secret, `v0:${timestamp}:${body}`)}`;
+	const headers = new Headers({
+		"content-type": "application/x-www-form-urlencoded",
+		"x-slack-request-timestamp": timestamp,
+		"x-slack-signature": signature,
+	});
+	if (opts.requestId) {
+		headers.set("x-slack-request-id", opts.requestId);
+	}
+	return new Request("https://example.test/slack/actions", {
+		method: "POST",
+		headers,
+		body,
+	});
+}
+
 function slackEventRequest(opts: {
 	secret: string;
 	timestampSec: number;
@@ -521,6 +545,106 @@ describe("channel adapters integrated with control-plane", () => {
 		expect(result.outboxRecord).toBeNull();
 		const ack = (await result.response.json()) as { text?: string };
 		expect(ack.text).toContain("command-only");
+	});
+
+	test("Slack interactive confirm action normalizes to /mu confirm <id>", async () => {
+		const harness = await createHarness();
+		const submit = await harness.slack.ingest(
+			slackRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(harness.clock.now / 1000),
+				text: "issue close mu-555",
+				triggerId: "trigger-action-submit",
+				requestId: "req-action-submit",
+			}),
+		);
+		expect(submit.pipelineResult?.kind).toBe("awaiting_confirmation");
+		if (submit.pipelineResult?.kind !== "awaiting_confirmation") {
+			throw new Error(`expected awaiting_confirmation, got ${submit.pipelineResult?.kind}`);
+		}
+		const commandId = submit.pipelineResult.command.command_id;
+
+		const confirm = await harness.slack.ingest(
+			slackActionRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(harness.clock.now / 1000),
+				requestId: "req-action-confirm",
+				payload: {
+					team: { id: "team-1" },
+					channel: { id: "chan-1" },
+					user: { id: "slack-actor" },
+					trigger_id: "trigger-action-confirm",
+					actions: [{ value: `confirm:${commandId}` }],
+				},
+			}),
+		);
+		expect(confirm.pipelineResult?.kind).toBe("completed");
+		if (confirm.pipelineResult?.kind !== "completed") {
+			throw new Error(`expected completed, got ${confirm.pipelineResult?.kind}`);
+		}
+		expect(confirm.pipelineResult.command.command_id).toBe(commandId);
+		expect(confirm.outboxRecord?.envelope.metadata?.slack_thread_ts).toBeUndefined();
+	});
+
+	test("Slack interactive cancel action normalizes to /mu cancel <id> and carries thread metadata", async () => {
+		const harness = await createHarness();
+		const submit = await harness.slack.ingest(
+			slackRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(harness.clock.now / 1000),
+				text: "issue close mu-777",
+				triggerId: "trigger-action-cancel-submit",
+				requestId: "req-action-cancel-submit",
+			}),
+		);
+		expect(submit.pipelineResult?.kind).toBe("awaiting_confirmation");
+		if (submit.pipelineResult?.kind !== "awaiting_confirmation") {
+			throw new Error(`expected awaiting_confirmation, got ${submit.pipelineResult?.kind}`);
+		}
+		const commandId = submit.pipelineResult.command.command_id;
+
+		const cancel = await harness.slack.ingest(
+			slackActionRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(harness.clock.now / 1000),
+				requestId: "req-action-cancel",
+				payload: {
+					team: { id: "team-1" },
+					channel: { id: "chan-1" },
+					user: { id: "slack-actor" },
+					trigger_id: "trigger-action-cancel",
+					container: { thread_ts: "171.2001" },
+					actions: [{ value: `cancel:${commandId}` }],
+				},
+			}),
+		);
+		expect(cancel.pipelineResult?.kind).toBe("cancelled");
+		if (cancel.pipelineResult?.kind !== "cancelled") {
+			throw new Error(`expected cancelled, got ${cancel.pipelineResult?.kind}`);
+		}
+		expect(cancel.pipelineResult.command.command_id).toBe(commandId);
+		expect(cancel.outboxRecord?.envelope.metadata?.slack_thread_ts).toBe("171.2001");
+	});
+
+	test("Slack interactive invalid action payload is deterministic noop", async () => {
+		const harness = await createHarness();
+		const invalid = await harness.slack.ingest(
+			slackActionRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(harness.clock.now / 1000),
+				requestId: "req-action-invalid",
+				payload: {
+					team: { id: "team-1" },
+					channel: { id: "chan-1" },
+					user: { id: "slack-actor" },
+					actions: [{ value: "confirm:mu-123:extra" }],
+				},
+			}),
+		);
+		expect(invalid.pipelineResult).toEqual({ kind: "noop", reason: "unsupported_slack_action_payload" });
+		expect(invalid.outboxRecord).toBeNull();
+		const ack = (await invalid.response.json()) as { text?: string };
+		expect(ack.text).toContain("Unsupported Slack action payload");
 	});
 
 	test("Slack guarded writes deny unauthorized scope with explicit visibility", async () => {

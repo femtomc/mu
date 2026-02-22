@@ -243,6 +243,98 @@ export function splitTelegramMessageText(text: string, maxLen: number = TELEGRAM
 	return chunks;
 }
 
+const SLACK_MESSAGE_MAX_LEN = 3_500;
+
+type SlackMessageButtonElement = {
+	type: "button";
+	text: { type: "plain_text"; text: string };
+	value: string;
+	action_id: string;
+};
+
+type SlackLayoutBlock =
+	| { type: "section"; text: { type: "mrkdwn"; text: string } }
+	| { type: "actions"; elements: SlackMessageButtonElement[] };
+
+export function splitSlackMessageText(text: string, maxLen: number = SLACK_MESSAGE_MAX_LEN): string[] {
+	if (text.length <= maxLen) {
+		return [text];
+	}
+	const chunks: string[] = [];
+	let cursor = 0;
+	while (cursor < text.length) {
+		const end = Math.min(text.length, cursor + maxLen);
+		if (end === text.length) {
+			chunks.push(text.slice(cursor));
+			break;
+		}
+		const window = text.slice(cursor, end);
+		const splitAtNewline = window.lastIndexOf("\n");
+		const splitPoint = splitAtNewline >= Math.floor(maxLen * 0.5) ? cursor + splitAtNewline + 1 : end;
+		chunks.push(text.slice(cursor, splitPoint));
+		cursor = splitPoint;
+	}
+	return chunks;
+}
+
+function slackBlocksForOutboxRecord(record: OutboxRecord): SlackLayoutBlock[] | undefined {
+	const interactionMessage = record.envelope.metadata?.interaction_message;
+	if (!interactionMessage || typeof interactionMessage !== "object") {
+		return undefined;
+	}
+	const rawActions = (interactionMessage as { actions?: unknown }).actions;
+	if (!Array.isArray(rawActions) || rawActions.length === 0) {
+		return undefined;
+	}
+	const buttons: SlackMessageButtonElement[] = [];
+	for (const action of rawActions) {
+		if (!action || typeof action !== "object") {
+			continue;
+		}
+		const candidate = action as { label?: unknown; command?: unknown };
+		if (typeof candidate.label !== "string" || typeof candidate.command !== "string") {
+			continue;
+		}
+		const normalized = candidate.command.trim().replace(/^\/mu\s+/i, "");
+		const confirm = /^confirm\s+([^\s]+)$/i.exec(normalized);
+		if (confirm?.[1]) {
+			buttons.push({
+				type: "button",
+				text: { type: "plain_text", text: candidate.label },
+				value: `confirm:${confirm[1]}`,
+				action_id: `confirm_${confirm[1]}`,
+			});
+			continue;
+		}
+		const cancel = /^cancel\s+([^\s]+)$/i.exec(normalized);
+		if (cancel?.[1]) {
+			buttons.push({
+				type: "button",
+				text: { type: "plain_text", text: candidate.label },
+				value: `cancel:${cancel[1]}`,
+				action_id: `cancel_${cancel[1]}`,
+			});
+		}
+	}
+	if (buttons.length === 0) {
+		return undefined;
+	}
+	return [
+		{ type: "section", text: { type: "mrkdwn", text: record.envelope.body } },
+		{ type: "actions", elements: buttons },
+	];
+}
+
+function slackThreadTsFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
+	const candidates = [metadata?.slack_thread_ts, metadata?.slack_message_ts, metadata?.thread_ts];
+	for (const value of candidates) {
+		if (typeof value === "string" && value.trim().length > 0) {
+			return value.trim();
+		}
+	}
+	return undefined;
+}
+
 function telegramReplyMarkupForOutboxRecord(record: OutboxRecord): TelegramInlineKeyboardMarkup | undefined {
 	const interactionMessage = record.envelope.metadata?.interaction_message;
 	if (!interactionMessage || typeof interactionMessage !== "object") {
@@ -558,30 +650,38 @@ export async function deliverSlackOutboxRecord(opts: {
 }): Promise<OutboxDeliveryHandlerResult> {
 	const { botToken, record } = opts;
 	const attachments = record.envelope.attachments ?? [];
+	const textChunks = splitSlackMessageText(record.envelope.body);
+	const blocks = slackBlocksForOutboxRecord(record);
+	const threadTs = slackThreadTsFromMetadata(record.envelope.metadata);
 	if (attachments.length === 0) {
-		const delivered = await postSlackJson<SlackChatPostMessageResponse>({
-			botToken,
-			method: "chat.postMessage",
-			payload: {
-				channel: record.envelope.channel_conversation_id,
-				text: record.envelope.body,
-				unfurl_links: false,
-				unfurl_media: false,
-			},
-		});
-		if (delivered.response.ok && delivered.payload?.ok) {
-			return { kind: "delivered" };
+		for (const [index, chunk] of textChunks.entries()) {
+			const delivered = await postSlackJson<SlackChatPostMessageResponse>({
+				botToken,
+				method: "chat.postMessage",
+				payload: {
+					channel: record.envelope.channel_conversation_id,
+					text: chunk,
+					unfurl_links: false,
+					unfurl_media: false,
+					...(index === 0 && blocks ? { blocks } : {}),
+					...(threadTs ? { thread_ts: threadTs } : {}),
+				},
+			});
+			if (delivered.response.ok && delivered.payload?.ok) {
+				continue;
+			}
+			const status = delivered.response.status;
+			const err = delivered.payload?.error ?? "unknown_error";
+			if (status === 429 || status >= 500) {
+				return {
+					kind: "retry",
+					error: `slack chat.postMessage ${status}: ${err}`,
+					retryDelayMs: parseRetryDelayMs(delivered.response),
+				};
+			}
+			return { kind: "retry", error: `slack chat.postMessage ${status}: ${err}` };
 		}
-		const status = delivered.response.status;
-		const err = delivered.payload?.error ?? "unknown_error";
-		if (status === 429 || status >= 500) {
-			return {
-				kind: "retry",
-				error: `slack chat.postMessage ${status}: ${err}`,
-				retryDelayMs: parseRetryDelayMs(delivered.response),
-			};
-		}
-		return { kind: "retry", error: `slack chat.postMessage ${status}: ${err}` };
+		return { kind: "delivered" };
 	}
 
 	let firstError: string | null = null;
@@ -613,7 +713,10 @@ export async function deliverSlackOutboxRecord(opts: {
 		form.set("filename", filename);
 		form.set("title", filename);
 		if (index === 0 && record.envelope.body.trim().length > 0) {
-			form.set("initial_comment", record.envelope.body);
+			form.set("initial_comment", textChunks[0] ?? record.envelope.body);
+		}
+		if (threadTs) {
+			form.set("thread_ts", threadTs);
 		}
 		form.set("file", new Blob([bytes], { type: contentType }), filename);
 
@@ -641,33 +744,39 @@ export async function deliverSlackOutboxRecord(opts: {
 		}
 	}
 
-	if (firstError) {
-		const fallback = await postSlackJson<SlackChatPostMessageResponse>({
-			botToken,
-			method: "chat.postMessage",
-			payload: {
-				channel: record.envelope.channel_conversation_id,
-				text: record.envelope.body,
-				unfurl_links: false,
-				unfurl_media: false,
-			},
-		});
-		if (fallback.response.ok && fallback.payload?.ok) {
-			return { kind: "delivered" };
-		}
-		const status = fallback.response.status;
-		const err = fallback.payload?.error ?? "unknown_error";
-		if (status === 429 || status >= 500) {
+	if (firstError || textChunks.length > 1) {
+		for (const [index, chunk] of textChunks.entries()) {
+			if (index === 0 && !firstError) {
+				continue;
+			}
+			const fallback = await postSlackJson<SlackChatPostMessageResponse>({
+				botToken,
+				method: "chat.postMessage",
+				payload: {
+					channel: record.envelope.channel_conversation_id,
+					text: chunk,
+					unfurl_links: false,
+					unfurl_media: false,
+					...(threadTs ? { thread_ts: threadTs } : {}),
+				},
+			});
+			if (fallback.response.ok && fallback.payload?.ok) {
+				continue;
+			}
+			const status = fallback.response.status;
+			const err = fallback.payload?.error ?? "unknown_error";
+			if (status === 429 || status >= 500) {
+				return {
+					kind: "retry",
+					error: `slack chat.postMessage fallback ${status}: ${err}${firstError ? ` (upload_error=${firstError})` : ""}`,
+					retryDelayMs: parseRetryDelayMs(fallback.response),
+				};
+			}
 			return {
 				kind: "retry",
-				error: `slack chat.postMessage fallback ${status}: ${err} (upload_error=${firstError})`,
-				retryDelayMs: parseRetryDelayMs(fallback.response),
+				error: `slack chat.postMessage fallback ${status}: ${err}${firstError ? ` (upload_error=${firstError})` : ""}`,
 			};
 		}
-		return {
-			kind: "retry",
-			error: `slack chat.postMessage fallback ${status}: ${err} (upload_error=${firstError})`,
-		};
 	}
 
 	return { kind: "delivered" };

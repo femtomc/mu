@@ -22,6 +22,7 @@ import {
 	type ControlPlaneSessionLifecycle,
 	containsTelegramMathNotation,
 	renderTelegramMarkdown,
+	splitSlackMessageText,
 	splitTelegramMessageText,
 } from "../src/control_plane.js";
 
@@ -249,6 +250,63 @@ function mkTelegramOutboxRecord(opts: {
 				scope_effective: "cp.read",
 				target_type: "status",
 				target_id: "tg-chat-1",
+				attempt: 1,
+				state: "completed",
+				error_code: null,
+				operator_session_id: null,
+				operator_turn_id: null,
+				cli_invocation_id: null,
+				cli_command_kind: null,
+			},
+			metadata: opts.metadata ?? {},
+		},
+		created_at_ms: 1_000,
+		updated_at_ms: 1_000,
+		next_attempt_at_ms: 1_000,
+		attempt_count: 0,
+		max_attempts: 3,
+		last_error: null,
+		dead_letter_reason: null,
+		replay_of_outbox_id: null,
+		replay_requested_by_command_id: null,
+	});
+}
+
+function mkSlackOutboxRecord(opts: {
+	body?: string;
+	attachments?: Array<Record<string, unknown>>;
+	metadata?: Record<string, unknown>;
+}) {
+	return OutboxRecordSchema.parse({
+		outbox_id: "out-slack-test-1",
+		dedupe_key: "dedupe-slack-test-1",
+		state: "pending",
+		envelope: {
+			v: 1,
+			ts_ms: 1_000,
+			channel: "slack",
+			channel_tenant_id: "team-1",
+			channel_conversation_id: "chan-1",
+			request_id: "req-1",
+			response_id: "resp-1",
+			kind: "result",
+			body: opts.body ?? "hello slack",
+			attachments: opts.attachments,
+			correlation: {
+				command_id: "cmd-1",
+				idempotency_key: "idem-1",
+				request_id: "req-1",
+				channel: "slack",
+				channel_tenant_id: "team-1",
+				channel_conversation_id: "chan-1",
+				actor_id: "slack-actor",
+				actor_binding_id: "binding-slack",
+				assurance_tier: "tier_a",
+				repo_root: "/tmp/repo",
+				scope_required: "cp.read",
+				scope_effective: "cp.read",
+				target_type: "status",
+				target_id: "chan-1",
 				attempt: 1,
 				state: "completed",
 				error_code: null,
@@ -618,6 +676,105 @@ describe("telegram outbound media delivery", () => {
 					]],
 				},
 			});
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("maps awaiting-confirmation actions to Slack message buttons", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== "https://slack.com/api/chat.postMessage") {
+				throw new Error(`unexpected fetch: ${url}`);
+			}
+			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+			return new Response(JSON.stringify({ ok: true, ts: "10.01" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+		try {
+			const result = await deliverSlackOutboxRecord({
+				botToken: "xoxb-test-token",
+				record: mkSlackOutboxRecord({
+					body: "confirm or cancel",
+					metadata: {
+						interaction_message: {
+							actions: [
+								{ label: "Confirm", command: "/mu confirm mu-abc123" },
+								{ label: "Cancel", command: "/mu cancel mu-abc123" },
+							],
+						},
+					},
+				}),
+			});
+			expect(result.kind).toBe("delivered");
+			expect(payloads).toHaveLength(1);
+			expect(payloads[0]?.blocks).toMatchObject([
+				{ type: "section" },
+				{
+					type: "actions",
+					elements: [
+						{ type: "button", text: { type: "plain_text", text: "Confirm" }, value: "confirm:mu-abc123" },
+						{ type: "button", text: { type: "plain_text", text: "Cancel" }, value: "cancel:mu-abc123" },
+					],
+				},
+			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("anchors Slack text delivery to thread_ts when metadata is present", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== "https://slack.com/api/chat.postMessage") {
+				throw new Error(`unexpected fetch: ${url}`);
+			}
+			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+			return new Response(JSON.stringify({ ok: true, ts: "10.02" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+		try {
+			const result = await deliverSlackOutboxRecord({
+				botToken: "xoxb-test-token",
+				record: mkSlackOutboxRecord({ body: "anchored", metadata: { slack_thread_ts: "171.0002" } }),
+			});
+			expect(result.kind).toBe("delivered");
+			expect(payloads).toHaveLength(1);
+			expect(payloads[0]?.thread_ts).toBe("171.0002");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("splits long Slack text into deterministic ordered chunks", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const body = `${"A".repeat(3_490)}\n${"B".repeat(3_490)}\n${"C".repeat(300)}`;
+		const expected = splitSlackMessageText(body);
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== "https://slack.com/api/chat.postMessage") {
+				throw new Error(`unexpected fetch: ${url}`);
+			}
+			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+			return new Response(JSON.stringify({ ok: true, ts: "10.03" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+		try {
+			const result = await deliverSlackOutboxRecord({ botToken: "xoxb-test-token", record: mkSlackOutboxRecord({ body }) });
+			expect(result.kind).toBe("delivered");
+			expect(payloads.map((entry) => entry.text)).toEqual(expected);
+			expect(expected.length).toBeGreaterThan(1);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
@@ -993,7 +1150,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 	});
 
 	test("Slack outbound delivery uploads media attachments via Slack Web API", async () => {
-		const calls: Array<{ url: string; auth: string | null }> = [];
+		const calls: Array<{ url: string; auth: string | null; threadTs?: string | null }> = [];
 		const originalFetch = globalThis.fetch;
 		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -1004,7 +1161,12 @@ describe("bootstrapControlPlane operator wiring", () => {
 				});
 			}
 			if (url === "https://slack.com/api/files.upload") {
-				calls.push({ url, auth: new Headers(init?.headers).get("authorization") });
+				const form = init?.body;
+				calls.push({
+					url,
+					auth: new Headers(init?.headers).get("authorization"),
+					threadTs: form instanceof FormData ? (form.get("thread_ts") as string | null) : null,
+				});
 				return new Response(JSON.stringify({ ok: true, file: { id: "F123" } }), {
 					status: 200,
 					headers: { "content-type": "application/json" },
@@ -1079,7 +1241,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 							cli_invocation_id: null,
 							cli_command_kind: null,
 						},
-						metadata: {},
+						metadata: { slack_thread_ts: "171.9900" },
 					},
 				},
 			});
@@ -1087,6 +1249,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			expect(result.kind).toBe("delivered");
 			expect(calls.some((entry) => entry.url.endsWith("/files.upload"))).toBe(true);
 			expect(calls.some((entry) => entry.auth === "Bearer xoxb-test-token")).toBe(true);
+			expect(calls.find((entry) => entry.url.endsWith("/files.upload"))?.threadTs).toBe("171.9900");
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

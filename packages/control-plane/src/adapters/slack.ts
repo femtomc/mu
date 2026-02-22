@@ -119,6 +119,80 @@ function parseSlackEventFiles(value: unknown): SlackEventFile[] {
 	return out;
 }
 
+type SlackActionParseResult =
+	| { kind: "none" }
+	| {
+			kind: "ok";
+			teamId: string;
+			channelId: string;
+			actorId: string;
+			triggerId: string;
+			normalizedText: string;
+			threadTs?: string;
+		}
+	| { kind: "unsupported"; reason: "unsupported_slack_action_payload" };
+
+function parseSlackActionPayload(payloadRaw: string | null): SlackActionParseResult {
+	if (!payloadRaw || payloadRaw.trim().length === 0) {
+		return { kind: "none" };
+	}
+	let payload: unknown;
+	try {
+		payload = JSON.parse(payloadRaw);
+	} catch {
+		return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+	}
+	if (!payload || typeof payload !== "object") {
+		return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+	}
+	const data = payload as Record<string, unknown>;
+	const actions = Array.isArray(data.actions) ? data.actions : [];
+	const action0 = actions[0];
+	if (!action0 || typeof action0 !== "object") {
+		return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+	}
+	const action = action0 as Record<string, unknown>;
+	const value = typeof action.value === "string" ? action.value.trim() : "";
+	const team = data.team && typeof data.team === "object" ? (data.team as Record<string, unknown>) : null;
+	const channel = data.channel && typeof data.channel === "object" ? (data.channel as Record<string, unknown>) : null;
+	const user = data.user && typeof data.user === "object" ? (data.user as Record<string, unknown>) : null;
+	const teamId = typeof team?.id === "string" ? team.id : "unknown-team";
+	const channelId = typeof channel?.id === "string" ? channel.id : "unknown-channel";
+	const actorId = typeof user?.id === "string" ? user.id : "unknown-user";
+	const triggerId = typeof data.trigger_id === "string" ? data.trigger_id : sha256Hex(payloadRaw).slice(0, 24);
+	const container = data.container && typeof data.container === "object" ? (data.container as Record<string, unknown>) : null;
+	const message = data.message && typeof data.message === "object" ? (data.message as Record<string, unknown>) : null;
+	const threadTs = [container?.thread_ts, container?.message_ts, message?.thread_ts, message?.ts].find(
+		(candidate) => typeof candidate === "string" && candidate.trim().length > 0,
+	) as string | undefined;
+
+	const confirmMatch = /^confirm:([^\s:]+)$/i.exec(value);
+	if (confirmMatch?.[1]) {
+		return {
+			kind: "ok",
+			teamId,
+			channelId,
+			actorId,
+			triggerId,
+			normalizedText: `/mu confirm ${confirmMatch[1]}`,
+			...(threadTs ? { threadTs } : {}),
+		};
+	}
+	const cancelMatch = /^cancel:([^\s:]+)$/i.exec(value);
+	if (cancelMatch?.[1]) {
+		return {
+			kind: "ok",
+			teamId,
+			channelId,
+			actorId,
+			triggerId,
+			normalizedText: `/mu cancel ${cancelMatch[1]}`,
+			...(threadTs ? { threadTs } : {}),
+		};
+	}
+	return { kind: "unsupported", reason: "unsupported_slack_action_payload" };
+}
+
 export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 	public readonly spec = SlackControlPlaneAdapterSpec;
 	readonly #pipeline: ControlPlaneCommandPipeline;
@@ -219,12 +293,30 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 
 	async #ingestSlashCommand(req: Request, rawBody: string): Promise<AdapterIngressResult> {
 		const form = new URLSearchParams(rawBody);
-		const teamId = form.get("team_id") ?? "unknown-team";
-		const channelId = form.get("channel_id") ?? "unknown-channel";
-		const actorId = form.get("user_id") ?? "unknown-user";
+		const parsedAction = parseSlackActionPayload(form.get("payload"));
+		if (parsedAction.kind === "unsupported") {
+			return acceptedIngressResult({
+				channel: this.spec.channel,
+				reason: parsedAction.reason,
+				response: jsonResponse(
+					{
+						response_type: "ephemeral",
+						text: "Unsupported Slack action payload. Use `/mu confirm <id>` or `/mu cancel <id>`.",
+					},
+					{ status: 200 },
+				),
+				inbound: null,
+				pipelineResult: { kind: "noop", reason: parsedAction.reason },
+				outboxRecord: null,
+			});
+		}
+
+		const teamId = parsedAction.kind === "ok" ? parsedAction.teamId : (form.get("team_id") ?? "unknown-team");
+		const channelId = parsedAction.kind === "ok" ? parsedAction.channelId : (form.get("channel_id") ?? "unknown-channel");
+		const actorId = parsedAction.kind === "ok" ? parsedAction.actorId : (form.get("user_id") ?? "unknown-user");
 		const command = (form.get("command") ?? "").trim();
 		const text = form.get("text") ?? "";
-		if (command !== "/mu") {
+		if (parsedAction.kind !== "ok" && command !== "/mu") {
 			return acceptedIngressResult({
 				channel: this.spec.channel,
 				reason: "slack_command_required",
@@ -240,8 +332,11 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				outboxRecord: null,
 			});
 		}
-		const triggerId = form.get("trigger_id") ?? form.get("command_ts") ?? sha256Hex(rawBody).slice(0, 24);
-		const normalizedText = normalizeSlashMuCommand(text);
+		const triggerId =
+			parsedAction.kind === "ok"
+				? parsedAction.triggerId
+				: (form.get("trigger_id") ?? form.get("command_ts") ?? sha256Hex(rawBody).slice(0, 24));
+		const normalizedText = parsedAction.kind === "ok" ? parsedAction.normalizedText : normalizeSlashMuCommand(text);
 		const stableSource = `${teamId}:${channelId}:${actorId}:${triggerId}:${normalizedText}`;
 		const stableId = sha256Hex(stableSource).slice(0, 32);
 		const requestIdHeader = req.headers.get("x-slack-request-id");
@@ -276,6 +371,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				adapter: this.spec.channel,
 				response_url: form.get("response_url"),
 				trigger_id: triggerId,
+				...(parsedAction.kind === "ok" && parsedAction.threadTs ? { slack_thread_ts: parsedAction.threadTs } : {}),
 				source: "slack:slash_command",
 			},
 		});
@@ -289,6 +385,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				adapter: this.spec.channel,
 				response_url: form.get("response_url"),
 				delivery_id: deliveryId,
+				...(parsedAction.kind === "ok" && parsedAction.threadTs ? { slack_thread_ts: parsedAction.threadTs } : {}),
 				source: "slack:slash_command",
 			},
 		});
@@ -400,6 +497,9 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		}
 
 		const triggerId = typeof event.event_ts === "string" ? event.event_ts : eventId;
+		const threadTsCandidate = [event.thread_ts, event.ts].find(
+			(candidate) => typeof candidate === "string" && candidate.trim().length > 0,
+		) as string | undefined;
 		const bindingHint = resolveBindingHint(this.#pipeline, this.spec.channel, teamId, actorId);
 		const nowMs = Math.trunc(this.#nowMs());
 		const attachments: AttachmentDescriptor[] = [];
@@ -552,6 +652,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				source: "slack:event_callback",
 				event_id: eventId,
 				trigger_id: triggerId,
+				...(threadTsCandidate ? { slack_thread_ts: threadTsCandidate } : {}),
 			},
 		});
 
@@ -576,6 +677,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				delivery_id: deliveryId,
 				source: "slack:event_callback",
 				event_id: eventId,
+				...(threadTsCandidate ? { slack_thread_ts: threadTsCandidate } : {}),
 			},
 		});
 
