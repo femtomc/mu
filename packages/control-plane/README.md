@@ -291,6 +291,7 @@ This preserves explicit `/mu` behavior while enabling linked Slack `@mu ...` con
 Slack conversational retries (same `event_id`) are deduplicated for a short TTL so at-least-once delivery does not fan out duplicate long-running operator turns.
 Slack conversational context is scoped per linked actor + channel + `slack_thread_ts` (top-level mentions use the mention message timestamp), so separate threads do not share operator memory.
 When Slack bot token delivery is configured, conversational mention turns post an in-thread progress anchor and outbox delivery updates that anchor in-place with final output (`chat.update`) to reduce thread noise while preserving liveness.
+Long-running turns also emit lightweight in-place progress checkpoints (for example, operator turn started + periodic heartbeat) and deterministic adapter audit rows (`slack.progress_checkpoint.*`, `slack.operator_turn.*`).
 Conversational operator replies are delivered as plain chat bodies (not wrapped control-plane lifecycle scaffolding). Slack output applies light markdown normalization (for example, `### Heading` → `*Heading*`) for better mrkdwn rendering.
 
 Recommended secure collaboration mode: keep a single linked actor for the shared channel/thread, and rotate ownership via `mu control unlink` + `mu control link` when responsibility changes.

@@ -394,6 +394,155 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		}
 	}
 
+	async #updateProgressAnchor(opts: {
+		requestId: string;
+		deliveryId: string;
+		teamId: string;
+		channelId: string;
+		actorId: string;
+		commandText: string;
+		eventId: string;
+		statusMessageTs: string;
+		text: string;
+		stage: string;
+		elapsedMs?: number;
+		tick?: number;
+	}): Promise<boolean> {
+		if (!this.#botToken) {
+			return false;
+		}
+		try {
+			const response = await this.#fetchImpl("https://slack.com/api/chat.update", {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${this.#botToken}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					channel: opts.channelId,
+					ts: opts.statusMessageTs,
+					text: opts.text,
+					unfurl_links: false,
+					unfurl_media: false,
+				}),
+			});
+			const body = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+			if (response.ok && body?.ok === true) {
+				await this.#appendAudit({
+					requestId: opts.requestId,
+					deliveryId: opts.deliveryId,
+					teamId: opts.teamId,
+					channelId: opts.channelId,
+					actorId: opts.actorId,
+					commandText: opts.commandText.length > 0 ? opts.commandText : "/mu",
+					event: "slack.progress_checkpoint.sent",
+					metadata: {
+						event_id: opts.eventId,
+						stage: opts.stage,
+						status_message_ts: opts.statusMessageTs,
+						elapsed_ms: opts.elapsedMs,
+						tick: opts.tick,
+					},
+				});
+				return true;
+			}
+			await this.#appendAudit({
+				requestId: opts.requestId,
+				deliveryId: opts.deliveryId,
+				teamId: opts.teamId,
+				channelId: opts.channelId,
+				actorId: opts.actorId,
+				commandText: opts.commandText.length > 0 ? opts.commandText : "/mu",
+				event: "slack.progress_checkpoint.failed",
+				reason: body?.error ?? `http_${response.status}`,
+				metadata: {
+					event_id: opts.eventId,
+					stage: opts.stage,
+					status_message_ts: opts.statusMessageTs,
+					http_status: response.status,
+				},
+			});
+			return false;
+		} catch (err) {
+			await this.#appendAudit({
+				requestId: opts.requestId,
+				deliveryId: opts.deliveryId,
+				teamId: opts.teamId,
+				channelId: opts.channelId,
+				actorId: opts.actorId,
+				commandText: opts.commandText.length > 0 ? opts.commandText : "/mu",
+				event: "slack.progress_checkpoint.failed",
+				reason: err instanceof Error ? err.message : "progress_checkpoint_failed",
+				metadata: {
+					event_id: opts.eventId,
+					stage: opts.stage,
+					status_message_ts: opts.statusMessageTs,
+				},
+			});
+			return false;
+		}
+	}
+
+	#startProgressTicker(opts: {
+		requestId: string;
+		deliveryId: string;
+		teamId: string;
+		channelId: string;
+		actorId: string;
+		commandText: string;
+		eventId: string;
+		statusMessageTs: string;
+		startedAtMs: number;
+	}): () => void {
+		let stopped = false;
+		let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+		let intervalHandle: ReturnType<typeof setInterval> | null = null;
+		let tick = 0;
+
+		const emitTick = async (): Promise<void> => {
+			if (stopped) {
+				return;
+			}
+			tick += 1;
+			const elapsedMs = Math.max(0, Math.trunc(this.#nowMs()) - opts.startedAtMs);
+			const elapsedSec = Math.max(1, Math.trunc(elapsedMs / 1000));
+			const text = `INFO mu · ACK · WORKING\nStill working on this request (${elapsedSec}s elapsed).`;
+			await this.#updateProgressAnchor({
+				requestId: opts.requestId,
+				deliveryId: opts.deliveryId,
+				teamId: opts.teamId,
+				channelId: opts.channelId,
+				actorId: opts.actorId,
+				commandText: opts.commandText,
+				eventId: opts.eventId,
+				statusMessageTs: opts.statusMessageTs,
+				text,
+				stage: "working_heartbeat",
+				elapsedMs,
+				tick,
+			});
+		};
+
+		timeoutHandle = setTimeout(() => {
+			void emitTick();
+			intervalHandle = setInterval(() => {
+				void emitTick();
+			}, 12_000);
+		}, 3_000);
+
+		return () => {
+			stopped = true;
+			if (timeoutHandle) {
+				clearTimeout(timeoutHandle);
+				timeoutHandle = null;
+			}
+			if (intervalHandle) {
+				clearInterval(intervalHandle);
+				intervalHandle = null;
+			}
+		};
+	}
+
 	public async ingest(req: Request): Promise<AdapterIngressResult> {
 		if (req.method !== "POST") {
 			return rejectedIngressResult({
@@ -854,6 +1003,51 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			},
 		});
 
+		const turnStartedAtMs = Math.trunc(this.#nowMs());
+		const stopProgressTicker = progressAnchorTs
+			? this.#startProgressTicker({
+					requestId,
+					deliveryId,
+					teamId,
+					channelId,
+					actorId,
+					commandText: normalizedText,
+					eventId,
+					statusMessageTs: progressAnchorTs,
+					startedAtMs: turnStartedAtMs,
+				})
+			: null;
+		if (progressAnchorTs) {
+			await this.#updateProgressAnchor({
+				requestId,
+				deliveryId,
+				teamId,
+				channelId,
+				actorId,
+				commandText: normalizedText,
+				eventId,
+				statusMessageTs: progressAnchorTs,
+				text: "INFO mu · ACK · WORKING\nRunning the operator turn now.",
+				stage: "operator_turn_start",
+				elapsedMs: 0,
+				tick: 0,
+			});
+		}
+		await this.#appendAudit({
+			requestId,
+			deliveryId,
+			teamId,
+			channelId,
+			actorId,
+			commandText: normalizedText,
+			event: "slack.operator_turn.started",
+			metadata: {
+				event_id: eventId,
+				attachment_count: attachments.length,
+				...(progressAnchorTs ? { progress_anchor_ts: progressAnchorTs } : {}),
+			},
+		});
+
 		try {
 			const dispatched = await runPipelineForInbound({
 				pipeline: this.#pipeline,
@@ -871,6 +1065,22 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				forceOutbox: true,
 			});
 
+			await this.#appendAudit({
+				requestId,
+				deliveryId,
+				teamId,
+				channelId,
+				actorId,
+				commandText: normalizedText,
+				event: "slack.operator_turn.completed",
+				metadata: {
+					event_id: eventId,
+					pipeline_result_kind: dispatched.pipelineResult.kind,
+					elapsed_ms: Math.max(0, Math.trunc(this.#nowMs()) - turnStartedAtMs),
+					...(progressAnchorTs ? { progress_anchor_ts: progressAnchorTs } : {}),
+				},
+			});
+
 			return acceptedIngressResult({
 				channel: this.spec.channel,
 				response: jsonResponse({ ok: true }, { status: 200 }),
@@ -879,6 +1089,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				outboxRecord: dispatched.outboxRecord,
 			});
 		} finally {
+			stopProgressTicker?.();
 			if (!isExplicitCommand) {
 				this.#conversationalEventInFlight.delete(conversationalEventKey);
 				this.#markConversationalEventSeen(conversationalEventKey, Math.trunc(this.#nowMs()));

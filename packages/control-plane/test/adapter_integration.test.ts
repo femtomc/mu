@@ -1421,17 +1421,25 @@ describe("channel adapters integrated with control-plane", () => {
 
 	test("Slack conversational app_mention sets a progress anchor metadata pointer when bot token is configured", async () => {
 		const backend = new QueueOperatorBackend([{ kind: "respond", message: "Operator response." }]);
+		const calls: Array<{ url: string; payload: Record<string, unknown> }> = [];
 		const harness = await createHarness({
 			operatorBackend: backend,
 			slackBotToken: "xoxb-progress-test",
 			slackFetchImpl: async (input, init) => {
 				const url = String(input);
-				if (url !== "https://slack.com/api/chat.postMessage") {
+				if (url !== "https://slack.com/api/chat.postMessage" && url !== "https://slack.com/api/chat.update") {
 					throw new Error(`unexpected fetch: ${url}`);
 				}
 				const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-				expect(payload.channel).toBe("journey-room");
-				expect(payload.thread_ts).toBe("1700000000.700");
+				calls.push({ url, payload });
+				if (url === "https://slack.com/api/chat.postMessage") {
+					expect(payload.channel).toBe("journey-room");
+					expect(payload.thread_ts).toBe("1700000000.700");
+					return new Response(JSON.stringify({ ok: true, ts: "1700000000.701" }), {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					});
+				}
 				return new Response(JSON.stringify({ ok: true, ts: "1700000000.701" }), {
 					status: 200,
 					headers: { "content-type": "application/json" },
@@ -1461,6 +1469,8 @@ describe("channel adapters integrated with control-plane", () => {
 		);
 		expect(chat.pipelineResult?.kind).toBe("operator_response");
 		expect(chat.outboxRecord?.envelope.metadata?.slack_status_message_ts).toBe("1700000000.701");
+		expect(calls.some((entry) => entry.url === "https://slack.com/api/chat.postMessage")).toBe(true);
+		expect(calls.some((entry) => entry.url === "https://slack.com/api/chat.update")).toBe(true);
 		expect(backend.turns.length).toBe(1);
 	});
 
