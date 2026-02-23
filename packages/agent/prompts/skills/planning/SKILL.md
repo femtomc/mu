@@ -72,6 +72,10 @@ Do not invent alternate protocol names or tag schemas.
    - Update issues/dependencies and re-present deltas.
    - Do not begin broad execution until the user signals satisfaction.
 
+6. **After user approval, ask user about next steps*
+   - On user acceptance of the plan, turn the planning HUD off
+   - Read the `subagents` skill and offer to supervise subagents to execute the plan
+
 ## Suggested workflow
 
 ### A) Investigation pass
