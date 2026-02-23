@@ -98,7 +98,10 @@ mu forum read issue:<root-id> --limit 20 --pretty
 2. Choose exactly one action/primitive from `hierarchical-work-protocol`.
 3. Apply it.
 4. Verify (`get`, `children`, `ready`, `validate`).
-5. Post concise progress to forum.
+5. Post a human-facing `ORCH_PASS` update to forum:
+   - start with a short title that captures status in plain language
+   - follow with one concise paragraph covering: project objective context, milestone moved this pass, impact, overall progress, and next high-level step
+   - include queue/worker/drift internals only when diagnosing blocker/anomaly.
 6. Exit tick.
 
 Stop automation when `mu issues validate <root-id>` returns final.
@@ -114,7 +117,7 @@ For claimed issue `<issue-id>` under `<root-id>`:
    - directly solvable -> `complete`
 3. Apply primitive.
 4. Verify state.
-5. Post concise progress to `issue:<issue-id>`.
+5. Post progress to `issue:<issue-id>` focused on deliverable status, capability impact, and next step.
 
 Repeat bounded passes until issue closes.
 
@@ -138,7 +141,17 @@ mu heartbeats create \
   --title "hierarchical-work-v1 <root-id>" \
   --reason hierarchical_work_protocol_v1 \
   --every-ms 15000 \
-  --prompt "Use skills subagents and hierarchical-work-protocol for root <root-id>. Run exactly one bounded orchestration pass: claim/work one ready proto:hierarchical-work-v1 issue (or perform one orchestration action), verify state, and report status. Stop when 'mu issues validate <root-id>' is final."
+  --prompt "Use skills subagents and hierarchical-work-protocol for root <root-id>. Run exactly one bounded orchestration pass: inspect the proto:hierarchical-work-v1 queue, perform exactly one corrective orchestration action (including in_progress-without-worker drift recovery) or claim/work-start one ready issue, then verify state. Report human-facing progress as a titled status note plus one concise paragraph that explains project context, milestone moved, impact, overall progress, and next high-level step; avoid low-level orchestration internals unless diagnosing a blocker/anomaly. Post a matching ORCH_PASS update to issue:<root-id>. Stop when 'mu issues validate <root-id>' is final."
+```
+
+Reusable status-voice add-on for heartbeat prompts (copy/paste):
+
+```text
+Write each ORCH_PASS as a human status note, not operator telemetry.
+Use a short plain-language title + one concise paragraph covering:
+project objective, milestone moved this pass, impact/precondition,
+overall progress, and next high-level step.
+Keep queue/worker/session internals out unless diagnosing a blocker.
 ```
 
 ### B) tmux fan-out (parallel workers)
@@ -176,7 +189,7 @@ Tool: `mu_subagents_hud`
 
 1. **Heartbeat bounded-orchestration tick**
    - Setup: root issue with multiple ready leaves tagged `proto:hierarchical-work-v1`.
-   - Expected: one heartbeat tick performs exactly one bounded orchestration action, verifies state, posts concise progress, and exits.
+   - Expected: one heartbeat tick performs exactly one bounded orchestration action, verifies state, posts a high-level titled narrative status update, and exits.
 
 2. **tmux fan-out on ready leaves**
    - Setup: at least three independent ready issues under one root.

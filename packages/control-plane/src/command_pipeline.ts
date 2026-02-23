@@ -1,3 +1,4 @@
+import { normalizeHudDocs } from "@femtomc/mu-core";
 import { ChannelSchema, type IdentityBinding, IdentityStore, TERMINAL_IDENTITY_BINDING } from "./identity_store.js";
 import {
 	allowsConversationalIngressForInbound,
@@ -15,12 +16,22 @@ function idempotencyTtlMs(): number {
 	return 24 * 60 * 60 * 1_000;
 }
 
+const COMMAND_PIPELINE_HUD_DOCS_MAX = 16;
+
 function normalizeOperatorMessage(message: string): string {
 	const trimmed = message.trim();
 	if (trimmed.length > 0) {
 		return trimmed;
 	}
 	return "Operator response was empty.";
+}
+
+function normalizedHudDocsForPipeline(input: unknown) {
+	const docs = normalizeHudDocs(input, { maxDocs: COMMAND_PIPELINE_HUD_DOCS_MAX });
+	if (docs.length === 0) {
+		return undefined;
+	}
+	return docs;
 }
 
 export class ControlPlaneCommandPipeline {
@@ -118,14 +129,22 @@ export class ControlPlaneCommandPipeline {
 		const decision = await this.#operator.handleInbound({ inbound, binding });
 		switch (decision.kind) {
 			case "response":
-				return { kind: "operator_response", message: normalizeOperatorMessage(decision.message) };
+				return {
+					kind: "operator_response",
+					message: normalizeOperatorMessage(decision.message),
+					hud_docs: normalizedHudDocsForPipeline(decision.hud_docs),
+				};
 			case "reject":
 				if (decision.reason === "operator_cancelled") {
 					return { kind: "noop", reason: "operator_cancelled" };
 				}
 				return { kind: "denied", reason: decision.reason };
 			case "command":
-				return { kind: "operator_response", message: normalizeOperatorMessage(decision.commandText) };
+				return {
+					kind: "operator_response",
+					message: normalizeOperatorMessage(decision.commandText),
+					hud_docs: normalizedHudDocsForPipeline(decision.hud_docs),
+				};
 		}
 	}
 

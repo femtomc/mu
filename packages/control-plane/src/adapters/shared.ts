@@ -1,3 +1,4 @@
+import { HUD_CONTRACT_VERSION, normalizeHudDocs, stableSerializeJson } from "@femtomc/mu-core";
 import type { AdapterIngressResult } from "../adapter_contract.js";
 import type { CommandPipelineResult, ControlPlaneCommandPipeline } from "../command_pipeline.js";
 import { assuranceTierForChannel, type Channel, ChannelSchema } from "../identity_store.js";
@@ -188,6 +189,22 @@ export function syntheticStateForPipelineResult(result: CommandPipelineResult):
 	}
 }
 
+function hudMetadataFromPipelineResult(result: CommandPipelineResult): Record<string, unknown> {
+	if (result.kind !== "operator_response") {
+		return {};
+	}
+	const hudDocs = normalizeHudDocs(result.hud_docs, { maxDocs: 16 });
+	if (hudDocs.length === 0) {
+		return {};
+	}
+	return {
+		hud_contract_version: HUD_CONTRACT_VERSION,
+		hud_docs_count: hudDocs.length,
+		hud_docs: hudDocs,
+		hud_docs_json: stableSerializeJson(hudDocs),
+	};
+}
+
 export async function enqueueFallbackPipelineResult(opts: {
 	outbox: ControlPlaneOutbox;
 	inbound: InboundEnvelope;
@@ -238,6 +255,7 @@ export async function enqueueFallbackPipelineResult(opts: {
 			interaction_render_mode: "compact",
 			synthetic_correlation: true,
 			...(opts.metadata ?? {}),
+			...hudMetadataFromPipelineResult(opts.result),
 		},
 	};
 
@@ -303,6 +321,7 @@ export async function enqueueOperatorResponse(opts: {
 			interaction_message: presented.message,
 			interaction_render_mode: "chat_plain",
 			...(opts.metadata ?? {}),
+			...hudMetadataFromPipelineResult(opts.result),
 		},
 	};
 

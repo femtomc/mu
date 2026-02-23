@@ -22,6 +22,7 @@ import type { ControlPlaneCommandPipeline } from "../command_pipeline.js";
 import { type InboundEnvelope, InboundEnvelopeSchema } from "../models.js";
 import type { ControlPlaneSignalObserver } from "../observability.js";
 import type { ControlPlaneOutbox } from "../outbox.js";
+import { TelegramCallbackTokenStore } from "../telegram_callback_token_store.js";
 import { TelegramIngressQueue, type TelegramIngressRecord } from "../telegram_ingress_queue.js";
 import {
 	acceptedIngressResult,
@@ -124,8 +125,15 @@ function normalizeTelegramMessageCommand(text: string, _botUsername: string | nu
 	return text.trim();
 }
 
-function normalizeTelegramCallbackData(_data: string): string | null {
-	return null;
+function callbackDecodeFailureAck(reason: "invalid" | "expired" | "consumed"): string {
+	switch (reason) {
+		case "invalid":
+			return "This button is invalid or no longer recognized.";
+		case "expired":
+			return "This button expired. Please run the command again.";
+		case "consumed":
+			return "This button was already used.";
+	}
 }
 
 function extractTelegramMessageAttachments(message: Record<string, unknown>): TelegramMessageAttachmentCandidate[] {
@@ -277,6 +285,7 @@ export type TelegramControlPlaneAdapterOpts = {
 	botToken?: string | null;
 	inboundAttachmentPolicy?: InboundAttachmentPolicy;
 	fetchImpl?: typeof fetch;
+	callbackTokenTtlMs?: number;
 };
 
 export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
@@ -297,6 +306,8 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 	readonly #inboundAttachmentPolicy: InboundAttachmentPolicy;
 	readonly #inboundAttachmentStore: InboundAttachmentStore;
 	readonly #fetchImpl: typeof fetch;
+	readonly #callbackTokenStore: TelegramCallbackTokenStore;
+	readonly #callbackTokenTtlMs: number;
 	#ingressDraining = false;
 	#ingressDrainRequested = false;
 	#ingressRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -320,6 +331,11 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		this.#botToken = opts.botToken?.trim() || null;
 		this.#inboundAttachmentPolicy = opts.inboundAttachmentPolicy ?? DEFAULT_INBOUND_ATTACHMENT_POLICY;
 		this.#fetchImpl = opts.fetchImpl ?? fetch;
+		this.#callbackTokenStore = new TelegramCallbackTokenStore(
+			join(this.#pipeline.runtime.paths.controlPlaneDir, "telegram_callback_tokens.jsonl"),
+			{ nowMs: this.#nowMs },
+		);
+		this.#callbackTokenTtlMs = Math.max(1_000, Math.trunc(opts.callbackTokenTtlMs ?? 15 * 60_000));
 		const attachmentPaths = buildInboundAttachmentStorePaths(this.#pipeline.runtime.paths.controlPlaneDir);
 		this.#inboundAttachmentStore = new InboundAttachmentStore(attachmentPaths);
 		this.#acceptIngress = opts.acceptIngress ?? true;
@@ -537,6 +553,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			throw new Error("telegram_adapter_stopped");
 		}
 		await this.#inboundAttachmentStore.load();
+		await this.#callbackTokenStore.load();
 		if (!this.#deferredIngress || !this.#ingressQueue) {
 			return;
 		}
@@ -612,6 +629,19 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		this.#stopped = true;
 		this.#ingressDrainRequested = false;
 		this.#clearIngressRetryTimer();
+	}
+
+	public async issueCallbackToken(opts: { commandText: string; ttlMs?: number; nowMs?: number }): Promise<string> {
+		const actionCommand = opts.commandText.trim();
+		if (actionCommand.length === 0) {
+			throw new Error("commandText must be non-empty");
+		}
+		const record = await this.#callbackTokenStore.issue({
+			action: { kind: "command", command_text: actionCommand },
+			ttlMs: Math.max(1_000, Math.trunc(opts.ttlMs ?? this.#callbackTokenTtlMs)),
+			nowMs: opts.nowMs,
+		});
+		return record.callback_data;
 	}
 
 	async #buildInboundAttachments(opts: {
@@ -772,20 +802,35 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			sourceKind = "callback";
 			sourceId = stringId(callbackQuery.id) ?? updateId;
 			const callbackData = typeof callbackQuery.data === "string" ? callbackQuery.data : "";
-			const normalized = normalizeTelegramCallbackData(callbackData);
-			if (!normalized) {
+			const callbackDecision = await this.#callbackTokenStore.decodeAndConsume({
+				callbackData,
+				nowMs: Math.trunc(this.#nowMs()),
+			});
+			if (callbackDecision.kind !== "ok") {
+				const reason =
+					callbackDecision.kind === "expired"
+						? "expired_telegram_callback_token"
+						: callbackDecision.kind === "consumed"
+							? "consumed_telegram_callback_token"
+							: "invalid_telegram_callback_token";
+				const failureKind =
+					callbackDecision.kind === "expired"
+						? "expired"
+						: callbackDecision.kind === "consumed"
+							? "consumed"
+							: "invalid";
 				return rejectedIngressResult({
 					channel: this.spec.channel,
-					reason: "unsupported_telegram_callback",
+					reason,
 					response: telegramWebhookMethodResponse({
 						method: "answerCallbackQuery",
 						callback_query_id: sourceId,
-						text: "Interactive actions are no longer supported.",
+						text: callbackDecodeFailureAck(failureKind),
 						show_alert: false,
 					}),
 				});
 			}
-			commandText = normalized;
+			commandText = callbackDecision.record.action.command_text;
 			actorId = stringId((callbackQuery.from as Record<string, unknown> | undefined)?.id) ?? actorId;
 			conversationId =
 				stringId(
@@ -797,6 +842,8 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 				) ?? conversationId;
 			metadata.callback_query_id = sourceId;
 			metadata.callback_data = callbackData;
+			metadata.callback_token_id = callbackDecision.record.token_id;
+			metadata.callback_action_kind = callbackDecision.record.action.kind;
 			metadata.message_id = stringId((callbackQuery.message as Record<string, unknown> | undefined)?.message_id);
 		} else if (message) {
 			actorId = stringId((message.from as Record<string, unknown> | undefined)?.id) ?? actorId;

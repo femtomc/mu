@@ -1,3 +1,4 @@
+import { HudDocV1Schema, type HudDocV1, normalizeHudDocs } from "@femtomc/mu-core";
 import { appendJsonl, getStorePaths, readJsonl } from "@femtomc/mu-core/node";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -27,6 +28,7 @@ type InboundEnvelope = MessagingOperatorInboundEnvelope;
 type IdentityBinding = MessagingOperatorIdentityBinding;
 
 const OPERATOR_RESPONSE_MAX_CHARS = 12_000;
+const OPERATOR_TURN_HUD_DOCS_MAX = 16;
 const SAFE_RESPONSE_RE = new RegExp(`^[\\s\\S]{1,${OPERATOR_RESPONSE_MAX_CHARS}}$`);
 const OPERATOR_TIMEOUT_MIN_MS = 1_000;
 const OPERATOR_TIMEOUT_HARD_CAP_MS = 10 * 60 * 1_000;
@@ -66,9 +68,19 @@ export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 ]);
 export type OperatorApprovedCommand = z.infer<typeof OperatorApprovedCommandSchema>;
 
+const OperatorTurnHudDocsSchema = z.array(HudDocV1Schema).max(OPERATOR_TURN_HUD_DOCS_MAX).optional();
+
 export const OperatorBackendTurnResultSchema = z.discriminatedUnion("kind", [
-	z.object({ kind: z.literal("respond"), message: z.string().trim().min(1).max(OPERATOR_RESPONSE_MAX_CHARS) }),
-	z.object({ kind: z.literal("command"), command: OperatorApprovedCommandSchema }),
+	z.object({
+		kind: z.literal("respond"),
+		message: z.string().trim().min(1).max(OPERATOR_RESPONSE_MAX_CHARS),
+		hud_docs: OperatorTurnHudDocsSchema,
+	}),
+	z.object({
+		kind: z.literal("command"),
+		command: OperatorApprovedCommandSchema,
+		hud_docs: OperatorTurnHudDocsSchema,
+	}),
 ]);
 export type OperatorBackendTurnResult = z.infer<typeof OperatorBackendTurnResultSchema>;
 
@@ -89,12 +101,14 @@ export type OperatorDecision =
 	| {
 			kind: "response";
 			message: string;
+			hud_docs?: HudDocV1[];
 			operatorSessionId: string;
 			operatorTurnId: string;
 	  }
 	| {
 			kind: "command";
 			commandText: string;
+			hud_docs?: HudDocV1[];
 			operatorSessionId: string;
 			operatorTurnId: string;
 	  }
@@ -397,6 +411,49 @@ function nonEmptyString(value: unknown): string | null {
 	}
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : null;
+}
+
+function isHudToolName(toolName: string): boolean {
+	const normalized = toolName.trim().toLowerCase();
+	return normalized === "mu_hud" || normalized.endsWith("_hud");
+}
+
+function extractHudDocsFromToolResult(result: unknown): HudDocV1[] {
+	const rec = asRecord(result);
+	if (!rec) {
+		return [];
+	}
+	const details = asRecord(rec.details);
+	const candidates: unknown[] = [];
+
+	const topLevelHudDocs = rec.hud_docs;
+	if (Array.isArray(topLevelHudDocs)) {
+		candidates.push(...topLevelHudDocs);
+	}
+
+	if (details) {
+		const detailHudDocs = details.hud_docs;
+		if (Array.isArray(detailHudDocs)) {
+			candidates.push(...detailHudDocs);
+		}
+	}
+
+	return normalizeHudDocs(candidates, { maxDocs: OPERATOR_TURN_HUD_DOCS_MAX });
+}
+
+function collectHudDocsFromToolExecutionEvent(event: unknown): HudDocV1[] {
+	const rec = asRecord(event);
+	if (!rec) {
+		return [];
+	}
+	if (nonEmptyString(rec.type) !== "tool_execution_end") {
+		return [];
+	}
+	const toolName = nonEmptyString(rec.toolName);
+	if (!toolName || !isHudToolName(toolName)) {
+		return [];
+	}
+	return extractHudDocsFromToolResult(rec.result);
 }
 
 function finiteInt(value: unknown): number | null {
@@ -768,6 +825,7 @@ export class MessagingOperatorRuntime {
 			return {
 				kind: "response",
 				message,
+				...(backendResult.hud_docs && backendResult.hud_docs.length > 0 ? { hud_docs: backendResult.hud_docs } : {}),
 				operatorSessionId: sessionId,
 				operatorTurnId: turnId,
 			};
@@ -790,6 +848,7 @@ export class MessagingOperatorRuntime {
 		return {
 			kind: "command",
 			commandText: approved.commandText,
+			...(backendResult.hud_docs && backendResult.hud_docs.length > 0 ? { hud_docs: backendResult.hud_docs } : {}),
 			operatorSessionId: sessionId,
 			operatorTurnId: turnId,
 		};
@@ -1171,6 +1230,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 
 		let assistantText = "";
 		let capturedCommand: OperatorApprovedCommand | null = null;
+		let capturedHudDocs: HudDocV1[] = [];
 
 		const unsub = session.subscribe((event: any) => {
 			// Capture assistant text for fallback responses.
@@ -1196,6 +1256,13 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 				if (parsed.success) {
 					capturedCommand = parsed.data;
 				}
+			}
+
+			const hudDocs = collectHudDocsFromToolExecutionEvent(event);
+			if (hudDocs.length > 0) {
+				capturedHudDocs = normalizeHudDocs([...capturedHudDocs, ...hudDocs], {
+					maxDocs: OPERATOR_TURN_HUD_DOCS_MAX,
+				});
 			}
 		});
 
@@ -1234,6 +1301,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 				await session.agent.waitForIdle();
 				assistantText = "";
 				capturedCommand = null;
+				capturedHudDocs = [];
 				await promptOnce();
 			}
 		} catch (err) {
@@ -1256,6 +1324,9 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 				command: capturedCommand,
 				messagePreview: assistantText,
 			});
+			if (capturedHudDocs.length > 0) {
+				return { kind: "command", command: capturedCommand, hud_docs: capturedHudDocs };
+			}
 			return { kind: "command", command: capturedCommand };
 		}
 
@@ -1274,6 +1345,9 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			outcome: "respond",
 			messagePreview: responseMessage,
 		});
+		if (capturedHudDocs.length > 0) {
+			return { kind: "respond", message: responseMessage, hud_docs: capturedHudDocs };
+		}
 		return { kind: "respond", message: responseMessage };
 	}
 

@@ -1,3 +1,4 @@
+import { HUD_CONTRACT_VERSION, type HudDocV1 } from "@femtomc/mu-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { fetchMuJson, muServerUrl } from "./shared.js";
 import { clearHudMode, setActiveHudMode, syncHudModeStatus } from "./hud-mode.js";
@@ -108,6 +109,7 @@ const WIDGET_ERROR_MAX = 72;
 const ACTIVITY_EVENT_LIMIT = 180;
 const ACTIVITY_LINE_LIMIT = 4;
 const FORUM_ACTIVITY_ISSUE_LIMIT = 8;
+const SUBAGENTS_HUD_PROVIDER_ID = "subagents";
 
 function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\"'\"'")}'`;
@@ -826,6 +828,60 @@ function subagentsSnapshot(state: SubagentsState, format: "compact" | "multiline
 	].join(" · ");
 }
 
+function subagentsHudDoc(state: SubagentsState): HudDocV1 {
+	const updatedAtMs = state.lastUpdatedMs ?? Date.now();
+	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
+	const drift = computeQueueDrift(state.sessions, state.activeIssues);
+	const degraded =
+		Boolean(state.issueError || state.sessionError || state.activityError) ||
+		refreshStale ||
+		drift.activeWithoutSessionIds.length > 0 ||
+		drift.orphanSessions.length > 0;
+	return {
+		v: HUD_CONTRACT_VERSION,
+		hud_id: SUBAGENTS_HUD_PROVIDER_ID,
+		title: "Subagents HUD",
+		scope: state.issueRootId ?? null,
+		chips: [
+			{ key: "health", label: degraded ? "degraded" : "healthy", tone: degraded ? "warning" : "success" },
+			{ key: "mode", label: `mode:${state.spawnMode}`, tone: "dim" },
+			{ key: "paused", label: `paused:${state.spawnPaused ? "yes" : "no"}`, tone: state.spawnPaused ? "warning" : "dim" },
+		],
+		sections: [
+			{
+				kind: "kv",
+				title: "Queue",
+				items: [
+					{ key: "ready", label: "Ready", value: String(state.readyIssues.length) },
+					{ key: "active", label: "Active", value: String(state.activeIssues.length) },
+					{ key: "sessions", label: "Sessions", value: String(state.sessions.length) },
+				],
+			},
+			{
+				kind: "activity",
+				title: "Activity",
+				lines: state.activityLines.slice(0, ACTIVITY_LINE_LIMIT),
+			},
+		],
+		actions: [
+			{ id: "refresh", label: "Refresh", command_text: "/mu subagents refresh", kind: "secondary" },
+			{ id: "spawn", label: "Spawn", command_text: "/mu subagents spawn", kind: "primary" },
+		],
+		updated_at_ms: updatedAtMs,
+		snapshot_compact: subagentsSnapshot(state, "compact"),
+		snapshot_multiline: subagentsSnapshot(state, "multiline"),
+		metadata: {
+			enabled: state.enabled,
+			spawn_mode: state.spawnMode,
+			spawn_paused: state.spawnPaused,
+			ready_count: state.readyIssues.length,
+			active_count: state.activeIssues.length,
+			session_count: state.sessions.length,
+			refresh_stale: refreshStale,
+		},
+	};
+}
+
 function renderSubagentsUi(ctx: ExtensionContext, state: SubagentsState): void {
 	if (!ctx.hasUI) {
 		return;
@@ -997,7 +1053,10 @@ function subagentsUsageText(): string {
 
 function subagentsDetails(state: SubagentsState) {
 	const drift = computeQueueDrift(state.sessions, state.activeIssues);
+	const hudDoc = subagentsHudDoc(state);
 	return {
+		hud_provider_id: SUBAGENTS_HUD_PROVIDER_ID,
+		hud_docs: [hudDoc],
 		enabled: state.enabled,
 		prefix: state.prefix,
 		issue_root_id: state.issueRootId,
@@ -1023,12 +1082,14 @@ function subagentsDetails(state: SubagentsState) {
 }
 
 function subagentsToolError(message: string, state: SubagentsState) {
+	const details = subagentsDetails(state);
 	return {
 		content: [{ type: "text" as const, text: message }],
+		hud_docs: details.hud_docs,
 		details: {
 			ok: false,
 			error: message,
-			...subagentsDetails(state),
+			...details,
 		},
 	};
 }
@@ -1665,12 +1726,14 @@ export function subagentsUiExtension(pi: ExtensionAPI) {
 				return subagentsToolError(result.message, state);
 			}
 			syncSubagentsMode(ctx, params.action);
+			const details = subagentsDetails(state);
 			return {
 				content: [{ type: "text", text: result.message }],
+				hud_docs: details.hud_docs,
 				details: {
 					ok: true,
 					action: params.action,
-					...subagentsDetails(state),
+					...details,
 				},
 			};
 		},

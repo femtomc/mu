@@ -13,6 +13,7 @@ Use this skill when the user asks to schedule, inspect, tune, or debug `mu heart
 - [Preflight checks](#preflight-checks)
 - [Heartbeat lifecycle workflow](#heartbeat-lifecycle-workflow)
 - [Prompt design for bounded ticks](#prompt-design-for-bounded-ticks)
+- [Reusable status-voice snippet](#reusable-status-voice-snippet)
 - [Diagnostics and recovery](#diagnostics-and-recovery)
 - [Evaluation scenarios](#evaluation-scenarios)
 
@@ -107,15 +108,39 @@ Good pattern:
 - inspect queue/state
 - do exactly one action
 - verify
-- summarize progress
+- report project-level progress as a titled status note plus a concise narrative paragraph
+- narrative should cover project context, what milestone moved, impact, overall progress, and next step
+- keep low-level queue/worker internals out of default reporting; include them only for blocker/anomaly diagnosis
 - exit
 
 Example bounded prompt:
 
 ```text
-Review ready issues under root <root-id>. Perform exactly one bounded step:
-claim/work one ready issue (or report blocked), verify state, post concise progress,
-then exit.
+Review issues under root <root-id>. Perform exactly one bounded orchestration step,
+verify state, then report for a human as:
+- a short title that summarizes status
+- one concise paragraph: project context, what moved this pass, impact,
+  where the project stands overall, and what comes next
+Only include queue/worker details if diagnosing a blocker/anomaly.
+Then exit.
+```
+
+## Reusable status-voice snippet
+
+Use this copy/paste block in heartbeat prompts when updates should be written for
+non-operator humans:
+
+```text
+Write the update as a short status note for a human reader.
+- First line: a plain-language title that captures the status.
+- Then one concise paragraph explaining:
+  - what this project is trying to achieve,
+  - what meaningful milestone moved in this pass,
+  - what impact that creates (or what precondition was completed),
+  - where the overall project stands,
+  - what comes next and why it matters.
+Avoid low-level orchestration internals by default (queue snapshots, worker/session IDs,
+packet mechanics, raw issue-ID lists). Include them only when diagnosing a blocker/anomaly.
 ```
 
 For hierarchical DAG execution, pair this skill with:
@@ -161,7 +186,7 @@ mu store tail cp_outbox --limit 30 --pretty
 
 1. **Periodic progress heartbeat**
    - Setup: heartbeat created with bounded control-loop prompt and `--every-ms 15000`.
-   - Expected: each wake performs one bounded pass and exits; no unbounded run behavior.
+   - Expected: each wake performs one bounded pass, emits a high-level titled narrative status update, and exits; no unbounded run behavior.
 
 2. **Event-driven heartbeat mode**
    - Setup: heartbeat created/updated with `--every-ms 0`.

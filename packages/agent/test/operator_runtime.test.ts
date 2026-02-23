@@ -10,6 +10,7 @@ import {
 	type MessagingOperatorIdentityBinding,
 	type MessagingOperatorInboundEnvelope,
 } from "@femtomc/mu-agent";
+import type { HudDocV1 } from "@femtomc/mu-core";
 
 function mkInbound(conversationId: string): MessagingOperatorInboundEnvelope {
 	return {
@@ -47,6 +48,22 @@ function mkBinding(): MessagingOperatorIdentityBinding {
 	return {
 		binding_id: "binding-1",
 		assurance_tier: "tier_b",
+	};
+}
+
+function mkHudDoc(overrides: Partial<HudDocV1> = {}): HudDocV1 {
+	return {
+		v: 1,
+		hud_id: "planning",
+		title: "Planning",
+		scope: null,
+		chips: [{ key: "phase", label: "reviewing", tone: "warning" }],
+		sections: [{ kind: "text", text: "Awaiting approval" }],
+		actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu plan snapshot", kind: "secondary" }],
+		snapshot_compact: "HUD(plan) · phase=reviewing",
+		updated_at_ms: 123,
+		metadata: {},
+		...overrides,
 	};
 }
 
@@ -98,6 +115,32 @@ test("MessagingOperatorRuntime reuses persisted conversation session ids across 
 	await runtime2.stop();
 
 	expect(seenSessionIds).toEqual(["session-1", "session-1", "session-2"]);
+});
+
+test("MessagingOperatorRuntime forwards hud_docs from backend responses", async () => {
+	const hudDoc = mkHudDoc();
+	const runtime = new MessagingOperatorRuntime({
+		backend: {
+			runTurn: async () => ({
+				kind: "respond",
+				message: "ok",
+				hud_docs: [hudDoc],
+			}),
+		},
+		sessionIdFactory: () => "session-hud",
+		turnIdFactory: () => "turn-hud",
+	});
+	try {
+		const decision = await runtime.handleInbound({ inbound: mkInbound("chat-hud"), binding: mkBinding() });
+		expect(decision.kind).toBe("response");
+		if (decision.kind !== "response") {
+			throw new Error(`expected response decision, got ${decision.kind}`);
+		}
+		expect(decision.message).toBe("ok");
+		expect(decision.hud_docs).toEqual([hudDoc]);
+	} finally {
+		await runtime.stop();
+	}
 });
 
 test("MessagingOperatorRuntime isolates Slack conversation sessions by thread_ts", async () => {

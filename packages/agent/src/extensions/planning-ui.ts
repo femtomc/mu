@@ -1,3 +1,4 @@
+import { HUD_CONTRACT_VERSION, type HudDocV1 } from "@femtomc/mu-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { clearHudMode, setActiveHudMode, syncHudModeStatus } from "./hud-mode.js";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
@@ -86,6 +87,7 @@ const WIDGET_STEP_LABEL_MAX = 60;
 const WIDGET_ROOT_MAX = 24;
 const WIDGET_NEXT_MAX = 76;
 const WIDGET_BLOCKER_MAX = 76;
+const PLANNING_HUD_PROVIDER_ID = "planning";
 
 function phaseTone(phase: PlanningPhase): "dim" | "accent" | "warning" | "success" {
 	switch (phase) {
@@ -465,7 +467,67 @@ function parseOnOff(raw: string | undefined): boolean | null {
 	return null;
 }
 
+function planningHudDoc(state: PlanningUiState): HudDocV1 {
+	const done = state.steps.filter((step) => step.done).length;
+	const total = state.steps.length;
+	const phase = summarizePhase(state.phase);
+	const waiting = state.waitingOnUser;
+	const actions: HudDocV1["actions"] = [
+		{ id: "snapshot", label: "Snapshot", command_text: "/mu plan snapshot", kind: "secondary" },
+	];
+	if (!state.enabled) {
+		actions.unshift({ id: "enable", label: "Enable", command_text: "/mu plan on", kind: "primary" });
+	}
+	return {
+		v: HUD_CONTRACT_VERSION,
+		hud_id: PLANNING_HUD_PROVIDER_ID,
+		title: "Planning HUD",
+		scope: state.rootIssueId,
+		updated_at_ms: Date.now(),
+		chips: [
+			{ key: "phase", label: `phase:${phase}`, tone: phaseTone(state.phase) },
+			{ key: "steps", label: `steps:${done}/${total}`, tone: total > 0 && done === total ? "success" : "accent" },
+			{ key: "waiting", label: waiting ? "waiting:user" : "waiting:no", tone: waiting ? "warning" : "dim" },
+			{ key: "confidence", label: `conf:${state.confidence}`, tone: confidenceTone(state.confidence) },
+		],
+		sections: [
+			{
+				kind: "kv",
+				title: "Status",
+				items: [
+					{ key: "phase", label: "phase", value: phase },
+					{ key: "root", label: "root", value: state.rootIssueId ?? "(unset)" },
+					{ key: "steps", label: "steps", value: `${done}/${total}` },
+					{ key: "waiting", label: "waiting_on_user", value: waiting ? "yes" : "no" },
+					{ key: "confidence", label: "confidence", value: state.confidence },
+					{ key: "next", label: "next_action", value: shortLabel(state.nextAction, "(unset)", 120) },
+					{ key: "blocker", label: "blocker", value: shortLabel(state.blocker, "(none)", 120) },
+				],
+			},
+			{
+				kind: "checklist",
+				title: "Checklist",
+				items: state.steps.map((step, index) => ({ id: `${index + 1}`, label: step.label, done: step.done })),
+			},
+		],
+		actions,
+		snapshot_compact: planningSnapshot(state, "compact"),
+		snapshot_multiline: planningSnapshot(state, "multiline"),
+		metadata: {
+			enabled: state.enabled,
+			phase: state.phase,
+			root_issue_id: state.rootIssueId,
+			waiting_on_user: state.waitingOnUser,
+			confidence: state.confidence,
+			steps_total: state.steps.length,
+			steps_done: done,
+		},
+	};
+}
+
 function planningDetails(state: PlanningUiState): {
+	hud_provider_id: string;
+	hud_docs: HudDocV1[];
 	enabled: boolean;
 	phase: PlanningPhase;
 	root_issue_id: string | null;
@@ -477,7 +539,10 @@ function planningDetails(state: PlanningUiState): {
 	snapshot_compact: string;
 	snapshot_multiline: string;
 } {
+	const hudDoc = planningHudDoc(state);
 	return {
+		hud_provider_id: PLANNING_HUD_PROVIDER_ID,
+		hud_docs: [hudDoc],
 		enabled: state.enabled,
 		phase: state.phase,
 		root_issue_id: state.rootIssueId,
@@ -510,12 +575,15 @@ function planningStatusSummary(state: PlanningUiState): string {
 	].join("\n");
 }
 
-function planningToolError(message: string) {
+function planningToolError(message: string, state: PlanningUiState) {
+	const details = planningDetails(state);
 	return {
 		content: [{ type: "text" as const, text: message }],
+		hud_docs: details.hud_docs,
 		details: {
 			ok: false,
 			error: message,
+			...details,
 		},
 	};
 }
@@ -994,15 +1062,17 @@ export function planningUiExtension(pi: ExtensionAPI) {
 			const result = applyPlanningAction(params);
 			refresh(ctx);
 			if (!result.ok) {
-				return planningToolError(result.message);
+				return planningToolError(result.message, state);
 			}
 			syncPlanningMode(ctx, params.action);
+			const details = planningDetails(state);
 			return {
 				content: [{ type: "text", text: `${result.message}\n\n${planningStatusSummary(state)}` }],
+				hud_docs: details.hud_docs,
 				details: {
 					ok: true,
 					action: params.action,
-					...planningDetails(state),
+					...details,
 				},
 			};
 		},

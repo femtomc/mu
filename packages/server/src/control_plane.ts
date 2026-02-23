@@ -1,4 +1,5 @@
 import type { MessagingOperatorBackend, MessagingOperatorRuntime } from "@femtomc/mu-agent";
+import { normalizeHudDocs, type HudDocV1, type HudTone } from "@femtomc/mu-core";
 import {
 	type AdapterIngressResult,
 	type AttachmentDescriptor,
@@ -10,6 +11,7 @@ import {
 	ControlPlaneRuntime,
 	type ControlPlaneSignalObserver,
 	type GenerationTelemetryRecorder,
+	buildSlackHudActionId,
 	getControlPlanePaths,
 	type OutboxDeliveryHandlerResult,
 	type OutboxRecord,
@@ -287,7 +289,109 @@ type SlackMessageButtonElement = {
 
 type SlackLayoutBlock =
 	| { type: "section"; text: { type: "mrkdwn"; text: string } }
-	| { type: "actions"; elements: SlackMessageButtonElement[] };
+	| { type: "actions"; elements: SlackMessageButtonElement[] }
+	| { type: "context"; elements: Array<{ type: "mrkdwn"; text: string }> };
+
+const SLACK_BLOCK_TEXT_MAX_LEN = 3_000;
+const SLACK_BLOCKS_MAX = 50;
+const SLACK_ACTIONS_MAX_PER_BLOCK = 5;
+const SLACK_ACTIONS_MAX_TOTAL = 20;
+const SLACK_DOCS_MAX = 3;
+const SLACK_SECTION_LINE_MAX = 8;
+
+function truncateSlackText(text: string, maxLen: number = SLACK_BLOCK_TEXT_MAX_LEN): string {
+	if (text.length <= maxLen) {
+		return text;
+	}
+	if (maxLen <= 1) {
+		return text.slice(0, maxLen);
+	}
+	return `${text.slice(0, maxLen - 1)}…`;
+}
+
+function hudTonePrefix(tone: HudTone | undefined): string {
+	switch (tone) {
+		case "success":
+			return "✅";
+		case "warning":
+			return "⚠️";
+		case "error":
+			return "⛔";
+		case "accent":
+			return "🔹";
+		case "muted":
+			return "▫️";
+		case "dim":
+			return "·";
+		case "info":
+		default:
+			return "ℹ️";
+	}
+}
+
+function hudDocSectionLines(doc: HudDocV1): string[] {
+	const lines: string[] = [];
+	const chipsLine = doc.chips
+		.slice(0, 8)
+		.map((chip) => `${hudTonePrefix(chip.tone)} *${chip.label}*`)
+		.join(" · ");
+	if (chipsLine.length > 0) {
+		lines.push(chipsLine);
+	}
+
+	for (const section of doc.sections) {
+		switch (section.kind) {
+			case "kv": {
+				const title = section.title ? `*${section.title}*` : "*Details*";
+				const items = section.items.slice(0, SLACK_SECTION_LINE_MAX).map((item) => `• *${item.label}:* ${item.value}`);
+				if (items.length > 0) {
+					lines.push([title, ...items].join("\n"));
+				}
+				break;
+			}
+			case "checklist": {
+				const title = section.title ? `*${section.title}*` : "*Checklist*";
+				const items = section.items
+					.slice(0, SLACK_SECTION_LINE_MAX)
+					.map((item) => `${item.done ? "✅" : "⬜"} ${item.label}`);
+				if (items.length > 0) {
+					lines.push([title, ...items].join("\n"));
+				}
+				break;
+			}
+			case "activity": {
+				const title = section.title ? `*${section.title}*` : "*Activity*";
+				const items = section.lines.slice(0, SLACK_SECTION_LINE_MAX).map((line) => `• ${line}`);
+				if (items.length > 0) {
+					lines.push([title, ...items].join("\n"));
+				}
+				break;
+			}
+			case "text": {
+				const title = section.title ? `*${section.title}*\n` : "";
+				lines.push(`${title}${section.text}`);
+				break;
+			}
+		}
+	}
+
+	if (lines.length === 0) {
+		lines.push(`*Snapshot*\n${doc.snapshot_compact}`);
+	}
+	return lines;
+}
+
+function hudActionButtons(doc: HudDocV1): SlackMessageButtonElement[] {
+	return doc.actions.slice(0, SLACK_ACTIONS_MAX_TOTAL).map((action) => ({
+		type: "button",
+		text: {
+			type: "plain_text",
+			text: truncateSlackText(action.label, 75),
+		},
+		value: truncateSlackText(action.command_text, 2_000),
+		action_id: buildSlackHudActionId(action.id),
+	}));
+}
 
 export function splitSlackMessageText(text: string, maxLen: number = SLACK_MESSAGE_MAX_LEN): string[] {
 	if (text.length <= maxLen) {
@@ -310,8 +414,47 @@ export function splitSlackMessageText(text: string, maxLen: number = SLACK_MESSA
 	return chunks;
 }
 
-function slackBlocksForOutboxRecord(_record: OutboxRecord, _body: string): SlackLayoutBlock[] | undefined {
-	return undefined;
+function slackBlocksForOutboxRecord(record: OutboxRecord, body: string): SlackLayoutBlock[] | undefined {
+	const hudDocs = normalizeHudDocs(record.envelope.metadata?.hud_docs, { maxDocs: SLACK_DOCS_MAX });
+	if (hudDocs.length === 0) {
+		return undefined;
+	}
+	const blocks: SlackLayoutBlock[] = [];
+	blocks.push({
+		type: "section",
+		text: { type: "mrkdwn", text: truncateSlackText(body) },
+	});
+
+	for (const doc of hudDocs) {
+		if (blocks.length >= SLACK_BLOCKS_MAX) {
+			break;
+		}
+		blocks.push({
+			type: "context",
+			elements: [{ type: "mrkdwn", text: truncateSlackText(`*HUD · ${doc.title}*`) }],
+		});
+		for (const line of hudDocSectionLines(doc)) {
+			if (blocks.length >= SLACK_BLOCKS_MAX) {
+				break;
+			}
+			blocks.push({
+				type: "section",
+				text: { type: "mrkdwn", text: truncateSlackText(line) },
+			});
+		}
+		const buttons = hudActionButtons(doc);
+		for (let idx = 0; idx < buttons.length; idx += SLACK_ACTIONS_MAX_PER_BLOCK) {
+			if (blocks.length >= SLACK_BLOCKS_MAX) {
+				break;
+			}
+			blocks.push({
+				type: "actions",
+				elements: buttons.slice(idx, idx + SLACK_ACTIONS_MAX_PER_BLOCK),
+			});
+		}
+	}
+
+	return blocks.slice(0, SLACK_BLOCKS_MAX);
 }
 
 function slackThreadTsFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
@@ -333,8 +476,73 @@ function slackStatusMessageTsFromMetadata(metadata: Record<string, unknown> | un
 	return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function telegramReplyMarkupForOutboxRecord(_record: OutboxRecord): TelegramInlineKeyboardMarkup | undefined {
-	return undefined;
+const TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64;
+const TELEGRAM_ACTIONS_MAX_TOTAL = 20;
+const TELEGRAM_ACTIONS_PER_ROW = 3;
+const TELEGRAM_DOCS_MAX = 2;
+
+function utf8ByteLength(value: string): number {
+	return new TextEncoder().encode(value).length;
+}
+
+function telegramTextForOutboxRecord(record: OutboxRecord, body: string): string {
+	const hudDocs = normalizeHudDocs(record.envelope.metadata?.hud_docs, { maxDocs: TELEGRAM_DOCS_MAX });
+	if (hudDocs.length === 0) {
+		return body;
+	}
+
+	const lines: string[] = [body.trim()];
+	for (const doc of hudDocs) {
+		lines.push("", `HUD · ${doc.title}`);
+		for (const sectionLine of hudDocSectionLines(doc)) {
+			lines.push(sectionLine.replace(/\*/g, ""));
+		}
+	}
+	return lines.join("\n").trim();
+}
+
+type TelegramCallbackDataEncoder = (commandText: string) => Promise<string>;
+
+async function compileTelegramHudActions(opts: {
+	record: OutboxRecord;
+	encodeCallbackData?: TelegramCallbackDataEncoder;
+}): Promise<{ replyMarkup?: TelegramInlineKeyboardMarkup; overflowText: string }> {
+	const hudDocs = normalizeHudDocs(opts.record.envelope.metadata?.hud_docs, { maxDocs: TELEGRAM_DOCS_MAX });
+	if (hudDocs.length === 0) {
+		return { overflowText: "" };
+	}
+
+	const buttons: TelegramInlineKeyboardButton[] = [];
+	const overflowLines: string[] = [];
+	const actions = hudDocs.flatMap((doc) => doc.actions).slice(0, TELEGRAM_ACTIONS_MAX_TOTAL);
+	for (const action of actions) {
+		let callbackData = action.command_text;
+		if (opts.encodeCallbackData) {
+			try {
+				callbackData = await opts.encodeCallbackData(action.command_text);
+			} catch {
+				overflowLines.push(`• ${action.label}: ${action.command_text}`);
+				continue;
+			}
+		}
+		if (utf8ByteLength(callbackData) > TELEGRAM_CALLBACK_DATA_MAX_BYTES) {
+			overflowLines.push(`• ${action.label}: ${action.command_text}`);
+			continue;
+		}
+		buttons.push({
+			text: action.label.slice(0, 64),
+			callback_data: callbackData,
+		});
+	}
+
+	const inline_keyboard: TelegramInlineKeyboardButton[][] = [];
+	for (let idx = 0; idx < buttons.length; idx += TELEGRAM_ACTIONS_PER_ROW) {
+		inline_keyboard.push(buttons.slice(idx, idx + TELEGRAM_ACTIONS_PER_ROW));
+	}
+	return {
+		replyMarkup: inline_keyboard.length > 0 ? { inline_keyboard } : undefined,
+		overflowText: overflowLines.length > 0 ? `\n\nActions:\n${overflowLines.join("\n")}` : "",
+	};
 }
 
 async function postTelegramMessage(botToken: string, payload: TelegramSendMessagePayload): Promise<Response> {
@@ -441,14 +649,20 @@ async function sendTelegramTextChunks(opts: {
 export async function deliverTelegramOutboxRecord(opts: {
 	botToken: string;
 	record: OutboxRecord;
+	encodeCallbackData?: TelegramCallbackDataEncoder;
 }): Promise<OutboxDeliveryHandlerResult> {
 	const { botToken, record } = opts;
-	const replyMarkup = telegramReplyMarkupForOutboxRecord(record);
+	const hudActions = await compileTelegramHudActions({
+		record,
+		encodeCallbackData: opts.encodeCallbackData,
+	});
+	const replyMarkup = hudActions.replyMarkup;
 	const replyToMessageId = maybeParseTelegramMessageId(record.envelope.metadata?.telegram_reply_to_message_id);
+	const telegramText = `${telegramTextForOutboxRecord(record, record.envelope.body)}${hudActions.overflowText}`.trim();
 	const fallbackMessagePayload = {
 		...buildTelegramSendMessagePayload({
 			chatId: record.envelope.channel_conversation_id,
-			text: record.envelope.body,
+			text: telegramText,
 			richFormatting: true,
 		}),
 		...(replyMarkup ? { reply_markup: replyMarkup } : {}),
@@ -954,6 +1168,13 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 					return await deliverTelegramOutboxRecord({
 						botToken: telegramBotToken,
 						record,
+						encodeCallbackData: async (commandText: string) => {
+							const active = telegramManager.activeAdapter();
+							if (!active) {
+								return commandText;
+							}
+							return await active.issueCallbackToken({ commandText });
+						},
 					});
 				},
 			},

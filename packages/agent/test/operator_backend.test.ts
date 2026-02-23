@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { type HudDocV1 } from "@femtomc/mu-core";
 import { getStorePaths } from "@femtomc/mu-core/node";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -52,6 +53,8 @@ type StubSessionOpts = {
 	responses: string[];
 	/** Tool calls the session should simulate (emitted before message_end). */
 	toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }>;
+	/** Tool execution results the session should simulate (emitted before message_end). */
+	toolResults?: Array<{ toolName: string; result: unknown; isError?: boolean; toolCallId?: string }>;
 	onDispose?: () => void;
 	onBind?: () => void;
 	onPrompt?: (text: string) => void;
@@ -62,6 +65,7 @@ function makeStubSession(opts: StubSessionOpts): MuSession {
 	const listeners = new Set<(event: any) => void>();
 	const responseQueue = [...opts.responses];
 	const toolCallQueue = [...(opts.toolCalls ?? [])];
+	const toolResultQueue = [...(opts.toolResults ?? [])];
 	return {
 		subscribe(listener) {
 			listeners.add(listener);
@@ -81,6 +85,20 @@ function makeStubSession(opts: StubSessionOpts): MuSession {
 						toolCallId: `call-${crypto.randomUUID()}`,
 						toolName: toolCall.toolName,
 						args: toolCall.args,
+					});
+				}
+			}
+
+			// Emit tool_execution_end events for queued tool results.
+			const toolResult = toolResultQueue.shift();
+			if (toolResult) {
+				for (const listener of listeners) {
+					listener({
+						type: "tool_execution_end",
+						toolCallId: toolResult.toolCallId ?? `call-${crypto.randomUUID()}`,
+						toolName: toolResult.toolName,
+						result: toolResult.result,
+						isError: toolResult.isError ?? false,
 					});
 				}
 			}
@@ -466,6 +484,103 @@ describe("PiMessagingOperatorBackend", () => {
 			mkInput({ sessionId: "session-other-tool", turnId: "turn-1", commandText: "status" }),
 		);
 		expect(result).toEqual({ kind: "respond", message: "The repo has 5 open issues." });
+	});
+
+	test("captures hud_docs from *_hud tool execution results", async () => {
+		const planningHudDoc: HudDocV1 = {
+			v: 1,
+			hud_id: "planning",
+			title: "Planning",
+			scope: "issue:mu-root",
+			chips: [{ key: "phase", label: "reviewing", tone: "warning" }],
+			sections: [{ kind: "text", title: "status", text: "Awaiting approval", tone: "warning" }],
+			actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu plan snapshot", kind: "secondary" }],
+			snapshot_compact: "HUD(plan) · phase=reviewing",
+			snapshot_multiline: "Planning HUD snapshot",
+			updated_at_ms: 200,
+			metadata: {},
+		};
+
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ["Updated planning HUD."],
+					toolResults: [
+						{
+							toolName: "mu_planning_hud",
+							result: {
+								details: {
+									hud_docs: [planningHudDoc],
+								},
+							},
+						},
+					],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-hud-doc", turnId: "turn-1", commandText: "update planning hud" }),
+		);
+		expect(result).toEqual({
+			kind: "respond",
+			message: "Updated planning HUD.",
+			hud_docs: [planningHudDoc],
+		});
+	});
+
+	test("hud_docs capture is deterministic and does not break command capture", async () => {
+		const oldPlanningDoc: HudDocV1 = {
+			v: 1,
+			hud_id: "planning",
+			title: "Planning stale",
+			scope: null,
+			chips: [{ key: "phase", label: "drafting", tone: "accent" }],
+			sections: [],
+			actions: [],
+			snapshot_compact: "HUD(plan) · phase=drafting",
+			updated_at_ms: 50,
+			metadata: {},
+		};
+		const newPlanningDoc = {
+			...oldPlanningDoc,
+			title: "Planning latest",
+			snapshot_compact: "HUD(plan) · phase=reviewing",
+			updated_at_ms: 90,
+		};
+
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ["Issuing command."],
+					toolCalls: [
+						{
+							toolName: "command",
+							args: {
+								kind: "status",
+							},
+						},
+					],
+					toolResults: [
+						{
+							toolName: "mu_subagents_hud",
+							result: {
+								details: {
+									hud_docs: [newPlanningDoc, oldPlanningDoc, { hud_id: "bad" }],
+								},
+							},
+						},
+					],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-command-hud", turnId: "turn-1", commandText: "status" }),
+		);
+		expect(result).toEqual({
+			kind: "command",
+			command: { kind: "status" },
+			hud_docs: [newPlanningDoc],
+		});
 	});
 
 	test("timeout path aborts the active session turn", async () => {

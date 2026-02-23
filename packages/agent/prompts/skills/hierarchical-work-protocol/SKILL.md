@@ -164,6 +164,7 @@ mu issues dep <step-a> blocks <step-b>
 - Scoped authority: mutate only current issue and descendants.
 - Non-executable containers/questions must not retain `node:agent`.
 - Forum updates are append-only and resumable (`START`/`RESULT` packets).
+- Orchestrator progress packets are human-facing and objective-linked: use a clear status title plus concise narrative paragraph (project context, milestone moved, impact, overall progress, next step); include low-level queue/worker internals only for blocker/anomaly diagnosis.
 - Every executable issue closes with explicit outcome.
 - `mu issues validate <root-id>` must pass before declaring completion.
 
@@ -192,7 +193,7 @@ Worker/orchestrator passes always choose one primitive at a time:
 2. Choose one primitive (`ask` | `expand` | `complete` | orchestration primitive)
 3. Apply
 4. Verify (`get`, `children`, `ready`, `validate`)
-5. Log concise progress to forum
+5. Log human-facing progress to forum as a titled narrative update (context -> milestone moved -> impact -> overall progress -> next), using the reusable status-voice style from `heartbeats`
 6. Exit bounded pass
 
 ## Minimal bootstrap template

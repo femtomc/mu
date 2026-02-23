@@ -34,6 +34,18 @@ await runContext({ runId: newRunId() }, async () => {
 console.log(await jsonl.read());
 ```
 
+## HUD contract helpers
+
+`@femtomc/mu-core` exports a versioned HUD contract, deterministic JSON helper, and shared runtime loop:
+
+- `HudDocV1Schema`, `HUD_CONTRACT_VERSION`
+- `parseHudDoc(...)`, `normalizeHudDocs(...)`
+- `serializeHudDocTextFallback(...)`, `serializeHudDocsTextFallback(...)`
+- `stableSerializeJson(...)`
+- `HudRuntime` + `HudProvider` for provider registration, reducer updates, ordered effect execution, and HUD snapshot emission
+
+These are runtime-agnostic primitives intended for shared HUD capture/render pipelines.
+
 ## Tests / Typecheck
 
 From the `mu/` repo root:

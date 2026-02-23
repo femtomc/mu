@@ -17,5 +17,6 @@ export * from "./outbox.js";
 export * from "./paths.js";
 export * from "./reload_lifecycle.js";
 export * from "./runtime.js";
+export * from "./telegram_callback_token_store.js";
 export * from "./telegram_ingress_queue.js";
 export * from "./writer_lock.js";

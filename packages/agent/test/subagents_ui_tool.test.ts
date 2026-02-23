@@ -141,6 +141,9 @@ describe("subagents HUD tool", () => {
 		const result = await executeSubagentsTool(tool, { action: "status" });
 		const details = detailsOf(result);
 		expect(details.ok).toBe(true);
+		expect(details.hud_provider_id).toBe("subagents");
+		expect(Array.isArray(details.hud_docs)).toBe(true);
+		expect((details.hud_docs as Array<Record<string, unknown>>)[0]?.hud_id).toBe("subagents");
 		expect(details.enabled).toBe(false);
 		expect(details.prefix).toBe("mu-sub-");
 		expect(details.issue_tag_filter).toBeNull();

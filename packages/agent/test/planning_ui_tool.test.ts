@@ -127,6 +127,9 @@ describe("planning HUD tool", () => {
 		expect(details.enabled).toBe(true);
 		expect(details.phase).toBe("drafting");
 		expect(details.root_issue_id).toBe("mu-root-123");
+		expect(details.hud_provider_id).toBe("planning");
+		expect(Array.isArray(details.hud_docs)).toBe(true);
+		expect((details.hud_docs as Array<Record<string, unknown>>)[0]?.hud_id).toBe("planning");
 
 		const steps = details.steps;
 		expect(Array.isArray(steps)).toBe(true);
