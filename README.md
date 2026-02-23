@@ -31,6 +31,7 @@ or `$MU_HOME/skills/` when missing):
 
 - `mu` — core operator workflow (bounded investigation, CLI-first state operations,
   session/handoff patterns)
+- `memory` — cross-store context retrieval and index maintenance workflows
 - `planning` — investigate first, then draft/refine an issue DAG plan with user approval loops
 - `hierarchical-work-protocol` — shared DAG planning/execution protocol used by both planning and subagents
 - `subagents` — durable issue-driven subagent orchestration (heartbeat + tmux fan-out)
@@ -43,7 +44,7 @@ or `$MU_HOME/skills/` when missing):
 
 Recommended usage pattern:
 
-- Ask your operator to use a relevant skill (for DAG work: "planning", then "hierarchical-work-protocol", then "subagents"; for recurring automation: "heartbeats" and/or "crons").
+- Ask your operator to use a relevant skill (for historical context: "memory"; for DAG work: "planning", then "hierarchical-work-protocol", then "subagents"; for recurring automation: "heartbeats" and/or "crons").
 
 Examples:
 

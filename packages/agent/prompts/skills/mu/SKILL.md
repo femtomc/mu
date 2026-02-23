@@ -131,6 +131,7 @@ For wall-clock schedules (one-shot, interval, cron-expression), use `crons`.
 
 ## Escalation map
 
+- Historical context retrieval and index maintenance: **`memory`**
 - Planning/decomposition and DAG review: **`planning`**
 - Shared DAG semantics for planning + execution: **`hierarchical-work-protocol`**
 - Durable multi-agent orchestration: **`subagents`**

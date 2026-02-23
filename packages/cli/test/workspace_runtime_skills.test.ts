@@ -14,6 +14,7 @@ async function mkTempRepo(): Promise<string> {
 
 const STARTER_SKILLS = [
 	"mu",
+	"memory",
 	"planning",
 	"hierarchical-work-protocol",
 	"subagents",

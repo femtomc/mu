@@ -25,6 +25,7 @@ Bundled starter skills live under `packages/agent/prompts/skills/` and are boots
 into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
 
 - `mu`
+- `memory`
 - `planning`
 - `hierarchical-work-protocol`
 - `subagents`
