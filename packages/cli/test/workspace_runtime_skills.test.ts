@@ -17,6 +17,8 @@ const STARTER_SKILLS = [
 	"planning",
 	"hierarchical-work-protocol",
 	"subagents",
+	"heartbeats",
+	"crons",
 	"setup-slack",
 	"setup-discord",
 	"setup-telegram",

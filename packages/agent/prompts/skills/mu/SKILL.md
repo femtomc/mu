@@ -112,6 +112,8 @@ mu cron --help
 When work is multi-step and issue-graph driven, use `planning` to shape the DAG,
 then `hierarchical-work-protocol` to keep DAG semantics consistent, then
 `subagents` for durable execution.
+For recurring bounded automation loops, use `heartbeats`.
+For wall-clock schedules (one-shot, interval, cron-expression), use `crons`.
 
 ## Evaluation scenarios
 
@@ -132,6 +134,8 @@ then `hierarchical-work-protocol` to keep DAG semantics consistent, then
 - Planning/decomposition and DAG review: **`planning`**
 - Shared DAG semantics for planning + execution: **`hierarchical-work-protocol`**
 - Durable multi-agent orchestration: **`subagents`**
+- Recurring bounded automation scheduling: **`heartbeats`**
+- Wall-clock scheduling workflows: **`crons`**
 - Messaging adapter onboarding:
   - **`setup-slack`**
   - **`setup-discord`**

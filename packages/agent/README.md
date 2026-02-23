@@ -28,6 +28,8 @@ into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
 - `planning`
 - `hierarchical-work-protocol`
 - `subagents`
+- `heartbeats`
+- `crons`
 - `setup-slack`
 - `setup-discord`
 - `setup-telegram`

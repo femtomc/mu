@@ -34,6 +34,8 @@ or `$MU_HOME/skills/` when missing):
 - `planning` — investigate first, then draft/refine an issue DAG plan with user approval loops
 - `hierarchical-work-protocol` — shared DAG planning/execution protocol used by both planning and subagents
 - `subagents` — durable issue-driven subagent orchestration (heartbeat + tmux fan-out)
+- `heartbeats` — heartbeat program lifecycle for durable, bounded automation loops
+- `crons` — wall-clock scheduling workflows for recurring/one-shot automation
 - `setup-slack` — Slack adapter onboarding
 - `setup-discord` — Discord adapter onboarding
 - `setup-telegram` — Telegram adapter onboarding
@@ -41,7 +43,7 @@ or `$MU_HOME/skills/` when missing):
 
 Recommended usage pattern:
 
-- Ask your operator to use a relevant skill (for DAG work: "planning", then "hierarchical-work-protocol", then "subagents").
+- Ask your operator to use a relevant skill (for DAG work: "planning", then "hierarchical-work-protocol", then "subagents"; for recurring automation: "heartbeats" and/or "crons").
 
 Examples:
 
