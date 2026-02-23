@@ -96,6 +96,47 @@ function slackRequest(opts: {
 	});
 }
 
+function slackEventRequest(opts: {
+	secret: string;
+	timestampSec: number;
+	eventId: string;
+	text: string;
+	teamId?: string;
+	channelId?: string;
+	actorId?: string;
+	threadTs?: string | null;
+}): Request {
+	const ts = `${opts.timestampSec}.123456`;
+	const payload = {
+		type: "event_callback",
+		team_id: opts.teamId ?? "team-1",
+		event_id: opts.eventId,
+		event_time: opts.timestampSec,
+		event: {
+			type: "app_mention",
+			user: opts.actorId ?? "slack-actor",
+			channel: opts.channelId ?? "chan-1",
+			text: opts.text,
+			event_ts: ts,
+			ts,
+			...(opts.threadTs ? { thread_ts: opts.threadTs } : {}),
+		},
+	};
+	const body = JSON.stringify(payload);
+	const timestamp = String(opts.timestampSec);
+	const signature = `v0=${hmac(opts.secret, `v0:${timestamp}:${body}`)}`;
+	const headers = new Headers({
+		"content-type": "application/json",
+		"x-slack-request-timestamp": timestamp,
+		"x-slack-signature": signature,
+	});
+	return new Request("https://example.test/slack/events", {
+		method: "POST",
+		headers,
+		body,
+	});
+}
+
 function slackActionRequest(opts: {
 	secret: string;
 	timestampSec: number;
@@ -1383,6 +1424,167 @@ describe("bootstrapControlPlane operator wiring", () => {
 		const body = (await response.json()) as { text?: string };
 		expect(body.text).toContain("Operator · CHAT · RESPONDED");
 		expect(backend.turns).toBe(1);
+	});
+
+	test("Slack identity links are picked up without restarting the control-plane process", async () => {
+		const repoRoot = await mkRepoRoot();
+		const backend = new StaticOperatorBackend({
+			kind: "respond",
+			message: "Dynamic identity link worked.",
+		});
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({ slackSecret: "slack-secret" }),
+			operatorBackend: backend,
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const identities = new IdentityStore(getControlPlanePaths(repoRoot).identitiesPath);
+		await identities.load();
+		await identities.link({
+			bindingId: "binding-slack-dynamic",
+			operatorId: "op-slack-dynamic",
+			channel: "slack",
+			channelTenantId: "team-1",
+			channelActorId: "slack-dynamic-actor",
+			scopes: ["cp.read"],
+		});
+
+		const response = await handle.handleWebhook(
+			"/webhooks/slack",
+			slackRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(Date.now() / 1000),
+				text: "dynamic identity hello",
+				triggerId: "chat-dynamic-1",
+				actorId: "slack-dynamic-actor",
+			}),
+		);
+		expect(response).not.toBeNull();
+		if (!response) {
+			throw new Error("expected webhook response");
+		}
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { text?: string };
+		expect(body.text).toContain("Operator · CHAT · RESPONDED");
+		expect(backend.turns).toBe(1);
+	});
+
+	test("Slack slash command ingress returns fast ACK for slow operator turns", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkSlackIdentity(repoRoot, ["cp.read"]);
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({ slackSecret: "slack-secret" }),
+			operatorBackend: new DelayedOperatorBackend(3_500, {
+				kind: "respond",
+				message: "slow slash done",
+			}),
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const startedAt = Date.now();
+		const response = await handle.handleWebhook(
+			"/webhooks/slack",
+			slackRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(Date.now() / 1000),
+				text: "slow slash please",
+				triggerId: "slow-slash-ack-1",
+			}),
+		);
+		expect(response).not.toBeNull();
+		if (!response) {
+			throw new Error("expected webhook response");
+		}
+		const elapsedMs = Date.now() - startedAt;
+		expect(response.status).toBe(200);
+		expect(elapsedMs).toBeLessThan(3_000);
+		const body = (await response.json()) as { text?: string };
+		expect(body.text).toContain("ACK mu · ACCEPTED");
+
+		const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
+		await waitFor(
+			async () => {
+				await outbox.load();
+				return (
+					outbox.records().find((entry) => {
+						if (entry.envelope.channel !== "slack") {
+							return false;
+						}
+						return entry.envelope.body.includes("slow slash done");
+					}) ?? null
+				);
+			},
+			{ timeoutMs: 8_000 },
+		);
+	});
+
+	test("Slack event callback ingress returns fast ACK for slow operator turns", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkSlackIdentity(repoRoot, ["cp.read"]);
+
+		const handle = await bootstrapControlPlaneForTest({
+			repoRoot,
+			config: configWith({ slackSecret: "slack-secret" }),
+			operatorBackend: new DelayedOperatorBackend(3_500, {
+				kind: "respond",
+				message: "slow event done",
+			}),
+		});
+		expect(handle).not.toBeNull();
+		if (!handle) {
+			throw new Error("expected control plane handle");
+		}
+		handlesToCleanup.add(handle);
+
+		const startedAt = Date.now();
+		const response = await handle.handleWebhook(
+			"/webhooks/slack",
+			slackEventRequest({
+				secret: "slack-secret",
+				timestampSec: Math.trunc(Date.now() / 1000),
+				eventId: "slow-event-ack-1",
+				text: "<@slack-bot> slow event please",
+			}),
+		);
+		expect(response).not.toBeNull();
+		if (!response) {
+			throw new Error("expected webhook response");
+		}
+		const elapsedMs = Date.now() - startedAt;
+		expect(response.status).toBe(200);
+		expect(elapsedMs).toBeLessThan(2_500);
+		const body = (await response.json()) as { ok?: boolean };
+		expect(body.ok).toBe(true);
+
+		const outbox = new ControlPlaneOutbox(getControlPlanePaths(repoRoot).outboxPath);
+		await waitFor(
+			async () => {
+				await outbox.load();
+				return (
+					outbox.records().find((entry) => {
+						if (entry.envelope.channel !== "slack") {
+							return false;
+						}
+						if (entry.envelope.metadata.source !== "slack:event_callback") {
+							return false;
+						}
+						return entry.envelope.body.includes("slow event done");
+					}) ?? null
+				);
+			},
+			{ timeoutMs: 8_000 },
+		);
 	});
 
 	test("Slack HUD action callbacks route through ingress with deterministic outbox dedupe", async () => {

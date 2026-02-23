@@ -1,4 +1,5 @@
 import { appendJsonl, readJsonl } from "@femtomc/mu-core/node";
+import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { type AssuranceTier, AssuranceTierSchema } from "./models.js";
 
@@ -105,6 +106,39 @@ function resolvePrincipalKey(opts: { channel: Channel; channelTenantId: string; 
 	return `${opts.channel}::${opts.channelTenantId}::${opts.channelActorId}`;
 }
 
+type IdentityStoreFileSnapshot = {
+	mtime_ms: number;
+	size: number;
+};
+
+async function readIdentityStoreFileSnapshot(path: string): Promise<IdentityStoreFileSnapshot | null> {
+	try {
+		const file = await stat(path);
+		return {
+			mtime_ms: file.mtimeMs,
+			size: file.size,
+		};
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return null;
+		}
+		throw error;
+	}
+}
+
+function sameFileSnapshot(
+	left: IdentityStoreFileSnapshot | null,
+	right: IdentityStoreFileSnapshot | null,
+): boolean {
+	if (!left && !right) {
+		return true;
+	}
+	if (!left || !right) {
+		return false;
+	}
+	return left.mtime_ms === right.mtime_ms && left.size === right.size;
+}
+
 function cloneBinding(binding: IdentityBinding): IdentityBinding {
 	return IdentityBindingSchema.parse(binding);
 }
@@ -151,6 +185,7 @@ export const TERMINAL_IDENTITY_BINDING: IdentityBinding = {
 export class IdentityStore {
 	readonly #path: string;
 	#loaded = false;
+	#fileSnapshot: IdentityStoreFileSnapshot | null = null;
 	readonly #bindingsById = new Map<string, IdentityBinding>();
 	readonly #activeByPrincipal = new Map<string, string>();
 
@@ -176,12 +211,26 @@ export class IdentityStore {
 		}
 
 		this.#loaded = true;
+		this.#fileSnapshot = await readIdentityStoreFileSnapshot(this.#path);
 	}
 
 	async #ensureLoaded(): Promise<void> {
 		if (!this.#loaded) {
 			await this.load();
 		}
+	}
+
+	public async refreshIfStale(): Promise<boolean> {
+		if (!this.#loaded) {
+			await this.load();
+			return true;
+		}
+		const next = await readIdentityStoreFileSnapshot(this.#path);
+		if (sameFileSnapshot(this.#fileSnapshot, next)) {
+			return false;
+		}
+		await this.load();
+		return true;
 	}
 
 	#applyEntry(entry: IdentityStoreEntry, opts: { replay: boolean }): void {
@@ -323,6 +372,7 @@ export class IdentityStore {
 		});
 		await appendJsonl(this.#path, entry);
 		this.#applyEntry(entry, { replay: false });
+		this.#fileSnapshot = await readIdentityStoreFileSnapshot(this.#path);
 		return { kind: "linked", binding: cloneBinding(binding) };
 	}
 
@@ -354,6 +404,7 @@ export class IdentityStore {
 		});
 		await appendJsonl(this.#path, entry);
 		this.#applyEntry(entry, { replay: false });
+		this.#fileSnapshot = await readIdentityStoreFileSnapshot(this.#path);
 		const updated = this.#bindingsById.get(opts.bindingId);
 		if (!updated) {
 			throw new Error(`identity binding missing after unlink: ${opts.bindingId}`);
@@ -386,6 +437,7 @@ export class IdentityStore {
 		});
 		await appendJsonl(this.#path, entry);
 		this.#applyEntry(entry, { replay: false });
+		this.#fileSnapshot = await readIdentityStoreFileSnapshot(this.#path);
 		const updated = this.#bindingsById.get(opts.bindingId);
 		if (!updated) {
 			throw new Error(`identity binding missing after revoke: ${opts.bindingId}`);

@@ -99,7 +99,10 @@ export class ControlPlaneCommandPipeline {
 			return null;
 		}
 		if (binding.binding_id !== inbound.actor_binding_id) {
-			return null;
+			const staleUnlinkedHint = inbound.actor_binding_id.startsWith(`unlinked-${inbound.channel}-`);
+			if (!staleUnlinkedHint) {
+				return null;
+			}
 		}
 		return binding;
 	}
@@ -150,6 +153,7 @@ export class ControlPlaneCommandPipeline {
 
 	public async handleAdapterIngress(inboundInput: InboundEnvelope): Promise<CommandPipelineResult> {
 		this.#assertStarted();
+		await this.identities.refreshIfStale();
 		const inbound = InboundEnvelopeSchema.parse(inboundInput);
 		const binding = this.#resolveBinding(inbound);
 		if (!binding) {

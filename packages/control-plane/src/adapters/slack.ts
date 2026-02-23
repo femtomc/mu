@@ -128,6 +128,10 @@ function normalizeSlackEventCommandText(eventType: string, text: string): string
 
 const CONVERSATIONAL_EVENT_DEDUPE_TTL_MS = 10 * 60 * 1_000;
 const CONVERSATIONAL_EVENT_DEDUPE_MAX = 4_096;
+const SLACK_EVENT_SYNC_ACK_DEADLINE_MS = 1_500;
+const SLACK_SLASH_SYNC_ACK_DEADLINE_MS = 2_500;
+const SLACK_DEFERRED_ACK_TEXT =
+	"ACK mu · ACCEPTED\nRequest received. Processing now; response will arrive shortly.";
 
 type SlackActionPayloadBase = {
 	teamId: string;
@@ -795,6 +799,9 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			nowMs: this.#nowMs,
 		});
 		if (!verified.ok) {
+			console.warn(
+				`[mu-slack] rejected ingress reason=${verified.reason} status=${verified.status} content_type=${req.headers.get("content-type") ?? ""}`,
+			);
 			return rejectedIngressResult({
 				channel: this.spec.channel,
 				reason: verified.reason,
@@ -802,9 +809,80 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			});
 		}
 
+		await this.#pipeline.identities.refreshIfStale();
+
 		const contentType = (req.headers.get("content-type") ?? "").toLowerCase();
 		if (contentType.includes("application/json")) {
-			return await this.#ingestEventPayload(req, rawBody);
+			let payload: Record<string, unknown>;
+			try {
+				const parsed = JSON.parse(rawBody) as unknown;
+				const record = asRecord(parsed);
+				if (!record) {
+					throw new Error("invalid_json");
+				}
+				payload = record;
+			} catch {
+				return rejectedIngressResult({
+					channel: this.spec.channel,
+					reason: "invalid_json",
+					response: textResponse("invalid_json", { status: 400 }),
+				});
+			}
+
+			if (payload.type === "url_verification") {
+				const challenge = typeof payload.challenge === "string" ? payload.challenge : "";
+				return acceptedIngressResult({
+					channel: this.spec.channel,
+					reason: "slack_url_verification",
+					response: jsonResponse({ challenge }, { status: 200 }),
+					inbound: null,
+					pipelineResult: { kind: "noop", reason: "not_command" },
+					outboxRecord: null,
+				});
+			}
+
+			const eventDispatch = this.#ingestEventPayload(req, rawBody)
+				.then((result) => ({ kind: "result" as const, result }))
+				.catch((error) => ({ kind: "error" as const, error }));
+			const racedEventDispatch = await Promise.race([
+				eventDispatch,
+				new Promise<{ kind: "timeout" }>((resolve) => {
+					setTimeout(() => resolve({ kind: "timeout" }), SLACK_EVENT_SYNC_ACK_DEADLINE_MS);
+				}),
+			]);
+			if (racedEventDispatch.kind === "result") {
+				return racedEventDispatch.result;
+			}
+			if (racedEventDispatch.kind === "error") {
+				const message =
+					racedEventDispatch.error instanceof Error
+						? racedEventDispatch.error.message
+						: "event_dispatch_failed";
+				console.warn(`[mu-slack] event dispatch failed: ${message}`);
+				return acceptedIngressResult({
+					channel: this.spec.channel,
+					reason: "slack_event_dispatch_failed",
+					response: jsonResponse({ ok: true }, { status: 200 }),
+					inbound: null,
+					pipelineResult: { kind: "noop", reason: "not_command" },
+					outboxRecord: null,
+				});
+			}
+
+			void eventDispatch.then((outcome) => {
+				if (outcome.kind === "error") {
+					const message = outcome.error instanceof Error ? outcome.error.message : "event_dispatch_failed";
+					console.warn(`[mu-slack] async event dispatch failed: ${message}`);
+				}
+			});
+			return acceptedIngressResult({
+				channel: this.spec.channel,
+				reason: "slack_event_callback_accepted_async",
+				response: jsonResponse({ ok: true }, { status: 200 }),
+				inbound: null,
+				pipelineResult: { kind: "noop", reason: "deferred_processing" },
+				outboxRecord: null,
+			});
 		}
 		return await this.#ingestSlashCommand(req, rawBody);
 	}
@@ -981,25 +1059,68 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			},
 		});
 
-		const dispatched = await runPipelineForInbound({
+		const slashMetadata: Record<string, unknown> = {
+			adapter: this.spec.channel,
+			response_url: form.get("response_url"),
+			delivery_id: deliveryId,
+			source: "slack:slash_command",
+		};
+		const slashDispatch = runPipelineForInbound({
 			pipeline: this.#pipeline,
 			outbox: this.#outbox,
 			inbound,
 			nowMs,
-			metadata: {
-				adapter: this.spec.channel,
-				response_url: form.get("response_url"),
-				delivery_id: deliveryId,
-				source: "slack:slash_command",
-			},
-		});
+			metadata: slashMetadata,
+		})
+			.then((result) => ({ kind: "result" as const, result }))
+			.catch((error) => ({ kind: "error" as const, error }));
+		const racedSlashDispatch = await Promise.race([
+			slashDispatch,
+			new Promise<{ kind: "timeout" }>((resolve) => {
+				setTimeout(() => resolve({ kind: "timeout" }), SLACK_SLASH_SYNC_ACK_DEADLINE_MS);
+			}),
+		]);
+		if (racedSlashDispatch.kind === "result") {
+			return acceptedIngressResult({
+				channel: this.spec.channel,
+				response: jsonResponse({ response_type: "ephemeral", text: racedSlashDispatch.result.ackText }, { status: 200 }),
+				inbound,
+				pipelineResult: racedSlashDispatch.result.pipelineResult,
+				outboxRecord: racedSlashDispatch.result.outboxRecord,
+			});
+		}
+		if (racedSlashDispatch.kind === "error") {
+			const message = racedSlashDispatch.error instanceof Error ? racedSlashDispatch.error.message : "slash_dispatch_failed";
+			console.warn(`[mu-slack] slash dispatch failed: ${message}`);
+			return acceptedIngressResult({
+				channel: this.spec.channel,
+				reason: "slack_slash_dispatch_failed",
+				response: jsonResponse(
+					{
+						response_type: "ephemeral",
+						text: "ERROR mu · ERROR · TEMPORARY\nRequest failed before processing. Please retry.",
+					},
+					{ status: 200 },
+				),
+				inbound,
+				pipelineResult: { kind: "denied", reason: "operator_backend_error" },
+				outboxRecord: null,
+			});
+		}
 
+		void slashDispatch.then((outcome) => {
+			if (outcome.kind === "error") {
+				const message = outcome.error instanceof Error ? outcome.error.message : "slash_dispatch_failed";
+				console.warn(`[mu-slack] async slash dispatch failed: ${message}`);
+			}
+		});
 		return acceptedIngressResult({
 			channel: this.spec.channel,
-			response: jsonResponse({ response_type: "ephemeral", text: dispatched.ackText }, { status: 200 }),
+			reason: "slack_slash_command_accepted_async",
+			response: jsonResponse({ response_type: "ephemeral", text: SLACK_DEFERRED_ACK_TEXT }, { status: 200 }),
 			inbound,
-			pipelineResult: dispatched.pipelineResult,
-			outboxRecord: dispatched.outboxRecord,
+			pipelineResult: { kind: "noop", reason: "deferred_processing" },
+			outboxRecord: null,
 		});
 	}
 
