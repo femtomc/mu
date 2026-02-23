@@ -40,14 +40,13 @@ or `$MU_HOME/skills/` when missing):
 
 Recommended usage pattern:
 
-- Ask the operator to use the relevant skill explicitly.
-- Keep the README concise; keep procedural runbooks in skills.
+- Ask your operator to use a relevant skill (or mention the capability, e.g. "planning" or "subagents").
 
 Examples:
 
-- “Use skill `planning` to propose the implementation DAG.”
-- “Use skill `setup-slack` and walk me through the minimal UI steps.”
-- “Use skill `mu` and summarize current ready work.”
+- “Can we plan and setup an implementation issue DAG?”
+- “Can you help me setup the slack messaging service?"
+- “Summarize current ready work in our tracker.”
 
 ### Skill loading + precedence
 
@@ -60,9 +59,7 @@ On name collisions, mu-prefixed roots are preferred by default.
 
 ## Messaging setup (recommended)
 
-Prefer bundled setup skills for channel onboarding (`setup-slack`,
-`setup-discord`, `setup-telegram`, `setup-neovim`).
-These workflows are agent-first: the agent patches config, reloads
+The messaging setup skills are agent-first: the agent patches config, reloads
 control-plane, verifies routes/capabilities, and asks the user only for
 required external-console steps and secret handoff.
 
@@ -75,7 +72,7 @@ mu control reload
 mu control identities --all --pretty
 ```
 
-Detailed adapter internals and API contracts remain in package docs:
+Detailed adapter internals and API contracts are in package docs:
 
 - `packages/control-plane/README.md`
 - `packages/server/README.md`
