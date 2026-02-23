@@ -294,7 +294,7 @@ export function hudExtension(pi: ExtensionAPI) {
 
 	registerMuSubcommand(pi, {
 		subcommand: "hud",
-		summary: "Universal HUD status and rendering controls",
+		summary: "HUD status and rendering controls",
 		usage: "/mu hud status|snapshot|on|off|toggle|clear|remove <hud-id>",
 		handler: async (args, ctx) => {
 			const parsed = parseCommandAction(args);
@@ -311,7 +311,7 @@ export function hudExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "mu_hud",
 		label: "mu HUD",
-		description: "Control or inspect universal HUD docs rendered in the TUI and shared across channel renderers.",
+		description: "Control or inspect HUD docs rendered in the TUI and shared across channel renderers.",
 		parameters: {
 			type: "object",
 			properties: {

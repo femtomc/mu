@@ -66,7 +66,7 @@ Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
 - `eventLogExtension` — event tail + watch widget
-- `hudExtension` — universal HUD surface for skill-directed planning/subagents communication (`/mu hud ...`, `mu_hud`)
+- `hudExtension` — HUD surface for skill-directed planning/subagents communication (`/mu hud ...`, `mu_hud`)
 
 Extensions emit contract-valid `hud_docs` (`HudDoc`) so control-plane/server renderers can provide a consistent cross-surface HUD experience.
 
@@ -77,7 +77,7 @@ Default operator UI theme is `mu-gruvbox-dark`.
 - `/mu events [n]` / `/mu events tail [n]` — event log tail
 - `/mu events watch on|off` — toggle event watch widget
 - `/mu brand on|off|toggle` — enable/disable UI branding
-- `/mu hud ...` — universal HUD command for enabling/inspecting/clearing HUD docs; does not inject HUD metadata into branding footer
+- `/mu hud ...` — HUD command for enabling/inspecting/clearing HUD docs; does not inject HUD metadata into branding footer
 - `/mu help` — dispatcher catalog of registered `/mu` subcommands
 
 ## Tooling model (CLI-first)

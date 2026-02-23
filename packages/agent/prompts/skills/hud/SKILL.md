@@ -1,6 +1,6 @@
 ---
 name: hud
-description: "Defines universal HUD usage for `mu_hud` and `/mu hud`, including doc schema patterns, deterministic update rules, and rendering-safe conventions."
+description: "Defines HUD usage for `mu_hud` and `/mu hud`, including doc schema patterns, deterministic update rules, and rendering-safe conventions."
 ---
 
 # hud

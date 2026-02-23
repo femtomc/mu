@@ -107,7 +107,7 @@ If `--session-kind` is omitted, `mu turn` defaults to `cp_operator`
 
 In-session `/mu` helpers include:
 
-- `/mu hud ...` (universal HUD surface for status/snapshot/on/off/toggle/clear/remove)
+- `/mu hud ...` (HUD surface for status/snapshot/on/off/toggle/clear/remove)
 - `/mu events ...` (event tail/watch)
 - `/mu brand ...` (chrome toggle)
 
