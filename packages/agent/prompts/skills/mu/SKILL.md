@@ -109,8 +109,9 @@ mu heartbeats --help
 mu cron --help
 ```
 
-When work is multi-step and issue-graph driven, use `subagents`.
-When work is planning/decomposition with explicit approval loops, use `planning`.
+When work is multi-step and issue-graph driven, use `planning` to shape the DAG,
+then `hierarchical-work-protocol` to keep DAG semantics consistent, then
+`subagents` for durable execution.
 
 ## Evaluation scenarios
 
@@ -129,6 +130,7 @@ When work is planning/decomposition with explicit approval loops, use `planning`
 ## Escalation map
 
 - Planning/decomposition and DAG review: **`planning`**
+- Shared DAG semantics for planning + execution: **`hierarchical-work-protocol`**
 - Durable multi-agent orchestration: **`subagents`**
 - Messaging adapter onboarding:
   - **`setup-slack`**

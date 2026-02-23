@@ -26,6 +26,7 @@ into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
 
 - `mu`
 - `planning`
+- `hierarchical-work-protocol`
 - `subagents`
 - `setup-slack`
 - `setup-discord`

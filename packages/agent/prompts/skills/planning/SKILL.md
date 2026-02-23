@@ -10,6 +10,7 @@ Use this skill when the user asks for planning, decomposition, or a staged execu
 ## Contents
 
 - [Planning HUD is required](#planning-hud-is-required)
+- [Shared protocol dependency](#shared-protocol-dependency)
 - [Core contract](#core-contract)
 - [Suggested workflow](#suggested-workflow)
 - [Effective HUD usage heuristics](#effective-hud-usage-heuristics)
@@ -31,16 +32,30 @@ Default per-turn HUD loop:
 2. Synchronize checklist items and `root_issue_id` with the issue DAG.
 3. Emit `snapshot` (`compact` or `multiline`) and reflect it in your response.
 
+## Shared protocol dependency
+
+This skill plans DAGs for execution by `subagents`, so planning must follow the
+shared protocol in **`hierarchical-work-protocol`**.
+
+Before creating or reshaping DAG nodes, load that skill and use its canonical:
+
+- protocol identity/tag (`hierarchical-work.protocol/v1`, `proto:hierarchical-work-v1`)
+- node kinds and context tags
+- invariants for executable vs non-executable nodes
+- planning handoff contract
+
+Do not invent alternate protocol names or tag schemas.
+
 ## Core contract
 
 1. **Investigate first**
    - Read relevant code/docs/state before proposing work.
    - Avoid speculative plans when evidence is cheap to gather.
 
-2. **Materialize the plan in mu issues**
-   - Create a root planning issue and concrete child issues.
-   - Encode dependencies so the DAG reflects execution order.
-   - Add clear titles, scope, acceptance criteria, and role tags.
+2. **Materialize the plan in mu issues using the shared protocol**
+   - Create root and child issues that comply with `hierarchical-work.protocol/v1`.
+   - Encode dependencies so the DAG reflects execution order and synth fan-in.
+   - Add clear titles, scope, acceptance criteria, and protocol tags.
 
 3. **Drive communication through the planning HUD**
    - Treat HUD state as the canonical short status line for planning.
@@ -117,18 +132,39 @@ Also inspect repo files directly (read/bash) for implementation constraints.
 ### B) Draft DAG in mu-issue
 
 ```bash
-# 1) Create root planning issue
-mu issues create "<Goal>" --body "<scope + success criteria>" --tag node:root --pretty
+# 1) Create protocol root container
+root_json="$(mu issues create "<Goal>" \
+  --body "<scope + success criteria>" \
+  --tag node:root \
+  --tag kind:root \
+  --tag proto:hierarchical-work-v1 \
+  --json)"
+root_id="$(echo "$root_json" | jq -r '.id')"
+mu issues update "$root_id" --remove-tag node:agent
 
-# 2) Create child work items
-mu issues create "<Subtask A>" --parent <root-id> --priority 2 --pretty
-mu issues create "<Subtask B>" --parent <root-id> --priority 2 --pretty
+# 2) Create executable child work nodes
+mu issues create "<Subtask A>" \
+  --parent "$root_id" \
+  --body "<acceptance criteria>" \
+  --tag kind:spawn \
+  --tag ctx:clean \
+  --tag proto:hierarchical-work-v1 \
+  --priority 2 --pretty
+
+mu issues create "<Subtask B>" \
+  --parent "$root_id" \
+  --body "<acceptance criteria>" \
+  --tag kind:fork \
+  --tag ctx:inherit \
+  --tag proto:hierarchical-work-v1 \
+  --priority 2 --pretty
 
 # 3) Add dependency edges where needed
 mu issues dep <child-a-id> blocks <child-b-id>
 
-# 4) Validate ready set
-mu issues ready --root <root-id> --pretty
+# 4) Validate ready set + protocol scope
+mu issues ready --root "$root_id" --tag proto:hierarchical-work-v1 --pretty
+mu issues validate "$root_id"
 ```
 
 ### C) Plan presentation template
@@ -143,7 +179,8 @@ mu issues ready --root <root-id> --pretty
 ### D) Revision loop
 
 - Apply feedback with `mu issues update` / `mu issues dep` / additional issues.
-- Re-run `mu issues ready --root <root-id> --pretty`.
+- Re-run `mu issues ready --root <root-id> --tag proto:hierarchical-work-v1 --pretty`.
+- Validate protocol-root status via `mu issues validate <root-id>`.
 - Present a concise diff of what changed and why.
 - Update HUD each turn so phase/waiting/next/blocker/confidence match the latest state.
 
@@ -171,7 +208,7 @@ Required HUD updates during the loop:
 
 1. **Initial decomposition request**
    - Prompt: user asks for a staged roadmap.
-   - Expected: investigation pass runs first, root + child issues are created, HUD shows `phase=drafting` and `waiting_on_user=false` until first review checkpoint.
+   - Expected: investigation pass runs first, root + child issues are created with `proto:hierarchical-work-v1`, HUD shows `phase=drafting` and `waiting_on_user=false` until first review checkpoint.
 
 2. **Feedback-driven replan**
    - Prompt: user requests scope change after first DAG draft.
@@ -184,6 +221,7 @@ Required HUD updates during the loop:
 ## Quality bar
 
 - Every issue should be actionable and testable.
+- DAG nodes must satisfy `hierarchical-work.protocol/v1` before execution handoff.
 - Keep tasks small enough to complete in one focused pass.
 - Explicitly call out uncertain assumptions for user confirmation.
 - Prefer reversible plans and incremental checkpoints.
