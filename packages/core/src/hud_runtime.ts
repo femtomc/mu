@@ -1,4 +1,4 @@
-import { type HudDocV1, normalizeHudDocs } from "./hud.js";
+import { type HudDoc, normalizeHudDocs } from "./hud.js";
 
 export type HudProviderRuntimeApi<Msg> = {
 	dispatch: (message: Msg) => void;
@@ -14,7 +14,7 @@ export type HudProvider<State, Msg, Effect> = {
 	initialState: () => State;
 	reduce: (state: State, message: Msg) => HudProviderReducerResult<State, Effect>;
 	runEffect?: (effect: Effect, api: HudProviderRuntimeApi<Msg>) => void | Promise<void>;
-	view: (state: State) => HudDocV1 | HudDocV1[] | null;
+	view: (state: State) => HudDoc | HudDoc[] | null;
 };
 
 type HudProviderAny = HudProvider<unknown, unknown, unknown>;
@@ -26,7 +26,7 @@ type HudProviderRecord = {
 
 export type HudRuntimeSnapshot = {
 	provider_id: string;
-	hud_docs: HudDocV1[];
+	hud_docs: HudDoc[];
 };
 
 export type HudRuntimeListener = (snapshot: HudRuntimeSnapshot) => void;
@@ -35,7 +35,7 @@ export type HudRuntimeDispatchResult = {
 	provider_id: string;
 	messages_processed: number;
 	effects_processed: number;
-	hud_docs: HudDocV1[];
+	hud_docs: HudDoc[];
 };
 
 export class HudRuntime {
@@ -133,7 +133,7 @@ export class HudRuntime {
 		return record;
 	}
 
-	#hudDocs(provider: HudProviderAny, state: unknown): HudDocV1[] {
+	#hudDocs(provider: HudProviderAny, state: unknown): HudDoc[] {
 		const viewed = provider.view(state);
 		if (viewed == null) {
 			return [];

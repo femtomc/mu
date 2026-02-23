@@ -38,7 +38,7 @@ console.log(await jsonl.read());
 
 `@femtomc/mu-core` exports a versioned HUD contract, deterministic JSON helper, and shared runtime loop:
 
-- `HudDocV1Schema`, `HUD_CONTRACT_VERSION`
+- `HudDocSchema`, `HUD_CONTRACT_VERSION`
 - `parseHudDoc(...)`, `normalizeHudDocs(...)`
 - `serializeHudDocTextFallback(...)`, `serializeHudDocsTextFallback(...)`
 - `stableSerializeJson(...)`

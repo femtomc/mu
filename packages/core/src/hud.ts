@@ -81,7 +81,7 @@ export const HudActionSchema = z
 	.strict();
 export type HudAction = z.infer<typeof HudActionSchema>;
 
-export const HudDocV1Schema = z
+export const HudDocSchema = z
 	.object({
 		v: z.literal(HUD_CONTRACT_VERSION).default(HUD_CONTRACT_VERSION),
 		hud_id: NonEmptyTextSchema,
@@ -96,21 +96,21 @@ export const HudDocV1Schema = z
 		metadata: z.record(z.string(), z.unknown()).default({}),
 	})
 	.strict();
-export type HudDocV1 = z.infer<typeof HudDocV1Schema>;
+export type HudDoc = z.infer<typeof HudDocSchema>;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseHudDocCandidate(value: unknown): HudDocV1 | null {
-	const parsed = HudDocV1Schema.safeParse(value);
+function parseHudDocCandidate(value: unknown): HudDoc | null {
+	const parsed = HudDocSchema.safeParse(value);
 	if (!parsed.success) {
 		return null;
 	}
 	return parsed.data;
 }
 
-function deterministicHudDocChoice(a: HudDocV1, b: HudDocV1): HudDocV1 {
+function deterministicHudDocChoice(a: HudDoc, b: HudDoc): HudDoc {
 	if (a.updated_at_ms !== b.updated_at_ms) {
 		return a.updated_at_ms > b.updated_at_ms ? a : b;
 	}
@@ -298,13 +298,13 @@ export function serializeHudDocsTextFallback(
 	return rendered.join(mode === "compact" ? " | " : "\n\n");
 }
 
-export function parseHudDoc(input: unknown): HudDocV1 | null {
+export function parseHudDoc(input: unknown): HudDoc | null {
 	return parseHudDocCandidate(input);
 }
 
-export function normalizeHudDocs(input: unknown, opts: { maxDocs?: number } = {}): HudDocV1[] {
+export function normalizeHudDocs(input: unknown, opts: { maxDocs?: number } = {}): HudDoc[] {
 	const maxDocs = normalizedHudDocLimit(opts.maxDocs);
-	const byId = new Map<string, HudDocV1>();
+	const byId = new Map<string, HudDoc>();
 	for (const candidate of hudDocCandidates(input)) {
 		const parsed = parseHudDocCandidate(candidate);
 		if (!parsed) {

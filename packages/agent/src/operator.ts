@@ -1,4 +1,4 @@
-import { HudDocV1Schema, type HudDocV1, normalizeHudDocs } from "@femtomc/mu-core";
+import { HudDocSchema, type HudDoc, normalizeHudDocs } from "@femtomc/mu-core";
 import { appendJsonl, getStorePaths, readJsonl } from "@femtomc/mu-core/node";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -68,7 +68,7 @@ export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 ]);
 export type OperatorApprovedCommand = z.infer<typeof OperatorApprovedCommandSchema>;
 
-const OperatorTurnHudDocsSchema = z.array(HudDocV1Schema).max(OPERATOR_TURN_HUD_DOCS_MAX).optional();
+const OperatorTurnHudDocsSchema = z.array(HudDocSchema).max(OPERATOR_TURN_HUD_DOCS_MAX).optional();
 
 export const OperatorBackendTurnResultSchema = z.discriminatedUnion("kind", [
 	z.object({
@@ -101,14 +101,14 @@ export type OperatorDecision =
 	| {
 			kind: "response";
 			message: string;
-			hud_docs?: HudDocV1[];
+			hud_docs?: HudDoc[];
 			operatorSessionId: string;
 			operatorTurnId: string;
 	  }
 	| {
 			kind: "command";
 			commandText: string;
-			hud_docs?: HudDocV1[];
+			hud_docs?: HudDoc[];
 			operatorSessionId: string;
 			operatorTurnId: string;
 	  }
@@ -418,7 +418,7 @@ function isHudToolName(toolName: string): boolean {
 	return normalized === "mu_hud" || normalized.endsWith("_hud");
 }
 
-function extractHudDocsFromToolResult(result: unknown): HudDocV1[] {
+function extractHudDocsFromToolResult(result: unknown): HudDoc[] {
 	const rec = asRecord(result);
 	if (!rec) {
 		return [];
@@ -441,7 +441,7 @@ function extractHudDocsFromToolResult(result: unknown): HudDocV1[] {
 	return normalizeHudDocs(candidates, { maxDocs: OPERATOR_TURN_HUD_DOCS_MAX });
 }
 
-function collectHudDocsFromToolExecutionEvent(event: unknown): HudDocV1[] {
+function collectHudDocsFromToolExecutionEvent(event: unknown): HudDoc[] {
 	const rec = asRecord(event);
 	if (!rec) {
 		return [];
@@ -1230,7 +1230,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 
 		let assistantText = "";
 		let capturedCommand: OperatorApprovedCommand | null = null;
-		let capturedHudDocs: HudDocV1[] = [];
+		let capturedHudDocs: HudDoc[] = [];
 
 		const unsub = session.subscribe((event: any) => {
 			// Capture assistant text for fallback responses.

@@ -10,7 +10,7 @@ import {
 	type MessagingOperatorIdentityBinding,
 	type MessagingOperatorInboundEnvelope,
 } from "@femtomc/mu-agent";
-import type { HudDocV1 } from "@femtomc/mu-core";
+import type { HudDoc } from "@femtomc/mu-core";
 
 function mkInbound(conversationId: string): MessagingOperatorInboundEnvelope {
 	return {
@@ -51,7 +51,7 @@ function mkBinding(): MessagingOperatorIdentityBinding {
 	};
 }
 
-function mkHudDoc(overrides: Partial<HudDocV1> = {}): HudDocV1 {
+function mkHudDoc(overrides: Partial<HudDoc> = {}): HudDoc {
 	return {
 		v: 1,
 		hud_id: "planning",

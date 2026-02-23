@@ -68,7 +68,7 @@ Current stack:
 - `planningUiExtension` — planning mode: compact HUD for next-step/approval flow in widget/status surfaces while keeping the branding footer unchanged (`/mu plan ...`)
 - `subagentsUiExtension` — subagents mode: compact HUD with activity sentences from issue/forum events, with state kept in widget/status surfaces while branding footer stays unchanged (`/mu subagents ...`)
 
-Extensions emit contract-valid `hud_docs` (`HudDocV1`) so control-plane/server renderers can provide a consistent cross-surface HUD experience.
+Extensions emit contract-valid `hud_docs` (`HudDoc`) so control-plane/server renderers can provide a consistent cross-surface HUD experience.
 
 Default operator UI theme is `mu-gruvbox-dark`.
 

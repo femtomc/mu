@@ -1,4 +1,4 @@
-import { HUD_CONTRACT_VERSION, stableSerializeJson, type HudDocV1 } from "@femtomc/mu-core";
+import { HUD_CONTRACT_VERSION, stableSerializeJson, type HudDoc } from "@femtomc/mu-core";
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,7 +31,7 @@ function mkInbound(requestId: string): InboundEnvelope {
 	};
 }
 
-function mkHudDoc(id: string, updatedAt: number, title = id): HudDocV1 {
+function mkHudDoc(id: string, updatedAt: number, title = id): HudDoc {
 	return {
 		v: HUD_CONTRACT_VERSION,
 		hud_id: id,
@@ -77,7 +77,7 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 			const metadata = result.outboxRecord?.envelope.metadata ?? {};
 			expect(metadata.hud_contract_version).toBe(HUD_CONTRACT_VERSION);
 			expect(metadata.hud_docs_count).toBe(16);
-			const hudDocs = Array.isArray(metadata.hud_docs) ? (metadata.hud_docs as HudDocV1[]) : [];
+			const hudDocs = Array.isArray(metadata.hud_docs) ? (metadata.hud_docs as HudDoc[]) : [];
 			expect(hudDocs).toHaveLength(16);
 			expect(hudDocs.map((doc) => doc.hud_id)).toEqual([
 				"hud-01",

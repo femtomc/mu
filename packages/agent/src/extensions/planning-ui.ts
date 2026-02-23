@@ -1,4 +1,4 @@
-import { HUD_CONTRACT_VERSION, type HudDocV1 } from "@femtomc/mu-core";
+import { HUD_CONTRACT_VERSION, type HudDoc } from "@femtomc/mu-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { clearHudMode, setActiveHudMode, syncHudModeStatus } from "./hud-mode.js";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
@@ -467,12 +467,12 @@ function parseOnOff(raw: string | undefined): boolean | null {
 	return null;
 }
 
-function planningHudDoc(state: PlanningUiState): HudDocV1 {
+function planningHudDoc(state: PlanningUiState): HudDoc {
 	const done = state.steps.filter((step) => step.done).length;
 	const total = state.steps.length;
 	const phase = summarizePhase(state.phase);
 	const waiting = state.waitingOnUser;
-	const actions: HudDocV1["actions"] = [
+	const actions: HudDoc["actions"] = [
 		{ id: "snapshot", label: "Snapshot", command_text: "/mu plan snapshot", kind: "secondary" },
 	];
 	if (!state.enabled) {
@@ -527,7 +527,7 @@ function planningHudDoc(state: PlanningUiState): HudDocV1 {
 
 function planningDetails(state: PlanningUiState): {
 	hud_provider_id: string;
-	hud_docs: HudDocV1[];
+	hud_docs: HudDoc[];
 	enabled: boolean;
 	phase: PlanningPhase;
 	root_issue_id: string | null;

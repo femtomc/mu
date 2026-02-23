@@ -1,4 +1,4 @@
-import { HUD_CONTRACT_VERSION, type HudDocV1 } from "@femtomc/mu-core";
+import { HUD_CONTRACT_VERSION, type HudDoc } from "@femtomc/mu-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { fetchMuJson, muServerUrl } from "./shared.js";
 import { clearHudMode, setActiveHudMode, syncHudModeStatus } from "./hud-mode.js";
@@ -828,7 +828,7 @@ function subagentsSnapshot(state: SubagentsState, format: "compact" | "multiline
 	].join(" · ");
 }
 
-function subagentsHudDoc(state: SubagentsState): HudDocV1 {
+function subagentsHudDoc(state: SubagentsState): HudDoc {
 	const updatedAtMs = state.lastUpdatedMs ?? Date.now();
 	const refreshStale = isRefreshStale(state.lastUpdatedMs, state.staleAfterMs);
 	const drift = computeQueueDrift(state.sessions, state.activeIssues);

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import {
 	HUD_CONTRACT_VERSION,
 	HudRuntime,
-	type HudDocV1,
+	type HudDoc,
 	stableSerializeJson,
 	type HudProvider,
 } from "@femtomc/mu-core";
@@ -36,7 +36,7 @@ function counterProvider(id = "counter"): HudProvider<CounterState, CounterMessa
 	};
 }
 
-function mkDoc(hudId: string, compact: string, updatedAtMs: number): HudDocV1 {
+function mkDoc(hudId: string, compact: string, updatedAtMs: number): HudDoc {
 	return {
 		v: HUD_CONTRACT_VERSION,
 		hud_id: hudId,

@@ -235,7 +235,7 @@ Outbox metadata stores the structured contract alongside rendered text (`interac
 `interaction_contract_version`, `interaction_render_mode`) so follow-on channel renderers can build richer,
 collapsible UI while preserving deterministic serialization.
 
-Adapter UI affordances derive from canonical `hud_docs` (`HudDocV1`) metadata propagated through the
+Adapter UI affordances derive from canonical `hud_docs` (`HudDoc`) metadata propagated through the
 pipeline. New renderer behavior should use the shared HUD contract instead of introducing bespoke
 adapter-specific HUD payload formats.
 

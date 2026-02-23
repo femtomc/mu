@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type HudDocV1 } from "@femtomc/mu-core";
+import { type HudDoc } from "@femtomc/mu-core";
 import { getStorePaths } from "@femtomc/mu-core/node";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -487,7 +487,7 @@ describe("PiMessagingOperatorBackend", () => {
 	});
 
 	test("captures hud_docs from *_hud tool execution results", async () => {
-		const planningHudDoc: HudDocV1 = {
+		const planningHudDoc: HudDoc = {
 			v: 1,
 			hud_id: "planning",
 			title: "Planning",
@@ -529,7 +529,7 @@ describe("PiMessagingOperatorBackend", () => {
 	});
 
 	test("hud_docs capture is deterministic and does not break command capture", async () => {
-		const oldPlanningDoc: HudDocV1 = {
+		const oldPlanningDoc: HudDoc = {
 			v: 1,
 			hud_id: "planning",
 			title: "Planning stale",

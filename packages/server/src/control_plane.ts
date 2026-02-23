@@ -1,5 +1,5 @@
 import type { MessagingOperatorBackend, MessagingOperatorRuntime } from "@femtomc/mu-agent";
-import { normalizeHudDocs, type HudDocV1, type HudTone } from "@femtomc/mu-core";
+import { normalizeHudDocs, type HudDoc, type HudTone } from "@femtomc/mu-core";
 import {
 	type AdapterIngressResult,
 	type AttachmentDescriptor,
@@ -329,7 +329,7 @@ function hudTonePrefix(tone: HudTone | undefined): string {
 	}
 }
 
-function hudDocSectionLines(doc: HudDocV1): string[] {
+function hudDocSectionLines(doc: HudDoc): string[] {
 	const lines: string[] = [];
 	const chipsLine = doc.chips
 		.slice(0, 8)
@@ -381,7 +381,7 @@ function hudDocSectionLines(doc: HudDocV1): string[] {
 	return lines;
 }
 
-function hudActionButtons(doc: HudDocV1): SlackMessageButtonElement[] {
+function hudActionButtons(doc: HudDoc): SlackMessageButtonElement[] {
 	return doc.actions.slice(0, SLACK_ACTIONS_MAX_TOTAL).map((action) => ({
 		type: "button",
 		text: {

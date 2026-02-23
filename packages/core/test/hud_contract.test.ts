@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import {
 	HUD_CONTRACT_VERSION,
-	HudDocV1Schema,
+	HudDocSchema,
 	normalizeHudDocs,
 	parseHudDoc,
 	serializeHudDocTextFallback,
@@ -41,19 +41,19 @@ function mkHudDoc(overrides: Partial<Record<string, unknown>> = {}) {
 	};
 }
 
-test("HudDocV1 schema accepts valid documents", () => {
-	const doc = HudDocV1Schema.parse(mkHudDoc());
+test("HudDoc schema accepts valid documents", () => {
+	const doc = HudDocSchema.parse(mkHudDoc());
 	expect(doc.v).toBe(HUD_CONTRACT_VERSION);
 	expect(doc.hud_id).toBe("planning");
 	expect(doc.sections).toHaveLength(1);
 });
 
-test("HudDocV1 schema rejects unknown fields", () => {
+test("HudDoc schema rejects unknown fields", () => {
 	const invalid = {
 		...mkHudDoc(),
 		unexpected: true,
 	};
-	expect(() => HudDocV1Schema.parse(invalid)).toThrow();
+	expect(() => HudDocSchema.parse(invalid)).toThrow();
 });
 
 test("stableSerializeJson canonicalizes key ordering deterministically", () => {
