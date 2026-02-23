@@ -11,7 +11,7 @@ describe("muOperatorExtension", () => {
 		resetMuCommandDispatcher();
 	});
 
-	test("registers unified HUD tool and does not expose legacy planning/subagents tools", () => {
+	test("registers HUD tool and does not expose legacy planning/subagents tools", () => {
 		const tools = new Map<string, unknown>();
 		const commands = new Map<string, unknown>();
 		const api = {

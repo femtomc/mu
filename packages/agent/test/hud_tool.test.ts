@@ -92,7 +92,7 @@ describe("hud tool", () => {
 		resetMuCommandDispatcher();
 	});
 
-	test("registers unified mu_hud tool and /mu command", () => {
+	test("registers mu_hud tool and /mu command", () => {
 		const { api, tools, commands } = createExtensionApiMock();
 		hudExtension(api as unknown as Parameters<typeof hudExtension>[0]);
 
