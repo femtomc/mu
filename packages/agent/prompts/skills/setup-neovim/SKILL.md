@@ -16,6 +16,17 @@ Goal: get `:Mu ...` working against `mu` control-plane with minimal user-side ed
 
 ## Agent-first workflow
 
+### 0) Verify local prerequisites (agent)
+
+```bash
+command -v mu >/dev/null && echo "mu: ok"
+command -v python3 >/dev/null && echo "python3: ok (required for config patching)"
+command -v curl >/dev/null && echo "curl: ok (required for API checks)"
+command -v jq >/dev/null && echo "jq: ok (required for filtered JSON checks)"
+```
+
+If any required command is missing, stop and ask the user to install it before proceeding.
+
 ### 1) Preflight local state
 
 ```bash
@@ -28,11 +39,36 @@ If no running server exists for reload/capability checks, ask user to run `mu se
 
 ### 2) Generate and set a shared secret (agent)
 
-Generate a strong secret and write it to `<store>/config.json`:
+Generate a strong shared secret, then patch config with this canonical snippet
+(preserves unrelated keys):
 
-- `control_plane.adapters.neovim.shared_secret`
+```bash
+export MU_NEOVIM_SHARED_SECRET='<NEOVIM_SHARED_SECRET>'
+config_path="$(mu control status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["config_path"])')"
 
-Preserve unrelated config keys.
+python3 - "$config_path" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if path.exists():
+    data = json.loads(path.read_text())
+else:
+    data = {"version": 1, "control_plane": {}}
+
+cp = data.setdefault("control_plane", {})
+adapters = cp.setdefault("adapters", {})
+neovim = adapters.setdefault("neovim", {})
+neovim["shared_secret"] = os.environ["MU_NEOVIM_SHARED_SECRET"]
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+```
+
+Replace `<NEOVIM_SHARED_SECRET>` with the generated secret, then `unset MU_NEOVIM_SHARED_SECRET`.
 
 ### 3) Reload and verify channel capability
 
@@ -83,6 +119,20 @@ mu store tail cp_adapter_audit --limit 20 --pretty
 ```
 
 Confirm `:Mu status` returns a valid response in-editor.
+
+## Evaluation scenarios
+
+1. **Happy path with `:Mu link`**
+   - Inputs: matching shared secret in server + plugin, running `mu serve`.
+   - Expected: `:Mu channels` lists neovim as active; `:Mu link` succeeds; `:Mu status` returns valid response.
+
+2. **Shared-secret mismatch**
+   - Inputs: plugin secret differs from `control_plane.adapters.neovim.shared_secret`.
+   - Expected: neovim requests are rejected with deterministic auth reason; skill rotates/re-syncs secret and revalidates.
+
+3. **Manual identity-link fallback**
+   - Inputs: `:Mu link` unavailable in plugin version.
+   - Expected: skill extracts actor/tenant from adapter audit and links via control-plane API; identity appears in `mu control identities --all --pretty`.
 
 ## Safety and UX requirements
 

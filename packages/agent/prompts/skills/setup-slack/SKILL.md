@@ -9,6 +9,13 @@ Use this skill when the user asks to set up Slack messaging for `mu`.
 
 Goal: get `/mu ...` working end-to-end in Slack, with the agent doing all local setup and asking the user only for Slack-console actions/secrets the agent cannot perform.
 
+## Contents
+
+- [Required user-provided inputs](#required-user-provided-inputs)
+- [Agent-first workflow](#agent-first-workflow)
+- [Evaluation scenarios](#evaluation-scenarios)
+- [Safety and UX requirements](#safety-and-ux-requirements)
+
 ## Required user-provided inputs
 
 - Public webhook base URL reachable by Slack (for example `https://mu.example.com`)
@@ -16,6 +23,17 @@ Goal: get `/mu ...` working end-to-end in Slack, with the agent doing all local 
 - Slack app **Bot User OAuth Token** (`xoxb-...`) for outbound replies/media
 
 ## Agent-first workflow
+
+### 0) Verify local prerequisites (agent)
+
+```bash
+command -v mu >/dev/null && echo "mu: ok"
+command -v python3 >/dev/null && echo "python3: ok (required for config patching)"
+command -v curl >/dev/null && echo "curl: ok (required for API checks)"
+command -v jq >/dev/null && echo "jq: ok (required for filtered JSON checks)"
+```
+
+If any required command is missing, stop and ask the user to install it before proceeding.
 
 ### 1) Preflight local state
 
@@ -47,12 +65,37 @@ Ask the user to do only these actions in Slack API UI:
 
 ### 3) Agent patches mu config (do not ask user to edit JSON)
 
-Resolve `<store>/config.json` via `mu store paths --pretty`, then set:
+Use this canonical patch snippet (preserves unrelated keys):
 
-- `control_plane.adapters.slack.signing_secret`
-- `control_plane.adapters.slack.bot_token`
+```bash
+export MU_SLACK_SIGNING_SECRET='<SLACK_SIGNING_SECRET>'
+export MU_SLACK_BOT_TOKEN='<SLACK_BOT_TOKEN>'
+config_path="$(mu control status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["config_path"])')"
 
-Preserve unrelated keys.
+python3 - "$config_path" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if path.exists():
+    data = json.loads(path.read_text())
+else:
+    data = {"version": 1, "control_plane": {}}
+
+cp = data.setdefault("control_plane", {})
+adapters = cp.setdefault("adapters", {})
+slack = adapters.setdefault("slack", {})
+slack["signing_secret"] = os.environ["MU_SLACK_SIGNING_SECRET"]
+slack["bot_token"] = os.environ["MU_SLACK_BOT_TOKEN"]
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+```
+
+Replace placeholder values with secrets from the user, then `unset MU_SLACK_SIGNING_SECRET MU_SLACK_BOT_TOKEN` after patching.
 
 ### 4) Reload and verify adapter status
 
@@ -93,6 +136,20 @@ mu store tail cp_outbox --limit 20 --pretty
 ```
 
 Ask user to run `/mu status` again and confirm response delivery.
+
+## Evaluation scenarios
+
+1. **Happy path onboarding**
+   - Inputs: valid public base URL, `signing_secret`, `bot_token`, running `mu serve`.
+   - Expected: `/api/control-plane/channels` reports Slack `configured=true` and `active=true`; Slack `/mu status` returns a response.
+
+2. **Signature validation failure**
+   - Inputs: wrong `signing_secret` configured.
+   - Expected: inbound command is rejected; `cp_adapter_audit` shows deterministic signature/timestamp reason code; skill proposes secret rotation and reload as next step.
+
+3. **Outbound token missing/invalid**
+   - Inputs: webhook ingress works but `bot_token` missing or invalid.
+   - Expected: ingress may ACK but delivery fails; `cp_outbox`/adapter audit expose concrete failure reason; skill guides user to update token and re-run smoke test.
 
 ## Safety and UX requirements
 

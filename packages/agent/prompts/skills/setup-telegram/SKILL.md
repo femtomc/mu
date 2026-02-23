@@ -9,6 +9,13 @@ Use this skill when the user asks to set up Telegram messaging for `mu`.
 
 Goal: get Telegram bot ingress and reply delivery working with minimal user-side actions.
 
+## Contents
+
+- [Required user-provided inputs](#required-user-provided-inputs)
+- [Agent-first workflow](#agent-first-workflow)
+- [Evaluation scenarios](#evaluation-scenarios)
+- [Safety requirements](#safety-requirements)
+
 ## Required user-provided inputs
 
 - Public webhook base URL reachable by Telegram (for example `https://mu.example.com`)
@@ -18,6 +25,17 @@ Optional (agent can usually discover):
 - Bot username
 
 ## Agent-first workflow
+
+### 0) Verify local prerequisites (agent)
+
+```bash
+command -v mu >/dev/null && echo "mu: ok"
+command -v python3 >/dev/null && echo "python3: ok (required for config patching)"
+command -v curl >/dev/null && echo "curl: ok (required for Telegram API + channel checks)"
+command -v jq >/dev/null && echo "jq: ok (required for filtered JSON checks)"
+```
+
+If any required command is missing, stop and ask the user to install it before proceeding.
 
 ### 1) Preflight local state
 
@@ -55,13 +73,42 @@ If the agent cannot reach Telegram APIs from its environment, give user this exa
 
 ### 4) Patch mu config
 
-Set in `<store>/config.json`:
+Use this canonical patch snippet (preserves unrelated keys):
 
-- `control_plane.adapters.telegram.webhook_secret`
-- `control_plane.adapters.telegram.bot_token`
-- `control_plane.adapters.telegram.bot_username` (if known; otherwise null/omitted)
+```bash
+export MU_TELEGRAM_WEBHOOK_SECRET='<TELEGRAM_WEBHOOK_SECRET>'
+export MU_TELEGRAM_BOT_TOKEN='<TELEGRAM_BOT_TOKEN>'
+export MU_TELEGRAM_BOT_USERNAME='<TELEGRAM_BOT_USERNAME_OR_EMPTY>'
+config_path="$(mu control status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["config_path"])')"
 
-Preserve unrelated keys.
+python3 - "$config_path" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if path.exists():
+    data = json.loads(path.read_text())
+else:
+    data = {"version": 1, "control_plane": {}}
+
+cp = data.setdefault("control_plane", {})
+adapters = cp.setdefault("adapters", {})
+telegram = adapters.setdefault("telegram", {})
+telegram["webhook_secret"] = os.environ["MU_TELEGRAM_WEBHOOK_SECRET"]
+telegram["bot_token"] = os.environ["MU_TELEGRAM_BOT_TOKEN"]
+username = os.environ.get("MU_TELEGRAM_BOT_USERNAME", "").strip()
+telegram["bot_username"] = username or None
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+```
+
+Replace placeholder values with secrets from the user.
+If bot username is unknown, leave `MU_TELEGRAM_BOT_USERNAME` empty.
+Then `unset MU_TELEGRAM_WEBHOOK_SECRET MU_TELEGRAM_BOT_TOKEN MU_TELEGRAM_BOT_USERNAME` after patching.
 
 ### 5) Reload and verify
 
@@ -102,6 +149,20 @@ mu store tail cp_outbox --limit 20 --pretty
 ```
 
 Ask user to send `/mu status` (or plain status text) and verify response delivery.
+
+## Evaluation scenarios
+
+1. **Happy path with API reachability**
+   - Inputs: valid bot token, reachable public webhook base URL, working `setWebhook` call.
+   - Expected: Telegram channel reports `configured=true` + `active=true`; inbound message gets reply.
+
+2. **Network-restricted agent environment**
+   - Inputs: agent cannot reach `api.telegram.org`.
+   - Expected: skill hands user exact `setWebhook` command, resumes after confirmation, and still completes local config/reload verification.
+
+3. **Unknown bot username fallback**
+   - Inputs: `getMe` unavailable or username omitted.
+   - Expected: config stores `bot_username: null` (or omitted equivalent), adapter still activates, and identity link can proceed from audit chat id.
 
 ## Safety requirements
 

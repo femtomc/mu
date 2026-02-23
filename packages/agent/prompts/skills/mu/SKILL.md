@@ -8,6 +8,16 @@ description: "Runs core mu operator workflows for bounded investigation, CLI-fir
 Use this skill for day-to-day operator work in `mu`: inspect state, mutate state safely,
 run focused execution loops, and hand off to specialized skills when needed.
 
+## Contents
+
+- [Core contract](#core-contract)
+- [Default bounded investigation loop](#default-bounded-investigation-loop)
+- [Common mutation patterns](#common-mutation-patterns)
+- [Session and serve surfaces](#session-and-serve-surfaces)
+- [Durable automation handoff](#durable-automation-handoff)
+- [Evaluation scenarios](#evaluation-scenarios)
+- [Escalation map](#escalation-map)
+
 ## Core contract
 
 1. **Investigate first**
@@ -101,6 +111,20 @@ mu cron --help
 
 When work is multi-step and issue-graph driven, use `subagents`.
 When work is planning/decomposition with explicit approval loops, use `planning`.
+
+## Evaluation scenarios
+
+1. **Bounded investigation before mutation**
+   - Prompt: user asks for status + targeted change.
+   - Expected: skill gathers scoped evidence first (`mu status`, `issues`, `forum`, `memory`), then performs minimal write and verifies post-state.
+
+2. **Control-plane diagnostics loop**
+   - Prompt: user reports messaging channel stopped responding.
+   - Expected: skill inspects `mu control status`, identities, and adapter audit/outbox logs, then proposes smallest reversible recovery step (`reload`, relink, or config fix).
+
+3. **Session handoff continuity**
+   - Prompt: user asks to continue prior operator thread.
+   - Expected: skill inspects `mu session list`, resumes by ID, and keeps follow-up actions scoped to the resumed session context.
 
 ## Escalation map
 

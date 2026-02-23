@@ -16,6 +16,17 @@ Goal: get Discord `/mu` ingress working with minimal user effort outside the ter
 
 ## Agent-first workflow
 
+### 0) Verify local prerequisites (agent)
+
+```bash
+command -v mu >/dev/null && echo "mu: ok"
+command -v python3 >/dev/null && echo "python3: ok (required for config patching)"
+command -v curl >/dev/null && echo "curl: ok (required for API checks)"
+command -v jq >/dev/null && echo "jq: ok (required for filtered JSON checks)"
+```
+
+If any required command is missing, stop and ask the user to install it before proceeding.
+
 ### 1) Preflight local state
 
 ```bash
@@ -39,11 +50,35 @@ Ask the user to do only these actions:
 
 ### 3) Agent patches mu config
 
-Set in `<store>/config.json`:
+Use this canonical patch snippet (preserves unrelated keys):
 
-- `control_plane.adapters.discord.signing_secret`
+```bash
+export MU_DISCORD_SIGNING_SECRET='<DISCORD_SIGNING_SECRET>'
+config_path="$(mu control status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["config_path"])')"
 
-Preserve all unrelated keys.
+python3 - "$config_path" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if path.exists():
+    data = json.loads(path.read_text())
+else:
+    data = {"version": 1, "control_plane": {}}
+
+cp = data.setdefault("control_plane", {})
+adapters = cp.setdefault("adapters", {})
+discord = adapters.setdefault("discord", {})
+discord["signing_secret"] = os.environ["MU_DISCORD_SIGNING_SECRET"]
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+```
+
+Replace placeholder values with secrets from the user, then `unset MU_DISCORD_SIGNING_SECRET` after patching.
 
 ### 4) Reload and verify channel capability
 
@@ -84,6 +119,20 @@ mu store tail cp_outbox --limit 20 --pretty
 ```
 
 Ask user to run `/mu status` and confirm ingress ACK behavior.
+
+## Evaluation scenarios
+
+1. **Happy path onboarding**
+   - Inputs: valid public base URL, `signing_secret`, running `mu serve`.
+   - Expected: Discord channel reports `configured=true` and `active=true`; `/mu status` gets an ACK/response flow.
+
+2. **Invalid signing secret**
+   - Inputs: Discord app configured with one secret, `mu` config has another.
+   - Expected: inbound interactions are denied with deterministic audit reason; skill routes user to correct secret + reload + smoke.
+
+3. **Audit-assisted link fallback**
+   - Inputs: command ingress works but no identity linked yet.
+   - Expected: skill derives `actor_id`/`channel_tenant_id` from audit, links operator identity, verifies with `mu control identities --pretty`.
 
 ## Notes and caveats
 

@@ -7,6 +7,15 @@ description: "Builds and refines issue-DAG plans using the planning HUD and appr
 
 Use this skill when the user asks for planning, decomposition, or a staged execution roadmap.
 
+## Contents
+
+- [Planning HUD is required](#planning-hud-is-required)
+- [Core contract](#core-contract)
+- [Suggested workflow](#suggested-workflow)
+- [Effective HUD usage heuristics](#effective-hud-usage-heuristics)
+- [Evaluation scenarios](#evaluation-scenarios)
+- [Quality bar](#quality-bar)
+
 ## Planning HUD is required
 
 For this skill, the planning HUD is the primary status/communication surface.
@@ -157,6 +166,20 @@ Required HUD updates during the loop:
 - Keep `next_action` as one concrete action, not a paragraph.
 - Adjust `confidence` as evidence quality changes (`low` when assumptions are unresolved).
 - Customize checklist steps once scope is understood; check them off as milestones complete.
+
+## Evaluation scenarios
+
+1. **Initial decomposition request**
+   - Prompt: user asks for a staged roadmap.
+   - Expected: investigation pass runs first, root + child issues are created, HUD shows `phase=drafting` and `waiting_on_user=false` until first review checkpoint.
+
+2. **Feedback-driven replan**
+   - Prompt: user requests scope change after first DAG draft.
+   - Expected: dependency/issue updates are applied, concise change diff is presented, HUD transitions through `reviewing`/`waiting_user` with updated `next_action`.
+
+3. **Blocked-by-missing-input planning turn**
+   - Prompt: required architecture constraint is unknown.
+   - Expected: plan captures explicit assumption gap, HUD uses `phase=blocked` or `waiting_user` (as appropriate), and asks one concrete unblock question.
 
 ## Quality bar
 

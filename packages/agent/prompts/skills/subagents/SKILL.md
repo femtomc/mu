@@ -5,6 +5,22 @@ description: "Orchestrates issue-driven subagent execution with heartbeat superv
 
 # Subagents
 
+## Contents
+
+- [Purpose (what this skill is for)](#purpose-what-this-skill-is-for)
+- [When to use](#when-to-use)
+- [Success condition](#success-condition)
+- [Dispatch modes](#dispatch-modes)
+- [Protocol: `subagents.protocol/v1` (how the skill executes)](#protocol-subagentsprotocolv1-how-the-skill-executes)
+- [Required invariants](#required-invariants)
+- [Control loops](#control-loops)
+- [Bootstrap template](#bootstrap-template)
+- [Dispatch templates](#dispatch-templates)
+- [Subagents HUD](#subagents-hud)
+- [Evaluation scenarios](#evaluation-scenarios)
+- [Reconciliation](#reconciliation)
+- [Safety](#safety)
+
 ## Purpose (what this skill is for)
 
 Use this skill for **durable multi-agent orchestration**: work that must keep moving over time, not just one-shot execution.
@@ -258,6 +274,20 @@ Use HUD to communicate with your user for visibility. Truth should still live en
 Tool: `mu_subagents_hud`
 
 - Actions: `status`, `snapshot`, `on`, `off`, `toggle`, `refresh`, `set_prefix`, `set_root`, `set_tag`, `set_mode`, `set_refresh_interval`, `set_stale_after`, `set_spawn_paused`, `update`, `spawn`
+
+## Evaluation scenarios
+
+1. **Heartbeat bounded-orchestration tick**
+   - Setup: root issue with multiple ready leaves tagged `proto:subagents-v1`.
+   - Expected: one heartbeat tick performs exactly one bounded orchestration action, verifies state, posts concise progress, and exits.
+
+2. **tmux fan-out on ready leaves**
+   - Setup: at least three independent ready issues under one root.
+   - Expected: one worker session per issue is spawned, each worker claims before work, and each writes `START`/`RESULT` packets to `issue:<id>`.
+
+3. **Human-question blocking flow (`ask`)**
+   - Setup: worker encounters missing critical input.
+   - Expected: skill creates a `kind:ask` issue, posts a structured question packet, wires dependency edges so downstream work remains blocked until answer issue closes.
 
 ## Reconciliation
 
