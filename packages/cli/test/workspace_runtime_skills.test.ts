@@ -52,7 +52,7 @@ test("ensureStoreInitialized seeds bundled starter skills into MU_HOME/skills", 
 	}
 });
 
-test("ensureStoreInitialized preserves existing user skill files", async () => {
+test("ensureStoreInitialized refreshes bundled starter skills when version marker is missing", async () => {
 	const repoRoot = await mkTempRepo();
 	const muHome = await mkdtemp(join(tmpdir(), "mu-cli-skill-home-"));
 	const previousMuHome = process.env.MU_HOME;
@@ -69,8 +69,36 @@ test("ensureStoreInitialized preserves existing user skill files", async () => {
 		const paths = getStorePaths(repoRoot);
 		await ensureStoreInitialized({ paths });
 
+		const refreshed = await readFile(customSkillPath, "utf8");
+		expect(refreshed).not.toBe(customSkill);
+		expect(refreshed).toContain("name: subagents");
+	} finally {
+		if (previousMuHome === undefined) {
+			delete process.env.MU_HOME;
+		} else {
+			process.env.MU_HOME = previousMuHome;
+		}
+		await rm(repoRoot, { recursive: true, force: true });
+		await rm(muHome, { recursive: true, force: true });
+	}
+});
+
+test("ensureStoreInitialized preserves local skill edits after initial version sync", async () => {
+	const repoRoot = await mkTempRepo();
+	const muHome = await mkdtemp(join(tmpdir(), "mu-cli-skill-home-"));
+	const previousMuHome = process.env.MU_HOME;
+	process.env.MU_HOME = muHome;
+
+	const customSkillPath = join(muHome, "skills", "subagents", "SKILL.md");
+	const customSkill = "---\nname: subagents\ndescription: custom override\n---\n\n# Custom\n";
+
+	try {
+		const paths = getStorePaths(repoRoot);
+		await ensureStoreInitialized({ paths });
+		await writeFile(customSkillPath, customSkill, "utf8");
+		await ensureStoreInitialized({ paths });
+
 		expect(await readFile(customSkillPath, "utf8")).toBe(customSkill);
-		expect(await readFile(join(muHome, "skills", "planning", "SKILL.md"), "utf8")).toContain("name: planning");
 	} finally {
 		if (previousMuHome === undefined) {
 			delete process.env.MU_HOME;

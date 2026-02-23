@@ -42,6 +42,9 @@ or `$MU_HOME/skills/` when missing):
 - `setup-telegram` — Telegram adapter onboarding
 - `setup-neovim` — Neovim frontend onboarding
 
+Starter skills are version-synced. When users upgrade `mu`, bundled starter skills in
+`~/.mu/skills/` (or `$MU_HOME/skills/`) are refreshed to the new bundled version.
+
 Recommended usage pattern:
 
 - Ask your operator to use a relevant skill (for historical context: "memory"; for DAG work: "planning", then "hierarchical-work-protocol", then "subagents"; for recurring automation: "heartbeats" and/or "crons").

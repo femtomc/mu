@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -38,6 +38,7 @@ async function writeFileIfMissing(path: string, content: string | Uint8Array): P
 }
 
 const BUNDLED_SKILL_FILE_NAME = "SKILL.md";
+const STARTER_SKILLS_VERSION_FILE_NAME = ".starter-skills-version";
 
 function bundledSkillsTemplateDir(): string | null {
 	try {
@@ -48,7 +49,21 @@ function bundledSkillsTemplateDir(): string | null {
 	}
 }
 
-async function copyDirectoryFilesIfMissing(sourceDir: string, targetDir: string): Promise<void> {
+function bundledSkillsPackageVersion(): string | null {
+	try {
+		const agentPkgPath = require.resolve("@femtomc/mu-agent/package.json");
+		const parsed = JSON.parse(readFileSync(agentPkgPath, "utf8")) as { version?: unknown };
+		if (typeof parsed.version !== "string") {
+			return null;
+		}
+		const normalized = parsed.version.trim();
+		return normalized.length > 0 ? normalized : null;
+	} catch {
+		return null;
+	}
+}
+
+async function copyDirectoryFiles(sourceDir: string, targetDir: string, overwriteExisting: boolean): Promise<void> {
 	await mkdir(targetDir, { recursive: true });
 	const entries = await readdir(sourceDir, { withFileTypes: true });
 	entries.sort((left, right) => left.name.localeCompare(right.name));
@@ -56,14 +71,18 @@ async function copyDirectoryFilesIfMissing(sourceDir: string, targetDir: string)
 		const sourcePath = join(sourceDir, entry.name);
 		const targetPath = join(targetDir, entry.name);
 		if (entry.isDirectory()) {
-			await copyDirectoryFilesIfMissing(sourcePath, targetPath);
+			await copyDirectoryFiles(sourcePath, targetPath, overwriteExisting);
 			continue;
 		}
 		if (!entry.isFile()) {
 			continue;
 		}
 		const content = await readFile(sourcePath);
-		await writeFileIfMissing(targetPath, content);
+		if (overwriteExisting) {
+			await writeFile(targetPath, content);
+		} else {
+			await writeFileIfMissing(targetPath, content);
+		}
 	}
 }
 
@@ -75,6 +94,16 @@ async function installBundledStarterSkills(muHomeDir: string): Promise<void> {
 
 	const targetRoot = join(muHomeDir, "skills");
 	await mkdir(targetRoot, { recursive: true });
+
+	const versionPath = join(targetRoot, STARTER_SKILLS_VERSION_FILE_NAME);
+	const bundledVersion = bundledSkillsPackageVersion();
+	let installedVersion: string | null = null;
+	try {
+		installedVersion = nonEmptyString(await Bun.file(versionPath).text()) ?? null;
+	} catch {
+		installedVersion = null;
+	}
+	const overwriteExisting = bundledVersion != null && installedVersion !== bundledVersion;
 
 	const entries = await readdir(templateDir, { withFileTypes: true });
 	entries.sort((left, right) => left.name.localeCompare(right.name));
@@ -88,7 +117,11 @@ async function installBundledStarterSkills(muHomeDir: string): Promise<void> {
 			continue;
 		}
 		const targetSkillDir = join(targetRoot, entry.name);
-		await copyDirectoryFilesIfMissing(sourceSkillDir, targetSkillDir);
+		await copyDirectoryFiles(sourceSkillDir, targetSkillDir, overwriteExisting);
+	}
+
+	if (bundledVersion != null) {
+		await writeFile(versionPath, `${bundledVersion}\n`, "utf8");
 	}
 }
 

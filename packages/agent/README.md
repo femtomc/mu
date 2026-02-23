@@ -36,6 +36,9 @@ into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
 - `setup-telegram`
 - `setup-neovim`
 
+Starter skills are version-synced by the CLI bootstrap path when users run `mu`
+commands after upgrading.
+
 ## Install
 
 ```bash
