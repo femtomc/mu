@@ -1,6 +1,6 @@
 ---
 name: setup-slack
-description: "Use this when setting up the Slack messaging adapter with an agent-first onboarding flow and minimal user UI steps."
+description: "Sets up the Slack messaging adapter with agent-first config, reload, verification, and identity linking steps. Use when onboarding or repairing Slack channel integration."
 ---
 
 # setup-slack

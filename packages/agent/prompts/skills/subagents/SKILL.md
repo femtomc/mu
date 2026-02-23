@@ -1,6 +1,6 @@
 ---
 name: subagents
-description: "Use this when work should be orchestrated as issue-driven subagents with heartbeat supervision or tmux fan-out."
+description: "Orchestrates issue-driven subagent execution with heartbeat supervision and tmux fan-out. Use when work should progress through durable parallel subagent loops."
 ---
 
 # Subagents

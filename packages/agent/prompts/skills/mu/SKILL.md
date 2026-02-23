@@ -1,6 +1,6 @@
 ---
 name: mu
-description: "Use this when you need core mu operator workflow guidance for bounded investigation, CLI-first state operations, and session handoffs."
+description: "Runs core mu operator workflows for bounded investigation, CLI-first state operations, and session handoffs. Use when general mu execution or state-management guidance is needed."
 ---
 
 # mu

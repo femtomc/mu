@@ -1,6 +1,6 @@
 ---
 name: setup-telegram
-description: "Use this when setting up the Telegram messaging adapter with agent-led webhook, config, verification, and identity linking steps."
+description: "Sets up the Telegram messaging adapter with agent-first webhook, config, reload, verification, and identity linking steps. Use when onboarding or repairing Telegram channel integration."
 ---
 
 # setup-telegram

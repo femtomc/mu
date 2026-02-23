@@ -1,6 +1,6 @@
 ---
 name: setup-neovim
-description: "Use this when setting up the mu.nvim messaging channel with agent-led config, reload, verification, and identity linking steps."
+description: "Sets up the mu.nvim messaging channel with agent-first config, reload, verification, and identity linking steps. Use when onboarding or repairing Neovim channel integration."
 ---
 
 # setup-neovim

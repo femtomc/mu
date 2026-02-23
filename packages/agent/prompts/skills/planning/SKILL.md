@@ -1,6 +1,6 @@
 ---
 name: planning
-description: "Use this when the user asks for planning, decomposition, or an issue-DAG roadmap that needs review and approval."
+description: "Builds and refines issue-DAG plans using the planning HUD and approval loops. Use when the user asks for planning, decomposition, sequencing, or plan review."
 ---
 
 # Planning

@@ -1,6 +1,6 @@
 ---
 name: setup-discord
-description: "Use this when setting up the Discord messaging adapter with an agent-first onboarding flow and minimal user dashboard steps."
+description: "Sets up the Discord messaging adapter with agent-first config, reload, verification, and identity linking steps. Use when onboarding or repairing Discord channel integration."
 ---
 
 # setup-discord
