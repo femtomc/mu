@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { getStorePaths } from "@femtomc/mu-core/node";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "@femtomc/mu";
@@ -14,6 +14,20 @@ async function mkTempRepo(): Promise<string> {
 function workspaceStoreDir(repoRoot: string): string {
 	return getStorePaths(repoRoot).storeDir;
 }
+
+const STARTER_SKILLS = [
+	"mu",
+	"memory",
+	"planning",
+	"hierarchical-work-protocol",
+	"subagents",
+	"heartbeats",
+	"crons",
+	"setup-slack",
+	"setup-discord",
+	"setup-telegram",
+	"setup-neovim",
+] as const;
 
 async function writeConfigWithOperatorDefaults(
 	dir: string,
@@ -128,6 +142,33 @@ test("mu guide", async () => {
 	expect(result.stdout.includes("mu exec <prompt...>")).toBe(true);
 	expect(result.stdout).toContain("Removed engine commands");
 	expect(result.stdout).not.toContain("/mu-setup");
+});
+
+test("non-help CLI commands auto-initialize store and seed starter skills into MU_HOME", async () => {
+	const dir = await mkTempRepo();
+	const muHome = await mkdtemp(join(tmpdir(), "mu-cli-mu-home-"));
+	const previousMuHome = process.env.MU_HOME;
+	process.env.MU_HOME = muHome;
+
+	try {
+		const result = await run(["status"], { cwd: dir });
+		expect(result.exitCode).toBe(0);
+
+		await expectStoreBootstrapped(dir);
+		for (const skillName of STARTER_SKILLS) {
+			const skillPath = join(muHome, "skills", skillName, "SKILL.md");
+			const content = await readFile(skillPath, "utf8");
+			expect(content).toContain(`name: ${skillName}`);
+		}
+	} finally {
+		if (previousMuHome === undefined) {
+			delete process.env.MU_HOME;
+		} else {
+			process.env.MU_HOME = previousMuHome;
+		}
+		await rm(dir, { recursive: true, force: true });
+		await rm(muHome, { recursive: true, force: true });
+	}
 });
 
 test("mu memory help surfaces filters, timeline anchors, and index workflows", async () => {

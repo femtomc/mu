@@ -42,6 +42,7 @@ type RunOptions = {
 
 async function createCliCtx(cwd: string, opts: RunOptions): Promise<CliCtx> {
 	const ctx0 = await ensureCtx(cwd);
+	await ensureStoreInitialized(ctx0);
 	return {
 		...ctx0,
 		io: opts.io,
