@@ -16,6 +16,7 @@ const STARTER_SKILLS = [
 	"mu",
 	"memory",
 	"planning",
+	"hud",
 	"hierarchical-work-protocol",
 	"subagents",
 	"heartbeats",

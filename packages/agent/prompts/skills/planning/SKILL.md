@@ -10,6 +10,7 @@ Use this skill when the user asks for planning, decomposition, or a staged execu
 ## Contents
 
 - [Planning HUD is required](#planning-hud-is-required)
+- [HUD skill dependency](#hud-skill-dependency)
 - [Shared protocol dependency](#shared-protocol-dependency)
 - [Core contract](#core-contract)
 - [Suggested workflow](#suggested-workflow)
@@ -31,6 +32,13 @@ Default per-turn HUD loop:
 1. Emit a fresh `planning` HUD doc (`mu_hud` action `set` or `update`) with current `phase`, `waiting_on_user`, `next_action`, `blocker`, and `confidence` in sections/metadata.
 2. Keep checklist progress and root issue linkage synchronized with the live issue DAG.
 3. Emit `snapshot` (`compact` or `multiline`) and reflect it in your response.
+
+## HUD skill dependency
+
+Before emitting or mutating planning HUD state, load **`hud`** and follow its canonical contract.
+
+- Treat `hud` as source-of-truth for generic `mu_hud` actions, `HudDoc` shape, and rendering constraints.
+- This planning skill defines planning-specific conventions only (for example `hud_id: "planning"`, planning phases, checklist semantics).
 
 ## Shared protocol dependency
 
@@ -58,6 +66,7 @@ Do not invent alternate protocol names or tag schemas.
    - Add clear titles, scope, acceptance criteria, and protocol tags.
 
 3. **Drive communication through the planning HUD**
+   - Load `hud` and use its canonical `mu_hud`/`HudDoc` contract.
    - Treat HUD state as the canonical short status line for planning.
    - Keep `phase`, `waiting_on_user`, `next_action`, `blocker`, and `confidence` current.
    - Ensure HUD state and your natural-language response never contradict each other.
@@ -97,6 +106,7 @@ Bootstrap HUD immediately (interactive operator session):
 
 Tool contract (preferred when tools are available):
 
+- Canonical contract: see skill `hud`
 - Tool: `mu_hud`
 - Actions: `status`, `snapshot`, `on`, `off`, `toggle`, `set`, `update`, `replace`, `remove`, `clear`
 - Planning convention: maintain a HUD doc with `hud_id: "planning"`

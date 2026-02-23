@@ -9,6 +9,7 @@ description: "Orchestrates issue-driven subagent execution with heartbeat superv
 
 - [Purpose (what this skill is for)](#purpose-what-this-skill-is-for)
 - [Shared protocol dependency](#shared-protocol-dependency)
+- [HUD skill dependency](#hud-skill-dependency)
 - [When to use](#when-to-use)
 - [Success condition](#success-condition)
 - [Dispatch modes](#dispatch-modes)
@@ -44,6 +45,13 @@ Before orchestration begins, load that skill and enforce:
 - Primitive semantics (`read_tree`, `claim`, `spawn`, `fork`, `ask`, `expand`, `complete`, `serial`)
 
 Do not run subagent orchestration against alternate protocol tags.
+
+## HUD skill dependency
+
+Before emitting or mutating subagent HUD state, load **`hud`** and follow its canonical contract.
+
+- Treat `hud` as source-of-truth for generic `mu_hud` actions, `HudDoc` shape, and rendering constraints.
+- This subagents skill defines orchestration-specific conventions only (for example `hud_id: "subagents"`, queue/activity semantics).
 
 ## When to use
 
@@ -141,7 +149,7 @@ mu heartbeats create \
   --title "hierarchical-work-v1 <root-id>" \
   --reason hierarchical_work_protocol_v1 \
   --every-ms 15000 \
-  --prompt "Use skills subagents and hierarchical-work-protocol for root <root-id>. Run exactly one bounded orchestration pass: inspect the proto:hierarchical-work-v1 queue, perform exactly one corrective orchestration action (including in_progress-without-worker drift recovery) or claim/work-start one ready issue, then verify state. Report human-facing progress as a titled status note plus one concise paragraph that explains project context, milestone moved, impact, overall progress, and next high-level step; avoid low-level orchestration internals unless diagnosing a blocker/anomaly. Post a matching ORCH_PASS update to issue:<root-id>. Stop when 'mu issues validate <root-id>' is final."
+  --prompt "Use skills subagents, hud, and hierarchical-work-protocol for root <root-id>. Run exactly one bounded orchestration pass: inspect the proto:hierarchical-work-v1 queue, perform exactly one corrective orchestration action (including in_progress-without-worker drift recovery) or claim/work-start one ready issue, then verify state. Report human-facing progress as a titled status note plus one concise paragraph that explains project context, milestone moved, impact, overall progress, and next high-level step; avoid low-level orchestration internals unless diagnosing a blocker/anomaly. Post a matching ORCH_PASS update to issue:<root-id>. Stop when 'mu issues validate <root-id>' is final."
 ```
 
 Reusable status-voice add-on for heartbeat prompts (copy/paste):
@@ -161,7 +169,7 @@ run_id="$(date +%Y%m%d-%H%M%S)"
 for issue_id in $(mu issues ready --root <root-id> --tag proto:hierarchical-work-v1 --json | jq -r '.[].id' | head -n 3); do
   session="mu-sub-${run_id}-${issue_id}"
   tmux new-session -d -s "$session" \
-    "cd '$PWD' && mu exec 'Use skills subagents and hierarchical-work-protocol. Work issue ${issue_id} using hierarchical-work.protocol/v1. Claim first, then run one full control loop.' ; rc=\$?; echo __MU_DONE__:\$rc"
+    "cd '$PWD' && mu exec 'Use skills subagents, hud, and hierarchical-work-protocol. Work issue ${issue_id} using hierarchical-work.protocol/v1. Claim first, then run one full control loop.' ; rc=\$?; echo __MU_DONE__:\$rc"
 done
 ```
 
@@ -177,6 +185,7 @@ Use HUD for user visibility. Truth still lives in issues/forum.
 
 Tool: `mu_hud`
 
+- Canonical contract: see skill `hud`
 - Actions: `status`, `snapshot`, `on`, `off`, `toggle`, `set`, `update`, `replace`, `remove`, `clear`
 - Subagents convention: maintain a HUD doc with `hud_id: "subagents"`
 - Suggested subagents doc structure:

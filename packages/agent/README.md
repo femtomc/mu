@@ -27,6 +27,7 @@ into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
 - `mu`
 - `memory`
 - `planning`
+- `hud`
 - `hierarchical-work-protocol`
 - `subagents`
 - `heartbeats`
