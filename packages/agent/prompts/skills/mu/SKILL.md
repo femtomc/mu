@@ -1,6 +1,6 @@
 ---
 name: mu
-description: "Core mu operator workflow: bounded investigation, CLI-first state operations, session control, and durable automation handoffs."
+description: "Use this when you need core mu operator workflow guidance for bounded investigation, CLI-first state operations, and session handoffs."
 ---
 
 # mu

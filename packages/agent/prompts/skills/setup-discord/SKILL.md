@@ -1,6 +1,6 @@
 ---
 name: setup-discord
-description: Agent-first Discord adapter setup runbook (config, reload, verification, and identity linking with minimal user-side dashboard steps).
+description: "Use this when setting up the Discord messaging adapter with an agent-first onboarding flow and minimal user dashboard steps."
 ---
 
 # setup-discord

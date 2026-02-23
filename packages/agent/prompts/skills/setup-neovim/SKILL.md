@@ -1,6 +1,6 @@
 ---
 name: setup-neovim
-description: Agent-first mu.nvim channel setup runbook (shared secret config, reload, frontend verification, and identity linking).
+description: "Use this when setting up the mu.nvim messaging channel with agent-led config, reload, verification, and identity linking steps."
 ---
 
 # setup-neovim

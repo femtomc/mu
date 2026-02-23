@@ -1,6 +1,6 @@
 ---
 name: planning
-description: Investigate first, use the planning HUD as the user-facing status channel, then propose and refine a concrete issue DAG until approved.
+description: "Use this when the user asks for planning, decomposition, or an issue-DAG roadmap that needs review and approval."
 ---
 
 # Planning

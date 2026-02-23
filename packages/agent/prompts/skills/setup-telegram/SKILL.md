@@ -1,6 +1,6 @@
 ---
 name: setup-telegram
-description: Agent-first Telegram adapter setup runbook (bot token/webhook wiring, config, reload, verification, and identity linking).
+description: "Use this when setting up the Telegram messaging adapter with agent-led webhook, config, verification, and identity linking steps."
 ---
 
 # setup-telegram

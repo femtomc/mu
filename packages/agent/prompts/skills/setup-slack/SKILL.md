@@ -1,6 +1,6 @@
 ---
 name: setup-slack
-description: Agent-first Slack adapter setup runbook (config, reload, verification, and identity linking with minimal user-side UI steps).
+description: "Use this when setting up the Slack messaging adapter with an agent-first onboarding flow and minimal user UI steps."
 ---
 
 # setup-slack
