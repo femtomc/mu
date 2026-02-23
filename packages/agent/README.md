@@ -65,8 +65,7 @@ Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
 - `eventLogExtension` — event tail + watch widget
-- `planningUiExtension` — planning mode: compact HUD for next-step/approval flow in widget/status surfaces while keeping the branding footer unchanged (`/mu plan ...`)
-- `subagentsUiExtension` — subagents mode: compact HUD with activity sentences from issue/forum events, with state kept in widget/status surfaces while branding footer stays unchanged (`/mu subagents ...`)
+- `hudExtension` — universal HUD surface for skill-directed planning/subagents communication (`/mu hud ...`, `mu_hud`)
 
 Extensions emit contract-valid `hud_docs` (`HudDoc`) so control-plane/server renderers can provide a consistent cross-surface HUD experience.
 
@@ -77,8 +76,7 @@ Default operator UI theme is `mu-gruvbox-dark`.
 - `/mu events [n]` / `/mu events tail [n]` — event log tail
 - `/mu events watch on|off` — toggle event watch widget
 - `/mu brand on|off|toggle` — enable/disable UI branding
-- `/mu plan ...` — planning HUD (phases, checklist editing, communication state, snapshots); does not inject planning metadata into branding footer
-- `/mu subagents ...` — tmux + issue queue monitor/spawner (profiles, spawn pause, stale/refresh controls, snapshots); does not inject subagents metadata into branding footer
+- `/mu hud ...` — universal HUD command for enabling/inspecting/clearing HUD docs; does not inject HUD metadata into branding footer
 - `/mu help` — dispatcher catalog of registered `/mu` subcommands
 
 ## Tooling model (CLI-first)

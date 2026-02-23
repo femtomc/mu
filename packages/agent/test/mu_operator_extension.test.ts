@@ -11,7 +11,7 @@ describe("muOperatorExtension", () => {
 		resetMuCommandDispatcher();
 	});
 
-	test("registers planning/subagents tools and does not register legacy query/command tools", () => {
+	test("registers unified HUD tool and does not expose legacy planning/subagents tools", () => {
 		const tools = new Map<string, unknown>();
 		const commands = new Map<string, unknown>();
 		const api = {
@@ -27,8 +27,9 @@ describe("muOperatorExtension", () => {
 		};
 
 		muOperatorExtension(api as any);
-		expect(tools.has("mu_planning_hud")).toBe(true);
-		expect(tools.has("mu_subagents_hud")).toBe(true);
+		expect(tools.has("mu_hud")).toBe(true);
+		expect(tools.has("mu_planning_hud")).toBe(false);
+		expect(tools.has("mu_subagents_hud")).toBe(false);
 		expect(tools.has("query")).toBe(false);
 		expect(tools.has("command")).toBe(false);
 		expect(commands.has("mu")).toBe(true);

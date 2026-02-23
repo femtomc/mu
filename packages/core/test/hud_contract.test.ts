@@ -32,7 +32,7 @@ function mkHudDoc(overrides: Partial<Record<string, unknown>> = {}) {
 				],
 			},
 		],
-		actions: [{ id: "refresh", label: "Refresh", command_text: "/mu plan snapshot", kind: "secondary" }],
+		actions: [{ id: "refresh", label: "Refresh", command_text: "/mu hud snapshot", kind: "secondary" }],
 		snapshot_compact: "HUD(plan) · phase=reviewing",
 		snapshot_multiline: "Planning HUD snapshot",
 		updated_at_ms: 123,
@@ -107,8 +107,8 @@ test("serializeHudDocTextFallback renders deterministic compact and multiline te
 			},
 		],
 		actions: [
-			{ id: "snapshot", label: "Snapshot", command_text: "/mu plan snapshot", kind: "secondary" },
-			{ id: "next", label: "Next", command_text: "/mu plan next", kind: "primary" },
+			{ id: "snapshot", label: "Snapshot", command_text: "/mu hud snapshot", kind: "secondary" },
+			{ id: "next", label: "Next", command_text: "/mu status", kind: "primary" },
 		],
 		snapshot_compact: "phase=reviewing · steps=2/5",
 	});
@@ -128,8 +128,8 @@ test("serializeHudDocTextFallback renders deterministic compact and multiline te
 			"- [x] Investigate",
 			"- [ ] Draft",
 			"actions:",
-			"- Snapshot: /mu plan snapshot",
-			"- Next: /mu plan next",
+			"- Snapshot: /mu hud snapshot",
+			"- Next: /mu status",
 		].join("\n"),
 	);
 });
@@ -142,7 +142,7 @@ test("serializeHudDocsTextFallback keeps canonical ordering and deterministic tr
 		actions: Array.from({ length: 6 }, (_, idx) => ({
 			id: `a-${idx}`,
 			label: `Action ${idx}`,
-			command_text: `/mu plan ${idx}`,
+			command_text: `/mu hud snapshot ${idx}`,
 		})),
 	});
 	const subagents = mkHudDoc({

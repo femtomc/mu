@@ -8,14 +8,12 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { brandingExtension } from "./branding.js";
 import { eventLogExtension } from "./event-log.js";
-import { planningUiExtension } from "./planning-ui.js";
-import { subagentsUiExtension } from "./subagents-ui.js";
+import { hudExtension } from "./hud.js";
 
 export function muServeExtension(pi: ExtensionAPI) {
+	hudExtension(pi);
 	brandingExtension(pi);
 	eventLogExtension(pi);
-	planningUiExtension(pi);
-	subagentsUiExtension(pi);
 }
 
 export default muServeExtension;

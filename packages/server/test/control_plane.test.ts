@@ -727,7 +727,7 @@ describe("telegram outbound media delivery", () => {
 			return new Response(JSON.stringify({ ok: true }), { status: 200 });
 		}) as typeof fetch;
 		try {
-			const longCommand = `/mu plan ${"x".repeat(80)}`;
+			const longCommand = `/mu hud snapshot ${"x".repeat(80)}`;
 			const record = mkTelegramOutboxRecord({
 				body: "Operator response",
 				metadata: {

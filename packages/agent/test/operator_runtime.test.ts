@@ -59,7 +59,7 @@ function mkHudDoc(overrides: Partial<HudDoc> = {}): HudDoc {
 		scope: null,
 		chips: [{ key: "phase", label: "reviewing", tone: "warning" }],
 		sections: [{ kind: "text", text: "Awaiting approval" }],
-		actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu plan snapshot", kind: "secondary" }],
+		actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu hud snapshot", kind: "secondary" }],
 		snapshot_compact: "HUD(plan) · phase=reviewing",
 		updated_at_ms: 123,
 		metadata: {},

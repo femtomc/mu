@@ -170,20 +170,21 @@ done
 Use HUD for user visibility. Truth still lives in issues/forum.
 
 ```text
-/mu subagents on
-/mu subagents prefix mu-sub-
-/mu subagents root <root-id>
-/mu subagents tag proto:hierarchical-work-v1
-/mu subagents mode operator
-/mu subagents refresh
-/mu subagents snapshot
+/mu hud on
+/mu hud status
+/mu hud snapshot
 ```
 
-Tool: `mu_subagents_hud`
+Tool: `mu_hud`
 
-- Actions: `status`, `snapshot`, `on`, `off`, `toggle`, `refresh`,
-  `set_prefix`, `set_root`, `set_tag`, `set_mode`, `set_refresh_interval`,
-  `set_stale_after`, `set_spawn_paused`, `update`, `spawn`
+- Actions: `status`, `snapshot`, `on`, `off`, `toggle`, `set`, `update`, `replace`, `remove`, `clear`
+- Subagents convention: maintain a HUD doc with `hud_id: "subagents"`
+- Suggested subagents doc structure:
+  - chips: health, mode, paused
+  - sections: queue counts + recent activity lines
+  - actions: refresh/spawn command hooks (if desired)
+- Example update:
+  - `{"action":"set","doc":{"v":1,"hud_id":"subagents","title":"Subagents HUD","scope":"mu-root-123","chips":[{"key":"health","label":"healthy","tone":"success"},{"key":"mode","label":"mode:operator","tone":"dim"},{"key":"paused","label":"paused:no","tone":"dim"}],"sections":[{"kind":"kv","title":"Queue","items":[{"key":"ready","label":"Ready","value":"3"},{"key":"active","label":"Active","value":"2"},{"key":"sessions","label":"Sessions","value":"2"}]},{"kind":"activity","title":"Activity","lines":["Spawned worker for mu-abc123","Posted ORCH_PASS update"]}],"actions":[{"id":"refresh","label":"Refresh","command_text":"/mu hud snapshot","kind":"secondary"}],"snapshot_compact":"HUD(subagents) · healthy · mode=operator · ready=3 · active=2","updated_at_ms":1771853115000,"metadata":{"spawn_mode":"operator","spawn_paused":false}}}`
 
 ## Evaluation scenarios
 

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { brandingExtension } from "../src/extensions/branding.js";
-import { resetHudMode, setActiveHudMode } from "../src/extensions/hud-mode.js";
 import { resetMuCommandDispatcher } from "../src/extensions/mu-command-dispatcher.js";
 
 type EventHandler = (event: unknown, ctx: unknown) => Promise<void> | void;
@@ -76,18 +75,16 @@ function renderFooterLine(opts: { footerFactory: FooterFactory; theme: { fg: (to
 	return line;
 }
 
-describe("branding footer HUD integration", () => {
+describe("branding footer HUD isolation", () => {
 	beforeEach(() => {
 		resetMuCommandDispatcher();
-		resetHudMode();
 	});
 
 	afterEach(() => {
 		resetMuCommandDispatcher();
-		resetHudMode();
 	});
 
-	test("does not render planning HUD markers in branding footer", async () => {
+	test("does not render HUD status payload markers in branding footer", async () => {
 		const { api, handlers } = createExtensionApiMock();
 		brandingExtension(api as unknown as Parameters<typeof brandingExtension>[0]);
 
@@ -103,14 +100,14 @@ describe("branding footer HUD integration", () => {
 			throw new Error("footer factory missing");
 		}
 
-		setActiveHudMode("planning");
-		uiHarness.extensionStatuses.set("mu-planning-meta", "phase:waiting-user steps:0/4 wait:yes conf:high");
+		uiHarness.extensionStatuses.set("mu-hud", "hud · 1 · planning");
+		uiHarness.extensionStatuses.set("mu-hud-meta", "phase:waiting-user steps:0/4 wait:yes conf:high");
 		const rendered = renderFooterLine({
 			footerFactory,
 			theme: uiHarness.theme,
 			extensionStatuses: uiHarness.extensionStatuses,
 		});
-		expect(rendered).not.toContain("hud:planning");
+		expect(rendered).not.toContain("hud · 1 · planning");
 		expect(rendered).not.toContain("phase:waiting-user");
 
 		const shutdown = handlers.get("session_shutdown");
@@ -119,7 +116,7 @@ describe("branding footer HUD integration", () => {
 		}
 	});
 
-	test("does not render subagents HUD markers in branding footer", async () => {
+	test("does not render arbitrary extension status markers in branding footer", async () => {
 		const { api, handlers } = createExtensionApiMock();
 		brandingExtension(api as unknown as Parameters<typeof brandingExtension>[0]);
 
@@ -135,14 +132,14 @@ describe("branding footer HUD integration", () => {
 			throw new Error("footer factory missing");
 		}
 
-		setActiveHudMode("subagents");
-		uiHarness.extensionStatuses.set("mu-subagents-meta", "q:1/0 tmux:1");
+		uiHarness.extensionStatuses.set("mu-hud", "hud · 2 · planning,subagents");
+		uiHarness.extensionStatuses.set("mu-hud-meta", "q:1/0 tmux:1");
 		const rendered = renderFooterLine({
 			footerFactory,
 			theme: uiHarness.theme,
 			extensionStatuses: uiHarness.extensionStatuses,
 		});
-		expect(rendered).not.toContain("hud:subagents");
+		expect(rendered).not.toContain("planning,subagents");
 		expect(rendered).not.toContain("q:1/0");
 
 		const shutdown = handlers.get("session_shutdown");

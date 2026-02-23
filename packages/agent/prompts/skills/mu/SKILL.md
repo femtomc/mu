@@ -98,7 +98,7 @@ mu session <session-id>
 mu turn --session-kind operator --session-id <session-id> --body "<follow-up>"
 ```
 
-In attached terminal operator chat, `/mu` helpers are available (`/mu events`, `/mu plan`, `/mu subagents`, `/mu help`).
+In attached terminal operator chat, `/mu` helpers are available (`/mu events`, `/mu hud ...`, `/mu help`).
 
 ## Durable automation handoff
 

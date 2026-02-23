@@ -28,8 +28,8 @@ For this skill, the planning HUD is the primary status/communication surface.
 
 Default per-turn HUD loop:
 
-1. Apply an atomic `update` with current `phase`, `waiting_on_user`, `next_action`, `blocker`, and `confidence`.
-2. Synchronize checklist items and `root_issue_id` with the issue DAG.
+1. Emit a fresh `planning` HUD doc (`mu_hud` action `set` or `update`) with current `phase`, `waiting_on_user`, `next_action`, `blocker`, and `confidence` in sections/metadata.
+2. Keep checklist progress and root issue linkage synchronized with the live issue DAG.
 3. Emit `snapshot` (`compact` or `multiline`) and reflect it in your response.
 
 ## Shared protocol dependency
@@ -72,9 +72,9 @@ Do not invent alternate protocol names or tag schemas.
    - Update issues/dependencies and re-present deltas.
    - Do not begin broad execution until the user signals satisfaction.
 
-6. **After user approval, ask user about next steps*
-   - On user acceptance of the plan, turn the planning HUD off
-   - Read the `subagents` skill and offer to supervise subagents to execute the plan
+6. **After user approval, ask user about next steps**
+   - On user acceptance of the plan, turn the planning HUD off.
+   - Read the `subagents` skill and offer to supervise subagents to execute the plan.
 
 ## Suggested workflow
 
@@ -90,46 +90,35 @@ mu memory search --query "<topic>" --limit 30
 Bootstrap HUD immediately (interactive operator session):
 
 ```text
-/mu plan on
-/mu plan phase investigating
-/mu plan waiting off
-/mu plan confidence medium
-/mu plan next "Investigate constraints and gather evidence"
-/mu plan snapshot
+/mu hud on
+/mu hud status
+/mu hud snapshot
 ```
 
 Tool contract (preferred when tools are available):
 
-- Tool: `mu_planning_hud`
-- Actions:
-  - state: `status`, `snapshot`, `on`, `off`, `toggle`, `reset`, `phase`, `root`
-  - checklist: `check`, `uncheck`, `toggle_step`, `set_steps`, `add_step`, `remove_step`, `set_step_label`
-  - communication: `set_waiting`, `set_next`, `set_blocker`, `set_confidence`
-  - atomic: `update`
-- Key parameters:
-  - `phase`: `investigating|drafting|reviewing|waiting_user|blocked|executing|approved|done`
-  - `root_issue_id`: issue ID or `clear`
-  - `waiting_on_user`: boolean
-  - `next_action`, `blocker`: string or `clear`
-  - `confidence`: `low|medium|high`
-  - `steps`: string[]
-  - `step_updates`: array of `{index, done?, label?}`
+- Tool: `mu_hud`
+- Actions: `status`, `snapshot`, `on`, `off`, `toggle`, `set`, `update`, `replace`, `remove`, `clear`
+- Planning convention: maintain a HUD doc with `hud_id: "planning"`
+- Suggested planning doc structure:
+  - `title`: `Planning HUD`
+  - chips: `phase:<...>`, `steps:<done>/<total>`, `waiting:<yes|no>`, `conf:<low|medium|high>`
+  - sections:
+    - `kv` status block (`phase`, `root`, `waiting_on_user`, `confidence`, `next_action`, `blocker`)
+    - `checklist` block for plan milestones
+  - actions: include useful follow-ups (for example, `snapshot`)
 
 Example tool calls:
-- Atomic status update for an investigation turn:
-  - `{"action":"update","phase":"investigating","waiting_on_user":false,"next_action":"Draft root issue and child DAG","blocker":"clear","confidence":"medium"}`
-- Atomic handoff when waiting for approval:
-  - `{"action":"update","phase":"waiting_user","waiting_on_user":true,"next_action":"Confirm scope change","blocker":"Need approval","confidence":"low"}`
-- Clear communication fields after user reply:
-  - `{"action":"update","waiting_on_user":false,"blocker":"clear","next_action":"Incorporate feedback and re-draft DAG"}`
-- Customize checklist:
-  - `{"action":"set_steps","steps":["Investigate","Draft DAG","Review with user","Finalize"]}`
+- Turn HUD on:
+  - `{"action":"on"}`
+- Set/replace planning doc after investigation pass:
+  - `{"action":"set","doc":{"v":1,"hud_id":"planning","title":"Planning HUD","scope":"mu-root-123","chips":[{"key":"phase","label":"phase:investigating","tone":"dim"},{"key":"steps","label":"steps:1/4","tone":"accent"},{"key":"waiting","label":"waiting:no","tone":"dim"},{"key":"confidence","label":"conf:medium","tone":"accent"}],"sections":[{"kind":"kv","title":"Status","items":[{"key":"phase","label":"phase","value":"investigating"},{"key":"root","label":"root","value":"mu-root-123"},{"key":"waiting","label":"waiting_on_user","value":"no"},{"key":"confidence","label":"confidence","value":"medium"},{"key":"next","label":"next_action","value":"Draft root DAG"},{"key":"blocker","label":"blocker","value":"(none)"}]},{"kind":"checklist","title":"Checklist","items":[{"id":"1","label":"Investigate relevant code/docs/state","done":true},{"id":"2","label":"Create root + child issue DAG","done":false},{"id":"3","label":"Present plan + tradeoffs","done":false},{"id":"4","label":"Refine until approved","done":false}]}],"actions":[{"id":"snapshot","label":"Snapshot","command_text":"/mu hud snapshot","kind":"secondary"}],"snapshot_compact":"HUD(plan) · phase=investigating · steps=1/4 · waiting=no · conf=medium","updated_at_ms":1771853115000,"metadata":{"phase":"investigating","waiting_on_user":false,"confidence":"medium"}}}`
 - Human-facing status line:
   - `{"action":"snapshot","snapshot_format":"compact"}`
 
 If HUD behavior is unclear, inspect implementation/tests before guessing:
-- `packages/agent/src/extensions/planning-ui.ts`
-- `packages/agent/test/planning_ui_tool.test.ts`
+- `packages/agent/src/extensions/hud.ts`
+- `packages/agent/test/hud_tool.test.ts`
 
 Also inspect repo files directly (read/bash) for implementation constraints.
 
@@ -190,23 +179,17 @@ mu issues validate "$root_id"
 
 Required HUD updates during the loop:
 
-```text
-/mu plan root <root-id>
-/mu plan phase drafting
-/mu plan check 1
-/mu plan phase waiting-user
-/mu plan waiting on
-/mu plan next "Need your approval on tradeoff A/B"
-/mu plan snapshot
-```
+- Re-emit the `planning` HUD doc with current `phase`, checklist progress, `waiting_on_user`, `next_action`, and `blocker` after each meaningful planning step.
+- Use `{"action":"snapshot","snapshot_format":"compact"}` for concise user-facing HUD lines.
+- Keep `updated_at_ms` monotonic across updates so latest doc wins deterministically.
 
 ## Effective HUD usage heuristics
 
-- Prefer `update` for multi-field changes to avoid inconsistent intermediate state.
-- Reserve `waiting_user` for explicit user input/decision waits; use `blocked` for non-user blockers.
+- Keep one canonical planning doc (`hud_id: "planning"`) and refresh it whenever planning state changes.
+- Keep `updated_at_ms` monotonic so deterministic dedupe/ordering always keeps the latest planning state.
+- Use explicit, concise status fields (`phase`, `waiting_on_user`, `next_action`, `blocker`, `confidence`) in sections/metadata.
 - Keep `next_action` as one concrete action, not a paragraph.
-- Adjust `confidence` as evidence quality changes (`low` when assumptions are unresolved).
-- Customize checklist steps once scope is understood; check them off as milestones complete.
+- Customize checklist steps once scope is understood; mark them complete as milestones land.
 
 ## Evaluation scenarios
 

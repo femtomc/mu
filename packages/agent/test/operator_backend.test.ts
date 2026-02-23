@@ -494,7 +494,7 @@ describe("PiMessagingOperatorBackend", () => {
 			scope: "issue:mu-root",
 			chips: [{ key: "phase", label: "reviewing", tone: "warning" }],
 			sections: [{ kind: "text", title: "status", text: "Awaiting approval", tone: "warning" }],
-			actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu plan snapshot", kind: "secondary" }],
+			actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu hud snapshot", kind: "secondary" }],
 			snapshot_compact: "HUD(plan) · phase=reviewing",
 			snapshot_multiline: "Planning HUD snapshot",
 			updated_at_ms: 200,
@@ -507,7 +507,7 @@ describe("PiMessagingOperatorBackend", () => {
 					responses: ["Updated planning HUD."],
 					toolResults: [
 						{
-							toolName: "mu_planning_hud",
+							toolName: "mu_hud",
 							result: {
 								details: {
 									hud_docs: [planningHudDoc],
@@ -562,7 +562,7 @@ describe("PiMessagingOperatorBackend", () => {
 					],
 					toolResults: [
 						{
-							toolName: "mu_subagents_hud",
+							toolName: "mu_hud",
 							result: {
 								details: {
 									hud_docs: [newPlanningDoc, oldPlanningDoc, { hud_id: "bad" }],
