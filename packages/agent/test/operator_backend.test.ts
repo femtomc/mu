@@ -486,7 +486,7 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(result).toEqual({ kind: "respond", message: "The repo has 5 open issues." });
 	});
 
-	test("captures hud_docs from *_hud tool execution results", async () => {
+	test("captures hud_docs from mu_hud tool execution results", async () => {
 		const planningHudDoc: HudDoc = {
 			v: 1,
 			hud_id: "planning",

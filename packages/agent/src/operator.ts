@@ -415,7 +415,7 @@ function nonEmptyString(value: unknown): string | null {
 
 function isHudToolName(toolName: string): boolean {
 	const normalized = toolName.trim().toLowerCase();
-	return normalized === "mu_hud" || normalized.endsWith("_hud");
+	return normalized === "mu_hud";
 }
 
 function extractHudDocsFromToolResult(result: unknown): HudDoc[] {
