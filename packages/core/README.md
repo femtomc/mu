@@ -40,9 +40,12 @@ console.log(await jsonl.read());
 
 - `HudDocSchema`, `HUD_CONTRACT_VERSION`
 - `parseHudDoc(...)`, `normalizeHudDocs(...)`
+- `resolveHudStylePresetName(...)`, `applyHudStylePreset(...)`, `hudStylePresetWarnings(...)`
 - `serializeHudDocTextFallback(...)`, `serializeHudDocsTextFallback(...)`
 - `stableSerializeJson(...)`
 - `HudRuntime` + `HudProvider` for provider registration, reducer updates, ordered effect execution, and HUD snapshot emission
+
+`HudDoc` also supports optional presentation hints (`title_style`, `snapshot_style`, chip/item/section/action style objects) and metadata style presets (`metadata.style_preset` currently `planning|subagents`) so renderers can opt into richer emphasis while preserving deterministic plain-text fallbacks.
 
 These are runtime-agnostic primitives intended for shared HUD capture/render pipelines.
 

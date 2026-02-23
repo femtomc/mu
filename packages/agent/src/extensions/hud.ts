@@ -1,4 +1,14 @@
-import { HudDocSchema, type HudDoc, normalizeHudDocs, serializeHudDocsTextFallback } from "@femtomc/mu-core";
+import {
+	applyHudStylePreset,
+	hudStylePresetWarnings,
+	HudDocSchema,
+	type HudActionKind,
+	type HudDoc,
+	type HudTextStyle,
+	type HudTone,
+	normalizeHudDocs,
+	serializeHudDocsTextFallback,
+} from "@femtomc/mu-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 
@@ -30,6 +40,106 @@ type HudState = {
 const HUD_DISPLAY_DOCS_MAX = 16;
 const HUD_STORE_DOCS_MAX = 64;
 const HUD_LINE_MAX = 120;
+const HUD_CHIPS_MAX = 8;
+const HUD_SECTION_ITEMS_MAX = 6;
+const HUD_ACTIONS_MAX = 4;
+const HUD_LABEL_MAX = 28;
+const HUD_VALUE_MAX = 84;
+
+type ThemeColor = Parameters<ExtensionContext["ui"]["theme"]["fg"]>[0];
+type ThemeShape = ExtensionContext["ui"]["theme"];
+
+function themeBold(theme: ThemeShape, text: string): string {
+	if (typeof theme.bold === "function") {
+		return theme.bold(text);
+	}
+	return text;
+}
+
+function themeItalic(theme: ThemeShape, text: string): string {
+	if (typeof theme.italic === "function") {
+		return theme.italic(text);
+	}
+	return text;
+}
+
+function themeInverse(theme: ThemeShape, text: string): string {
+	if (typeof theme.inverse === "function") {
+		return theme.inverse(text);
+	}
+	return text;
+}
+
+function applyHudTextStyle(
+	theme: ThemeShape,
+	text: string,
+	style: HudTextStyle | undefined,
+	opts: {
+		defaultWeight?: HudTextStyle["weight"];
+		defaultItalic?: boolean;
+		defaultCode?: boolean;
+	} = {},
+): string {
+	let out = text;
+	const weight = style?.weight ?? opts.defaultWeight;
+	const italic = style?.italic ?? opts.defaultItalic ?? false;
+	const code = style?.code ?? opts.defaultCode ?? false;
+	if (code) {
+		out = themeInverse(theme, out);
+	}
+	if (italic) {
+		out = themeItalic(theme, out);
+	}
+	if (weight === "strong") {
+		out = themeBold(theme, out);
+	}
+	return out;
+}
+
+function toneColor(tone: HudTone | undefined): ThemeColor {
+	switch (tone) {
+		case "success":
+			return "success";
+		case "warning":
+			return "warning";
+		case "error":
+			return "error";
+		case "muted":
+			return "muted";
+		case "dim":
+			return "dim";
+		case "accent":
+			return "accent";
+		case "info":
+		default:
+			return "text";
+	}
+}
+
+function actionKindColor(kind: HudActionKind | undefined): ThemeColor {
+	switch (kind) {
+		case "primary":
+			return "accent";
+		case "danger":
+			return "error";
+		case "secondary":
+		default:
+			return "dim";
+	}
+}
+
+function sectionFallbackTitle(kind: HudDoc["sections"][number]["kind"]): string {
+	switch (kind) {
+		case "kv":
+			return "Details";
+		case "checklist":
+			return "Checklist";
+		case "activity":
+			return "Activity";
+		case "text":
+			return "Notes";
+	}
+}
 
 function createDefaultState(): HudState {
 	return {
@@ -52,6 +162,123 @@ function short(text: string, max = HUD_LINE_MAX): string {
 		return "…";
 	}
 	return `${normalized.slice(0, max - 1)}…`;
+}
+
+function sectionHeading(theme: ThemeShape, section: HudDoc["sections"][number]): string {
+	const title = short(section.title ?? sectionFallbackTitle(section.kind), 48);
+	const styledTitle = applyHudTextStyle(theme, title, section.title_style, { defaultWeight: "strong" });
+	return [theme.fg("accent", styledTitle), theme.fg("dim", `(${section.kind})`)].join(" ");
+}
+
+function renderHudWidgetLines(theme: ThemeShape, docs: HudDoc[]): string[] {
+	const lines: string[] = [];
+	for (const [docIndex, doc] of docs.entries()) {
+		if (docIndex > 0) {
+			lines.push(theme.fg("muted", "─".repeat(26)));
+		}
+
+		const title = short(doc.title, 64);
+		const hudId = short(doc.hud_id, 32);
+		const styledTitle = applyHudTextStyle(theme, title, doc.title_style, { defaultWeight: "strong" });
+		lines.push(`${theme.fg("accent", styledTitle)} ${theme.fg("dim", `[${hudId}]`)}`);
+
+		if (doc.scope) {
+			lines.push(`${theme.fg("dim", "scope:")} ${theme.fg("muted", short(doc.scope, HUD_LINE_MAX - 7))}`);
+		}
+
+		if (doc.chips.length > 0) {
+			const visible = doc.chips.slice(0, HUD_CHIPS_MAX);
+			const chips = visible.map((chip) => {
+				const color = toneColor(chip.tone);
+				const label = short(chip.label, 28);
+				const chipLabel = applyHudTextStyle(theme, label, chip.style, {
+					defaultWeight: color === "muted" || color === "dim" ? "normal" : "strong",
+				});
+				return theme.fg(color, chipLabel);
+			});
+			const hiddenCount = doc.chips.length - visible.length;
+			if (hiddenCount > 0) {
+				chips.push(theme.fg("dim", `+${hiddenCount}`));
+			}
+			lines.push(chips.join(theme.fg("muted", " · ")));
+		}
+
+		for (const section of doc.sections) {
+			lines.push(sectionHeading(theme, section));
+			switch (section.kind) {
+				case "kv": {
+					const visible = section.items.slice(0, HUD_SECTION_ITEMS_MAX);
+					for (const item of visible) {
+						const keyLabel = short(item.label, HUD_LABEL_MAX);
+						const valueMax = Math.max(16, HUD_LINE_MAX - keyLabel.length - 8);
+						const valueLabel = short(item.value, Math.min(HUD_VALUE_MAX, valueMax));
+						const styledValue = applyHudTextStyle(theme, valueLabel, item.value_style);
+						lines.push(
+							`  ${theme.fg("muted", "-")} ${theme.fg("dim", `${keyLabel}:`)} ${theme.fg(toneColor(item.tone), styledValue)}`,
+						);
+					}
+					const hiddenCount = section.items.length - visible.length;
+					if (hiddenCount > 0) {
+						lines.push(theme.fg("dim", `  … (+${hiddenCount} more)`));
+					}
+					break;
+				}
+				case "checklist": {
+					const visible = section.items.slice(0, HUD_SECTION_ITEMS_MAX);
+					for (const item of visible) {
+						const marker = item.done ? theme.fg("success", "[x]") : theme.fg("dim", "[ ]");
+						const textColor: ThemeColor = item.done ? "dim" : "text";
+						const label = short(item.label, HUD_LINE_MAX - 8);
+						const styledLabel = applyHudTextStyle(theme, label, item.style);
+						lines.push(`  ${marker} ${theme.fg(textColor, styledLabel)}`);
+					}
+					const hiddenCount = section.items.length - visible.length;
+					if (hiddenCount > 0) {
+						lines.push(theme.fg("dim", `  … (+${hiddenCount} more)`));
+					}
+					break;
+				}
+				case "activity": {
+					const visible = section.lines.slice(0, HUD_SECTION_ITEMS_MAX);
+					for (const line of visible) {
+						lines.push(`  ${theme.fg("muted", "-")} ${theme.fg("dim", short(line, HUD_LINE_MAX - 6))}`);
+					}
+					const hiddenCount = section.lines.length - visible.length;
+					if (hiddenCount > 0) {
+						lines.push(theme.fg("dim", `  … (+${hiddenCount} more)`));
+					}
+					break;
+				}
+				case "text": {
+					const text = short(section.text, HUD_LINE_MAX - 4);
+					const styledText = applyHudTextStyle(theme, text, section.style);
+					lines.push(`  ${theme.fg(toneColor(section.tone), styledText)}`);
+					break;
+				}
+			}
+		}
+
+		if (doc.actions.length > 0) {
+			lines.push(theme.fg("accent", applyHudTextStyle(theme, "Actions", undefined, { defaultWeight: "strong" })));
+			const visible = doc.actions.slice(0, HUD_ACTIONS_MAX);
+			for (const action of visible) {
+				const color = actionKindColor(action.kind);
+				const label = short(action.label, HUD_LABEL_MAX);
+				const styledLabel = applyHudTextStyle(theme, label, action.style, { defaultWeight: "strong" });
+				const commandText = short(action.command_text, HUD_VALUE_MAX);
+				lines.push(`  ${theme.fg(color, styledLabel)} ${theme.fg("dim", commandText)}`);
+			}
+			const hiddenCount = doc.actions.length - visible.length;
+			if (hiddenCount > 0) {
+				lines.push(theme.fg("dim", `  … (+${hiddenCount} more)`));
+			}
+		}
+
+		const snapshotText = short(doc.snapshot_compact, HUD_LINE_MAX - 10);
+		const styledSnapshot = applyHudTextStyle(theme, snapshotText, doc.snapshot_style, { defaultItalic: true });
+		lines.push(`${theme.fg("dim", "snapshot:")} ${theme.fg("muted", styledSnapshot)}`);
+	}
+	return lines;
 }
 
 function activeDocs(state: HudState, maxDocs = HUD_DISPLAY_DOCS_MAX): HudDoc[] {
@@ -91,18 +318,13 @@ function renderHud(ctx: ExtensionContext, state: HudState): void {
 		].join(" "),
 	);
 
-	const snapshot = serializeHudDocsTextFallback(docs, {
-		mode: "multiline",
-		maxDocs: HUD_DISPLAY_DOCS_MAX,
-		maxSectionItems: 6,
-		maxActions: 4,
-		maxChars: 8_000,
-	});
-	const lines = snapshot
-		.split(/\r?\n/)
-		.map((line) => short(line, HUD_LINE_MAX))
-		.filter((line) => line.length > 0);
-	ctx.ui.setWidget("mu-hud", lines.length > 0 ? lines : ["(hud enabled, no docs)"], { placement: "belowEditor" });
+	const docsForRender = docs.map((doc) => applyHudStylePreset(doc) ?? doc);
+	const lines = renderHudWidgetLines(ctx.ui.theme, docsForRender);
+	ctx.ui.setWidget(
+		"mu-hud",
+		lines.length > 0 ? lines : [ctx.ui.theme.fg("dim", "(hud enabled, no docs)")],
+		{ placement: "belowEditor" },
+	);
 }
 
 function parseHudDoc(input: unknown): { ok: true; doc: HudDoc } | { ok: false; error: string } {
@@ -126,6 +348,25 @@ function parseHudDocList(input: unknown): { ok: true; docs: HudDoc[] } | { ok: f
 		docs.push(parsed.doc);
 	}
 	return { ok: true, docs: normalizeHudDocs(docs, { maxDocs: HUD_STORE_DOCS_MAX }) };
+}
+
+function presetWarningsExtraForDoc(doc: HudDoc): Record<string, unknown> {
+	const warnings = hudStylePresetWarnings(doc);
+	if (warnings.length === 0) {
+		return {};
+	}
+	return { preset_warnings: warnings };
+}
+
+function presetWarningsExtraForDocs(docs: HudDoc[]): Record<string, unknown> {
+	const byHudId: Record<string, string[]> = {};
+	for (const doc of docs) {
+		const warnings = hudStylePresetWarnings(doc);
+		if (warnings.length > 0) {
+			byHudId[doc.hud_id] = warnings;
+		}
+	}
+	return Object.keys(byHudId).length > 0 ? { preset_warnings: byHudId } : {};
 }
 
 function hudToolResult(opts: {
@@ -199,7 +440,7 @@ function applyHudAction(params: HudToolParams, state: HudState): {
 				ok: true,
 				action: params.action,
 				message: `HUD doc set: ${parsed.doc.hud_id}`,
-				extra: { hud_id: parsed.doc.hud_id },
+				extra: { hud_id: parsed.doc.hud_id, ...presetWarningsExtraForDoc(parsed.doc) },
 			};
 		}
 		case "replace": {
@@ -212,7 +453,12 @@ function applyHudAction(params: HudToolParams, state: HudState): {
 				state.docsById.set(doc.hud_id, doc);
 			}
 			state.enabled = true;
-			return { ok: true, action: "replace", message: `HUD docs replaced (${parsed.docs.length}).` };
+			return {
+				ok: true,
+				action: "replace",
+				message: `HUD docs replaced (${parsed.docs.length}).`,
+				extra: presetWarningsExtraForDocs(parsed.docs),
+			};
 		}
 		case "remove": {
 			const hudId = (params.hud_id ?? "").trim();

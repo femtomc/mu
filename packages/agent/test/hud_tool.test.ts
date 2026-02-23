@@ -83,6 +83,40 @@ async function executeHudTool(
 	return tool.execute("call-1", params, undefined, undefined, ctx);
 }
 
+function createHudUiHarness() {
+	const statuses = new Map<string, string | undefined>();
+	const widgets = new Map<string, string[] | undefined>();
+	const theme = {
+		fg: (tone: string, text: string) => `<${tone}>${text}</${tone}>`,
+		bold: (text: string) => `<b>${text}</b>`,
+		italic: (text: string) => `<i>${text}</i>`,
+		inverse: (text: string) => `<inverse>${text}</inverse>`,
+	};
+	const ctx = {
+		hasUI: true,
+		ui: {
+			theme,
+			setStatus(key: string, text: string | undefined) {
+				statuses.set(key, text);
+			},
+			setWidget(key: string, content: unknown) {
+				if (Array.isArray(content)) {
+					widgets.set(
+						key,
+						content.map((line) => (typeof line === "string" ? line : String(line))),
+					);
+					return;
+				}
+				widgets.set(key, undefined);
+			},
+			notify() {
+				return undefined;
+			},
+		},
+	};
+	return { ctx, statuses, widgets };
+}
+
 describe("hud tool", () => {
 	beforeEach(() => {
 		resetMuCommandDispatcher();
@@ -129,6 +163,154 @@ describe("hud tool", () => {
 		const snapshot = await executeHudTool(tool, { action: "snapshot", snapshot_format: "compact" });
 		expect(textOf(snapshot)).toContain("Planning HUD");
 		expect(textOf(snapshot)).toContain("Subagents HUD");
+	});
+
+	test("renders styled widget lines when UI context is available", async () => {
+		const { api, tools } = createExtensionApiMock();
+		hudExtension(api as unknown as Parameters<typeof hudExtension>[0]);
+
+		const tool = tools.get("mu_hud");
+		if (!tool) {
+			throw new Error("mu_hud tool missing");
+		}
+
+		const uiHarness = createHudUiHarness();
+		await executeHudTool(
+			tool,
+			{
+				action: "set",
+				doc: {
+					v: 1,
+					hud_id: "planning",
+					title: "Planning HUD",
+					title_style: { italic: true },
+					scope: "issue:mu-1",
+					chips: [{ key: "phase", label: "phase:review", tone: "warning", style: { weight: "normal", italic: true } }],
+					sections: [
+						{
+							kind: "kv",
+							title: "Status",
+							title_style: { italic: true },
+							items: [
+								{
+									key: "next",
+									label: "next_action",
+									value: "Ship HUD styling",
+									tone: "accent",
+									value_style: { code: true },
+								},
+							],
+						},
+						{
+							kind: "checklist",
+							title: "Checklist",
+							items: [{ id: "1", label: "Render styled rows", done: true, style: { italic: true } }],
+						},
+					],
+					actions: [
+						{
+							id: "snapshot",
+							label: "Snapshot",
+							command_text: "/mu hud snapshot",
+							kind: "primary",
+							style: { italic: true },
+						},
+					],
+					snapshot_compact: "phase=review · waiting=no",
+					snapshot_style: { code: true },
+					updated_at_ms: 42,
+					metadata: {},
+				},
+			},
+			uiHarness.ctx,
+		);
+
+		const status = uiHarness.statuses.get("mu-hud") ?? "";
+		expect(status).toContain("<accent>1</accent>");
+
+		const widgetLines = uiHarness.widgets.get("mu-hud");
+		expect(Array.isArray(widgetLines)).toBe(true);
+		const rendered = (widgetLines ?? []).join("\n");
+		expect(rendered).toContain("<accent><b><i>Planning HUD</i></b></accent>");
+		expect(rendered).toContain("<warning><i>phase:review</i></warning>");
+		expect(rendered).toContain("<accent><inverse>Ship HUD styling</inverse></accent>");
+		expect(rendered).toContain("<success>[x]</success>");
+		expect(rendered).toContain("<dim>snapshot:</dim> <muted><i><inverse>phase=review · waiting=no</inverse></i></muted>");
+	});
+
+	test("applies planning style preset metadata in TUI widget rendering", async () => {
+		const { api, tools } = createExtensionApiMock();
+		hudExtension(api as unknown as Parameters<typeof hudExtension>[0]);
+
+		const tool = tools.get("mu_hud");
+		if (!tool) {
+			throw new Error("mu_hud tool missing");
+		}
+
+		const uiHarness = createHudUiHarness();
+		await executeHudTool(
+			tool,
+			{
+				action: "set",
+				doc: {
+					v: 1,
+					hud_id: "planning",
+					title: "Planning HUD",
+					scope: "issue:mu-1",
+					chips: [{ key: "phase", label: "phase:investigating", tone: "warning" }],
+					sections: [
+						{
+							kind: "kv",
+							title: "Status",
+							items: [{ key: "root", label: "root", value: "mu-root-1", tone: "accent" }],
+						},
+					],
+					actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu hud snapshot", kind: "secondary" }],
+					snapshot_compact: "phase=investigating",
+					updated_at_ms: 43,
+					metadata: { style_preset: "planning" },
+				},
+			},
+			uiHarness.ctx,
+		);
+
+		const rendered = (uiHarness.widgets.get("mu-hud") ?? []).join("\n");
+		expect(rendered).toContain("<accent><b>Planning HUD</b></accent>");
+		expect(rendered).toContain("<warning><b>phase:investigating</b></warning>");
+		expect(rendered).toContain("<accent><inverse>mu-root-1</inverse></accent>");
+		expect(rendered).toContain("<dim>snapshot:</dim> <muted><i>phase=investigating</i></muted>");
+	});
+
+	test("returns advisory preset warnings when style preset and doc shape diverge", async () => {
+		const { api, tools } = createExtensionApiMock();
+		hudExtension(api as unknown as Parameters<typeof hudExtension>[0]);
+
+		const tool = tools.get("mu_hud");
+		if (!tool) {
+			throw new Error("mu_hud tool missing");
+		}
+
+		const result = await executeHudTool(tool, {
+			action: "set",
+			doc: {
+				v: 1,
+				hud_id: "subagents",
+				title: "Mismatched HUD",
+				scope: null,
+				chips: [],
+				sections: [{ kind: "text", text: "noop" }],
+				actions: [],
+				snapshot_compact: "noop",
+				updated_at_ms: 50,
+				metadata: { style_preset: "planning" },
+			},
+		});
+		const details = detailsOf(result);
+		expect(details.ok).toBe(true);
+		const warnings = details.preset_warnings;
+		expect(Array.isArray(warnings)).toBe(true);
+		expect((warnings as string[]).some((warning) => warning.includes("expects hud_id=planning"))).toBe(true);
+		expect((warnings as string[]).some((warning) => warning.includes("recommends a checklist section"))).toBe(true);
 	});
 
 	test("replace/remove/clear lifecycle updates doc inventory deterministically", async () => {

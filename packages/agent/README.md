@@ -66,7 +66,7 @@ Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
 - `eventLogExtension` — event tail + watch widget
-- `hudExtension` — HUD surface for skill-directed planning/subagents communication (`/mu hud ...`, `mu_hud`)
+- `hudExtension` — HUD surface for skill-directed planning/subagents communication (`/mu hud ...`, `mu_hud`) with tone/style-aware TUI widget rows, including `metadata.style_preset` support for `planning|subagents` (plain deterministic snapshots remain available via `/mu hud snapshot`)
 
 Extensions emit contract-valid `hud_docs` (`HudDoc`) so control-plane/server renderers can provide a consistent cross-surface HUD experience.
 

@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
 import {
+	applyHudStylePreset,
 	HUD_CONTRACT_VERSION,
+	hudStylePresetWarnings,
 	HudDocSchema,
 	normalizeHudDocs,
 	parseHudDoc,
+	resolveHudStylePresetName,
 	serializeHudDocTextFallback,
 	serializeHudDocsTextFallback,
 	stableSerializeJson,
@@ -48,6 +51,54 @@ test("HudDoc schema accepts valid documents", () => {
 	expect(doc.sections).toHaveLength(1);
 });
 
+test("HudDoc schema accepts optional presentation style hints", () => {
+	const doc = HudDocSchema.parse(
+		mkHudDoc({
+			title_style: { weight: "strong", italic: true },
+			chips: [{ key: "phase", label: "review", tone: "warning", style: { weight: "normal", italic: true } }],
+			sections: [
+				{
+					kind: "kv",
+					title: "Status",
+					title_style: { italic: true },
+					items: [
+						{
+							key: "next",
+							label: "next_action",
+							value: "Ship styling",
+							tone: "accent",
+							value_style: { code: true },
+						},
+					],
+				},
+				{
+					kind: "checklist",
+					title: "Checklist",
+					items: [{ id: "1", label: "Render", done: false, style: { italic: true } }],
+				},
+				{
+					kind: "text",
+					title: "Summary",
+					text: "Done",
+					tone: "success",
+					style: { weight: "strong" },
+				},
+			],
+			actions: [
+				{ id: "snapshot", label: "Snapshot", command_text: "/mu hud snapshot", kind: "secondary", style: { italic: true } },
+			],
+			snapshot_style: { code: true, italic: true },
+		}),
+	);
+	expect(doc.title_style?.italic).toBe(true);
+	expect(doc.snapshot_style?.code).toBe(true);
+	const section = doc.sections[0];
+	if (section?.kind !== "kv") {
+		throw new Error("expected first section to be kv");
+	}
+	expect(section.items[0]?.value_style?.code).toBe(true);
+});
+
 test("HudDoc schema rejects unknown fields", () => {
 	const invalid = {
 		...mkHudDoc(),
@@ -78,6 +129,62 @@ test("normalizeHudDocs deduplicates by hud_id and keeps latest updated_at_ms", (
 test("parseHudDoc returns null for invalid inputs", () => {
 	expect(parseHudDoc({ nope: true })).toBeNull();
 	expect(parseHudDoc(mkHudDoc({ title: "ok" }))?.title).toBe("ok");
+});
+
+test("resolveHudStylePresetName reads known preset names from doc metadata", () => {
+	expect(resolveHudStylePresetName(mkHudDoc({ metadata: { style_preset: "planning" } }))).toBe("planning");
+	expect(resolveHudStylePresetName(mkHudDoc({ metadata: { style_preset: "subagents" } }))).toBe("subagents");
+	expect(resolveHudStylePresetName(mkHudDoc({ metadata: { style_preset: "unknown" } }))).toBeNull();
+	expect(resolveHudStylePresetName({ nope: true })).toBeNull();
+});
+
+test("applyHudStylePreset derives style hints while preserving explicit overrides", () => {
+	const planningDoc = mkHudDoc({
+		metadata: { style_preset: "planning" },
+		sections: [
+			{
+				kind: "kv",
+				title: "Status",
+				items: [{ key: "root", label: "root", value: "mu-root-123" }],
+			},
+		],
+		actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu hud snapshot", kind: "secondary" }],
+		title_style: { weight: "normal" },
+	});
+	const styled = applyHudStylePreset(planningDoc);
+	if (!styled) {
+		throw new Error("expected styled doc");
+	}
+	expect(styled.title_style?.weight).toBe("normal");
+	expect(styled.snapshot_style?.italic).toBe(true);
+	expect(styled.chips[0]?.style?.weight).toBe("strong");
+	const section = styled.sections[0];
+	if (section?.kind !== "kv") {
+		throw new Error("expected kv section");
+	}
+	expect(section.title_style?.weight).toBe("strong");
+	expect(section.items[0]?.value_style?.code).toBe(true);
+	expect(styled.actions[0]?.style?.italic).toBe(true);
+
+	const unchanged = applyHudStylePreset(mkHudDoc({ metadata: { style_preset: "unknown" } }));
+	expect(unchanged?.title_style).toBeUndefined();
+});
+
+test("hudStylePresetWarnings returns advisory guidance for preset/document mismatches", () => {
+	const warnings = hudStylePresetWarnings(
+		mkHudDoc({
+			hud_id: "subagents",
+			chips: [],
+			sections: [{ kind: "text", text: "noop" }],
+			metadata: { style_preset: "planning" },
+		}),
+	);
+	expect(warnings.length).toBeGreaterThan(0);
+	expect(warnings.some((warning) => warning.includes("expects hud_id=planning"))).toBe(true);
+	expect(warnings.some((warning) => warning.includes("recommends a checklist section"))).toBe(true);
+
+	const none = hudStylePresetWarnings(mkHudDoc({ metadata: {} }));
+	expect(none).toEqual([]);
 });
 
 test("serializeHudDocTextFallback renders deterministic compact and multiline text", () => {

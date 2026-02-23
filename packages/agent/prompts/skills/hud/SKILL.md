@@ -44,6 +44,7 @@ Notes:
 - `set` and `update` are both upsert-style single-doc writes.
 - `replace` is whole-inventory replacement.
 - Tool results include normalized `hud_docs` for downstream transport/rendering.
+- Advisory preset-shape warnings are surfaced in tool `details.preset_warnings` when `metadata.style_preset` and doc shape diverge (non-blocking).
 
 ### Command (`/mu hud ...`)
 
@@ -72,14 +73,15 @@ Minimum practical fields:
 Common optional fields:
 
 - `scope` (for root/session/issue scoping)
-- `chips` (`[{key,label,tone?}]`)
+- `title_style` / `snapshot_style` (`{weight?:"normal|strong", italic?:boolean, code?:boolean}`)
+- `chips` (`[{key,label,tone?,style?}]`)
 - `sections`:
-  - `kv` (key/value)
-  - `checklist` (checkbox-style progress)
-  - `activity` (recent lines)
-  - `text` (free text)
-- `actions` (`[{id,label,command_text,kind?}]`)
-- `metadata` (machine-readable extras)
+  - `kv` (key/value; supports `title_style` + item `value_style`)
+  - `checklist` (checkbox-style progress; supports `title_style` + item `style`)
+  - `activity` (recent lines; supports `title_style`)
+  - `text` (free text; supports `title_style` + `style`)
+- `actions` (`[{id,label,command_text,kind?,style?}]`)
+- `metadata` (machine-readable extras; optional `style_preset` convention: `planning|subagents`)
 
 Example checklist doc:
 
@@ -92,7 +94,7 @@ Example checklist doc:
     "title": "Planning HUD",
     "scope": "mu-root-123",
     "chips": [
-      { "key": "phase", "label": "phase:drafting", "tone": "accent" },
+      { "key": "phase", "label": "phase:drafting", "tone": "accent", "style": { "weight": "strong" } },
       { "key": "steps", "label": "steps:2/5", "tone": "dim" }
     ],
     "sections": [
@@ -107,11 +109,11 @@ Example checklist doc:
       }
     ],
     "actions": [
-      { "id": "snapshot", "label": "Snapshot", "command_text": "/mu hud snapshot", "kind": "secondary" }
+      { "id": "snapshot", "label": "Snapshot", "command_text": "/mu hud snapshot", "kind": "secondary", "style": { "italic": true } }
     ],
     "snapshot_compact": "HUD(plan) · phase=drafting · steps=2/5",
     "updated_at_ms": 1771853115000,
-    "metadata": { "phase": "drafting" }
+    "metadata": { "style_preset": "planning", "phase": "drafting" }
   }
 }
 ```

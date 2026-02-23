@@ -10,11 +10,24 @@ export type HudTone = z.infer<typeof HudToneSchema>;
 export const HudActionKindSchema = z.enum(["primary", "secondary", "danger"]);
 export type HudActionKind = z.infer<typeof HudActionKindSchema>;
 
+export const HudTextWeightSchema = z.enum(["normal", "strong"]);
+export type HudTextWeight = z.infer<typeof HudTextWeightSchema>;
+
+export const HudTextStyleSchema = z
+	.object({
+		weight: HudTextWeightSchema.optional(),
+		italic: z.boolean().optional(),
+		code: z.boolean().optional(),
+	})
+	.strict();
+export type HudTextStyle = z.infer<typeof HudTextStyleSchema>;
+
 export const HudChipSchema = z
 	.object({
 		key: NonEmptyTextSchema,
 		label: NonEmptyTextSchema,
 		tone: HudToneSchema.optional(),
+		style: HudTextStyleSchema.optional(),
 	})
 	.strict();
 export type HudChip = z.infer<typeof HudChipSchema>;
@@ -25,6 +38,7 @@ export const HudKvItemSchema = z
 		label: NonEmptyTextSchema,
 		value: NonEmptyTextSchema,
 		tone: HudToneSchema.optional(),
+		value_style: HudTextStyleSchema.optional(),
 	})
 	.strict();
 export type HudKvItem = z.infer<typeof HudKvItemSchema>;
@@ -34,6 +48,7 @@ export const HudChecklistItemSchema = z
 		id: NonEmptyTextSchema,
 		label: NonEmptyTextSchema,
 		done: z.boolean(),
+		style: HudTextStyleSchema.optional(),
 	})
 	.strict();
 export type HudChecklistItem = z.infer<typeof HudChecklistItemSchema>;
@@ -43,6 +58,7 @@ export const HudSectionSchema = z.discriminatedUnion("kind", [
 		.object({
 			kind: z.literal("kv"),
 			title: NonEmptyTextSchema.optional(),
+			title_style: HudTextStyleSchema.optional(),
 			items: z.array(HudKvItemSchema).default([]),
 		})
 		.strict(),
@@ -50,6 +66,7 @@ export const HudSectionSchema = z.discriminatedUnion("kind", [
 		.object({
 			kind: z.literal("checklist"),
 			title: NonEmptyTextSchema.optional(),
+			title_style: HudTextStyleSchema.optional(),
 			items: z.array(HudChecklistItemSchema).default([]),
 		})
 		.strict(),
@@ -57,6 +74,7 @@ export const HudSectionSchema = z.discriminatedUnion("kind", [
 		.object({
 			kind: z.literal("activity"),
 			title: NonEmptyTextSchema.optional(),
+			title_style: HudTextStyleSchema.optional(),
 			lines: z.array(NonEmptyTextSchema).default([]),
 		})
 		.strict(),
@@ -64,8 +82,10 @@ export const HudSectionSchema = z.discriminatedUnion("kind", [
 		.object({
 			kind: z.literal("text"),
 			title: NonEmptyTextSchema.optional(),
+			title_style: HudTextStyleSchema.optional(),
 			text: NonEmptyTextSchema,
 			tone: HudToneSchema.optional(),
+			style: HudTextStyleSchema.optional(),
 		})
 		.strict(),
 ]);
@@ -77,6 +97,7 @@ export const HudActionSchema = z
 		label: NonEmptyTextSchema,
 		command_text: NonEmptyTextSchema,
 		kind: HudActionKindSchema.optional(),
+		style: HudTextStyleSchema.optional(),
 	})
 	.strict();
 export type HudAction = z.infer<typeof HudActionSchema>;
@@ -86,11 +107,13 @@ export const HudDocSchema = z
 		v: z.literal(HUD_CONTRACT_VERSION).default(HUD_CONTRACT_VERSION),
 		hud_id: NonEmptyTextSchema,
 		title: NonEmptyTextSchema,
+		title_style: HudTextStyleSchema.optional(),
 		scope: NonEmptyTextSchema.nullable().default(null),
 		chips: z.array(HudChipSchema).default([]),
 		sections: z.array(HudSectionSchema).default([]),
 		actions: z.array(HudActionSchema).default([]),
 		snapshot_compact: NonEmptyTextSchema,
+		snapshot_style: HudTextStyleSchema.optional(),
 		snapshot_multiline: NonEmptyTextSchema.optional(),
 		updated_at_ms: z.number().int().nonnegative(),
 		metadata: z.record(z.string(), z.unknown()).default({}),
@@ -108,6 +131,221 @@ function parseHudDocCandidate(value: unknown): HudDoc | null {
 		return null;
 	}
 	return parsed.data;
+}
+
+export const HUD_STYLE_PRESET_NAMES = ["planning", "subagents"] as const;
+export type HudStylePresetName = (typeof HUD_STYLE_PRESET_NAMES)[number];
+
+function isHudStylePresetName(value: string): value is HudStylePresetName {
+	return (HUD_STYLE_PRESET_NAMES as readonly string[]).includes(value);
+}
+
+function hudStylePresetNameFromMetadata(metadata: Record<string, unknown>): HudStylePresetName | null {
+	const raw = metadata.style_preset;
+	if (typeof raw !== "string") {
+		return null;
+	}
+	const normalized = raw.trim().toLowerCase();
+	if (!normalized || !isHudStylePresetName(normalized)) {
+		return null;
+	}
+	return normalized;
+}
+
+function mergeHudTextStyle(preferred: HudTextStyle | undefined, fallback: HudTextStyle | undefined): HudTextStyle | undefined {
+	if (!preferred && !fallback) {
+		return undefined;
+	}
+	const merged = {
+		...(fallback ?? {}),
+		...(preferred ?? {}),
+	};
+	if (merged.weight === undefined && merged.italic === undefined && merged.code === undefined) {
+		return undefined;
+	}
+	return merged;
+}
+
+function defaultChipStyle(chip: HudChip): HudTextStyle {
+	if (chip.tone === "dim" || chip.tone === "muted") {
+		return { weight: "normal" };
+	}
+	return { weight: "strong" };
+}
+
+function planningKvValueStyle(item: HudKvItem): HudTextStyle | undefined {
+	switch (item.key) {
+		case "root":
+		case "next":
+		case "next_action":
+			return { code: true };
+		default:
+			return undefined;
+	}
+}
+
+function applyPlanningPreset(doc: HudDoc): HudDoc {
+	return {
+		...doc,
+		title_style: mergeHudTextStyle(doc.title_style, { weight: "strong" }),
+		snapshot_style: mergeHudTextStyle(doc.snapshot_style, { italic: true }),
+		chips: doc.chips.map((chip) => ({
+			...chip,
+			style: mergeHudTextStyle(chip.style, defaultChipStyle(chip)),
+		})),
+		sections: doc.sections.map((section) => {
+			switch (section.kind) {
+				case "kv":
+					return {
+						...section,
+						title_style: mergeHudTextStyle(section.title_style, { weight: "strong" }),
+						items: section.items.map((item) => ({
+							...item,
+							value_style: mergeHudTextStyle(item.value_style, planningKvValueStyle(item)),
+						})),
+					};
+				case "checklist":
+					return {
+						...section,
+						title_style: mergeHudTextStyle(section.title_style, { weight: "strong" }),
+					};
+				case "activity":
+					return {
+						...section,
+						title_style: mergeHudTextStyle(section.title_style, { weight: "strong" }),
+					};
+				case "text":
+					return {
+						...section,
+						title_style: mergeHudTextStyle(section.title_style, { weight: "strong" }),
+					};
+			}
+		}),
+		actions: doc.actions.map((action) => ({
+			...action,
+			style: mergeHudTextStyle(action.style, { italic: true }),
+		})),
+	};
+}
+
+function applySubagentsPreset(doc: HudDoc): HudDoc {
+	return {
+		...doc,
+		title_style: mergeHudTextStyle(doc.title_style, { weight: "strong" }),
+		snapshot_style: mergeHudTextStyle(doc.snapshot_style, { italic: true }),
+		chips: doc.chips.map((chip) => ({
+			...chip,
+			style: mergeHudTextStyle(chip.style, defaultChipStyle(chip)),
+		})),
+		sections: doc.sections.map((section) => {
+			switch (section.kind) {
+				case "kv":
+					return {
+						...section,
+						title_style: mergeHudTextStyle(section.title_style, { weight: "strong" }),
+					};
+				case "checklist":
+					return {
+						...section,
+						title_style: mergeHudTextStyle(section.title_style, { weight: "strong" }),
+					};
+				case "activity":
+					return {
+						...section,
+						title_style: mergeHudTextStyle(section.title_style, { weight: "strong" }),
+					};
+				case "text":
+					return {
+						...section,
+						title_style: mergeHudTextStyle(section.title_style, { weight: "strong" }),
+					};
+			}
+		}),
+		actions: doc.actions.map((action) => ({
+			...action,
+			style: mergeHudTextStyle(action.style, { weight: "strong" }),
+		})),
+	};
+}
+
+function hasChipKey(doc: HudDoc, key: string): boolean {
+	return doc.chips.some((chip) => chip.key === key);
+}
+
+function hasSectionKind(doc: HudDoc, kind: HudSection["kind"]): boolean {
+	return doc.sections.some((section) => section.kind === kind);
+}
+
+function hudStylePresetWarningsForDoc(doc: HudDoc, preset: HudStylePresetName): string[] {
+	const warnings: string[] = [];
+	switch (preset) {
+		case "planning":
+			if (doc.hud_id !== "planning") {
+				warnings.push(`style_preset=planning expects hud_id=planning (got ${doc.hud_id})`);
+			}
+			if (!hasChipKey(doc, "phase")) {
+				warnings.push("style_preset=planning recommends chip key 'phase'");
+			}
+			if (!hasSectionKind(doc, "kv")) {
+				warnings.push("style_preset=planning recommends a kv section");
+			}
+			if (!hasSectionKind(doc, "checklist")) {
+				warnings.push("style_preset=planning recommends a checklist section");
+			}
+			break;
+		case "subagents":
+			if (doc.hud_id !== "subagents") {
+				warnings.push(`style_preset=subagents expects hud_id=subagents (got ${doc.hud_id})`);
+			}
+			if (!hasChipKey(doc, "health")) {
+				warnings.push("style_preset=subagents recommends chip key 'health'");
+			}
+			if (!hasSectionKind(doc, "kv")) {
+				warnings.push("style_preset=subagents recommends a kv section");
+			}
+			if (!hasSectionKind(doc, "activity")) {
+				warnings.push("style_preset=subagents recommends an activity section");
+			}
+			break;
+	}
+	return warnings;
+}
+
+export function hudStylePresetWarnings(input: unknown): string[] {
+	const doc = parseHudDocCandidate(input);
+	if (!doc) {
+		return [];
+	}
+	const preset = hudStylePresetNameFromMetadata(doc.metadata);
+	if (!preset) {
+		return [];
+	}
+	return hudStylePresetWarningsForDoc(doc, preset);
+}
+
+export function resolveHudStylePresetName(input: unknown): HudStylePresetName | null {
+	const doc = parseHudDocCandidate(input);
+	if (!doc) {
+		return null;
+	}
+	return hudStylePresetNameFromMetadata(doc.metadata);
+}
+
+export function applyHudStylePreset(input: unknown): HudDoc | null {
+	const doc = parseHudDocCandidate(input);
+	if (!doc) {
+		return null;
+	}
+	const preset = hudStylePresetNameFromMetadata(doc.metadata);
+	if (!preset) {
+		return doc;
+	}
+	switch (preset) {
+		case "planning":
+			return applyPlanningPreset(doc);
+		case "subagents":
+			return applySubagentsPreset(doc);
+	}
 }
 
 function deterministicHudDocChoice(a: HudDoc, b: HudDoc): HudDoc {

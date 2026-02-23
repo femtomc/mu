@@ -1,5 +1,5 @@
 import type { MessagingOperatorBackend, MessagingOperatorRuntime } from "@femtomc/mu-agent";
-import { normalizeHudDocs, type HudDoc, type HudTone } from "@femtomc/mu-core";
+import { applyHudStylePreset, normalizeHudDocs, type HudDoc, type HudTextStyle, type HudTone } from "@femtomc/mu-core";
 import {
 	type AdapterIngressResult,
 	type AttachmentDescriptor,
@@ -299,6 +299,10 @@ const SLACK_ACTIONS_MAX_TOTAL = 20;
 const SLACK_DOCS_MAX = 3;
 const SLACK_SECTION_LINE_MAX = 8;
 
+function hudDocsForPresentation(input: unknown, maxDocs: number): HudDoc[] {
+	return normalizeHudDocs(input, { maxDocs }).map((doc) => applyHudStylePreset(doc) ?? doc);
+}
+
 function truncateSlackText(text: string, maxLen: number = SLACK_BLOCK_TEXT_MAX_LEN): string {
 	if (text.length <= maxLen) {
 		return text;
@@ -329,11 +333,43 @@ function hudTonePrefix(tone: HudTone | undefined): string {
 	}
 }
 
+function applySlackHudTextStyle(
+	text: string,
+	style: HudTextStyle | undefined,
+	opts: {
+		defaultWeight?: HudTextStyle["weight"];
+		defaultItalic?: boolean;
+		defaultCode?: boolean;
+	} = {},
+): string {
+	const weight = style?.weight ?? opts.defaultWeight;
+	const italic = style?.italic ?? opts.defaultItalic ?? false;
+	const code = style?.code ?? opts.defaultCode ?? false;
+	let out = text;
+	if (code) {
+		out = `\`${out}\``;
+	}
+	if (italic) {
+		out = `_${out}_`;
+	}
+	if (weight === "strong") {
+		out = `*${out}*`;
+	}
+	return out;
+}
+
+function stripSlackMrkdwn(text: string): string {
+	return text.replace(/[*_`~]/g, "");
+}
+
 function hudDocSectionLines(doc: HudDoc): string[] {
 	const lines: string[] = [];
 	const chipsLine = doc.chips
 		.slice(0, 8)
-		.map((chip) => `${hudTonePrefix(chip.tone)} *${chip.label}*`)
+		.map((chip) => {
+			const label = applySlackHudTextStyle(chip.label, chip.style, { defaultWeight: "strong" });
+			return `${hudTonePrefix(chip.tone)} ${label}`;
+		})
 		.join(" · ");
 	if (chipsLine.length > 0) {
 		lines.push(chipsLine);
@@ -342,25 +378,28 @@ function hudDocSectionLines(doc: HudDoc): string[] {
 	for (const section of doc.sections) {
 		switch (section.kind) {
 			case "kv": {
-				const title = section.title ? `*${section.title}*` : "*Details*";
-				const items = section.items.slice(0, SLACK_SECTION_LINE_MAX).map((item) => `• *${item.label}:* ${item.value}`);
+				const title = applySlackHudTextStyle(section.title ?? "Details", section.title_style, { defaultWeight: "strong" });
+				const items = section.items.slice(0, SLACK_SECTION_LINE_MAX).map((item) => {
+					const value = applySlackHudTextStyle(item.value, item.value_style);
+					return `• *${item.label}:* ${value}`;
+				});
 				if (items.length > 0) {
 					lines.push([title, ...items].join("\n"));
 				}
 				break;
 			}
 			case "checklist": {
-				const title = section.title ? `*${section.title}*` : "*Checklist*";
+				const title = applySlackHudTextStyle(section.title ?? "Checklist", section.title_style, { defaultWeight: "strong" });
 				const items = section.items
 					.slice(0, SLACK_SECTION_LINE_MAX)
-					.map((item) => `${item.done ? "✅" : "⬜"} ${item.label}`);
+					.map((item) => `${item.done ? "✅" : "⬜"} ${applySlackHudTextStyle(item.label, item.style)}`);
 				if (items.length > 0) {
 					lines.push([title, ...items].join("\n"));
 				}
 				break;
 			}
 			case "activity": {
-				const title = section.title ? `*${section.title}*` : "*Activity*";
+				const title = applySlackHudTextStyle(section.title ?? "Activity", section.title_style, { defaultWeight: "strong" });
 				const items = section.lines.slice(0, SLACK_SECTION_LINE_MAX).map((line) => `• ${line}`);
 				if (items.length > 0) {
 					lines.push([title, ...items].join("\n"));
@@ -368,15 +407,19 @@ function hudDocSectionLines(doc: HudDoc): string[] {
 				break;
 			}
 			case "text": {
-				const title = section.title ? `*${section.title}*\n` : "";
-				lines.push(`${title}${section.text}`);
+				const title = section.title
+					? `${applySlackHudTextStyle(section.title, section.title_style, { defaultWeight: "strong" })}\n`
+					: "";
+				const text = applySlackHudTextStyle(section.text, section.style);
+				lines.push(`${title}${text}`);
 				break;
 			}
 		}
 	}
 
 	if (lines.length === 0) {
-		lines.push(`*Snapshot*\n${doc.snapshot_compact}`);
+		const snapshot = applySlackHudTextStyle(doc.snapshot_compact, doc.snapshot_style);
+		lines.push(`${applySlackHudTextStyle("Snapshot", undefined, { defaultWeight: "strong" })}\n${snapshot}`);
 	}
 	return lines;
 }
@@ -415,7 +458,7 @@ export function splitSlackMessageText(text: string, maxLen: number = SLACK_MESSA
 }
 
 function slackBlocksForOutboxRecord(record: OutboxRecord, body: string): SlackLayoutBlock[] | undefined {
-	const hudDocs = normalizeHudDocs(record.envelope.metadata?.hud_docs, { maxDocs: SLACK_DOCS_MAX });
+	const hudDocs = hudDocsForPresentation(record.envelope.metadata?.hud_docs, SLACK_DOCS_MAX);
 	if (hudDocs.length === 0) {
 		return undefined;
 	}
@@ -429,9 +472,10 @@ function slackBlocksForOutboxRecord(record: OutboxRecord, body: string): SlackLa
 		if (blocks.length >= SLACK_BLOCKS_MAX) {
 			break;
 		}
+		const styledTitle = applySlackHudTextStyle(doc.title, doc.title_style, { defaultWeight: "strong" });
 		blocks.push({
 			type: "context",
-			elements: [{ type: "mrkdwn", text: truncateSlackText(`*HUD · ${doc.title}*`) }],
+			elements: [{ type: "mrkdwn", text: truncateSlackText(`*HUD* · ${styledTitle}`) }],
 		});
 		for (const line of hudDocSectionLines(doc)) {
 			if (blocks.length >= SLACK_BLOCKS_MAX) {
@@ -486,7 +530,7 @@ function utf8ByteLength(value: string): number {
 }
 
 function telegramTextForOutboxRecord(record: OutboxRecord, body: string): string {
-	const hudDocs = normalizeHudDocs(record.envelope.metadata?.hud_docs, { maxDocs: TELEGRAM_DOCS_MAX });
+	const hudDocs = hudDocsForPresentation(record.envelope.metadata?.hud_docs, TELEGRAM_DOCS_MAX);
 	if (hudDocs.length === 0) {
 		return body;
 	}
@@ -495,7 +539,7 @@ function telegramTextForOutboxRecord(record: OutboxRecord, body: string): string
 	for (const doc of hudDocs) {
 		lines.push("", `HUD · ${doc.title}`);
 		for (const sectionLine of hudDocSectionLines(doc)) {
-			lines.push(sectionLine.replace(/\*/g, ""));
+			lines.push(stripSlackMrkdwn(sectionLine));
 		}
 	}
 	return lines.join("\n").trim();
@@ -507,7 +551,7 @@ async function compileTelegramHudActions(opts: {
 	record: OutboxRecord;
 	encodeCallbackData?: TelegramCallbackDataEncoder;
 }): Promise<{ replyMarkup?: TelegramInlineKeyboardMarkup; overflowText: string }> {
-	const hudDocs = normalizeHudDocs(opts.record.envelope.metadata?.hud_docs, { maxDocs: TELEGRAM_DOCS_MAX });
+	const hudDocs = hudDocsForPresentation(opts.record.envelope.metadata?.hud_docs, TELEGRAM_DOCS_MAX);
 	if (hudDocs.length === 0) {
 		return { overflowText: "" };
 	}

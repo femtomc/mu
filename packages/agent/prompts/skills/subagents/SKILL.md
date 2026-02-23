@@ -192,8 +192,9 @@ Tool: `mu_hud`
   - chips: health, mode, paused
   - sections: queue counts + recent activity lines
   - actions: refresh/spawn command hooks (if desired)
+  - metadata: include `style_preset:"subagents"` for consistent renderer emphasis
 - Example update:
-  - `{"action":"set","doc":{"v":1,"hud_id":"subagents","title":"Subagents HUD","scope":"mu-root-123","chips":[{"key":"health","label":"healthy","tone":"success"},{"key":"mode","label":"mode:operator","tone":"dim"},{"key":"paused","label":"paused:no","tone":"dim"}],"sections":[{"kind":"kv","title":"Queue","items":[{"key":"ready","label":"Ready","value":"3"},{"key":"active","label":"Active","value":"2"},{"key":"sessions","label":"Sessions","value":"2"}]},{"kind":"activity","title":"Activity","lines":["Spawned worker for mu-abc123","Posted ORCH_PASS update"]}],"actions":[{"id":"refresh","label":"Refresh","command_text":"/mu hud snapshot","kind":"secondary"}],"snapshot_compact":"HUD(subagents) · healthy · mode=operator · ready=3 · active=2","updated_at_ms":1771853115000,"metadata":{"spawn_mode":"operator","spawn_paused":false}}}`
+  - `{"action":"set","doc":{"v":1,"hud_id":"subagents","title":"Subagents HUD","scope":"mu-root-123","chips":[{"key":"health","label":"healthy","tone":"success"},{"key":"mode","label":"mode:operator","tone":"dim"},{"key":"paused","label":"paused:no","tone":"dim"}],"sections":[{"kind":"kv","title":"Queue","items":[{"key":"ready","label":"Ready","value":"3"},{"key":"active","label":"Active","value":"2"},{"key":"sessions","label":"Sessions","value":"2"}]},{"kind":"activity","title":"Activity","lines":["Spawned worker for mu-abc123","Posted ORCH_PASS update"]}],"actions":[{"id":"refresh","label":"Refresh","command_text":"/mu hud snapshot","kind":"secondary"}],"snapshot_compact":"HUD(subagents) · healthy · mode=operator · ready=3 · active=2","updated_at_ms":1771853115000,"metadata":{"style_preset":"subagents","spawn_mode":"operator","spawn_paused":false}}}`
 
 ## Evaluation scenarios
 

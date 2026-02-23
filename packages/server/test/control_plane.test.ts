@@ -726,16 +726,18 @@ describe("telegram outbound media delivery", () => {
 							v: 1,
 							hud_id: "planning",
 							title: "Planning",
+							title_style: { italic: true },
 							scope: "issue:mu-e08f2ebb",
-							chips: [{ key: "status", label: "In progress", tone: "info" }],
+							chips: [{ key: "status", label: "In progress", tone: "info", style: { italic: true } }],
 							sections: [
-								{ kind: "text", title: "Summary", text: "Build Telegram HUD renderer" },
-								{ kind: "checklist", title: "Steps", items: [{ id: "a", label: "Compile text", done: true }] },
+								{ kind: "text", title: "Summary", text: "Build Telegram HUD renderer", style: { code: true } },
+								{ kind: "checklist", title: "Steps", items: [{ id: "a", label: "Compile text", done: true, style: { italic: true } }] },
 							],
 							actions: [
 								{ id: "refresh", label: "Refresh", command_text: "/mu status", kind: "secondary" },
 							],
 							snapshot_compact: "planning compact",
+							snapshot_style: { code: true },
 							updated_at_ms: 1,
 							metadata: {},
 						},
@@ -745,8 +747,11 @@ describe("telegram outbound media delivery", () => {
 			const result = await deliverTelegramOutboxRecord({ botToken: "telegram-token", record });
 			expect(result.kind).toBe("delivered");
 			expect(payloads).toHaveLength(1);
-			expect(String(payloads[0]?.text ?? "")).toContain("HUD · Planning");
-			expect(String(payloads[0]?.text ?? "")).toContain("Compile text");
+			const telegramText = String(payloads[0]?.text ?? "");
+			expect(telegramText).toContain("HUD · Planning");
+			expect(telegramText).toContain("Compile text");
+			expect(telegramText).not.toContain("`");
+			expect(telegramText).not.toContain("_In progress_");
 			const markup = payloads[0]?.reply_markup as Record<string, unknown>;
 			const inlineKeyboard = markup?.inline_keyboard as Array<Array<Record<string, unknown>>>;
 			expect(inlineKeyboard?.[0]?.[0]?.text).toBe("Refresh");
@@ -894,28 +899,31 @@ describe("telegram outbound media delivery", () => {
 								v: 1,
 								hud_id: "planning",
 								title: "Planning",
+								title_style: { italic: true },
 								scope: null,
-								chips: [{ key: "phase", label: "review", tone: "warning" }],
+								chips: [{ key: "phase", label: "review", tone: "warning", style: { weight: "normal", italic: true } }],
 								sections: [
 									{
 										kind: "kv",
 										title: "Status",
-										items: [{ key: "root", label: "root", value: "mu-1", tone: "info" }],
+										title_style: { italic: true },
+										items: [{ key: "root", label: "root", value: "mu-1", tone: "info", value_style: { code: true } }],
 									},
 									{
 										kind: "checklist",
 										title: "Steps",
-										items: [{ id: "s1", label: "compile Slack HUD blocks", done: true }],
+										items: [{ id: "s1", label: "compile Slack HUD blocks", done: true, style: { italic: true } }],
 									},
 									{
 										kind: "activity",
 										title: "Activity",
 										lines: ["Posted progress update"],
 									},
-									{ kind: "text", title: "Note", text: "Ready to close", tone: "success" },
+									{ kind: "text", title: "Note", text: "Ready to close", tone: "success", style: { weight: "strong" } },
 								],
 								actions: [{ id: "a1", label: "Close issue", command_text: "mu issues close mu-1 --outcome success" }],
 								snapshot_compact: "phase=review",
+								snapshot_style: { code: true },
 								updated_at_ms: 100,
 								metadata: {},
 							},
@@ -928,6 +936,34 @@ describe("telegram outbound media delivery", () => {
 			const blocks = payloads[0]?.blocks as Array<Record<string, unknown>>;
 			expect(Array.isArray(blocks)).toBe(true);
 			expect(blocks.some((block) => block.type === "context")).toBe(true);
+			expect(
+				blocks.some((block) => {
+					if (block.type !== "context") {
+						return false;
+					}
+					const elements = block.elements as Array<Record<string, unknown>> | undefined;
+					const text = elements?.[0]?.text;
+					return typeof text === "string" && text.includes("*HUD* · *_Planning_*");
+				}),
+			).toBe(true);
+			expect(
+				blocks.some((block) => {
+					if (block.type !== "section") {
+						return false;
+					}
+					const text = (block.text as Record<string, unknown>)?.text;
+					return typeof text === "string" && text.includes("⚠️ _review_");
+				}),
+			).toBe(true);
+			expect(
+				blocks.some((block) => {
+					if (block.type !== "section") {
+						return false;
+					}
+					const text = (block.text as Record<string, unknown>)?.text;
+					return typeof text === "string" && text.includes("`mu-1`");
+				}),
+			).toBe(true);
 			expect(
 				blocks.some((block) => {
 					if (block.type !== "section") {
@@ -945,6 +981,71 @@ describe("telegram outbound media delivery", () => {
 			expect(typeof actionButton?.action_id).toBe("string");
 			expect(String(actionButton?.action_id ?? "")).toBe("mu_hud_action:a1");
 			expect(actionButton?.value).toBe("mu issues close mu-1 --outcome success");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("applies planning style preset to Slack HUD blocks when explicit styles are omitted", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== "https://slack.com/api/chat.postMessage") {
+				throw new Error(`unexpected fetch: ${url}`);
+			}
+			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+			return new Response(JSON.stringify({ ok: true, ts: "10.02c" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+		try {
+			const result = await deliverSlackOutboxRecord({
+				botToken: "xoxb-test-token",
+				record: mkSlackOutboxRecord({
+					body: "summary",
+					metadata: {
+						hud_docs: [
+							{
+								v: 1,
+								hud_id: "planning",
+								title: "Planning",
+								scope: null,
+								chips: [],
+								sections: [],
+								actions: [],
+								snapshot_compact: "phase=review",
+								updated_at_ms: 1,
+								metadata: { style_preset: "planning" },
+							},
+						],
+					},
+				}),
+			});
+			expect(result.kind).toBe("delivered");
+			expect(payloads).toHaveLength(1);
+			const blocks = payloads[0]?.blocks as Array<Record<string, unknown>>;
+			expect(Array.isArray(blocks)).toBe(true);
+			expect(
+				blocks.some((block) => {
+					if (block.type !== "context") {
+						return false;
+					}
+					const elements = block.elements as Array<Record<string, unknown>> | undefined;
+					const text = elements?.[0]?.text;
+					return typeof text === "string" && text.includes("*HUD* · *Planning*");
+				}),
+			).toBe(true);
+			expect(
+				blocks.some((block) => {
+					if (block.type !== "section") {
+						return false;
+					}
+					const text = (block.text as Record<string, unknown>)?.text;
+					return typeof text === "string" && text.includes("*Snapshot*\n_phase=review_");
+				}),
+			).toBe(true);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

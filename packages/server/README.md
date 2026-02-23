@@ -186,7 +186,9 @@ Operational fallbacks:
 - Missing Slack/Telegram bot tokens surface capability reason codes (`*_bot_token_missing`) and retry behavior.
 
 Server channel renderers consume canonical `hud_docs` metadata (`HudDoc`) for Slack/Telegram HUD
-rendering + actions. New features should extend the shared HUD contract path instead of bespoke
+rendering + actions. Optional HUD presentation hints (`title_style`, `snapshot_style`, chip/item styles)
+and metadata presets (`metadata.style_preset`) may be used by richer renderers and safely ignored by
+plain-text channels. New features should extend the shared HUD contract path instead of bespoke
 channel-specific HUD payload formats.
 
 ## Running the Server
