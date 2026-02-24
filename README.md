@@ -4,46 +4,32 @@
   <img src="assets/mu-periodic-logo.svg" alt="mu periodic table style logo" width="180" />
 </p>
 
-```
-npm install -g @femtomc/mu
-```
+`mu` is a programmable personal assistant for technical work, designed for long-running execution, persistence, and reactivity.
 
-**The little assistant that could.**
-
-`mu` is a personal assistant for technical work, designed for long-running execution,
-persistence, and reactivity.
-
-It is a _programmable_ assistant: features that are baked into other harnesses are expressed through a composition of modular primitives.
-
-As [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) say, _bash is all you need_.
-
-## The pitch for (natural language) programmability
-
-`mu` is a "pi distribution" (analogous to Emacs or Neovim distributions -- layers which customize or extend the base system in a particular way): we take [`pi`](https://github.com/badlogic/pi-mono), retain the programmable (customize it yourself) spirit of pi, and
-_add programmable batteries_:
-
-1. CLI issue tracker and forum (thank [beads](https://github.com/steveyegge/beads) for the idea)
-2. Heartbeats and crons (thank [openclaw](https://github.com/openclaw/openclaw) for the idea)
-3. Programmable (by your agent!) HUD
-
-These additions form a programmable substrate which you use to program via skills (already handled by `pi`).
-
-For instance, Claude's "plan mode" -- well, that's just a skill which directs the agent to work with the user to create a plan in the issue tracker, and communicate progress via the programmable HUD. Subagents ... skill, tmux, programmable HUD. Complex work orchestration project which you call Gas Town? CLI issue tracker + forum, programmable HUD, heartbeats, and skills.
-
-The core of this assistant is about _composition and modularity_ -- we want the minimal set of ingredients which _you compose_ to get more complex harness ideas.
-Then, you have the power to take our ingredients and do whatever you want with them.
+Where other agents bake in complex logic, `mu` provides modular CLI primitives (issue tracking, heartbeats, programmable HUDs) that agents orchestrate using shell commands. This makes `mu` highly customizable: as [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) note, *bash is all you need*.
 
 ## Quickstart
 
+Install `mu` globally via npm:
+
 ```bash
 npm install -g @femtomc/mu
-cd /path/to/your/repo
+```
 
-mu --help
+`mu` requires an AI model to function. Export your API key before starting:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+Start the `mu` server and attach a terminal operator session in your repository:
+
+```bash
+cd /path/to/your/repo
 mu serve
 ```
 
-In another terminal:
+In a separate terminal, use the CLI to interact with the assistant's state:
 
 ```bash
 mu status --pretty
@@ -53,77 +39,41 @@ mu forum post research:topic -m "found something" --author operator
 mu memory search --query "reload" --limit 20
 ```
 
-## Skills are behavioral programs
+## Key Features
 
-With the correct programmable substrate for your agent (_bash + CLI tools are all you need_), skills should 
-be the thing you customize most frequently. 
+`mu` extends the [`pi`](https://github.com/badlogic/pi-mono) framework with programmable batteries:
 
-Skills can be dynamically improved, optimized by reflecting
-on traces of interaction ... they're just Markdown, easy to change and modify, and immediately
-reflected in the agent's policy distribution.
+- **CLI issue tracker & forum**: Native tools to manage work and discussions (inspired by [beads](https://github.com/steveyegge/beads)).
+- **Heartbeats & crons**: Durable automation loops for long-running tasks (inspired by [openclaw](https://github.com/openclaw/openclaw)).
+- **Programmable HUD**: Real-time contextual display updated dynamically by the agent.
+- **Skill-based behavior**: Customize agent workflows entirely through Markdown files.
 
-`mu` ships with a set of starter skills (bootstrapped into `~/.mu/skills/`
-or `$MU_HOME/skills/` during store initialization):
+## Skills
 
-- **Core operator and memory**
-  - `mu` — core instruction concerning the `mu` CLI
-  - `memory` — context retrieval and index maintenance
+Skills define the agent's behavior. Because `mu` relies on bash and CLI tools, you customize skills to change workflows. `mu` ships with a set of version-synced starter skills bootstrapped into `~/.mu/skills/`:
 
-- **Planning and orchestration**
-  - `planning` — investigate first, then draft/refine an issue DAG plan with user approval loops
-  - `hud` — canonical HUD contract/workflow
-  - `orchestration` — shared DAG planning/execution protocol used by both planning and subagents
-  - `control-flow` — compositional loop/termination policy overlays (for example review-gated retries)
-  - `subagents` — durable issue-driven subagent orchestration (heartbeat + tmux fan-out)
+- **Core**: `mu` (CLI usage), `memory` (context retrieval)
+- **Planning**: `planning` (issue DAGs), `hud` (HUD contract), `orchestration` (DAG protocol), `control-flow` (loop policies), `subagents` (durable orchestration)
+- **Sessions**: `code-mode` (REPLs), `tmux` (workspace fan-out)
+- **Automation**: `heartbeats` (lifecycle automation loops), `crons` (wall-clock scheduling)
+- **Messaging Setup**: `setup-slack`, `setup-discord`, `setup-telegram`, `setup-neovim`
+- **Writing**: `writing` (technical prose guidelines)
 
-- **REPL and session primitives**
-  - `code-mode` — lightweight tmux-backed REPL execution and context engineering
-  - `tmux` — canonical tmux session lifecycle/fan-out primitives for skills
+**Usage pattern:** Ask the agent to use a specific skill. For example: *"Can we plan and setup an implementation issue DAG?"* or *"Set up the slack messaging service."*
 
-- **Durable automation**
-  - `heartbeats` — heartbeat program lifecycle for durable, bounded automation loops
-  - `crons` — wall-clock scheduling workflows for recurring/one-shot automation
+### Skill Precedence
 
-- **Messaging adapter onboarding**
-  - `setup-slack` — Slack adapter onboarding
-  - `setup-discord` — Discord adapter onboarding
-  - `setup-telegram` — Telegram adapter onboarding
-  - `setup-neovim` — Neovim frontend onboarding
+When names collide, `mu` loads the first match in this order:
+1. Workspace: `~/.mu/workspaces/<workspace-id>/skills/`
+2. Global: `~/.mu/skills/`
+3. Repository: `skills/`
+4. Pi framework (also loaded): `.pi/skills/`, `~/.pi/agent/skills/`
 
-- **Technical writing**
-  - `writing` — technical writing workflow for docs/READMEs/PR descriptions and operator-facing prose
+## Messaging Adapters
 
-Starter skills are version-synced. Initial bootstrap seeds missing skills; bundled-version
-changes refresh installed starter skill files in `~/.mu/skills/` (or `$MU_HOME/skills/`).
+`mu` supports native integrations via agent-first setup skills. The agent patches configuration, reloads the control plane, verifies capabilities, and guides you through required setup.
 
-Recommended usage pattern:
-
-- Ask your operator to use a relevant skill (for historical context: `memory`; for DAG work: `planning` -> `hud` -> `orchestration` -> `control-flow` -> `subagents`; for REPL-heavy context engineering: `code-mode`; for tmux session/fan-out mechanics: `tmux`; for recurring automation: `heartbeats` and/or `crons`; for docs/prose: `writing`).
-
-Examples:
-
-- “Can we plan and setup an implementation issue DAG?”
-- “Can you help me setup the slack messaging service?"
-- “Summarize current ready work in our tracker.”
-
-### Skill loading + precedence
-
-First-match precedence is:
-
-- Mu workspace: `~/.mu/workspaces/<workspace-id>/skills/`
-- Mu global: `~/.mu/skills/`
-- Repo top-level: `skills/`
-- Pi project/global (also loaded): `.pi/skills/`, `~/.pi/agent/skills/`
-
-On name collisions, roots earlier in this list win.
-
-## Messaging setup (recommended)
-
-The messaging setup skills are agent-first: the agent patches config, reloads
-control-plane, verifies routes/capabilities, and asks the user only for
-required external-console steps and secret handoff.
-
-Baseline control-plane commands:
+Manage the control plane with:
 
 ```bash
 mu control status --pretty
@@ -132,28 +82,17 @@ mu control reload
 mu control identities --all --pretty
 ```
 
-Detailed adapter internals and API contracts are in package docs:
+*Detailed adapter internals are available in the [control-plane](packages/control-plane/README.md), [server](packages/server/README.md), and [neovim](packages/neovim/README.md) package docs.*
 
-- `packages/control-plane/README.md`
-- `packages/server/README.md`
-- `packages/neovim/README.md`
+## Terminal Operator Sessions
 
-## Terminal operator sessions
-
-`mu serve` is the primary interactive surface:
-
-```bash
-mu serve              # start server + attach terminal operator session
-mu serve --port 8080  # custom port
-```
-
-Session follow-up (`mu session list` defaults to both `operator` + `cp_operator`):
+Manage interactive sessions using the CLI:
 
 ```bash
 mu session list --json --pretty
 mu session list --kind cp_operator --json --pretty
 mu session list --kind all --all-workspaces --limit 50 --json --pretty
-mu session <session-id>  # auto-resolves operator/cp_operator stores by id
+mu session <session-id>
 mu turn --session-kind operator --session-id <session-id> --body "follow-up"
 ```
 
@@ -170,17 +109,20 @@ mu turn --session-kind operator --session-id <session-id> --body "follow-up"
 | [`@femtomc/mu-server`](packages/server/README.md) | HTTP API server + control-plane/runtime coordination surfaces. |
 | [`mu.nvim`](packages/neovim/README.md) | First-party Neovim frontend channel. |
 
-When installed from npm, package READMEs are available under the install tree
-(for example `<mu-install>/node_modules/@femtomc/mu-control-plane/README.md`).
+*When installed from npm, READMEs exist at `<mu-install>/node_modules/@femtomc/mu-<package>/README.md`.*
 
 ## Development
+
+`mu` requires [Bun](https://bun.sh) for local development, while Node.js (`npm`) is sufficient for global runtime usage.
+
+Set up the environment:
 
 ```bash
 bun install
 bun run check
 ```
 
-Additional commands:
+Validate and test changes:
 
 ```bash
 bun run guardrails:architecture
@@ -192,11 +134,21 @@ bun run lint
 bun run pack:smoke
 ```
 
-## Workspace store
+## Workspace Store & Troubleshooting
 
-Runtime state is workspace-scoped under:
+Runtime state is strictly workspace-scoped. Data is stored under:
 
 - `~/.mu/workspaces/<workspace-id>/`
 - or `$MU_HOME/workspaces/<workspace-id>/`
 
-Use `mu store paths --pretty` to resolve exact paths for the current repo.
+To find exact paths for the current repository:
+
+```bash
+mu store paths --pretty
+```
+
+To wipe the state for a specific project and start fresh, safely delete its workspace directory:
+
+```bash
+rm -rf ~/.mu/workspaces/<workspace-id>
+```
