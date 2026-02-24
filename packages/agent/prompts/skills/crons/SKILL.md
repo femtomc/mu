@@ -152,7 +152,8 @@ post concise summary, then exit.
 
 For DAG execution workloads, combine with:
 - `planning`
-- `hierarchical-work-protocol`
+- `orchestration`
+- `control-flow` (when explicit loop/termination policy is required)
 - `subagents`
 - `heartbeats` (for short-cadence wake loops)
 

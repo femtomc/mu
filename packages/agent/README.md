@@ -28,7 +28,8 @@ into `~/.mu/skills/` (or `$MU_HOME/skills/`) by the CLI store-initialization pat
 - `memory`
 - `planning`
 - `hud`
-- `hierarchical-work-protocol`
+- `orchestration`
+- `control-flow`
 - `subagents`
 - `heartbeats`
 - `crons`

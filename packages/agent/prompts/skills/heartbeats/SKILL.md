@@ -145,7 +145,8 @@ packet mechanics, raw issue-ID lists). Include them only when diagnosing a block
 
 For hierarchical DAG execution, pair this skill with:
 - `planning`
-- `hierarchical-work-protocol`
+- `orchestration`
+- `control-flow` (when explicit loop/termination policy is required)
 - `subagents`
 
 For wall-clock scheduling semantics (`at`, `every`, `cron`), use `crons`.

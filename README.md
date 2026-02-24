@@ -66,7 +66,8 @@ or `$MU_HOME/skills/` during store initialization):
 - `memory` — cross-store context retrieval and index maintenance workflows
 - `planning` — investigate first, then draft/refine an issue DAG plan with user approval loops
 - `hud` — canonical HUD contract/workflow for `mu_hud` and `/mu hud`
-- `hierarchical-work-protocol` — shared DAG planning/execution protocol used by both planning and subagents
+- `orchestration` — shared DAG planning/execution protocol used by both planning and subagents
+- `control-flow` — compositional loop/termination policy overlays (for example review-gated retries)
 - `subagents` — durable issue-driven subagent orchestration (heartbeat + tmux fan-out)
 - `heartbeats` — heartbeat program lifecycle for durable, bounded automation loops
 - `crons` — wall-clock scheduling workflows for recurring/one-shot automation
@@ -81,7 +82,7 @@ changes refresh installed starter skill files in `~/.mu/skills/` (or `$MU_HOME/s
 
 Recommended usage pattern:
 
-- Ask your operator to use a relevant skill (for historical context: `memory`; for DAG work: `planning` -> `hud` -> `hierarchical-work-protocol` -> `subagents`; for recurring automation: `heartbeats` and/or `crons`; for docs/prose: `writing`).
+- Ask your operator to use a relevant skill (for historical context: `memory`; for DAG work: `planning` -> `hud` -> `orchestration` -> `control-flow` -> `subagents`; for recurring automation: `heartbeats` and/or `crons`; for docs/prose: `writing`).
 
 Examples:
 

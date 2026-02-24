@@ -9,6 +9,7 @@ description: "Orchestrates issue-driven subagent execution with heartbeat superv
 
 - [Purpose (what this skill is for)](#purpose-what-this-skill-is-for)
 - [Shared protocol dependency](#shared-protocol-dependency)
+- [Control-flow dependency](#control-flow-dependency)
 - [HUD skill dependency](#hud-skill-dependency)
 - [When to use](#when-to-use)
 - [Success condition](#success-condition)
@@ -36,7 +37,7 @@ Source of truth remains in `mu issues` + `mu forum`.
 
 ## Shared protocol dependency
 
-This skill executes DAG work defined by **`hierarchical-work-protocol`**.
+This skill executes DAG work defined by **`orchestration`**.
 
 Before orchestration begins, load that skill and enforce:
 
@@ -45,6 +46,16 @@ Before orchestration begins, load that skill and enforce:
 - Primitive semantics (`read_tree`, `claim`, `spawn`, `fork`, `ask`, `expand`, `complete`, `serial`)
 
 Do not run subagent orchestration against alternate protocol tags.
+
+## Control-flow dependency
+
+When a subtree declares explicit loop/termination policy (for example
+`flow:review-gated-v1`), load **`control-flow`** and apply policy transitions as
+an overlay on orchestration primitives.
+
+- Keep DAG structure protocol-valid (`orchestration` remains source-of-truth).
+- Compile control-flow decisions into protocol primitives (`spawn`, `expand`,
+  `ask`, `complete`, `serial`), not ad-hoc mutations.
 
 ## HUD skill dependency
 
@@ -103,7 +114,7 @@ mu issues ready --root <root-id> --tag proto:hierarchical-work-v1 --pretty
 mu forum read issue:<root-id> --limit 20 --pretty
 ```
 
-2. Choose exactly one action/primitive from `hierarchical-work-protocol`.
+2. Choose exactly one action/primitive from `orchestration`.
 3. Apply it.
 4. Verify (`get`, `children`, `ready`, `validate`).
 5. Post a human-facing `ORCH_PASS` update to forum:
@@ -132,7 +143,7 @@ Repeat bounded passes until issue closes.
 ## Bootstrap and queue targeting
 
 If root DAG does not yet exist, create it using the
-`hierarchical-work-protocol` bootstrap template first.
+`orchestration` bootstrap template first.
 
 During orchestration, always scope queue reads with protocol tag:
 
@@ -147,9 +158,9 @@ mu issues ready --root <root-id> --tag proto:hierarchical-work-v1 --pretty
 ```bash
 mu heartbeats create \
   --title "hierarchical-work-v1 <root-id>" \
-  --reason hierarchical_work_protocol_v1 \
+  --reason orchestration_v1 \
   --every-ms 15000 \
-  --prompt "Use skills subagents, hud, and hierarchical-work-protocol for root <root-id>. Run exactly one bounded orchestration pass: inspect the proto:hierarchical-work-v1 queue, perform exactly one corrective orchestration action (including in_progress-without-worker drift recovery) or claim/work-start one ready issue, then verify state. Report human-facing progress as a titled status note plus one concise paragraph that explains project context, milestone moved, impact, overall progress, and next high-level step; avoid low-level orchestration internals unless diagnosing a blocker/anomaly. Post a matching ORCH_PASS update to issue:<root-id>. Stop when 'mu issues validate <root-id>' is final."
+  --prompt "Use skills subagents, orchestration, control-flow, and hud for root <root-id>. Run exactly one bounded orchestration pass: inspect the proto:hierarchical-work-v1 queue, perform exactly one corrective orchestration action (including in_progress-without-worker drift recovery) or claim/work-start one ready issue, then verify state. If flow:* policy tags are present, apply one control-flow transition from the control-flow skill in this pass. Report human-facing progress as a titled status note plus one concise paragraph that explains project context, milestone moved, impact, overall progress, and next high-level step; avoid low-level orchestration internals unless diagnosing a blocker/anomaly. Post a matching ORCH_PASS update to issue:<root-id>. Stop when 'mu issues validate <root-id>' is final."
 ```
 
 Reusable status-voice add-on for heartbeat prompts (copy/paste):
@@ -169,7 +180,7 @@ run_id="$(date +%Y%m%d-%H%M%S)"
 for issue_id in $(mu issues ready --root <root-id> --tag proto:hierarchical-work-v1 --json | jq -r '.[].id' | head -n 3); do
   session="mu-sub-${run_id}-${issue_id}"
   tmux new-session -d -s "$session" \
-    "cd '$PWD' && mu exec 'Use skills subagents, hud, and hierarchical-work-protocol. Work issue ${issue_id} using hierarchical-work.protocol/v1. Claim first, then run one full control loop.' ; rc=\$?; echo __MU_DONE__:\$rc"
+    "cd '$PWD' && mu exec 'Use skills subagents, orchestration, control-flow, and hud. Work issue ${issue_id} using hierarchical-work.protocol/v1. If flow:* policy tags are present, apply the control-flow overlay before selecting the next primitive. Claim first, then run one full control loop.' ; rc=\$?; echo __MU_DONE__:\$rc"
 done
 ```
 

@@ -1,16 +1,19 @@
 ---
-name: hierarchical-work-protocol
-description: "Defines the shared hierarchical planning/work issue-DAG protocol used by planning and subagents. Use when creating, validating, or executing protocol-driven DAG work."
+name: orchestration
+description: "Defines the shared planning/execution orchestration protocol for issue-DAG work. Use when creating, validating, or executing protocol-driven DAG work."
 ---
 
-# hierarchical-work-protocol
+# orchestration
 
 Use this skill when work should flow through one shared protocol from planning to execution.
+
+This skill supersedes the previous `hierarchical-work-protocol` skill name.
 
 ## Contents
 
 - [Protocol identity](#protocol-identity)
 - [Canonical tags and node roles](#canonical-tags-and-node-roles)
+- [Control-flow overlays](#control-flow-overlays)
 - [Protocol primitives](#protocol-primitives)
 - [Required invariants](#required-invariants)
 - [Planning handoff contract](#planning-handoff-contract)
@@ -61,6 +64,20 @@ Node role rules:
 3. Human input nodes (`kind:ask`)
    - Must include: `proto:hierarchical-work-v1`, `kind:ask`, `ctx:human`, `actor:user`
    - Must be non-executable (`node:agent` removed)
+
+## Control-flow overlays
+
+Control-flow is layered on top of this protocol and should not redefine protocol
+primitives or `kind:*` semantics.
+
+- Keep orchestration protocol tags/kinds as source-of-truth for structure.
+- Represent policy-specific behavior (for example review gates, retry rounds,
+  escalation thresholds) with `flow:*` tags/metadata.
+- Compile control-flow policy decisions into existing primitives (`spawn`, `fork`,
+  `expand`, `ask`, `complete`, `serial`) instead of introducing ad-hoc mutations.
+
+Current compositional control-flow policy skill:
+- `control-flow` (for example `flow:review-gated-v1` behavior)
 
 ## Protocol primitives
 

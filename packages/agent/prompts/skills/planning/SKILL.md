@@ -43,7 +43,7 @@ Before emitting or mutating planning HUD state, load **`hud`** and follow its ca
 ## Shared protocol dependency
 
 This skill plans DAGs for execution by `subagents`, so planning must follow the
-shared protocol in **`hierarchical-work-protocol`**.
+shared protocol in **`orchestration`**.
 
 Before creating or reshaping DAG nodes, load that skill and use its canonical:
 
@@ -53,6 +53,10 @@ Before creating or reshaping DAG nodes, load that skill and use its canonical:
 - planning handoff contract
 
 Do not invent alternate protocol names or tag schemas.
+
+If the user asks for explicit loop/termination behavior (for example review-gated
+retry rounds), load **`control-flow`** and encode policy via `flow:*` overlays
+without changing orchestration protocol semantics.
 
 ## Core contract
 
