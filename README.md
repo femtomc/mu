@@ -5,6 +5,8 @@
 `mu` is a personal assistant for technical work, designed for long-running execution,
 persistence, and reactivity.
 
+---
+
 `mu` is a "pi distribution" (analogous to Emacs or Neovim distributions): we take [`pi`](https://github.com/badlogic/pi-mono) and
 add a small set of capabilities -- good modular ideas inspired by (`beads`, `jules`, `openclaw`, etc). We retain the programmable spirit of pi, but
 _add programmable batteries_: we can emulate _anything_ added to any other harness (including Claude Code, Codex, your favorite *Claw) with a few compositional 
