@@ -19,7 +19,7 @@ Features that are baked into other harnesses (Claude Code I'm looking at you) ar
 
 As [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) say, _bash is all you need_.
 
----
+## The pitch for programmability
 
 `mu` is a "pi distribution" (analogous to Emacs or Neovim distributions -- layers which customize or extend the base system in a particular way): we take [`pi`](https://github.com/badlogic/pi-mono) and
 add a small set of capabilities -- good modular ideas inspired by (`beads`, `jules`, `openclaw`, etc). We retain the programmable spirit of pi, but
