@@ -30,8 +30,8 @@ These additions form a programmable substrate which you get to program via skill
 
 For instance, Claude's "plan mode" -- well, that's just a skill which directs the agent to work with the user to create a plan in the issue tracker, and communicate progress via the programmable HUD. Subagents ... skill, tmux, programmable HUD. Complex work orchestration project which you call Gas Town? CLI issue tracker + forum, programmable HUD, heartbeats, and skills.
 
-The core of this assistant is about _composition and modularity_ -- we want the minimal set of ingredients to express more complex harness ideas.
-Then, you can take our ingredients and do whatever you want with them.
+The core of this assistant is about _composition and modularity_ -- we want the minimal set of ingredients which _you compose_ to get more complex harness ideas.
+Then, you have the power to take our ingredients and do whatever you want with them.
 
 ## Quickstart
 
