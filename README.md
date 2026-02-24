@@ -4,7 +4,7 @@
 
 # mu
 
-**The little long-running assistant that could.**
+**The little assistant that could.**
 
 `mu` is a personal assistant for technical work, designed for long-running execution,
 persistence, and reactivity.
