@@ -6,6 +6,7 @@ describe("operator prompt is CLI-first", () => {
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu --help");
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu memory search|timeline|stats");
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu memory index status|rebuild");
+		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu control harness [provider] --json --pretty");
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu heartbeats");
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).toContain("mu cron");
 		expect(DEFAULT_OPERATOR_SYSTEM_PROMPT).not.toContain("query({");

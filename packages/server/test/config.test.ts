@@ -82,7 +82,7 @@ describe("mu config", () => {
 			control_plane: {
 				adapters: {
 					slack: { signing_secret: "slack-secret", bot_token: "slack-bot-token" },
-					telegram: { webhook_secret: "tg-secret", bot_token: "tg-token", bot_username: "mybot" },
+					telegram: { webhook_secret: "tg-secret", bot_token: "tg-token" },
 					neovim: { shared_secret: "nvim-secret" },
 				},
 				operator: {
@@ -98,7 +98,6 @@ describe("mu config", () => {
 		const presence = muConfigPresence(config);
 		expect(presence.control_plane.adapters.slack.signing_secret).toBe(true);
 		expect(presence.control_plane.adapters.slack.bot_token).toBe(true);
-		expect(presence.control_plane.adapters.telegram.bot_username).toBe(true);
 		expect(presence.control_plane.adapters.neovim.shared_secret).toBe(true);
 		expect(presence.control_plane.operator.thinking).toBe(true);
 		expect(presence.control_plane.operator.timeout_ms).toBe(300_000);

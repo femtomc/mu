@@ -17,10 +17,9 @@ local defaults = {
 	selection_max_chars = 12000,
 	include_client_context = true,
 	metadata = {},
-	flash_session_kind = "cp_operator",
+	turn_session_kind = "cp_operator",
 	ui = {
 		mode = "panel", -- panel | float | notify
-		use_float = nil, -- legacy alias (overrides mode when set)
 		border = "rounded",
 		width_ratio = 0.8,
 		height_ratio = 0.65,
@@ -32,7 +31,8 @@ local defaults = {
 		auto_start = true,
 		interval_ms = 4000,
 		limit = 80,
-		sources = "cp_outbox,cp_commands",
+		source = nil, -- optional exact /api/control-plane/events source filter
+		contains = nil, -- optional full-text event filter (defaults to current conversation_id)
 		notify_errors = false,
 		max_preview_chars = 240,
 	},
@@ -423,9 +423,6 @@ end
 
 local function resolve_ui_mode()
 	local ui = state.opts.ui or {}
-	if type(ui.use_float) == "boolean" then
-		return ui.use_float and "float" or "notify"
-	end
 	local mode = trim(ui.mode or "")
 	if mode == "float" or mode == "notify" or mode == "panel" then
 		return mode
@@ -699,14 +696,19 @@ local function link_identity(callback)
 	end)
 end
 
-local function build_timeline_url(ctx)
+local function build_events_tail_url(ctx)
+	local poll_opts = state.opts.poll or {}
+	local contains = trim(poll_opts.contains or "")
+	if #contains == 0 then
+		contains = trim(ctx.conversation_id or "")
+	end
+
+	local source = trim(poll_opts.source or "")
+
 	local params = {
-		order = "asc",
-		limit = tostring(state.opts.poll.limit),
-		channel = "neovim",
-		channel_tenant_id = ctx.tenant_id,
-		channel_conversation_id = ctx.conversation_id,
-		sources = state.opts.poll.sources,
+		n = tostring(poll_opts.limit or defaults.poll.limit),
+		contains = contains,
+		source = source,
 	}
 	if state.poll.last_ts_ms then
 		params.since = tostring(state.poll.last_ts_ms + 1)
@@ -718,29 +720,45 @@ local function build_timeline_url(ctx)
 			table.insert(query, url_encode(key) .. "=" .. url_encode(value))
 		end
 	end
-	return ctx.server_url .. "/api/context/timeline?" .. table.concat(query, "&")
+	return ctx.server_url .. "/api/control-plane/events/tail?" .. table.concat(query, "&")
 end
 
-local function should_render_polled_item(item)
-	if type(item) ~= "table" then
-		return false
+local function should_render_polled_event(event)
+	return type(event) == "table"
+end
+
+local function summarize_polled_event(event)
+	local event_type = trim(tostring(event.type or "event"))
+	if #event_type == 0 then
+		event_type = "event"
 	end
-	local source = item.source_kind
-	return source == "cp_outbox" or source == "cp_commands"
-end
+	local source = trim(tostring(event.source or "control-plane"))
+	if #source == 0 then
+		source = "control-plane"
+	end
 
-local function summarize_polled_item(item)
-	local source = tostring(item.source_kind or "context")
-	local preview = trim(item.preview or item.text or "")
+	local preview = ""
+	if type(event.payload) == "string" then
+		preview = trim(event.payload)
+	elseif event.payload ~= nil then
+		preview = trim(vim.inspect(event.payload))
+	end
 	if #preview == 0 then
-		preview = vim.inspect(item.metadata or {})
+		local issue = trim(tostring(event.issue_id or ""))
+		local run = trim(tostring(event.run_id or ""))
+		if #issue > 0 or #run > 0 then
+			preview = string.format("issue=%s run=%s", #issue > 0 and issue or "-", #run > 0 and run or "-")
+		else
+			preview = "(no payload)"
+		end
 	end
+
 	local max_chars = tonumber(state.opts.poll.max_preview_chars) or defaults.poll.max_preview_chars
 	if #preview > max_chars then
 		preview = preview:sub(1, max_chars) .. "…"
 	end
 	preview = preview:gsub("\n", " ⏎ ")
-	return string.format("[%s] %s", source, preview)
+	return string.format("[%s] (%s) %s", event_type, source, preview)
 end
 
 local function poll_once(opts, done)
@@ -775,7 +793,7 @@ local function poll_once(opts, done)
 
 	http_json_request({
 		method = "GET",
-		url = build_timeline_url(ctx),
+		url = build_events_tail_url(ctx),
 		headers = {
 			accept = "application/json",
 		},
@@ -803,7 +821,7 @@ local function poll_once(opts, done)
 			return
 		end
 
-		if type(response.json) ~= "table" or type(response.json.items) ~= "table" then
+		if type(response.json) ~= "table" then
 			if (opts and not opts.silent_errors) or state.opts.poll.notify_errors then
 				notify("mu tail poll returned invalid payload", vim.log.levels.WARN)
 			end
@@ -814,20 +832,26 @@ local function poll_once(opts, done)
 		end
 
 		local new_lines = {}
-		for _, item in ipairs(response.json.items) do
-			if type(item) == "table" then
-				local item_id = trim(tostring(item.id or ""))
+		for _, event in ipairs(response.json) do
+			if type(event) == "table" then
+				local item_id = trim(tostring(event.id or ""))
 				if #item_id == 0 then
-					item_id = string.format("%s:%s", tostring(item.ts_ms or 0), trim(item.preview or ""))
+					item_id = string.format(
+						"%s:%s:%s:%s",
+						tostring(event.ts_ms or 0),
+						trim(tostring(event.type or "")),
+						trim(tostring(event.source or "")),
+						trim(tostring(event.run_id or ""))
+					)
 				end
-				local ts_ms = tonumber(item.ts_ms)
+				local ts_ms = tonumber(event.ts_ms)
 				if ts_ms and (not state.poll.last_ts_ms or ts_ms > state.poll.last_ts_ms) then
 					state.poll.last_ts_ms = ts_ms
 				end
 				if not state.poll.seen_ids[item_id] then
 					state.poll.seen_ids[item_id] = true
-					if should_render_polled_item(item) then
-						table.insert(new_lines, summarize_polled_item(item))
+					if should_render_polled_event(event) then
+						table.insert(new_lines, summarize_polled_event(event))
 					end
 				end
 			end
@@ -1035,7 +1059,6 @@ local function show_help()
 		"  :Mu panel [show|hide|clear]",
 		"  :Mu tail [on|off|once|status]",
 		"  :Mu turn <session_id> <message>",
-		"  :Mu flash <session_id> <message> (legacy alias for turn)",
 		"  :Mu help",
 		"",
 		"Notes:",
@@ -1099,7 +1122,7 @@ local function session_turn(args, cmd)
 
 	local payload = {
 		session_id = session_id,
-		session_kind = state.opts.flash_session_kind,
+		session_kind = state.opts.turn_session_kind,
 		body = message,
 		source = "neovim",
 		metadata = {
@@ -1250,7 +1273,6 @@ local function complete_subcommands(arglead)
 		"tail once",
 		"tail status",
 		"turn ",
-		"flash ",
 	}
 	local out = {}
 	for _, candidate in ipairs(candidates) do
@@ -1296,7 +1318,7 @@ local function register_command()
 			handle_tail_command(words)
 			return
 		end
-		if head == "turn" or head == "flash" then
+		if head == "turn" then
 			session_turn(args, cmd)
 			return
 		end

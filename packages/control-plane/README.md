@@ -39,8 +39,7 @@ Adapter config keys (`<store>/config.json`):
 
 - Slack: `control_plane.adapters.slack.signing_secret`, `bot_token`
 - Discord: `control_plane.adapters.discord.signing_secret`
-- Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`,
-  `bot_username` (optional)
+- Telegram: `control_plane.adapters.telegram.webhook_secret`, `bot_token`
 - Neovim: `control_plane.adapters.neovim.shared_secret`
 
 Identity linking:
@@ -91,7 +90,6 @@ Telegram:
 
 - `control_plane.adapters.telegram.webhook_secret`
 - `control_plane.adapters.telegram.bot_token`
-- `control_plane.adapters.telegram.bot_username` (optional; kept for compatibility)
 
 Apply config updates with:
 

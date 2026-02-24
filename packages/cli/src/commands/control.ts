@@ -6,7 +6,7 @@ export type ControlCommandRunResult = {
 	exitCode: number;
 };
 
-export type ControlCommandDeps<Ctx extends { repoRoot: string }> = {
+export type ControlCommandDeps = {
 	hasHelpFlag: (argv: readonly string[]) => boolean;
 	popFlag: (argv: readonly string[], name: string) => { present: boolean; rest: string[] };
 	getFlagValue: (argv: readonly string[], name: string) => { value: string | null; rest: string[] };
@@ -33,7 +33,153 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 	return value as Record<string, unknown>;
 }
 
-function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCommandDeps<Ctx>): {
+type ControlConfigValueKind = "secret_string" | "boolean" | "integer";
+
+type ControlConfigKeySpec = {
+	key: string;
+	kind: ControlConfigValueKind;
+	path: readonly string[];
+	description: string;
+	defaultValue: string | number | boolean | null;
+	min?: number;
+	max?: number;
+};
+
+const CONTROL_CONFIG_KEY_SPECS: readonly ControlConfigKeySpec[] = [
+	{
+		key: "control_plane.adapters.slack.signing_secret",
+		kind: "secret_string",
+		path: ["control_plane", "adapters", "slack", "signing_secret"],
+		description: "Slack ingress signing secret",
+		defaultValue: null,
+	},
+	{
+		key: "control_plane.adapters.slack.bot_token",
+		kind: "secret_string",
+		path: ["control_plane", "adapters", "slack", "bot_token"],
+		description: "Slack bot token for outbound delivery/media",
+		defaultValue: null,
+	},
+	{
+		key: "control_plane.adapters.discord.signing_secret",
+		kind: "secret_string",
+		path: ["control_plane", "adapters", "discord", "signing_secret"],
+		description: "Discord ingress signing secret",
+		defaultValue: null,
+	},
+	{
+		key: "control_plane.adapters.telegram.webhook_secret",
+		kind: "secret_string",
+		path: ["control_plane", "adapters", "telegram", "webhook_secret"],
+		description: "Telegram webhook secret token",
+		defaultValue: null,
+	},
+	{
+		key: "control_plane.adapters.telegram.bot_token",
+		kind: "secret_string",
+		path: ["control_plane", "adapters", "telegram", "bot_token"],
+		description: "Telegram bot token for outbound delivery/media",
+		defaultValue: null,
+	},
+	{
+		key: "control_plane.adapters.neovim.shared_secret",
+		kind: "secret_string",
+		path: ["control_plane", "adapters", "neovim", "shared_secret"],
+		description: "Neovim shared-secret header value",
+		defaultValue: null,
+	},
+	{
+		key: "control_plane.operator.enabled",
+		kind: "boolean",
+		path: ["control_plane", "operator", "enabled"],
+		description: "Enable/disable messaging operator runtime",
+		defaultValue: true,
+	},
+	{
+		key: "control_plane.operator.timeout_ms",
+		kind: "integer",
+		path: ["control_plane", "operator", "timeout_ms"],
+		description: "Operator turn timeout in milliseconds",
+		defaultValue: 600_000,
+		min: 1_000,
+		max: 7_200_000,
+	},
+	{
+		key: "control_plane.memory_index.enabled",
+		kind: "boolean",
+		path: ["control_plane", "memory_index", "enabled"],
+		description: "Enable background memory index maintenance",
+		defaultValue: true,
+	},
+	{
+		key: "control_plane.memory_index.every_ms",
+		kind: "integer",
+		path: ["control_plane", "memory_index", "every_ms"],
+		description: "Memory index maintenance interval (ms)",
+		defaultValue: 300_000,
+		min: 1_000,
+		max: 86_400_000,
+	},
+];
+
+const CONTROL_CONFIG_KEY_BY_NAME = new Map<string, ControlConfigKeySpec>(
+	CONTROL_CONFIG_KEY_SPECS.map((spec) => [spec.key, spec]),
+);
+
+function readControlConfigPathValue(root: unknown, path: readonly string[]): unknown {
+	let cursor: unknown = root;
+	for (const segment of path) {
+		if (typeof cursor !== "object" || cursor == null || Array.isArray(cursor)) {
+			return undefined;
+		}
+		cursor = (cursor as Record<string, unknown>)[segment];
+	}
+	return cursor;
+}
+
+function buildControlConfigPatch(path: readonly string[], value: unknown): Record<string, unknown> {
+	const patch: Record<string, unknown> = {};
+	let cursor: Record<string, unknown> = patch;
+	for (let idx = 0; idx < path.length; idx += 1) {
+		const segment = path[idx]!;
+		if (idx === path.length - 1) {
+			cursor[segment] = value;
+			break;
+		}
+		const child: Record<string, unknown> = {};
+		cursor[segment] = child;
+		cursor = child;
+	}
+	return patch;
+}
+
+function parseControlConfigBoolean(raw: string): boolean | null {
+	const normalized = raw.trim().toLowerCase();
+	if (["1", "true", "yes", "on", "enabled"].includes(normalized)) {
+		return true;
+	}
+	if (["0", "false", "no", "off", "disabled"].includes(normalized)) {
+		return false;
+	}
+	return null;
+}
+
+function trimSingleTrailingNewline(text: string): string {
+	return text.replace(/\r?\n$/, "");
+}
+
+function buildControlConfigKeySummary(spec: ControlConfigKeySpec): string {
+	switch (spec.kind) {
+		case "secret_string":
+			return `${spec.key} (secret)`;
+		case "boolean":
+			return `${spec.key} (boolean)`;
+		default:
+			return `${spec.key} (integer)`;
+	}
+}
+
+function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCommandDeps): {
 	cmdControl: (argv: string[], ctx: Ctx) => Promise<ControlCommandRunResult>;
 } {
 	const {
@@ -69,17 +215,22 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"  unlink             Unlink a binding (self-unlink or admin revoke)",
 					"  identities         List identity bindings",
 					"  status             Show adapter/operator/config readiness",
+					"  harness            Show harness adapter/provider/model capabilities",
 					"  operator           Inspect/update operator model + thinking",
+					"  config             Inspect/update workspace control-plane config",
 					"  reload             Trigger in-process control-plane reload",
 					"  update             Run update command then trigger reload",
 					"  diagnose-operator  Diagnose operator turn parsing/execution health",
 					"",
 					"Examples:",
 					"  mu control status",
+					"  mu control harness",
 					"  mu control identities --all",
 					"  mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot",
 					"  mu control operator models",
 					"  mu control operator set <provider> <model> <thinking>",
+					"  mu control config get",
+					"  mu control config set control_plane.operator.enabled false",
 					"  mu control reload",
 					"",
 					"Run `mu control <subcommand> --help` for subcommand-specific usage.",
@@ -100,8 +251,12 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 				return await controlIdentities(rest, ctx, pretty);
 			case "status":
 				return await controlStatus(rest, ctx, pretty);
+			case "harness":
+				return await controlHarness(rest, ctx, pretty);
 			case "operator":
 				return await controlOperator(rest, ctx, pretty);
+			case "config":
+				return await controlConfig(rest, ctx, pretty);
 			case "reload":
 				return await controlReload(rest, ctx, pretty);
 			case "update":
@@ -615,19 +770,22 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"mu control status - show control-plane readiness snapshot",
 					"",
 					"Usage:",
-					"  mu control status [--json] [--pretty]",
+					"  mu control status [--json] [--pretty] [--verbose|--debug]",
 					"",
 					"Includes:",
 					"  identity binding counts, adapter config presence, operator defaults, config/policy paths",
 					"",
 					"Examples:",
 					"  mu control status",
+					"  mu control status --verbose",
 					"  mu control status --json --pretty",
 				].join("\n") + "\n",
 			);
 		}
 
-		const { present: jsonMode, rest } = popFlag(argv, "--json");
+		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+		const { present: verbose, rest: argv1 } = popFlag(argv0, "--verbose");
+		const { present: debug, rest } = popFlag(argv1, "--debug");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu control status --help"] });
 		}
@@ -702,6 +860,19 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 			return ok(jsonText(payload, pretty));
 		}
 
+		const showDetails = verbose || debug;
+		if (!showDetails) {
+			const adapterSummary = adapters.map((adapter) => `${adapter.channel}=${adapter.configured ? "yes" : "no"}`).join(", ");
+			let out = `Control plane: ${ctx.repoRoot}\n`;
+			out += `Identities: ${bindings.length} active, ${allBindings.length} total\n`;
+			out += `Policy: ${hasPolicyFile ? "configured" : "missing"}\n`;
+			out += `Adapters: ${adapterSummary}\n`;
+			out += `Operator: enabled=${operator.enabled} provider=${operator.provider ?? "(default)"} model=${operator.model ?? "(default)"} thinking=${operator.thinking ?? "(default)"}\n`;
+			out += `Config: ${configPath}\n`;
+			out += "Use `mu control status --verbose` for detailed adapter/operator breakdown.\n";
+			return ok(out);
+		}
+
 		let out = `Control plane: ${ctx.repoRoot}\n`;
 		out += `Identities: ${bindings.length} active, ${allBindings.length} total\n`;
 		out += `Policy: ${hasPolicyFile ? paths.policyPath : "(none)"}\n`;
@@ -718,6 +889,305 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		out += `  thinking             ${operator.thinking ?? "(default)"}\n`;
 		out += `  timeout_ms           ${operator.timeout_ms}\n`;
 		out += "  Use `mu serve` for direct terminal operator access.\n";
+
+		return ok(out);
+	}
+
+	async function controlHarness(argv: string[], ctx: Ctx, pretty: boolean): Promise<ControlCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu control harness - show harness adapter/provider/model capabilities",
+					"",
+					"Usage:",
+					"  mu control harness [provider] [--json] [--pretty] [--verbose|--debug]",
+					"",
+					"Includes:",
+					"  adapter config presence, operator defaults, provider auth, model capability vectors",
+					"",
+					"Examples:",
+					"  mu control harness",
+					"  mu control harness --verbose",
+					"  mu control harness anthropic",
+					"  mu control harness openai-codex --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
+
+		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+		const { present: verbose, rest: argv1 } = popFlag(argv0, "--verbose");
+		const { present: debug, rest: argv2 } = popFlag(argv1, "--debug");
+		if (argv2.length > 1) {
+			return jsonError(`unknown args: ${argv2.join(" ")}`, {
+				pretty,
+				recovery: ["mu control harness --help"],
+			});
+		}
+
+		const providerFilterRaw = argv2[0]?.trim();
+		const { readMuConfigFile, getMuConfigPath } = await import("@femtomc/mu-server");
+		const { getModels, getProviders, supportsXhigh } = await import("@mariozechner/pi-ai");
+		const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
+
+		const config = await readMuConfigFile(ctx.repoRoot);
+		const configPath = getMuConfigPath(ctx.repoRoot);
+		const providers = getProviders().map((provider) => String(provider));
+		const authStorage = AuthStorage.create();
+
+		const lookupProvider = (providerRaw: string): string | null => {
+			const trimmed = providerRaw.trim();
+			if (!isSafeOperatorToken(trimmed)) {
+				return null;
+			}
+			const found = providers.find((provider) => provider === trimmed);
+			return found ?? null;
+		};
+
+		let providerFilter: string | null = null;
+		if (providerFilterRaw) {
+			providerFilter = lookupProvider(providerFilterRaw);
+			if (!providerFilter) {
+				return jsonError(`unknown provider: ${providerFilterRaw}`, {
+					pretty,
+					recovery: ["mu control operator models"],
+				});
+			}
+		}
+
+		const listProviderModels = (provider: string) =>
+			getModels(provider as never).map((model) => {
+				const xhigh = supportsXhigh(model);
+				const reasoning = Boolean(model.reasoning);
+				const thinkingLevels = supportedThinkingLevelsForModel({ reasoning, xhigh });
+				return {
+					id: model.id,
+					api: String(model.api),
+					reasoning,
+					xhigh,
+					thinking_levels: thinkingLevels,
+					input: [...model.input].map((entry) => String(entry)),
+					context_window: model.contextWindow,
+					max_tokens: model.maxTokens,
+					cost: {
+						input: model.cost.input,
+						output: model.cost.output,
+						cache_read: model.cost.cacheRead,
+						cache_write: model.cost.cacheWrite,
+					},
+				};
+			});
+
+		const buildProviderCatalog = (providerNames: readonly string[]) =>
+			providerNames.map((provider) => {
+				const models = listProviderModels(provider);
+				const apiFamilies = [...new Set(models.map((model) => model.api))].sort((a, b) => a.localeCompare(b));
+				const inputModalities = [...new Set(models.flatMap((model) => model.input))].sort((a, b) => a.localeCompare(b));
+				return {
+					provider,
+					authenticated: authStorage.hasAuth(provider),
+					model_count: models.length,
+					reasoning_model_count: models.filter((model) => model.reasoning).length,
+					xhigh_model_count: models.filter((model) => model.xhigh).length,
+					api_families: apiFamilies,
+					input_modalities: inputModalities,
+					models,
+				};
+			});
+
+		const allProviders = buildProviderCatalog(providers);
+		const selectedProviders = providerFilter
+			? allProviders.filter((provider) => provider.provider === providerFilter)
+			: allProviders;
+
+		const configuredProvider = config.control_plane.operator.provider;
+		const configuredModel = config.control_plane.operator.model;
+		const configuredProviderEntry = configuredProvider
+			? allProviders.find((provider) => provider.provider === configuredProvider)
+			: null;
+		const configuredModelEntry =
+			configuredProviderEntry && configuredModel
+				? configuredProviderEntry.models.find((model) => model.id === configuredModel)
+				: null;
+
+		const defaultModel = configuredProvider
+			? {
+					provider: configuredProvider,
+					model: configuredModel,
+					resolved: configuredModelEntry != null,
+					reason:
+						configuredModelEntry != null
+							? null
+							: configuredProviderEntry == null
+								? "provider_not_in_pi_registry"
+								: "model_not_in_provider_catalog",
+					capabilities: configuredModelEntry,
+				}
+			: null;
+
+		const adapters = [
+			{
+				channel: "slack",
+				configured: config.control_plane.adapters.slack.signing_secret != null,
+				bot_token_configured: config.control_plane.adapters.slack.bot_token != null,
+			},
+			{
+				channel: "discord",
+				configured: config.control_plane.adapters.discord.signing_secret != null,
+			},
+			{
+				channel: "telegram",
+				configured: config.control_plane.adapters.telegram.webhook_secret != null,
+				bot_token_configured: config.control_plane.adapters.telegram.bot_token != null,
+			},
+			{
+				channel: "neovim",
+				configured: config.control_plane.adapters.neovim.shared_secret != null,
+			},
+		];
+
+		const authenticatedProviders = allProviders
+			.filter((provider) => provider.authenticated)
+			.map((provider) => provider.provider);
+		const authenticatedApiFamilies = [
+			...new Set(
+				allProviders
+					.filter((provider) => provider.authenticated)
+					.flatMap((provider) => provider.api_families),
+			),
+		].sort((a, b) => a.localeCompare(b));
+
+		const payload = {
+			repo_root: ctx.repoRoot,
+			config_path: configPath,
+			adapters,
+			operator_defaults: {
+				enabled: config.control_plane.operator.enabled,
+				provider: config.control_plane.operator.provider,
+				model: config.control_plane.operator.model,
+				thinking: config.control_plane.operator.thinking,
+				timeout_ms: config.control_plane.operator.timeout_ms,
+			},
+			authenticated_ai: {
+				providers: authenticatedProviders,
+				api_families: authenticatedApiFamilies,
+			},
+			provider_filter: providerFilter,
+			providers: selectedProviders,
+			default_model: defaultModel,
+		};
+
+		if (jsonMode) {
+			return ok(jsonText(payload, pretty));
+		}
+
+		const showDetails = verbose || debug;
+		if (!showDetails) {
+			const adapterSummary = adapters
+				.map((adapter) => {
+					const base = `${adapter.channel}=${adapter.configured ? "yes" : "no"}`;
+					if ("bot_token_configured" in adapter) {
+						return `${base}(bot=${adapter.bot_token_configured ? "yes" : "no"})`;
+					}
+					return base;
+				})
+				.join(", ");
+			const providerSummary = selectedProviders
+				.map(
+					(provider) =>
+						`${provider.provider}(auth=${provider.authenticated ? "yes" : "no"}, models=${provider.model_count}, reasoning=${provider.reasoning_model_count}, xhigh=${provider.xhigh_model_count})`,
+				)
+				.join("; ");
+
+			let out = `Harness: ${ctx.repoRoot}\n`;
+			out += `Config: ${configPath}\n`;
+			out += `Adapters: ${adapterSummary}\n`;
+			out += `Operator defaults: enabled=${payload.operator_defaults.enabled} provider=${payload.operator_defaults.provider ?? "(default)"} model=${payload.operator_defaults.model ?? "(default)"} thinking=${payload.operator_defaults.thinking ?? "(default)"} timeout_ms=${payload.operator_defaults.timeout_ms}\n`;
+			out += `Authenticated AI providers: ${authenticatedProviders.length > 0 ? authenticatedProviders.join(", ") : "(none)"}\n`;
+			if (authenticatedApiFamilies.length > 0) {
+				out += `Authenticated APIs: ${authenticatedApiFamilies.join(", ")}\n`;
+			}
+			out += `Providers: ${providerSummary || "(none)"}\n`;
+
+			if (defaultModel == null) {
+				out += "Default model: (not configured)\n";
+			} else if (!defaultModel.resolved) {
+				out += `Default model: ${defaultModel.provider}/${defaultModel.model ?? "(missing)"} (unresolved: ${defaultModel.reason})\n`;
+			} else if (defaultModel.capabilities) {
+				const model = defaultModel.capabilities;
+				out += `Default model: ${model.id} [api=${model.api}, reasoning=${model.reasoning ? "yes" : "no"}, xhigh=${model.xhigh ? "yes" : "no"}]\n`;
+			}
+
+			if (providerFilter && selectedProviders.length > 0) {
+				const provider = selectedProviders[0]!;
+				const modelIds = provider.models.map((model) => model.id);
+				const shown = modelIds.slice(0, 20);
+				const hiddenCount = modelIds.length - shown.length;
+				out += `Models (${modelIds.length}) for ${provider.provider}: ${shown.join(", ")}${hiddenCount > 0 ? `, +${hiddenCount} more` : ""}\n`;
+				out += "Use `mu control harness --verbose` (or --json --pretty) for per-model capability vectors.\n";
+			} else {
+				out += "Use `mu control harness --verbose` (or <provider> --json --pretty) for full capability vectors.\n";
+			}
+			return ok(out);
+		}
+
+		let out = `Harness: ${ctx.repoRoot}\n`;
+		out += `Config: ${configPath}\n`;
+		out += "\nMessaging adapters:\n";
+		for (const adapter of adapters) {
+			const extra = "bot_token_configured" in adapter ? `, bot_token=${adapter.bot_token_configured ? "yes" : "no"}` : "";
+			out += `  ${adapter.channel.padEnd(12)} configured=${adapter.configured ? "yes" : "no"}${extra}\n`;
+		}
+
+		out += "\nOperator defaults:\n";
+		out += `  enabled              ${payload.operator_defaults.enabled}\n`;
+		out += `  provider             ${payload.operator_defaults.provider ?? "(default)"}\n`;
+		out += `  model                ${payload.operator_defaults.model ?? "(default)"}\n`;
+		out += `  thinking             ${payload.operator_defaults.thinking ?? "(default)"}\n`;
+		out += `  timeout_ms           ${payload.operator_defaults.timeout_ms}\n`;
+
+		out += "\nAuthenticated AI providers:\n";
+		if (authenticatedProviders.length === 0) {
+			out += "  (none)\n";
+		} else {
+			for (const provider of authenticatedProviders) {
+				out += `  - ${provider}\n`;
+			}
+			out += `  APIs: ${authenticatedApiFamilies.join(", ")}\n`;
+		}
+
+		out += "\nProvider catalog:\n";
+		for (const provider of selectedProviders) {
+			const apis = provider.api_families.join(",") || "(none)";
+			const inputs = provider.input_modalities.join(",") || "(none)";
+			out += `  ${provider.provider.padEnd(18)} auth=${provider.authenticated ? "yes" : "no"} models=${provider.model_count} reasoning=${provider.reasoning_model_count} xhigh=${provider.xhigh_model_count} apis=${apis} input=${inputs}\n`;
+		}
+
+		if (defaultModel == null) {
+			out += "\nDefault model: (not configured)\n";
+		} else if (!defaultModel.resolved) {
+			out += `\nDefault model: ${defaultModel.provider}/${defaultModel.model ?? "(missing)"} (unresolved: ${defaultModel.reason})\n`;
+		} else if (defaultModel.capabilities) {
+			const model = defaultModel.capabilities;
+			out += "\nDefault model capabilities:\n";
+			out += `  ${model.id}\n`;
+			out += `  api                 ${model.api}\n`;
+			out += `  reasoning           ${model.reasoning ? "yes" : "no"}\n`;
+			out += `  xhigh               ${model.xhigh ? "yes" : "no"}\n`;
+			out += `  thinking_levels     ${model.thinking_levels.join(", ")}\n`;
+			out += `  context_window      ${model.context_window}\n`;
+			out += `  max_tokens          ${model.max_tokens}\n`;
+			out += `  input               ${model.input.join(", ")}\n`;
+		}
+
+		if (providerFilter && selectedProviders.length > 0) {
+			const provider = selectedProviders[0]!;
+			out += `\nModels for provider ${provider.provider}:\n`;
+			for (const model of provider.models) {
+				out += `  - ${model.id} [api=${model.api}, reasoning=${model.reasoning ? "yes" : "no"}, xhigh=${model.xhigh ? "yes" : "no"}, ctx=${model.context_window}, max=${model.max_tokens}, input=${model.input.join(",")}]\n`;
+			}
+		} else {
+			out += "\nTip: run `mu control harness <provider> --json --pretty` for full per-model capability vectors.\n";
+		}
 
 		return ok(out);
 	}
@@ -827,6 +1297,360 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		});
 	}
 
+	async function reloadRunningControlPlaneForConfigUpdate(ctx: Ctx): Promise<{
+		attempted: boolean;
+		ok: boolean;
+		message: string;
+		payload: Record<string, unknown> | null;
+	}> {
+		return await reloadRunningControlPlane({
+			ctx,
+			reason: "cli_control_config_update",
+			missingServerMessage: "no running server detected; start `mu serve` to apply immediately",
+		});
+	}
+
+	async function controlConfig(argv: string[], ctx: Ctx, pretty: boolean): Promise<ControlCommandRunResult> {
+		const renderEntry = (spec: ControlConfigKeySpec, config: Record<string, unknown>) => {
+			const raw = readControlConfigPathValue(config, spec.path);
+			if (spec.kind === "secret_string") {
+				const present = typeof raw === "string" && raw.trim().length > 0;
+				return {
+					key: spec.key,
+					type: "string",
+					secret: true,
+					description: spec.description,
+					default_value: null,
+					value: null,
+					present,
+				};
+			}
+
+			if (spec.kind === "boolean") {
+				const fallback = spec.defaultValue === true;
+				const value = typeof raw === "boolean" ? raw : fallback;
+				return {
+					key: spec.key,
+					type: "boolean",
+					secret: false,
+					description: spec.description,
+					default_value: fallback,
+					value,
+					present: null,
+				};
+			}
+
+			const fallback = typeof spec.defaultValue === "number" ? spec.defaultValue : 0;
+			const value = typeof raw === "number" && Number.isFinite(raw) ? Math.trunc(raw) : fallback;
+			return {
+				key: spec.key,
+				type: "integer",
+				secret: false,
+				description: spec.description,
+				default_value: fallback,
+				value,
+				present: null,
+			};
+		};
+
+		const renderHelp = (): string => {
+			const keyLines = CONTROL_CONFIG_KEY_SPECS.map((spec) => `  - ${buildControlConfigKeySummary(spec)}`);
+			return (
+				[
+					"mu control config - inspect/update workspace control-plane config",
+					"",
+					"Usage:",
+					"  mu control config get [key] [--json] [--pretty] [--verbose|--debug]",
+					"  mu control config set <key> <value> [--json] [--pretty]",
+					"  mu control config set <key> --value <value> [--json] [--pretty]",
+					"  mu control config set <key> --stdin [--json] [--pretty]",
+					"  mu control config unset <key> [--json] [--pretty]",
+					"",
+					"Supported keys:",
+					...keyLines,
+					"",
+					"Notes:",
+					"  - Secret keys never echo plaintext values; output reports configured=true/false.",
+					"  - get text output is compact by default; --verbose/--debug adds defaults + descriptions.",
+					"  - set/unset write workspace config.json and request live reload when server is running.",
+					"  - Use --stdin for secrets to avoid shell history/process-list exposure.",
+					"",
+					"Examples:",
+					"  mu control config get",
+					"  mu control config get control_plane.operator.timeout_ms",
+					"  mu control config set control_plane.operator.enabled false",
+					"  mu control config set control_plane.memory_index.every_ms 120000",
+					"  printf 'xoxb-...' | mu control config set control_plane.adapters.slack.bot_token --stdin",
+					"  mu control config unset control_plane.adapters.slack.bot_token",
+				].join("\n") + "\n"
+			);
+		};
+
+		if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
+			return ok(renderHelp());
+		}
+
+		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+		const { present: verbose, rest: argv1 } = popFlag(argv0, "--verbose");
+		const { present: debug, rest: argv2 } = popFlag(argv1, "--debug");
+		if (argv2.length === 0) {
+			return jsonError("missing config subcommand", {
+				pretty,
+				recovery: ["mu control config --help"],
+			});
+		}
+
+		const sub = argv2[0]!;
+		const args = argv2.slice(1);
+		const showDetails = verbose || debug;
+		if (showDetails && sub !== "get") {
+			return jsonError("--verbose/--debug are only supported with `mu control config get`", {
+				pretty,
+				recovery: ["mu control config get --verbose"],
+			});
+		}
+		const { readMuConfigFile, writeMuConfigFile, applyMuConfigPatch, getMuConfigPath } = await import("@femtomc/mu-server");
+		const resolveSpec = (keyRaw: string): ControlConfigKeySpec | null => {
+			const key = keyRaw.trim();
+			if (!key) {
+				return null;
+			}
+			return CONTROL_CONFIG_KEY_BY_NAME.get(key) ?? null;
+		};
+
+		if (sub === "get") {
+			if (hasHelpFlag(args)) {
+				return ok(renderHelp());
+			}
+			if (args.length > 1) {
+				return jsonError(`unknown args: ${args.join(" ")}`, {
+					pretty,
+					recovery: ["mu control config --help"],
+				});
+			}
+
+			const spec = args[0] ? resolveSpec(args[0]) : null;
+			if (args[0] && !spec) {
+				return jsonError(`unknown config key: ${args[0]}`, {
+					pretty,
+					recovery: ["mu control config get", "mu control config --help"],
+				});
+			}
+
+			const config = asRecord(await readMuConfigFile(ctx.repoRoot)) ?? {};
+			const configPath = getMuConfigPath(ctx.repoRoot);
+			const selected = spec ? [spec] : [...CONTROL_CONFIG_KEY_SPECS];
+			const entries = selected.map((entry) => renderEntry(entry, config));
+
+			const payload = {
+				repo_root: ctx.repoRoot,
+				config_path: configPath,
+				scope: "workspace",
+				action: "get",
+				count: entries.length,
+				entries,
+			};
+			if (jsonMode) {
+				return ok(jsonText(payload, pretty));
+			}
+
+			let out = `Workspace control config (${entries.length})\n`;
+			out += `Config: ${configPath}\n\n`;
+			for (const entry of entries) {
+				if (!showDetails) {
+					if (entry.secret) {
+						out += `  ${entry.key} configured=${entry.present ? "yes" : "no"}\n`;
+					} else {
+						out += `  ${entry.key} value=${String(entry.value)}\n`;
+					}
+					continue;
+				}
+				if (entry.secret) {
+					out += `  ${entry.key}\n`;
+					out += `    configured         ${entry.present ? "yes" : "no"}\n`;
+					out += `    description        ${entry.description}\n`;
+					continue;
+				}
+				out += `  ${entry.key}\n`;
+				out += `    value              ${String(entry.value)}\n`;
+				out += `    default            ${String(entry.default_value)}\n`;
+				out += `    description        ${entry.description}\n`;
+			}
+			if (!showDetails && entries.length > 1) {
+				out += "\nUse `mu control config get --verbose` for defaults + descriptions.\n";
+			}
+			return ok(out);
+		}
+
+		if (sub === "set") {
+			if (hasHelpFlag(args)) {
+				return ok(renderHelp());
+			}
+
+			const { present: stdinMode, rest: argv1 } = popFlag(args, "--stdin");
+			const { value: valueFlag, rest: argv2 } = getFlagValue(argv1, "--value");
+			if (argv2.length < 1 || argv2.length > 2) {
+				return jsonError("usage: mu control config set <key> <value> | --value <value> | --stdin", {
+					pretty,
+					recovery: ["mu control config --help"],
+				});
+			}
+
+			const spec = resolveSpec(argv2[0]!);
+			if (!spec) {
+				return jsonError(`unknown config key: ${argv2[0]}`, {
+					pretty,
+					recovery: ["mu control config get", "mu control config --help"],
+				});
+			}
+
+			const valuePositional = argv2[1] ?? null;
+			if (stdinMode && (valueFlag != null || valuePositional != null)) {
+				return jsonError("--stdin cannot be combined with positional value or --value", {
+					pretty,
+					recovery: ["mu control config set <key> --stdin"],
+				});
+			}
+			if (valueFlag != null && valuePositional != null) {
+				return jsonError("provide either positional value or --value, not both", {
+					pretty,
+					recovery: ["mu control config set <key> <value>"],
+				});
+			}
+
+			let rawValue: string;
+			if (stdinMode) {
+				rawValue = trimSingleTrailingNewline(await Bun.stdin.text());
+			} else {
+				const candidate = valueFlag ?? valuePositional;
+				if (candidate == null) {
+					return jsonError("missing config value (or use --stdin)", {
+						pretty,
+						recovery: ["mu control config set <key> <value>", "mu control config set <key> --stdin"],
+					});
+				}
+				rawValue = candidate;
+			}
+
+			let value: string | number | boolean;
+			if (spec.kind === "secret_string") {
+				const normalized = rawValue.trim();
+				if (normalized.length === 0) {
+					return jsonError(`empty value for ${spec.key}; use unset to clear`, {
+						pretty,
+						recovery: [`mu control config unset ${spec.key}`],
+					});
+				}
+				value = normalized;
+			} else if (spec.kind === "boolean") {
+				const parsed = parseControlConfigBoolean(rawValue);
+				if (parsed == null) {
+					return jsonError(`invalid boolean for ${spec.key}: ${JSON.stringify(rawValue)}`, {
+						pretty,
+						recovery: ["valid booleans: true,false,1,0,yes,no,on,off"],
+					});
+				}
+				value = parsed;
+			} else {
+				const parsed = ensureInt(rawValue, {
+					name: spec.key,
+					min: spec.min,
+					max: spec.max,
+				});
+				if (parsed == null) {
+					const range = spec.min != null && spec.max != null ? `${spec.min}-${spec.max}` : "a valid integer";
+					return jsonError(`invalid integer for ${spec.key}; expected ${range}`, {
+						pretty,
+						recovery: [`mu control config get ${spec.key}`],
+					});
+				}
+				value = parsed;
+			}
+
+			const current = await readMuConfigFile(ctx.repoRoot);
+			const next = applyMuConfigPatch(current, buildControlConfigPatch(spec.path, value));
+			const configPath = await writeMuConfigFile(ctx.repoRoot, next);
+			const reload = await reloadRunningControlPlaneForConfigUpdate(ctx);
+			const entry = renderEntry(spec, asRecord(next) ?? {});
+			const payload = {
+				ok: true,
+				scope: "workspace",
+				action: "set",
+				config_path: configPath,
+				entry,
+				reload,
+			};
+			if (jsonMode) {
+				return ok(jsonText(payload, pretty));
+			}
+
+			let out = `Workspace control config updated in ${configPath}\n`;
+			out += `  key      ${entry.key}\n`;
+			if (entry.secret) {
+				out += `  value    (redacted)\n`;
+				out += `  present  ${entry.present ? "yes" : "no"}\n`;
+			} else {
+				out += `  value    ${String(entry.value)}\n`;
+			}
+			out += `  reload   ${reload.message}\n`;
+			return ok(out);
+		}
+
+		if (sub === "unset") {
+			if (hasHelpFlag(args)) {
+				return ok(renderHelp());
+			}
+			if (args.length !== 1) {
+				return jsonError("usage: mu control config unset <key>", {
+					pretty,
+					recovery: ["mu control config --help"],
+				});
+			}
+
+			const spec = resolveSpec(args[0]!);
+			if (!spec) {
+				return jsonError(`unknown config key: ${args[0]}`, {
+					pretty,
+					recovery: ["mu control config get", "mu control config --help"],
+				});
+			}
+
+			const resetValue = spec.kind === "secret_string" ? null : spec.defaultValue;
+			const current = await readMuConfigFile(ctx.repoRoot);
+			const next = applyMuConfigPatch(current, buildControlConfigPatch(spec.path, resetValue));
+			const configPath = await writeMuConfigFile(ctx.repoRoot, next);
+			const reload = await reloadRunningControlPlaneForConfigUpdate(ctx);
+			const entry = renderEntry(spec, asRecord(next) ?? {});
+			const payload = {
+				ok: true,
+				scope: "workspace",
+				action: "unset",
+				config_path: configPath,
+				entry,
+				reload,
+			};
+			if (jsonMode) {
+				return ok(jsonText(payload, pretty));
+			}
+
+			let out = `Workspace control config unset in ${configPath}\n`;
+			out += `  key      ${entry.key}\n`;
+			if (entry.secret) {
+				out += `  present  ${entry.present ? "yes" : "no"}\n`;
+			} else {
+				out += `  value    ${String(entry.value)}\n`;
+				out += `  default  ${String(entry.default_value)}\n`;
+			}
+			out += `  reload   ${reload.message}\n`;
+			return ok(out);
+		}
+
+		return jsonError(`unknown config subcommand: ${sub}`, {
+			pretty,
+			recovery: ["mu control config --help"],
+		});
+	}
+
 	async function controlOperator(argv: string[], ctx: Ctx, pretty: boolean): Promise<ControlCommandRunResult> {
 		if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
 			return ok(
@@ -894,9 +1718,19 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 				const thinkingLevels = supportedThinkingLevelsForModel({ reasoning, xhigh });
 				return {
 					id: model.id,
+					api: String(model.api),
 					reasoning,
 					xhigh,
 					thinking_levels: thinkingLevels,
+					input: [...model.input].map((entry) => String(entry)),
+					context_window: model.contextWindow,
+					max_tokens: model.maxTokens,
+					cost: {
+						input: model.cost.input,
+						output: model.cost.output,
+						cache_read: model.cost.cacheRead,
+						cache_write: model.cost.cacheWrite,
+					},
 				};
 			});
 
@@ -998,7 +1832,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 			for (const provider of payload.providers) {
 				out += `\n${provider.provider} (${provider.authenticated ? "authenticated" : "not authenticated"})\n`;
 				for (const model of provider.models) {
-					out += `  - ${model.id} [reasoning=${model.reasoning ? "yes" : "no"}, xhigh=${model.xhigh ? "yes" : "no"}]\n`;
+					out += `  - ${model.id} [api=${model.api}, reasoning=${model.reasoning ? "yes" : "no"}, xhigh=${model.xhigh ? "yes" : "no"}, ctx=${model.context_window}, max=${model.max_tokens}, input=${model.input.join(",")}]\n`;
 				}
 			}
 			return ok(out);
@@ -1331,7 +2165,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 export async function cmdControl<Ctx extends { repoRoot: string }>(
 	argv: string[],
 	ctx: Ctx,
-	deps: ControlCommandDeps<Ctx>,
+	deps: ControlCommandDeps,
 ): Promise<ControlCommandRunResult> {
 	return await buildControlHandlers(deps).cmdControl(argv, ctx);
 }

@@ -126,6 +126,9 @@ Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace
     "source": "neovim"
   }
   ```
+  - `session_kind` is optional. When omitted, the server auto-resolves `session_id` across
+    `<store>/operator/sessions` and `<store>/control-plane/operator-sessions`.
+    If the same id exists in both stores, pass `session_kind` (or `session_dir`) to disambiguate.
   - Optional overrides: `session_file`, `session_dir`, `provider`, `model`, `thinking`, `extension_profile`
   - Response includes: `turn.reply`, `turn.context_entry_id`, `turn.session_file`
 

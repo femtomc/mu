@@ -120,11 +120,10 @@ function deferred<T>(): {
 	return { promise, resolve };
 }
 
-function configWithTelegram(opts: { secret: string; botToken: string; botUsername?: string | null }): MuConfig {
+function configWithTelegram(opts: { secret: string; botToken: string }): MuConfig {
 	const next = JSON.parse(JSON.stringify(DEFAULT_MU_CONFIG)) as MuConfig;
 	next.control_plane.adapters.telegram.webhook_secret = opts.secret;
 	next.control_plane.adapters.telegram.bot_token = opts.botToken;
-	next.control_plane.adapters.telegram.bot_username = opts.botUsername ?? null;
 	next.control_plane.adapters.slack.signing_secret = null;
 	next.control_plane.adapters.discord.signing_secret = null;
 	return next;
@@ -136,7 +135,6 @@ describe("telegram blue/green generation reload", () => {
 		let config = configWithTelegram({
 			secret: "telegram-secret-v1",
 			botToken: "telegram-token-v1",
-			botUsername: "mu_bot",
 		});
 		const drainStarted = deferred<void>();
 		const releaseDrain = deferred<void>();
@@ -169,7 +167,6 @@ describe("telegram blue/green generation reload", () => {
 		config = configWithTelegram({
 			secret: "telegram-secret-v2",
 			botToken: "telegram-token-v2",
-			botUsername: "mu_bot_v2",
 		});
 
 		const reload = server.fetch(reloadRequest("telegram_overlap"));

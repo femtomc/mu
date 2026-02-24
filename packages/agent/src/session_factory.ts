@@ -42,12 +42,16 @@ type SessionManagerFactory = {
 	open: (sessionFile: string, sessionDir?: string) => any;
 };
 
+function resolveSessionPersistenceMode(sessionOpts: MuSessionPersistenceOpts | undefined): MuSessionPersistenceMode {
+	return sessionOpts?.mode ?? (sessionOpts?.sessionFile ? "open" : "continue-recent");
+}
+
 function createSessionManager(
 	SessionManager: SessionManagerFactory,
 	cwd: string,
 	sessionOpts: MuSessionPersistenceOpts | undefined,
 ): any {
-	const mode: MuSessionPersistenceMode = sessionOpts?.mode ?? (sessionOpts?.sessionFile ? "open" : "continue-recent");
+	const mode = resolveSessionPersistenceMode(sessionOpts);
 	const sessionDir = sessionOpts?.sessionDir;
 
 	switch (mode) {
@@ -73,10 +77,13 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 	);
 
 	const authStorage = AuthStorage.create();
+	const sessionMode = resolveSessionPersistenceMode(opts.session);
+	const shouldRestoreSessionConfig = sessionMode === "open" && !opts.provider && !opts.model;
 	const defaultModel = "gpt-5.3-codex";
-	const modelId = opts.model ?? defaultModel;
-	const model = resolveModel(modelId, authStorage, opts.provider);
-	if (!model) {
+	const requestedModelId = opts.model?.trim();
+	const modelId = requestedModelId && requestedModelId.length > 0 ? requestedModelId : shouldRestoreSessionConfig ? null : defaultModel;
+	const model = modelId ? resolveModel(modelId, authStorage, opts.provider) : undefined;
+	if (modelId && !model) {
 		const scope = opts.provider ? ` in provider "${opts.provider}"` : "";
 		throw new Error(`Model "${modelId}" not found${scope} in pi-ai registry.`);
 	}
@@ -98,16 +105,25 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 		createEditTool(opts.cwd),
 	];
 
-	const { session } = await createAgentSession({
+	const requestedThinking = opts.thinking?.trim();
+	const thinkingLevel =
+		requestedThinking && requestedThinking.length > 0
+			? requestedThinking
+			: shouldRestoreSessionConfig
+				? undefined
+				: "minimal";
+	const createOpts = {
 		cwd: opts.cwd,
-		model,
+		...(model ? { model } : {}),
 		tools,
-		thinkingLevel: (opts.thinking ?? "minimal") as ThinkingLevel,
+		...(thinkingLevel ? { thinkingLevel: thinkingLevel as ThinkingLevel } : {}),
 		sessionManager: createSessionManager(SessionManager as SessionManagerFactory, opts.cwd, opts.session),
 		settingsManager,
 		resourceLoader,
 		authStorage,
-	});
+	};
+
+	const { session } = await createAgentSession(createOpts);
 
 	return session;
 }

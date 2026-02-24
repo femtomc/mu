@@ -21,8 +21,6 @@ Goal: get Telegram bot ingress and reply delivery working with minimal user-side
 - Public webhook base URL reachable by Telegram (for example `https://mu.example.com`)
 - Telegram bot token (from BotFather)
 
-Optional (agent can usually discover):
-- Bot username
 
 ## Agent-first workflow
 
@@ -47,17 +45,9 @@ mu control identities --all --pretty
 
 If no running server is available, ask user to start `mu serve` in another terminal before reload/route checks.
 
-### 2) Generate webhook secret and discover bot username
+### 2) Generate webhook secret
 
 Generate a strong webhook secret (do not expose it in final summaries).
-
-If outbound network is available, discover bot username:
-
-```bash
-curl -sS "https://api.telegram.org/bot<bot-token>/getMe"
-```
-
-Extract `result.username` when present.
 
 ### 3) Configure Telegram webhook (agent does this when possible)
 
@@ -78,7 +68,6 @@ Use this canonical patch snippet (preserves unrelated keys):
 ```bash
 export MU_TELEGRAM_WEBHOOK_SECRET='<TELEGRAM_WEBHOOK_SECRET>'
 export MU_TELEGRAM_BOT_TOKEN='<TELEGRAM_BOT_TOKEN>'
-export MU_TELEGRAM_BOT_USERNAME='<TELEGRAM_BOT_USERNAME_OR_EMPTY>'
 config_path="$(mu control status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["config_path"])')"
 
 python3 - "$config_path" <<'PY'
@@ -98,8 +87,6 @@ adapters = cp.setdefault("adapters", {})
 telegram = adapters.setdefault("telegram", {})
 telegram["webhook_secret"] = os.environ["MU_TELEGRAM_WEBHOOK_SECRET"]
 telegram["bot_token"] = os.environ["MU_TELEGRAM_BOT_TOKEN"]
-username = os.environ.get("MU_TELEGRAM_BOT_USERNAME", "").strip()
-telegram["bot_username"] = username or None
 
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps(data, indent=2) + "\n")
@@ -107,8 +94,7 @@ PY
 ```
 
 Replace placeholder values with secrets from the user.
-If bot username is unknown, leave `MU_TELEGRAM_BOT_USERNAME` empty.
-Then `unset MU_TELEGRAM_WEBHOOK_SECRET MU_TELEGRAM_BOT_TOKEN MU_TELEGRAM_BOT_USERNAME` after patching.
+Then `unset MU_TELEGRAM_WEBHOOK_SECRET MU_TELEGRAM_BOT_TOKEN` after patching.
 
 ### 5) Reload and verify
 
@@ -160,9 +146,9 @@ Ask user to send `/mu status` (or plain status text) and verify response deliver
    - Inputs: agent cannot reach `api.telegram.org`.
    - Expected: skill hands user exact `setWebhook` command, resumes after confirmation, and still completes local config/reload verification.
 
-3. **Unknown bot username fallback**
-   - Inputs: `getMe` unavailable or username omitted.
-   - Expected: config stores `bot_username: null` (or omitted equivalent), adapter still activates, and identity link can proceed from audit chat id.
+3. **Token+secret only configuration**
+   - Inputs: valid bot token + webhook secret, no username discovery step.
+   - Expected: adapter activates and identity link can proceed from audit chat id.
 
 ## Safety requirements
 

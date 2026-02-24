@@ -16,7 +16,6 @@ export type MuConfig = {
 			telegram: {
 				webhook_secret: string | null;
 				bot_token: string | null;
-				bot_username: string | null;
 			};
 			neovim: {
 				shared_secret: string | null;
@@ -49,7 +48,6 @@ export type MuConfigPatch = {
 			telegram?: {
 				webhook_secret?: string | null;
 				bot_token?: string | null;
-				bot_username?: string | null;
 			};
 			neovim?: {
 				shared_secret?: string | null;
@@ -88,7 +86,6 @@ export type MuConfigPresence = {
 			telegram: {
 				webhook_secret: boolean;
 				bot_token: boolean;
-				bot_username: boolean;
 			};
 			neovim: {
 				shared_secret: boolean;
@@ -122,7 +119,6 @@ export const DEFAULT_MU_CONFIG: MuConfig = {
 			telegram: {
 				webhook_secret: null,
 				bot_token: null,
-				bot_username: null,
 			},
 			neovim: {
 				shared_secret: null,
@@ -218,9 +214,6 @@ export function normalizeMuConfig(input: unknown): MuConfig {
 			if ("bot_token" in telegram) {
 				next.control_plane.adapters.telegram.bot_token = normalizeNullableString(telegram.bot_token);
 			}
-			if ("bot_username" in telegram) {
-				next.control_plane.adapters.telegram.bot_username = normalizeNullableString(telegram.bot_username);
-			}
 		}
 
 		const neovim = asRecord(adapters.neovim);
@@ -315,9 +308,6 @@ function normalizeMuConfigPatch(input: unknown): MuConfigPatch {
 			}
 			if ("bot_token" in telegram) {
 				telegramPatch.bot_token = normalizeNullableString(telegram.bot_token);
-			}
-			if ("bot_username" in telegram) {
-				telegramPatch.bot_username = normalizeNullableString(telegram.bot_username);
 			}
 			if (Object.keys(telegramPatch).length > 0) {
 				patch.control_plane.adapters.telegram = telegramPatch;
@@ -418,9 +408,6 @@ export function applyMuConfigPatch(base: MuConfig, patchInput: unknown): MuConfi
 			}
 			if ("bot_token" in adapters.telegram) {
 				next.control_plane.adapters.telegram.bot_token = adapters.telegram.bot_token ?? null;
-			}
-			if ("bot_username" in adapters.telegram) {
-				next.control_plane.adapters.telegram.bot_username = adapters.telegram.bot_username ?? null;
 			}
 		}
 		if (adapters.neovim && "shared_secret" in adapters.neovim) {
@@ -533,7 +520,6 @@ export function muConfigPresence(config: MuConfig): MuConfigPresence {
 				telegram: {
 					webhook_secret: isPresent(config.control_plane.adapters.telegram.webhook_secret),
 					bot_token: isPresent(config.control_plane.adapters.telegram.bot_token),
-					bot_username: isPresent(config.control_plane.adapters.telegram.bot_username),
 				},
 				neovim: {
 					shared_secret: isPresent(config.control_plane.adapters.neovim.shared_secret),

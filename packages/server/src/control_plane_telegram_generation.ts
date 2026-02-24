@@ -15,7 +15,6 @@ import type {
 type TelegramAdapterConfig = {
 	webhookSecret: string;
 	botToken: string | null;
-	botUsername: string | null;
 };
 
 type TelegramGenerationRecord = {
@@ -51,7 +50,6 @@ function telegramAdapterConfigFromControlPlane(config: ControlPlaneConfig): Tele
 	return {
 		webhookSecret,
 		botToken: config.adapters.telegram.bot_token,
-		botUsername: config.adapters.telegram.bot_username,
 	};
 }
 
@@ -62,7 +60,6 @@ function applyTelegramAdapterConfig(
 	const next = cloneControlPlaneConfig(base);
 	next.adapters.telegram.webhook_secret = telegram?.webhookSecret ?? null;
 	next.adapters.telegram.bot_token = telegram?.botToken ?? null;
-	next.adapters.telegram.bot_username = telegram?.botUsername ?? null;
 	return next;
 }
 
@@ -70,7 +67,6 @@ function cloneTelegramAdapterConfig(config: TelegramAdapterConfig): TelegramAdap
 	return {
 		webhookSecret: config.webhookSecret,
 		botToken: config.botToken,
-		botUsername: config.botUsername,
 	};
 }
 
@@ -166,7 +162,6 @@ export class TelegramAdapterGenerationManager {
 			outbox: this.#outbox,
 			webhookSecret: config.webhookSecret,
 			botToken: config.botToken,
-			botUsername: config.botUsername,
 			deferredIngress: true,
 			onOutboxEnqueued: this.#onOutboxEnqueued ?? undefined,
 			signalObserver: this.#signalObserver ?? undefined,

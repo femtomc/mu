@@ -163,6 +163,77 @@ test("control reload errors when no running server is detected", async () => {
 	}
 });
 
+test("status text output is compact by default and expanded with --verbose", async () => {
+	const dir = await mkTempRepo();
+	try {
+		const created = await run(["issues", "create", "Status compact sample", "--tag", "node:agent", "--json"], {
+			cwd: dir,
+		});
+		expect(created.exitCode).toBe(0);
+		const createdPayload = JSON.parse(created.stdout) as { id: string };
+		await run(["forum", "post", `issue:${createdPayload.id}`, "-m", "status topic sample", "--json"], { cwd: dir });
+
+		const compact = await run(["status"], { cwd: dir });
+		expect(compact.exitCode).toBe(0);
+		expect(compact.stdout).toContain("Ready sample:");
+		expect(compact.stdout).toContain("Topic sample:");
+		expect(compact.stdout).not.toContain("Recent issue topics:");
+		expect(compact.stdout).not.toContain("\nReady:\n");
+
+		const verbose = await run(["status", "--verbose"], { cwd: dir });
+		expect(verbose.exitCode).toBe(0);
+		expect(verbose.stdout).toContain("\nReady:\n");
+		expect(verbose.stdout).toContain("Recent issue topics:");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("control status/config/harness text output is compact by default and expanded with --verbose", async () => {
+	const dir = await mkTempRepo();
+	try {
+		const statusCompact = await run(["control", "status"], { cwd: dir });
+		expect(statusCompact.exitCode).toBe(0);
+		expect(statusCompact.stdout).toContain("Adapters:");
+		expect(statusCompact.stdout).not.toContain("Adapter config:");
+		expect(statusCompact.stdout).not.toContain("Operator config:");
+
+		const statusVerbose = await run(["control", "status", "--verbose"], { cwd: dir });
+		expect(statusVerbose.exitCode).toBe(0);
+		expect(statusVerbose.stdout).toContain("Adapter config:");
+		expect(statusVerbose.stdout).toContain("Operator config:");
+
+		const configCompact = await run(["control", "config", "get"], { cwd: dir });
+		expect(configCompact.exitCode).toBe(0);
+		expect(configCompact.stdout).toContain("control_plane.operator.enabled value=true");
+		expect(configCompact.stdout).not.toContain("description        ");
+
+		const configVerbose = await run(["control", "config", "get", "--verbose"], { cwd: dir });
+		expect(configVerbose.exitCode).toBe(0);
+		expect(configVerbose.stdout).toContain("description");
+
+		const configSetVerbose = await run(
+			["control", "config", "set", "control_plane.operator.enabled", "false", "--verbose"],
+			{ cwd: dir },
+		);
+		expect(configSetVerbose.exitCode).toBe(1);
+		expect(configSetVerbose.stdout).toContain("--verbose/--debug are only supported with `mu control config get`");
+
+		const harnessCompact = await run(["control", "harness"], { cwd: dir });
+		expect(harnessCompact.exitCode).toBe(0);
+		expect(harnessCompact.stdout).toContain("Adapters:");
+		expect(harnessCompact.stdout).not.toContain("Messaging adapters:");
+		expect(harnessCompact.stdout).toContain("Use `mu control harness --verbose`");
+
+		const harnessVerbose = await run(["control", "harness", "--verbose"], { cwd: dir });
+		expect(harnessVerbose.exitCode).toBe(0);
+		expect(harnessVerbose.stdout).toContain("Messaging adapters:");
+		expect(harnessVerbose.stdout).toContain("Provider catalog:");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("control-plane/memory read interfaces default to compact output with opt-in --json", async () => {
 	const dir = await mkTempRepo();
 	const storeDir = getStorePaths(dir).storeDir;

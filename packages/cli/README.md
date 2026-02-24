@@ -29,8 +29,15 @@ packages/cli/dist/cli.js --help
 ```bash
 mu serve                   # Start server + terminal operator session (auto-inits workspace store)
 mu session                 # Reconnect to latest persisted operator session
-mu session list            # List persisted operator sessions for this repo
-mu status                  # Show repository status
+mu session list            # List persisted sessions (operator + cp_operator) for this repo
+mu session list --kind all --all-workspaces --limit 50
+mu session list --verbose  # Show per-row kind chips in text output (op/cp)
+mu status                  # Compact repository status summary
+mu status --verbose        # Expanded ready/topic detail
+mu control harness         # Compact harness adapter/provider/model snapshot
+mu control harness --verbose  # Expanded capability vectors
+mu control config get      # Compact typed workspace control-plane config
+mu control config get --verbose  # Include defaults + descriptions
 mu issues list             # List all issues
 mu issues create "title"   # Create new issue
 mu issues ready            # Show ready leaf issues
@@ -94,16 +101,46 @@ tools and invokes `mu` CLI commands directly for reads and mutations.
 
 By default, operator sessions are persisted under `<store>/operator/sessions`, and
 `mu session` reconnects to the latest persisted session.
+`mu session list` defaults to both session kinds (`operator` + `cp_operator`).
+Text list output is compact by default; use `--verbose` to include kind chips and per-row session paths.
 
 For follow-up handoffs on a prior terminal/tmux session:
 
 ```bash
 mu session list --json --pretty
+mu session list --kind cp_operator --json --pretty
+mu session list --kind all --all-workspaces --limit 50 --json --pretty
+mu session <session-id>  # auto-resolves operator/cp_operator stores by id
 mu turn --session-kind operator --session-id <session-id> --body "follow-up question"
 ```
 
-If `--session-kind` is omitted, `mu turn` defaults to `cp_operator`
-(`control-plane/operator-sessions`) rather than terminal operator sessions.
+Session-scoped model/thinking updates (without changing workspace global defaults):
+
+```bash
+mu session config get --session-id <id>
+mu session config set-model --session-id <id> --provider openai-codex --model gpt-5.3-codex --thinking high
+mu session config set-thinking --session-id <id> --thinking minimal
+```
+
+Workspace global defaults remain under:
+
+```bash
+mu control operator set <provider> <model> [thinking]
+mu control operator thinking-set <thinking>
+```
+
+Additional typed workspace config controls:
+
+```bash
+mu control config get
+mu control config set control_plane.operator.enabled false
+mu control config set control_plane.memory_index.every_ms 120000
+mu control config unset control_plane.adapters.slack.bot_token
+```
+
+If `--session-kind` is omitted, `mu turn` auto-resolves `--session-id`
+across both session stores (`operator/sessions` + `control-plane/operator-sessions`).
+If the same id exists in both, pass `--session-kind` (or `--session-dir`) to disambiguate.
 
 In-session `/mu` helpers include:
 
@@ -111,8 +148,9 @@ In-session `/mu` helpers include:
 - `/mu events ...` (event tail/watch)
 - `/mu brand ...` (chrome toggle)
 
-Use `mu store paths` to resolve `<store>`, and `mu control status` to inspect current
-config-driven control-plane/operator state.
+Use `mu store paths` to resolve `<store>`, `mu control status` for compact
+control-plane/operator state (or `--verbose` for detail), and `mu control harness`
+for compact provider/model availability + capability vectors (`--verbose` to expand).
 
 ### Messaging setup (skills-first)
 
@@ -124,7 +162,10 @@ required external-console steps and secret handoff.
 Baseline control-plane commands:
 
 ```bash
-mu control status --pretty
+mu control status
+mu control status --verbose
+mu control config get
+mu control config get --verbose
 mu store paths --pretty
 mu control reload
 mu control identities --all --pretty

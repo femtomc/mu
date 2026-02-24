@@ -217,21 +217,6 @@ function telegramCallbackRequest(opts: {
 	});
 }
 
-function streamFromLines(lines: string[]): ReadableStream<Uint8Array> {
-	return new ReadableStream<Uint8Array>({
-		start(controller) {
-			const encoder = new TextEncoder();
-			for (const line of lines) {
-				controller.enqueue(
-					encoder.encode(`${line}
-`),
-				);
-			}
-			controller.close();
-		},
-	});
-}
-
 async function waitFor<T>(
 	fn: () => T | Promise<T>,
 	opts: { timeoutMs?: number; intervalMs?: number } = {},
@@ -294,7 +279,6 @@ function configWith(opts: {
 	neovimSecret?: string | null;
 	telegramSecret?: string | null;
 	telegramBotToken?: string | null;
-	telegramBotUsername?: string | null;
 	operatorEnabled?: boolean;
 }): ControlPlaneConfig {
 	const base = JSON.parse(JSON.stringify(DEFAULT_MU_CONFIG.control_plane)) as ControlPlaneConfig;
@@ -303,7 +287,6 @@ function configWith(opts: {
 	base.adapters.neovim.shared_secret = opts.neovimSecret ?? null;
 	base.adapters.telegram.webhook_secret = opts.telegramSecret ?? null;
 	base.adapters.telegram.bot_token = opts.telegramBotToken ?? null;
-	base.adapters.telegram.bot_username = opts.telegramBotUsername ?? null;
 	if (typeof opts.operatorEnabled === "boolean") {
 		base.operator.enabled = opts.operatorEnabled;
 	}

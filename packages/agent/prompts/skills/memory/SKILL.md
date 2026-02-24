@@ -136,9 +136,6 @@ mu memory stats --pretty
 - adjust anchors (`issue_id`, `run_id`, `session_id`, `topic`, channel metadata)
 - rebuild selected sources only
 
-Compatibility note:
-- `mu context ...` remains an alias to `mu memory ...`.
-
 ## Evaluation scenarios
 
 1. **Issue-scoped context retrieval**

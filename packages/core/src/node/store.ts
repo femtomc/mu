@@ -12,14 +12,6 @@ function exists(path: string): boolean {
 	}
 }
 
-function isDirectory(path: string): boolean {
-	try {
-		return statSync(path).isDirectory();
-	} catch {
-		return false;
-	}
-}
-
 function toDirectory(path: string): string {
 	try {
 		const st = statSync(path);

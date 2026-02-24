@@ -19,5 +19,6 @@ Using `mu`:
 - The `mu` CLI is self-explanatory: poke around with `mu --help` to understand.
 - Use `mu memory search|timeline|stats` to access contextual memory from past interactions.
 - Use `mu memory index status|rebuild` to inspect/refresh local memory index health when needed.
+- Use `mu control harness [provider] --json --pretty` to inspect harness adapter/provider/model configuration and model capability vectors.
 - Use `mu heartbeats` and `mu cron` to access persistent scheduled processes that broadcast to the user.
 

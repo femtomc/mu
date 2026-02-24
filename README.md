@@ -19,6 +19,7 @@ In another terminal:
 
 ```bash
 mu status --pretty
+mu control harness --pretty
 mu issues ready --pretty
 mu forum post research:topic -m "found something" --author operator
 mu memory search --query "reload" --limit 20
@@ -94,11 +95,13 @@ mu serve              # start server + attach terminal operator session
 mu serve --port 8080  # custom port
 ```
 
-Session follow-up:
+Session follow-up (`mu session list` defaults to both `operator` + `cp_operator`):
 
 ```bash
 mu session list --json --pretty
-mu session <session-id>
+mu session list --kind cp_operator --json --pretty
+mu session list --kind all --all-workspaces --limit 50 --json --pretty
+mu session <session-id>  # auto-resolves operator/cp_operator stores by id
 mu turn --session-kind operator --session-id <session-id> --body "follow-up"
 ```
 

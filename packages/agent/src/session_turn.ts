@@ -101,6 +101,32 @@ function defaultSessionDirForKind(repoRoot: string, sessionKind: SessionKind | n
 	}
 }
 
+function normalizePathForPrefixMatch(path: string): string {
+	return resolve(path).replaceAll("\\", "/");
+}
+
+function inferSessionKindFromSessionDir(repoRoot: string, sessionDir: string): SessionKind | null {
+	const storeDir = getStorePaths(repoRoot).storeDir;
+	const normalizedSessionDir = normalizePathForPrefixMatch(sessionDir);
+	const operatorDir = normalizePathForPrefixMatch(join(storeDir, "operator", "sessions"));
+	if (normalizedSessionDir === operatorDir || normalizedSessionDir.startsWith(`${operatorDir}/`)) {
+		return "operator";
+	}
+	const cpOperatorDir = normalizePathForPrefixMatch(join(storeDir, "control-plane", "operator-sessions"));
+	if (normalizedSessionDir === cpOperatorDir || normalizedSessionDir.startsWith(`${cpOperatorDir}/`)) {
+		return "cp_operator";
+	}
+	return null;
+}
+
+function defaultSessionLookupTargets(repoRoot: string): Array<{ sessionKind: SessionKind; sessionDir: string }> {
+	const storeDir = getStorePaths(repoRoot).storeDir;
+	return [
+		{ sessionKind: "operator", sessionDir: join(storeDir, "operator", "sessions") },
+		{ sessionKind: "cp_operator", sessionDir: join(storeDir, "control-plane", "operator-sessions") },
+	];
+}
+
 async function pathExists(path: string): Promise<boolean> {
 	try {
 		await stat(path);
@@ -260,10 +286,8 @@ async function resolveSessionTarget(opts: {
 	repoRoot: string;
 	request: SessionTurnRequest;
 	normalizedSessionKind: SessionKind | null;
-}): Promise<{ sessionFile: string; sessionDir: string }> {
-	const sessionDir = opts.request.session_dir
-		? resolveRepoPath(opts.repoRoot, opts.request.session_dir)
-		: defaultSessionDirForKind(opts.repoRoot, opts.normalizedSessionKind);
+}): Promise<{ sessionFile: string; sessionDir: string; sessionKind: SessionKind | null }> {
+	const explicitSessionDir = opts.request.session_dir ? resolveRepoPath(opts.repoRoot, opts.request.session_dir) : null;
 
 	if (opts.request.session_file) {
 		const sessionFile = resolveRepoPath(opts.repoRoot, opts.request.session_file);
@@ -280,24 +304,65 @@ async function resolveSessionTarget(opts: {
 				`session_file header id mismatch (expected ${opts.request.session_id}, found ${headerId})`,
 			);
 		}
+		const sessionDir = explicitSessionDir ?? dirname(sessionFile);
 		return {
 			sessionFile,
-			sessionDir: opts.request.session_dir ? sessionDir : dirname(sessionFile),
+			sessionDir,
+			sessionKind: opts.normalizedSessionKind ?? inferSessionKindFromSessionDir(opts.repoRoot, sessionDir),
 		};
 	}
 
-	if (!(await directoryExists(sessionDir))) {
-		throw new SessionTurnError(404, `session directory not found: ${sessionDir}`);
+	if (explicitSessionDir || opts.normalizedSessionKind) {
+		const sessionDir = explicitSessionDir ?? defaultSessionDirForKind(opts.repoRoot, opts.normalizedSessionKind);
+		if (!(await directoryExists(sessionDir))) {
+			throw new SessionTurnError(404, `session directory not found: ${sessionDir}`);
+		}
+		const sessionFile = await resolveSessionFileById({
+			sessionDir,
+			sessionId: opts.request.session_id,
+		});
+		if (!sessionFile) {
+			throw new SessionTurnError(404, `session_id not found in ${sessionDir}: ${opts.request.session_id}`);
+		}
+		return {
+			sessionFile,
+			sessionDir,
+			sessionKind: opts.normalizedSessionKind ?? inferSessionKindFromSessionDir(opts.repoRoot, sessionDir),
+		};
 	}
 
-	const sessionFile = await resolveSessionFileById({
-		sessionDir,
-		sessionId: opts.request.session_id,
-	});
-	if (!sessionFile) {
-		throw new SessionTurnError(404, `session_id not found in ${sessionDir}: ${opts.request.session_id}`);
+	const matches: Array<{ sessionFile: string; sessionDir: string; sessionKind: SessionKind }> = [];
+	for (const target of defaultSessionLookupTargets(opts.repoRoot)) {
+		if (!(await directoryExists(target.sessionDir))) {
+			continue;
+		}
+		const sessionFile = await resolveSessionFileById({
+			sessionDir: target.sessionDir,
+			sessionId: opts.request.session_id,
+		});
+		if (sessionFile) {
+			matches.push({
+				sessionFile,
+				sessionDir: target.sessionDir,
+				sessionKind: target.sessionKind,
+			});
+		}
 	}
-	return { sessionFile, sessionDir };
+
+	if (matches.length === 1) {
+		return matches[0]!;
+	}
+	if (matches.length > 1) {
+		throw new SessionTurnError(
+			409,
+			`session_id is ambiguous across operator/cp_operator stores: ${opts.request.session_id} (pass --session-kind or --session-dir)`,
+		);
+	}
+
+	throw new SessionTurnError(
+		404,
+		`session_id not found in operator/cp_operator stores: ${opts.request.session_id}`,
+	);
 }
 
 export function parseSessionTurnRequest(body: Record<string, unknown>): {
@@ -360,18 +425,19 @@ export async function executeSessionTurn(opts: {
 		normalizedSessionKind,
 	});
 
+	const effectiveSessionKind = target.sessionKind ?? normalizedSessionKind;
 	const sessionFactory = opts.sessionFactory ?? createMuSession;
 	const session = await sessionFactory({
 		cwd: opts.repoRoot,
 		systemPrompt: systemPromptForTurn({
-			sessionKind: normalizedSessionKind,
+			sessionKind: effectiveSessionKind,
 			extensionProfile,
 		}),
 		provider: opts.request.provider ?? undefined,
 		model: opts.request.model ?? undefined,
 		thinking: opts.request.thinking ?? undefined,
 		extensionPaths: extensionPathsForTurn({
-			sessionKind: normalizedSessionKind,
+			sessionKind: effectiveSessionKind,
 			extensionProfile,
 		}),
 		session: {
@@ -439,7 +505,7 @@ export async function executeSessionTurn(opts: {
 
 	return {
 		session_id: resolvedSessionId ?? opts.request.session_id,
-		session_kind: normalizedSessionKind,
+		session_kind: effectiveSessionKind,
 		session_file: resolvedSessionFile ?? target.sessionFile,
 		context_entry_id: contextEntryId,
 		reply,

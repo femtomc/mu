@@ -48,7 +48,7 @@ async function writeConfigWithOperatorDefaults(
 					adapters: {
 						slack: { signing_secret: null },
 						discord: { signing_secret: null },
-						telegram: { webhook_secret: null, bot_token: null, bot_username: null },
+						telegram: { webhook_secret: null, bot_token: null },
 						neovim: { shared_secret: null },
 					},
 					operator: {
@@ -68,9 +68,12 @@ async function writeConfigWithOperatorDefaults(
 
 async function writeOperatorSessionFile(
 	dir: string,
-	opts: { id: string; timestamp: string; message?: string },
+	opts: { id: string; timestamp: string; message?: string; kind?: "operator" | "cp_operator" },
 ): Promise<{ id: string; path: string }> {
-	const sessionDir = join(workspaceStoreDir(dir), "operator", "sessions");
+	const sessionDir =
+		opts.kind === "cp_operator"
+			? join(workspaceStoreDir(dir), "control-plane", "operator-sessions")
+			: join(workspaceStoreDir(dir), "operator", "sessions");
 	await mkdir(sessionDir, { recursive: true });
 	const filename = `${opts.timestamp.replace(/[:.]/g, "-")}_${opts.id}.jsonl`;
 	const path = join(sessionDir, filename);
@@ -141,7 +144,6 @@ test("mu guide", async () => {
 	expect(result.stdout.includes("Agent Navigation (by intent)")).toBe(true);
 	expect(result.stdout.includes("mu memory index status")).toBe(true);
 	expect(result.stdout.includes("mu exec <prompt...>")).toBe(true);
-	expect(result.stdout).toContain("Removed engine commands");
 	expect(result.stdout).not.toContain("/mu-setup");
 });
 
@@ -185,11 +187,13 @@ test("mu memory help surfaces filters, timeline anchors, and index workflows", a
 	expect(indexHelp.exitCode).toBe(0);
 	expect(indexHelp.stdout).toContain("Rebuild filters:");
 	expect(indexHelp.stdout).toContain("mu memory index rebuild --sources issues,forum,events");
+});
 
-	const contextAliasHelp = await run(["context", "--help"], { cwd: dir });
-	expect(contextAliasHelp.exitCode).toBe(0);
-	expect(contextAliasHelp.stdout).toContain("mu memory - cross-store memory retrieval + index management");
-	expect(contextAliasHelp.stdout).toContain("`mu context ...` remains available as an alias to `mu memory ...`.");
+test("mu context is unknown command", async () => {
+	const dir = await mkTempRepo();
+	const result = await run(["context", "--help"], { cwd: dir });
+	expect(result.exitCode).toBe(1);
+	expect(result.stdout).toContain("unknown command: context");
 });
 
 test("mu heartbeats help surfaces telegram setup and subcommand guidance", async () => {
@@ -260,7 +264,7 @@ test("mu command-group help is self-explanatory across events/cron/control/turn/
 				"mu turn - inject one prompt turn",
 				"Examples:",
 				"--session-id <id> --body <text>",
-				"defaults to control-plane operator sessions",
+				"auto-resolves --session-id across",
 			],
 		},
 		{
@@ -391,7 +395,161 @@ test("mu control operator set persists config and reports live reload status", a
 	expect(config.control_plane.operator.thinking).toBe(thinking);
 });
 
-test("mu init is disabled", async () => {
+test("mu control config get/set/unset supports typed workspace control-plane settings", async () => {
+	const dir = await mkTempRepo();
+
+	const getAll = await run(["control", "config", "get", "--json", "--pretty"], { cwd: dir });
+	expect(getAll.exitCode).toBe(0);
+	const getAllPayload = JSON.parse(getAll.stdout) as {
+		action: string;
+		entries: Array<{ key: string }>;
+	};
+	expect(getAllPayload.action).toBe("get");
+	expect(getAllPayload.entries.some((entry) => entry.key === "control_plane.operator.enabled")).toBe(true);
+	expect(getAllPayload.entries.some((entry) => entry.key === "control_plane.adapters.slack.bot_token")).toBe(true);
+
+	const setOperatorEnabled = await run(
+		["control", "config", "set", "control_plane.operator.enabled", "false", "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(setOperatorEnabled.exitCode).toBe(0);
+	const setOperatorEnabledPayload = JSON.parse(setOperatorEnabled.stdout) as {
+		action: string;
+		entry: { key: string; value: boolean; secret: boolean };
+		reload: { attempted: boolean };
+	};
+	expect(setOperatorEnabledPayload.action).toBe("set");
+	expect(setOperatorEnabledPayload.entry.key).toBe("control_plane.operator.enabled");
+	expect(setOperatorEnabledPayload.entry.secret).toBe(false);
+	expect(setOperatorEnabledPayload.entry.value).toBe(false);
+	expect(setOperatorEnabledPayload.reload.attempted).toBe(false);
+
+	const setMemoryInterval = await run(
+		["control", "config", "set", "control_plane.memory_index.every_ms", "120000", "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(setMemoryInterval.exitCode).toBe(0);
+
+	const setTimeout = await run(
+		["control", "config", "set", "control_plane.operator.timeout_ms", "180000", "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(setTimeout.exitCode).toBe(0);
+
+	const unsetTimeout = await run(
+		["control", "config", "unset", "control_plane.operator.timeout_ms", "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(unsetTimeout.exitCode).toBe(0);
+	const unsetTimeoutPayload = JSON.parse(unsetTimeout.stdout) as {
+		action: string;
+		entry: { key: string; value: number; default_value: number };
+	};
+	expect(unsetTimeoutPayload.action).toBe("unset");
+	expect(unsetTimeoutPayload.entry.key).toBe("control_plane.operator.timeout_ms");
+	expect(unsetTimeoutPayload.entry.value).toBe(600000);
+	expect(unsetTimeoutPayload.entry.default_value).toBe(600000);
+
+	const token = "xoxb-test-secret-token";
+	const setSlackToken = await run(
+		["control", "config", "set", "control_plane.adapters.slack.bot_token", token, "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(setSlackToken.exitCode).toBe(0);
+	expect(setSlackToken.stdout).not.toContain(token);
+	const setSlackTokenPayload = JSON.parse(setSlackToken.stdout) as {
+		entry: { key: string; secret: boolean; value: null; present: boolean };
+	};
+	expect(setSlackTokenPayload.entry.key).toBe("control_plane.adapters.slack.bot_token");
+	expect(setSlackTokenPayload.entry.secret).toBe(true);
+	expect(setSlackTokenPayload.entry.value).toBeNull();
+	expect(setSlackTokenPayload.entry.present).toBe(true);
+
+	const unsetSlackToken = await run(
+		["control", "config", "unset", "control_plane.adapters.slack.bot_token", "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(unsetSlackToken.exitCode).toBe(0);
+	const unsetSlackTokenPayload = JSON.parse(unsetSlackToken.stdout) as {
+		entry: { key: string; secret: boolean; value: null; present: boolean };
+	};
+	expect(unsetSlackTokenPayload.entry.key).toBe("control_plane.adapters.slack.bot_token");
+	expect(unsetSlackTokenPayload.entry.secret).toBe(true);
+	expect(unsetSlackTokenPayload.entry.value).toBeNull();
+	expect(unsetSlackTokenPayload.entry.present).toBe(false);
+
+	const config = JSON.parse(await readFile(join(workspaceStoreDir(dir), "config.json"), "utf8")) as {
+		control_plane: {
+			adapters: { slack: { bot_token: string | null } };
+			operator: { enabled: boolean; timeout_ms: number };
+			memory_index: { every_ms: number };
+		};
+	};
+	expect(config.control_plane.operator.enabled).toBe(false);
+	expect(config.control_plane.operator.timeout_ms).toBe(600000);
+	expect(config.control_plane.memory_index.every_ms).toBe(120000);
+	expect(config.control_plane.adapters.slack.bot_token).toBeNull();
+});
+
+test("mu control harness reports adapter/provider/model capability snapshot", async () => {
+	const dir = await mkTempRepo();
+
+	const harnessResult = await run(["control", "harness", "--json", "--pretty"], { cwd: dir });
+	expect(harnessResult.exitCode).toBe(0);
+	const payload = JSON.parse(harnessResult.stdout) as {
+		repo_root: string;
+		adapters: Array<{ channel: string; configured: boolean }>;
+		providers: Array<{
+			provider: string;
+			authenticated: boolean;
+			api_families: string[];
+			models: Array<{
+				id: string;
+				api: string;
+				reasoning: boolean;
+				xhigh: boolean;
+				thinking_levels: string[];
+				input: string[];
+				context_window: number;
+				max_tokens: number;
+			}>;
+		}>;
+	};
+
+	expect(payload.repo_root).toBe(dir);
+	expect(payload.adapters.some((adapter) => adapter.channel === "slack")).toBe(true);
+	expect(payload.providers.length).toBeGreaterThan(0);
+
+	const providerEntry = payload.providers.find((provider) => provider.models.length > 0);
+	expect(providerEntry).toBeTruthy();
+	if (!providerEntry) {
+		throw new Error("expected provider with at least one model");
+	}
+
+	expect(providerEntry.api_families.length).toBeGreaterThan(0);
+	const model = providerEntry.models[0]!;
+	expect(typeof model.api).toBe("string");
+	expect(typeof model.reasoning).toBe("boolean");
+	expect(typeof model.xhigh).toBe("boolean");
+	expect(Array.isArray(model.thinking_levels)).toBe(true);
+	expect(Array.isArray(model.input)).toBe(true);
+	expect(typeof model.context_window).toBe("number");
+	expect(typeof model.max_tokens).toBe("number");
+
+	const filteredResult = await run(["control", "harness", providerEntry.provider, "--json", "--pretty"], {
+		cwd: dir,
+	});
+	expect(filteredResult.exitCode).toBe(0);
+	const filteredPayload = JSON.parse(filteredResult.stdout) as {
+		provider_filter: string | null;
+		providers: Array<{ provider: string }>;
+	};
+	expect(filteredPayload.provider_filter).toBe(providerEntry.provider);
+	expect(filteredPayload.providers).toHaveLength(1);
+	expect(filteredPayload.providers[0]?.provider).toBe(providerEntry.provider);
+});
+
+test("mu init is unknown command", async () => {
 	const dir = await mkTempRepo();
 
 	const help = await run(["--help"], { cwd: dir });
@@ -400,6 +558,7 @@ test("mu init is disabled", async () => {
 
 	const initCmd = await run(["init"], { cwd: dir });
 	expect(initCmd.exitCode).toBe(1);
+	expect(initCmd.stdout).toContain("unknown command: init");
 
 	const statusHelp = await run(["status", "--help"], { cwd: dir });
 	expect(statusHelp.exitCode).toBe(0);
@@ -451,7 +610,7 @@ test("mu issues/forum help reflects operator-first workflows", async () => {
 	expect(forumTopicsHelp.stdout).toContain("mu forum topics --prefix issue:");
 });
 
-test("mu chat removed - returns unknown command", async () => {
+test("mu chat is unknown command", async () => {
 	const dir = await mkTempRepo();
 	const chatResult = await run(["chat"], { cwd: dir });
 	expect(chatResult.exitCode).toBe(1);
@@ -531,7 +690,28 @@ test("mu serve help text", async () => {
 	expect(serveHelp.stdout.includes("--api-port")).toBe(false);
 });
 
-test("mu session list reports persisted operator sessions", async () => {
+test("mu session list includes target session_dir metadata even when empty", async () => {
+	const dir = await mkTempRepo();
+	const result = await run(["session", "list", "--json", "--pretty"], { cwd: dir });
+	expect(result.exitCode).toBe(0);
+	const payload = JSON.parse(result.stdout) as {
+		kind: string;
+		session_dir: string | null;
+		session_dirs: string[];
+		total: number;
+		sessions: unknown[];
+	};
+	expect(payload.kind).toBe("all");
+	expect(payload.total).toBe(0);
+	expect(payload.sessions).toHaveLength(0);
+	expect(payload.session_dir).toBeNull();
+	expect(payload.session_dirs).toEqual([
+		join(workspaceStoreDir(dir), "operator", "sessions"),
+		join(workspaceStoreDir(dir), "control-plane", "operator-sessions"),
+	]);
+});
+
+test("mu session list defaults to merged operator+cp_operator discovery", async () => {
 	const dir = await mkTempRepo();
 	await writeOperatorSessionFile(dir, {
 		id: "sess-alpha-11111111",
@@ -543,20 +723,204 @@ test("mu session list reports persisted operator sessions", async () => {
 		timestamp: "2026-02-19T13:00:00.000Z",
 		message: "second",
 	});
+	await writeOperatorSessionFile(dir, {
+		id: "sess-cp-33333333",
+		timestamp: "2026-02-19T14:00:00.000Z",
+		message: "cp",
+		kind: "cp_operator",
+	});
 
 	const result = await run(["session", "list", "--json", "--pretty"], { cwd: dir });
 	expect(result.exitCode).toBe(0);
 	const payload = JSON.parse(result.stdout) as {
+		kind: string;
+		session_dir: string | null;
+		total: number;
+		sessions: Array<{ id: string; rel_path: string; session_kind: string }>;
+	};
+	expect(payload.kind).toBe("all");
+	expect(payload.session_dir).toBeNull();
+	expect(payload.total).toBe(3);
+	expect(payload.sessions.length).toBe(3);
+	expect(payload.sessions.some((session) => session.id === "sess-alpha-11111111" && session.session_kind === "operator")).toBe(
+		true,
+	);
+	expect(payload.sessions.some((session) => session.id === "sess-beta-22222222" && session.session_kind === "operator")).toBe(true);
+	expect(payload.sessions.some((session) => session.id === "sess-cp-33333333" && session.session_kind === "cp_operator")).toBe(true);
+});
+
+test("mu session list text output is compact by default (no kind chips/rel paths)", async () => {
+	const dir = await mkTempRepo();
+	await writeOperatorSessionFile(dir, {
+		id: "sess-text-op-11111111",
+		timestamp: "2026-02-19T12:00:00.000Z",
+		message: "terminal operator",
+		kind: "operator",
+	});
+	await writeOperatorSessionFile(dir, {
+		id: "sess-text-cp-22222222",
+		timestamp: "2026-02-19T13:00:00.000Z",
+		message: "control-plane operator",
+		kind: "cp_operator",
+	});
+
+	const result = await run(["session", "list"], { cwd: dir });
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout).not.toContain(" op msgs=");
+	expect(result.stdout).not.toContain(" cp msgs=");
+	expect(result.stdout).not.toContain(".jsonl");
+});
+
+test("mu session list --verbose shows kind chips + rel paths in text output", async () => {
+	const dir = await mkTempRepo();
+	await writeOperatorSessionFile(dir, {
+		id: "sess-text-op-33333333",
+		timestamp: "2026-02-19T12:00:00.000Z",
+		message: "terminal operator",
+		kind: "operator",
+	});
+	await writeOperatorSessionFile(dir, {
+		id: "sess-text-cp-44444444",
+		timestamp: "2026-02-19T13:00:00.000Z",
+		message: "control-plane operator",
+		kind: "cp_operator",
+	});
+
+	const result = await run(["session", "list", "--verbose"], { cwd: dir });
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout).toContain(" op msgs=");
+	expect(result.stdout).toContain(" cp msgs=");
+	expect(result.stdout).toContain(".jsonl");
+});
+
+test("mu session list supports --kind operator|cp_operator|all", async () => {
+	const dir = await mkTempRepo();
+	await writeOperatorSessionFile(dir, {
+		id: "sess-op-11111111",
+		timestamp: "2026-02-19T12:00:00.000Z",
+		message: "terminal operator",
+		kind: "operator",
+	});
+	await writeOperatorSessionFile(dir, {
+		id: "sess-cp-22222222",
+		timestamp: "2026-02-19T13:00:00.000Z",
+		message: "control-plane operator",
+		kind: "cp_operator",
+	});
+
+	const cpOnly = await run(["session", "list", "--kind", "cp_operator", "--json", "--pretty"], { cwd: dir });
+	expect(cpOnly.exitCode).toBe(0);
+	const cpPayload = JSON.parse(cpOnly.stdout) as {
+		kind: string;
 		session_dir: string;
 		total: number;
-		sessions: Array<{ id: string; rel_path: string }>;
+		sessions: Array<{ id: string; session_kind: string; rel_path: string }>;
 	};
-	expect(payload.session_dir).toBe(join(workspaceStoreDir(dir), "operator", "sessions"));
-	expect(payload.total).toBe(2);
-	expect(payload.sessions.length).toBe(2);
-	expect(payload.sessions.some((session) => session.id === "sess-alpha-11111111")).toBe(true);
-	expect(payload.sessions.some((session) => session.id === "sess-beta-22222222")).toBe(true);
-	expect(payload.sessions[0]?.rel_path).toContain("operator/sessions/");
+	expect(cpPayload.kind).toBe("cp_operator");
+	expect(cpPayload.session_dir).toBe(join(workspaceStoreDir(dir), "control-plane", "operator-sessions"));
+	expect(cpPayload.total).toBe(1);
+	expect(cpPayload.sessions).toHaveLength(1);
+	expect(cpPayload.sessions[0]?.id).toBe("sess-cp-22222222");
+	expect(cpPayload.sessions[0]?.session_kind).toBe("cp_operator");
+	expect(cpPayload.sessions[0]?.rel_path).toContain("control-plane/operator-sessions/");
+
+	const allKinds = await run(["session", "list", "--kind", "all", "--json", "--pretty"], { cwd: dir });
+	expect(allKinds.exitCode).toBe(0);
+	const allKindsPayload = JSON.parse(allKinds.stdout) as {
+		kind: string;
+		session_dir: string | null;
+		total: number;
+		sessions: Array<{ id: string; session_kind: string }>;
+	};
+	expect(allKindsPayload.kind).toBe("all");
+	expect(allKindsPayload.session_dir).toBeNull();
+	expect(allKindsPayload.total).toBe(2);
+	expect(allKindsPayload.sessions.some((session) => session.id === "sess-op-11111111" && session.session_kind === "operator")).toBe(
+		true,
+	);
+	expect(
+		allKindsPayload.sessions.some((session) => session.id === "sess-cp-22222222" && session.session_kind === "cp_operator"),
+	).toBe(true);
+});
+
+test("mu session list rejects invalid --kind", async () => {
+	const dir = await mkTempRepo();
+	const result = await run(["session", "list", "--kind", "nope"], { cwd: dir });
+	expect(result.exitCode).toBe(1);
+	expect(result.stdout).toContain("invalid --kind");
+});
+
+test("mu session list --all-workspaces aggregates persisted sessions across workspace stores", async () => {
+	const repoA = await mkTempRepo();
+	const repoB = await mkTempRepo();
+	const muHome = await mkdtemp(join(tmpdir(), "mu-cli-shared-home-"));
+	const previousMuHome = process.env.MU_HOME;
+	process.env.MU_HOME = muHome;
+
+	try {
+		await writeOperatorSessionFile(repoA, {
+			id: "sess-a-11111111",
+			timestamp: "2026-02-19T12:00:00.000Z",
+			message: "repo a",
+		});
+		await writeOperatorSessionFile(repoB, {
+			id: "sess-b-22222222",
+			timestamp: "2026-02-19T13:00:00.000Z",
+			message: "repo b",
+		});
+
+		const result = await run(
+			["session", "list", "--kind", "operator", "--all-workspaces", "--json", "--pretty"],
+			{ cwd: repoA },
+		);
+		expect(result.exitCode).toBe(0);
+		const payload = JSON.parse(result.stdout) as {
+			kind: string;
+			all_workspaces: boolean;
+			workspace_scope: string;
+			workspace_count: number;
+			total: number;
+			sessions: Array<{
+				id: string;
+				workspace_store_dir: string;
+				workspace_current: boolean;
+				session_kind: string;
+			}>;
+		};
+		expect(payload.kind).toBe("operator");
+		expect(payload.all_workspaces).toBe(true);
+		expect(payload.workspace_scope).toBe("all");
+		expect(payload.workspace_count).toBeGreaterThanOrEqual(2);
+		expect(payload.total).toBe(2);
+		expect(payload.sessions.some((session) => session.id === "sess-a-11111111" && session.workspace_current)).toBe(true);
+		expect(payload.sessions.some((session) => session.id === "sess-b-22222222" && !session.workspace_current)).toBe(true);
+		expect(payload.sessions.every((session) => session.session_kind === "operator")).toBe(true);
+		expect(payload.sessions.some((session) => session.workspace_store_dir === workspaceStoreDir(repoA))).toBe(true);
+		expect(payload.sessions.some((session) => session.workspace_store_dir === workspaceStoreDir(repoB))).toBe(true);
+	} finally {
+		if (previousMuHome === undefined) {
+			delete process.env.MU_HOME;
+		} else {
+			process.env.MU_HOME = previousMuHome;
+		}
+		await rm(repoA, { recursive: true, force: true });
+		await rm(repoB, { recursive: true, force: true });
+		await rm(muHome, { recursive: true, force: true });
+	}
+});
+
+test("mu session rejects --all-workspaces outside list mode", async () => {
+	const dir = await mkTempRepo();
+	const result = await run(["session", "--all-workspaces"], { cwd: dir });
+	expect(result.exitCode).toBe(1);
+	expect(result.stdout).toContain("--kind/--all-workspaces are only supported");
+});
+
+test("mu session rejects --verbose outside list mode", async () => {
+	const dir = await mkTempRepo();
+	const result = await run(["session", "--verbose"], { cwd: dir });
+	expect(result.exitCode).toBe(1);
+	expect(result.stdout).toContain("--verbose/--debug are only supported");
 });
 
 test("mu session defaults to a new operator session when no persisted sessions exist", async () => {
@@ -649,6 +1013,248 @@ test("mu session <id-prefix> resolves and opens a specific persisted operator se
 	expect(result.exitCode).toBe(0);
 	expect(seenSessionMode).toBe("open");
 	expect(seenSessionFile).toBe(persisted.path);
+});
+
+test("mu session selector auto-resolves cp_operator sessions", async () => {
+	const dir = await mkTempRepo();
+	const persisted = await writeOperatorSessionFile(dir, {
+		id: "sess-cp-open-88888888",
+		timestamp: "2026-02-19T14:10:00.000Z",
+		message: "cp resume",
+		kind: "cp_operator",
+	});
+
+	let seenSessionMode: string | undefined;
+	let seenSessionDir: string | undefined;
+	let seenSessionFile: string | undefined;
+	const result = await run(["session", "sess-cp-open-888", "--port", "3311"], {
+		cwd: dir,
+		serveDeps: {
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
+			runOperatorSession: async ({ onReady, sessionMode, sessionDir, sessionFile }) => {
+				seenSessionMode = sessionMode;
+				seenSessionDir = sessionDir;
+				seenSessionFile = sessionFile;
+				onReady();
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+			registerSignalHandler: () => () => {},
+		},
+	});
+
+	expect(result.exitCode).toBe(0);
+	expect(seenSessionMode).toBe("open");
+	expect(seenSessionDir).toBe(join(workspaceStoreDir(dir), "control-plane", "operator-sessions"));
+	expect(seenSessionFile).toBe(persisted.path);
+});
+
+test("mu session selector errors when id is ambiguous across operator and cp_operator stores", async () => {
+	const dir = await mkTempRepo();
+	await writeOperatorSessionFile(dir, {
+		id: "sess-shared-99999999",
+		timestamp: "2026-02-19T14:20:00.000Z",
+		message: "operator copy",
+		kind: "operator",
+	});
+	await writeOperatorSessionFile(dir, {
+		id: "sess-shared-99999999",
+		timestamp: "2026-02-19T14:21:00.000Z",
+		message: "cp copy",
+		kind: "cp_operator",
+	});
+
+	const result = await run(["session", "sess-shared-99999999", "--port", "3311"], { cwd: dir });
+	expect(result.exitCode).toBe(1);
+	expect(result.stdout).toContain("ambiguous session selector across session kinds");
+});
+
+test("mu session selector preserves same-store ambiguity errors", async () => {
+	const dir = await mkTempRepo();
+	await writeOperatorSessionFile(dir, {
+		id: "sess-prefix-aa111111",
+		timestamp: "2026-02-19T14:30:00.000Z",
+		message: "first",
+		kind: "operator",
+	});
+	await writeOperatorSessionFile(dir, {
+		id: "sess-prefix-aa222222",
+		timestamp: "2026-02-19T14:31:00.000Z",
+		message: "second",
+		kind: "operator",
+	});
+
+	const result = await run(["session", "sess-prefix-aa", "--port", "3311"], { cwd: dir });
+	expect(result.exitCode).toBe(1);
+	expect(result.stdout).toContain("ambiguous session selector");
+});
+
+test("mu session open does not force workspace global operator defaults onto existing sessions", async () => {
+	const dir = await mkTempRepo();
+	await writeConfigWithOperatorDefaults(dir, "openai-codex", "gpt-5.3-codex", "xhigh");
+	await writeOperatorSessionFile(dir, {
+		id: "sess-open-defaults-55555555",
+		timestamp: "2026-02-19T14:30:00.000Z",
+		message: "resume with session settings",
+	});
+
+	let seenProvider: string | undefined;
+	let seenModel: string | undefined;
+	let seenThinking: string | undefined;
+	const result = await run(["session", "sess-open-defaults-555", "--port", "3312"], {
+		cwd: dir,
+		serveDeps: {
+			spawnBackgroundServer: async ({ port }) => ({ pid: 99999, url: `http://localhost:${port}` }),
+			runOperatorSession: async ({ onReady, provider, model, thinking }) => {
+				seenProvider = provider;
+				seenModel = model;
+				seenThinking = thinking;
+				onReady();
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+			registerSignalHandler: () => () => {},
+		},
+	});
+
+	expect(result.exitCode).toBe(0);
+	expect(seenProvider).toBeUndefined();
+	expect(seenModel).toBeUndefined();
+	expect(seenThinking).toBeUndefined();
+});
+
+test("mu session config auto-resolves cp_operator session ids when --session-kind is omitted", async () => {
+	const dir = await mkTempRepo();
+	const persisted = await writeOperatorSessionFile(dir, {
+		id: "sess-cp-config-12121212",
+		timestamp: "2026-02-19T14:40:00.000Z",
+		message: "cp config",
+		kind: "cp_operator",
+	});
+
+	const result = await run(["session", "config", "get", "--session-id", persisted.id, "--json", "--pretty"], {
+		cwd: dir,
+	});
+	expect(result.exitCode).toBe(0);
+	const payload = JSON.parse(result.stdout) as {
+		action: string;
+		session: { session_kind: string; session_dir: string; session_file: string };
+	};
+	expect(payload.action).toBe("get");
+	expect(payload.session.session_kind).toBe("cp_operator");
+	expect(payload.session.session_dir).toBe(join(workspaceStoreDir(dir), "control-plane", "operator-sessions"));
+	expect(payload.session.session_file).toBe(persisted.path);
+});
+
+test("mu session config errors when session id is ambiguous across operator/cp_operator stores", async () => {
+	const dir = await mkTempRepo();
+	await writeOperatorSessionFile(dir, {
+		id: "sess-config-shared-13131313",
+		timestamp: "2026-02-19T14:50:00.000Z",
+		message: "operator copy",
+		kind: "operator",
+	});
+	await writeOperatorSessionFile(dir, {
+		id: "sess-config-shared-13131313",
+		timestamp: "2026-02-19T14:51:00.000Z",
+		message: "cp copy",
+		kind: "cp_operator",
+	});
+
+	const result = await run(
+		["session", "config", "get", "--session-id", "sess-config-shared-13131313", "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(result.exitCode).toBe(1);
+	expect(result.stdout).toContain("ambiguous session selector across session kinds");
+});
+
+test("mu session config updates session-scoped model/thinking without changing global defaults", async () => {
+	const dir = await mkTempRepo();
+	const persisted = await writeOperatorSessionFile(dir, {
+		id: "sess-config-44444444",
+		timestamp: "2026-02-19T15:00:00.000Z",
+		message: "configure me",
+	});
+
+	const modelsResult = await run(["control", "operator", "models", "--json", "--pretty"], { cwd: dir });
+	expect(modelsResult.exitCode).toBe(0);
+	const catalog = JSON.parse(modelsResult.stdout) as {
+		providers: Array<{
+			provider: string;
+			models: Array<{ id: string; thinking_levels: string[] }>;
+		}>;
+	};
+	const providerEntry =
+		catalog.providers.find((entry) => entry.models.length >= 2) ?? catalog.providers.find((entry) => entry.models.length > 0);
+	expect(providerEntry).toBeTruthy();
+	if (!providerEntry) {
+		throw new Error("expected provider with at least one model");
+	}
+	const globalModel = providerEntry.models[0]!;
+	const sessionModel = providerEntry.models[1] ?? providerEntry.models[0]!;
+	const globalThinking = globalModel.thinking_levels[globalModel.thinking_levels.length - 1] ?? "minimal";
+	const sessionThinking = sessionModel.thinking_levels[0] ?? "off";
+
+	const setGlobal = await run(
+		["control", "operator", "set", providerEntry.provider, globalModel.id, globalThinking, "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(setGlobal.exitCode).toBe(0);
+
+	const setSessionModel = await run(
+		[
+			"session",
+			"config",
+			"set-model",
+			"--session-id",
+			persisted.id,
+			"--provider",
+			providerEntry.provider,
+			"--model",
+			sessionModel.id,
+			"--thinking",
+			sessionThinking,
+			"--json",
+			"--pretty",
+		],
+		{ cwd: dir },
+	);
+	expect(setSessionModel.exitCode).toBe(0);
+	const sessionPayload = JSON.parse(setSessionModel.stdout) as {
+		action: string;
+		session: { model: { provider: string | null; id: string | null }; thinking: string };
+	};
+	expect(sessionPayload.action).toBe("set-model");
+	expect(sessionPayload.session.model.provider).toBe(providerEntry.provider);
+	expect(sessionPayload.session.model.id).toBe(sessionModel.id);
+	expect(sessionPayload.session.thinking).toBe(sessionThinking);
+
+	const globalGet = await run(["control", "operator", "get", "--json", "--pretty"], { cwd: dir });
+	expect(globalGet.exitCode).toBe(0);
+	const globalPayload = JSON.parse(globalGet.stdout) as {
+		operator: { provider: string | null; model: string | null; thinking: string | null };
+	};
+	expect(globalPayload.operator.provider).toBe(providerEntry.provider);
+	expect(globalPayload.operator.model).toBe(globalModel.id);
+	expect(globalPayload.operator.thinking).toBe(globalThinking);
+
+	const setSessionThinking = await run(
+		["session", "config", "set-thinking", "--session-id", persisted.id, "--thinking", "minimal", "--json", "--pretty"],
+		{ cwd: dir },
+	);
+	expect(setSessionThinking.exitCode).toBe(0);
+
+	const getSession = await run(["session", "config", "get", "--session-id", persisted.id, "--json", "--pretty"], {
+		cwd: dir,
+	});
+	expect(getSession.exitCode).toBe(0);
+	const getSessionPayload = JSON.parse(getSession.stdout) as {
+		action: string;
+		session: { model: { provider: string | null; id: string | null }; thinking: string };
+	};
+	expect(getSessionPayload.action).toBe("get");
+	expect(getSessionPayload.session.model.provider).toBe(providerEntry.provider);
+	expect(getSessionPayload.session.model.id).toBe(sessionModel.id);
+	expect(getSessionPayload.session.thinking).toBe("minimal");
 });
 
 

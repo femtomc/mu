@@ -247,8 +247,6 @@ function memoryHelpText(): string {
 			"  mu memory index status",
 			"  mu memory index rebuild --sources issues,forum,events",
 			"",
-			"Compatibility:",
-			"  `mu context ...` remains available as an alias to `mu memory ...`.",
 		].join("\n") + "\n"
 	);
 }

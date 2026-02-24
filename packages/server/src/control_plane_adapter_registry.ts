@@ -17,7 +17,6 @@ export type DetectedTelegramAdapter = {
 	name: "telegram";
 	webhookSecret: string;
 	botToken: string | null;
-	botUsername: string | null;
 };
 
 export type DetectedAdapter = DetectedStaticAdapter | DetectedTelegramAdapter;
@@ -94,7 +93,6 @@ export function detectAdapters(config: ControlPlaneConfig): DetectedAdapter[] {
 			name: "telegram",
 			webhookSecret: telegramSecret,
 			botToken: config.adapters.telegram.bot_token,
-			botUsername: config.adapters.telegram.bot_username,
 		});
 	}
 

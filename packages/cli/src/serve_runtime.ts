@@ -259,12 +259,19 @@ export async function runServeLifecycle<Ctx extends { repoRoot: string; io?: Ser
 ): Promise<ServeRuntimeRunResult> {
 	await deps.ensureStoreInitialized(ctx);
 	const operatorDefaults = await deps.readServeOperatorDefaults(ctx.repoRoot);
-	const operatorProvider = opts.operatorProvider ?? operatorDefaults.provider;
+	const operatorSession = opts.operatorSession ?? deps.defaultOperatorSessionStart(ctx.repoRoot);
+	const shouldApplyWorkspaceDefaults = operatorSession.mode !== "open";
+	const operatorProvider =
+		opts.operatorProvider ?? (shouldApplyWorkspaceDefaults ? operatorDefaults.provider : undefined);
 	const operatorModel =
 		opts.operatorModel ??
-		(opts.operatorProvider != null && opts.operatorProvider.length > 0 ? undefined : operatorDefaults.model);
-	const operatorThinking = opts.operatorThinking ?? operatorDefaults.thinking;
-	const operatorSession = opts.operatorSession ?? deps.defaultOperatorSessionStart(ctx.repoRoot);
+		(opts.operatorProvider != null && opts.operatorProvider.length > 0
+			? undefined
+			: shouldApplyWorkspaceDefaults
+				? operatorDefaults.model
+				: undefined);
+	const operatorThinking =
+		opts.operatorThinking ?? (shouldApplyWorkspaceDefaults ? operatorDefaults.thinking : undefined);
 
 	const io = ctx.io;
 	const serveDeps = deps.buildServeDeps(ctx);

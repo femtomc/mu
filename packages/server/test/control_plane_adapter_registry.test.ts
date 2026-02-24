@@ -64,7 +64,6 @@ describe("control plane adapter registry", () => {
 		config.control_plane.adapters.neovim.shared_secret = "nvim-secret";
 		config.control_plane.adapters.telegram.webhook_secret = "tg-secret";
 		config.control_plane.adapters.telegram.bot_token = "tg-token";
-		config.control_plane.adapters.telegram.bot_username = "tg-bot";
 
 		const detected = detectAdapters(config.control_plane);
 		expect(detected).toEqual([
@@ -75,7 +74,6 @@ describe("control plane adapter registry", () => {
 				name: "telegram",
 				webhookSecret: "tg-secret",
 				botToken: "tg-token",
-				botUsername: "tg-bot",
 			},
 		]);
 	});

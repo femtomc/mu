@@ -33,13 +33,6 @@ export async function routeCommand<Ctx, Result>(
 	switch (cmd) {
 		case "guide":
 			return await deps.cmdGuide(rest);
-		case "init":
-			return deps.jsonError(
-				"`mu init` has been removed. mu now auto-initializes the workspace store on `mu serve`.",
-				{
-					recovery: ["mu serve", "mu --help"],
-				},
-			);
 		case "status":
 			return await deps.cmdStatus(rest, ctx);
 		case "store":
@@ -55,8 +48,6 @@ export async function routeCommand<Ctx, Result>(
 		case "cron":
 			return await deps.cmdCron(rest, ctx);
 		case "memory":
-			return await deps.cmdMemoryDelegated(rest, ctx);
-		case "context":
 			return await deps.cmdMemoryDelegated(rest, ctx);
 		case "turn":
 			return await deps.cmdTurn(rest, ctx);

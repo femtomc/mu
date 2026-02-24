@@ -15,11 +15,9 @@ It talks to the same control-plane channel pipeline as Slack/Discord/Telegram vi
 - Structured editor context handoff (`client_context`)
 - Visual-selection context send via `:'<,'>Mu ...`
 - Persistent panel UI (`ui.mode = "panel"`) with `:Mu panel ...`
-- Async timeline polling (`:Mu tail on|off|once|status`)
+- Async control-plane event tail polling (`:Mu tail on|off|once|status`)
 - Session turn injection (`:Mu turn <session_id> <message>`) for real
   in-session turns (reply + context cursor)
-- Legacy flash alias (`:Mu flash <session_id> <message>` ->
-  `POST /api/control-plane/turn`)
 - `:Mu` command + optional lowercase `:mu` alias
 
 ## Install (local monorepo)
@@ -49,9 +47,11 @@ With `lazy.nvim` in this monorepo checkout:
         enabled = false, -- start on :Mu tail on (or auto_start after first send)
         auto_start = true,
         interval_ms = 4000,
+        source = nil,   -- optional exact event source filter
+        contains = nil, -- optional full-text event filter (defaults to conversation_id)
       },
 
-      flash_session_kind = "cp_operator", -- default target kind for :Mu turn/:Mu flash
+      turn_session_kind = "cp_operator", -- default target kind for :Mu turn
     })
   end,
 }
@@ -94,7 +94,6 @@ mu control reload
 - `:Mu tail [on|off|once|status]` — background poll control
 - `:Mu turn <session_id> <message>` — run a real turn in target session
   (`POST /api/control-plane/turn`)
-- `:Mu flash <session_id> <message>` — legacy alias of `:Mu turn`
 - `:Mu help` — help text
 
 Neovim requires user commands to start uppercase, so `:Mu` is canonical.
@@ -117,6 +116,6 @@ Session turn targeting expects a `session_id` (for example from
 ## Notes
 
 - Requires Neovim with `vim.system` support (Neovim 0.10+).
-- Background updates currently use channel-scoped timeline polling
-  (`channel=neovim`, `channel_tenant_id`, `channel_conversation_id`).
+- Background updates currently use `/api/control-plane/events/tail` polling,
+  scoped by `contains=<conversation_id>` by default.
 - A dedicated frontend inbox/SSE transport can still be added later for lower-latency delivery.

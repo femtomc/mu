@@ -52,11 +52,13 @@ export async function cmdStatus(
 				"mu status - show repo + DAG status",
 				"",
 				"Usage:",
-				"  mu status [--json] [--pretty]",
+				"  mu status [--json] [--pretty] [--verbose|--debug]",
 				"",
 				"Options:",
 				"  --json      Emit machine-readable status payload",
 				"  --pretty    Pretty-print JSON output (when combined with --json)",
+				"  --verbose   Expand text output with full ready/topic sections",
+				"  --debug     Alias of --verbose",
 				"",
 				"Includes:",
 				"  repo root, root issue count, open issue count, ready issue sample, recent issue topics",
@@ -72,7 +74,9 @@ export async function cmdStatus(
 	}
 
 	const { present: pretty, rest: argv0 } = popFlag(argv, "--pretty");
-	const { present: jsonMode, rest } = popFlag(argv0, "--json");
+	const { present: jsonMode, rest: argv1 } = popFlag(argv0, "--json");
+	const { present: verbose, rest: argv2 } = popFlag(argv1, "--verbose");
+	const { present: debug, rest } = popFlag(argv2, "--debug");
 	if (rest.length > 0) {
 		return jsonError(`unknown args: ${rest.join(" ")}`, { recovery: ["mu status --help"] });
 	}
@@ -98,22 +102,46 @@ export async function cmdStatus(
 	const label = (s: string) => chalk.bold(s);
 	const val = (s: string | number) => chalk.cyan(String(s));
 	const dim = (s: string) => chalk.dim(s);
+	const showDetails = verbose || debug;
 
 	let out = `${label("Repo:")} ${val(ctx.repoRoot)}\n`;
 	out += `${label("Root issues:")} ${val(roots.length)}  ${label("Open:")} ${val(openIssues.length)}  ${label("Ready:")} ${val(ready.length)}\n`;
 
-	if (ready.length > 0) {
-		out += `\n${label("Ready:")}\n`;
-		for (const issue of ready.slice(0, 10)) {
-			out += `  ${chalk.yellow(issue.id)} ${dim(`[p=${issue.priority ?? 3}]`)} ${String(issue.title ?? "").slice(0, 80)}\n`;
+	if (showDetails) {
+		if (ready.length > 0) {
+			out += `\n${label("Ready:")}\n`;
+			for (const issue of ready.slice(0, 10)) {
+				out += `  ${chalk.yellow(issue.id)} ${dim(`[p=${issue.priority ?? 3}]`)} ${String(issue.title ?? "").slice(0, 80)}\n`;
+			}
 		}
+
+		if (topics.length > 0) {
+			out += `\n${label("Recent issue topics:")}\n`;
+			for (const topic of topics.slice(0, 10)) {
+				out += `  ${chalk.yellow(topic.topic)} ${dim(`(${topic.messages})`)} ${dim(`last_at=${topic.last_at}`)}\n`;
+			}
+		}
+		return ok(out);
 	}
 
-	if (topics.length > 0) {
-		out += `\n${label("Recent issue topics:")}\n`;
-		for (const topic of topics.slice(0, 10)) {
-			out += `  ${chalk.yellow(topic.topic)} ${dim(`(${topic.messages})`)} ${dim(`last_at=${topic.last_at}`)}\n`;
-		}
+	const readySample = ready
+		.slice(0, 3)
+		.map((issue) => `${issue.id}[p=${issue.priority ?? 3}]`)
+		.join(", ");
+	if (readySample.length > 0) {
+		out += `${label("Ready sample:")} ${readySample}\n`;
+	}
+
+	const topicSample = topics
+		.slice(0, 3)
+		.map((topic) => `${topic.topic}(${topic.messages})`)
+		.join(", ");
+	if (topicSample.length > 0) {
+		out += `${label("Topic sample:")} ${topicSample}\n`;
+	}
+
+	if (ready.length > 3 || topics.length > 3) {
+		out += `${dim("Use `mu status --verbose` for expanded ready/topic detail.")}\n`;
 	}
 
 	return ok(out);

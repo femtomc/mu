@@ -67,7 +67,6 @@ describe("server control-plane-only route surface", () => {
 			new Request("http://localhost/api/identities", { method: "GET" }),
 			new Request("http://localhost/api/events?limit=1", { method: "GET" }),
 			new Request("http://localhost/api/activities?limit=1", { method: "GET" }),
-			new Request("http://localhost/api/session-flash", { method: "GET" }),
 			new Request("http://localhost/api/session-turn", { method: "POST", body: "{}" }),
 		];
 
