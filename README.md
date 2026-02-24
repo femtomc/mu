@@ -4,6 +4,10 @@
   <img src="assets/mu-periodic-logo.svg" alt="mu periodic table style logo" width="180" />
 </p>
 
+```
+npm install -g @femtomc/mu
+```
+
 **The little assistant that could.**
 
 `mu` is a personal assistant for technical work, designed for long-running execution,
