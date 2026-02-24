@@ -22,6 +22,8 @@ const STARTER_SKILLS = [
 	"hud",
 	"orchestration",
 	"control-flow",
+	"code-mode",
+	"tmux",
 	"subagents",
 	"heartbeats",
 	"crons",

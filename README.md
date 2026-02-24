@@ -65,27 +65,40 @@ reflected in the agent's policy distribution.
 `mu` ships with a set of starter skills (bootstrapped into `~/.mu/skills/`
 or `$MU_HOME/skills/` during store initialization):
 
-- `mu` — core instruction concerning the `mu` CLI
-- `memory` — context retrieval and index maintenance
-- `planning` — investigate first, then draft/refine an issue DAG plan with user approval loops
-- `hud` — canonical HUD contract/workflow
-- `orchestration` — shared DAG planning/execution protocol used by both planning and subagents
-- `control-flow` — compositional loop/termination policy overlays (for example review-gated retries)
-- `subagents` — durable issue-driven subagent orchestration (heartbeat + tmux fan-out)
-- `heartbeats` — heartbeat program lifecycle for durable, bounded automation loops
-- `crons` — wall-clock scheduling workflows for recurring/one-shot automation
-- `setup-slack` — Slack adapter onboarding
-- `setup-discord` — Discord adapter onboarding
-- `setup-telegram` — Telegram adapter onboarding
-- `setup-neovim` — Neovim frontend onboarding
-- `writing` — technical writing workflow for docs/READMEs/PR descriptions and operator-facing prose
+- **Core operator and memory**
+  - `mu` — core instruction concerning the `mu` CLI
+  - `memory` — context retrieval and index maintenance
+
+- **Planning and orchestration**
+  - `planning` — investigate first, then draft/refine an issue DAG plan with user approval loops
+  - `hud` — canonical HUD contract/workflow
+  - `orchestration` — shared DAG planning/execution protocol used by both planning and subagents
+  - `control-flow` — compositional loop/termination policy overlays (for example review-gated retries)
+  - `subagents` — durable issue-driven subagent orchestration (heartbeat + tmux fan-out)
+
+- **REPL and session primitives**
+  - `code-mode` — lightweight tmux-backed REPL execution and context engineering
+  - `tmux` — canonical tmux session lifecycle/fan-out primitives for skills
+
+- **Durable automation**
+  - `heartbeats` — heartbeat program lifecycle for durable, bounded automation loops
+  - `crons` — wall-clock scheduling workflows for recurring/one-shot automation
+
+- **Messaging adapter onboarding**
+  - `setup-slack` — Slack adapter onboarding
+  - `setup-discord` — Discord adapter onboarding
+  - `setup-telegram` — Telegram adapter onboarding
+  - `setup-neovim` — Neovim frontend onboarding
+
+- **Technical writing**
+  - `writing` — technical writing workflow for docs/READMEs/PR descriptions and operator-facing prose
 
 Starter skills are version-synced. Initial bootstrap seeds missing skills; bundled-version
 changes refresh installed starter skill files in `~/.mu/skills/` (or `$MU_HOME/skills/`).
 
 Recommended usage pattern:
 
-- Ask your operator to use a relevant skill (for historical context: `memory`; for DAG work: `planning` -> `hud` -> `orchestration` -> `control-flow` -> `subagents`; for recurring automation: `heartbeats` and/or `crons`; for docs/prose: `writing`).
+- Ask your operator to use a relevant skill (for historical context: `memory`; for DAG work: `planning` -> `hud` -> `orchestration` -> `control-flow` -> `subagents`; for REPL-heavy context engineering: `code-mode`; for tmux session/fan-out mechanics: `tmux`; for recurring automation: `heartbeats` and/or `crons`; for docs/prose: `writing`).
 
 Examples:
 

@@ -180,6 +180,8 @@ When work is multi-step and issue-graph driven, use `planning` to shape the DAG,
 then `hud` for canonical HUD behavior, then `orchestration` to keep DAG
 semantics consistent, then `control-flow` for explicit loop/termination policy,
 then `subagents` for durable execution.
+For REPL-driven exploration and context compression, use `code-mode`.
+For persistent terminal sessions and worker fan-out mechanics, use `tmux`.
 For recurring bounded automation loops, use `heartbeats`.
 For wall-clock schedules (one-shot, interval, cron-expression), use `crons`.
 
@@ -204,6 +206,8 @@ For wall-clock schedules (one-shot, interval, cron-expression), use `crons`.
 - HUD contract/state updates across surfaces: **`hud`**
 - Shared DAG semantics for planning + execution: **`orchestration`**
 - Loop/termination policy overlays (review gates, retries, escalation): **`control-flow`**
+- Live REPL execution and context engineering via tmux: **`code-mode`**
+- Persistent tmux session management + worker fan-out primitives: **`tmux`**
 - Durable multi-agent orchestration: **`subagents`**
 - Recurring bounded automation scheduling: **`heartbeats`**
 - Wall-clock scheduling workflows: **`crons`**

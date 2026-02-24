@@ -30,6 +30,8 @@ into `~/.mu/skills/` (or `$MU_HOME/skills/`) by the CLI store-initialization pat
 - `hud`
 - `orchestration`
 - `control-flow`
+- `code-mode`
+- `tmux`
 - `subagents`
 - `heartbeats`
 - `crons`

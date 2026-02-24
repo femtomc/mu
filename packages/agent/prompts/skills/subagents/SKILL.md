@@ -11,6 +11,7 @@ description: "Orchestrates issue-driven subagent execution with heartbeat superv
 - [Shared protocol dependency](#shared-protocol-dependency)
 - [Control-flow dependency](#control-flow-dependency)
 - [HUD skill dependency](#hud-skill-dependency)
+- [tmux skill dependency](#tmux-skill-dependency)
 - [When to use](#when-to-use)
 - [Success condition](#success-condition)
 - [Dispatch modes](#dispatch-modes)
@@ -64,6 +65,14 @@ HUD usage is not optional for this skill.
 
 - Treat `hud` as source-of-truth for generic `mu_hud` actions, `HudDoc` shape, and rendering constraints.
 - This subagents skill defines orchestration-specific conventions only (for example `hud_id: "subagents"`, queue/activity semantics).
+
+## tmux skill dependency
+
+Before spawning/inspecting worker sessions, load **`tmux`** and follow its
+canonical session lifecycle and bounded send/capture protocol.
+
+- Treat `tmux` as source-of-truth for session ownership, completion markers, and teardown.
+- This subagents skill defines orchestration semantics and queue policy.
 
 ## When to use
 
