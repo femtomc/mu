@@ -24,9 +24,9 @@ The ideas:
 3. Heartbeats and crons
 4. Skills first
 
-For instance, Claude's "plan mode" -- well, that's just a skill which directs the agent to work with the user to create a plan in the issue tracker, and communicate progress via the programmable HUD. Subagents ... skill, tmux, programmable HUD. Complex work orchestration project which you call GasTown? CLI issue tracker + forum, programmable HUD, heartbeats skills.
+For instance, Claude's "plan mode" -- well, that's just a skill which directs the agent to work with the user to create a plan in the issue tracker, and communicate progress via the programmable HUD. Subagents ... skill, tmux, programmable HUD. Complex work orchestration project which you call GasTown? CLI issue tracker + forum, programmable HUD, heartbeats, and skills.
 
-The core of this assistant is about _composition and modularity_ -- we're aiming for the minimal set of ingredients to express any harness idea.
+The core of this assistant is about _composition and modularity_ -- we want the minimal set of ingredients to express any harness idea.
 
 ## Quickstart
 
