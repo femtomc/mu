@@ -10,6 +10,14 @@ add a small set of CLI tools and skills -- the best ideas taken from the best ha
 _add batteries_: we can emulate _anything_ added to any other harness (including Claude Code, Codex, your favorite *Claw) with a few simple compositional 
 ideas.
 
+The ideas:
+1. CLI issue tracker and forum
+2. Programmable HUD extension
+3. Heartbeats and crons
+4. Skills first
+
+For instance, Claude's "plan mode" -- well, that's just a skill which directs the agent to work with the user to create a plan in the issue tracker, and communicate progress via the programmable HUD. Subagents ... skill, tmux, programmable HUD.
+
 ## Quickstart
 
 ```bash
