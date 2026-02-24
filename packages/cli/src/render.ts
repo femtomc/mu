@@ -527,6 +527,22 @@ export function renderHeartbeatsPayloadCompact(payload: Record<string, unknown>)
 		}
 		return `${lines.join("\n")}\n`;
 	}
+	if (recordInt(payload, "armed_count") != null && Array.isArray(payload.armed)) {
+		const armed = asRecordArray(payload.armed);
+		const lines = [
+			`Heartbeat status: total=${recordInt(payload, "count") ?? 0} enabled=${recordInt(payload, "enabled_count") ?? 0} armed=${recordInt(payload, "armed_count") ?? armed.length}`,
+		];
+		if (armed.length > 0) {
+			lines.push(`${"PROGRAM".padEnd(18)} ${"EVERY_MS".padStart(8)} ${"LAST".padEnd(5)}`);
+			for (const row of armed) {
+				const id = recordString(row, "program_id") ?? "-";
+				const everyMs = recordInt(row, "every_ms");
+				const last = recordInt(row, "last_triggered_at_ms") ?? 0;
+				lines.push(`${compactId(id, 18).padEnd(18)} ${String(everyMs ?? "-").padStart(8)} ${formatAgeShort(last).padEnd(5)}`);
+			}
+		}
+		return `${lines.join("\n")}\n`;
+	}
 	if (recordString(payload, "program_id")) {
 		return renderHeartbeatProgramCompact(payload);
 	}

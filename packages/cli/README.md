@@ -44,6 +44,7 @@ mu issues ready            # Show ready leaf issues
 mu forum post topic -m "message"  # Post to forum
 mu exec "task..."          # One-shot operator prompt
 mu heartbeats --help        # Durable heartbeat automation programs
+mu heartbeats stats         # Heartbeat scheduler summary (total/enabled/armed)
 mu cron --help              # Durable cron automation programs
 ```
 

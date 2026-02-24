@@ -45,6 +45,9 @@ describe("server control-plane-only route surface", () => {
 	});
 
 	test("scheduling endpoints remain mounted", async () => {
+		const heartbeatStatus = await server.fetch(new Request("http://localhost/api/heartbeats/status"));
+		expect(heartbeatStatus.status).toBe(200);
+
 		const heartbeatList = await server.fetch(new Request("http://localhost/api/heartbeats?limit=1"));
 		expect(heartbeatList.status).toBe(200);
 

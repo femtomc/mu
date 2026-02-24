@@ -365,6 +365,10 @@ export class ActivityHeartbeatScheduler {
 		return [...this.#states.keys()];
 	}
 
+	public getMinIntervalMs(): number {
+		return this.#minIntervalMs;
+	}
+
 	public stop(): void {
 		for (const state of this.#states.values()) {
 			this.#disposeState(state);

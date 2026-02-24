@@ -139,10 +139,75 @@ describe("HeartbeatProgramRegistry", () => {
 			},
 		});
 
+		await waitFor(() => (ticks >= 1 ? true : null));
 		const loaded = await registry.list({ limit: 10 });
 		expect(loaded.length).toBe(1);
 		expect(loaded[0]?.program_id).toBe("hb-preloaded-1");
-		await waitFor(() => (ticks >= 1 ? true : null));
+
+		registry.stop();
+		scheduler.stop();
+	});
+
+	test("normalizes cadence to scheduler minimum and exposes status", async () => {
+		const store = new InMemoryJsonlStore<HeartbeatProgramSnapshot>([]);
+		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 2_000 });
+		const registry = new HeartbeatProgramRegistry({
+			repoRoot: "/repo",
+			heartbeatScheduler: scheduler,
+			store,
+			dispatchWake: async () => ({ status: "ok" }),
+		});
+
+		const created = await registry.create({
+			title: "Fast pulse",
+			everyMs: 500,
+		});
+		expect(created.every_ms).toBe(2_000);
+
+		const status = await registry.status();
+		expect(status.count).toBe(1);
+		expect(status.enabled_count).toBe(1);
+		expect(status.armed_count).toBe(1);
+		expect(status.armed[0]?.program_id).toBe(created.program_id);
+		expect(status.armed[0]?.every_ms).toBe(2_000);
+
+		const disabled = await registry.update({
+			programId: created.program_id,
+			everyMs: 0,
+		});
+		expect(disabled.ok).toBe(true);
+		expect(disabled.program?.every_ms).toBe(0);
+
+		const statusAfterDisable = await registry.status();
+		expect(statusAfterDisable.armed_count).toBe(0);
+
+		registry.stop();
+		scheduler.stop();
+	});
+
+	test("emits lifecycle events for create/update/delete", async () => {
+		const store = new InMemoryJsonlStore<HeartbeatProgramSnapshot>([]);
+		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 10 });
+		const lifecycleActions: string[] = [];
+		const registry = new HeartbeatProgramRegistry({
+			repoRoot: "/repo",
+			heartbeatScheduler: scheduler,
+			store,
+			dispatchWake: async () => ({ status: "ok" }),
+			onLifecycleEvent: async (event) => {
+				lifecycleActions.push(event.action);
+			},
+		});
+
+		const created = await registry.create({ title: "Lifecycle pulse", everyMs: 0 });
+		const updated = await registry.update({
+			programId: created.program_id,
+			title: "Lifecycle pulse v2",
+		});
+		expect(updated.ok).toBe(true);
+		const removed = await registry.remove(created.program_id);
+		expect(removed.ok).toBe(true);
+		expect(lifecycleActions).toEqual(["created", "updated", "deleted"]);
 
 		registry.stop();
 		scheduler.stop();

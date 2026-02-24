@@ -8,6 +8,14 @@ export async function heartbeatRoutes(
 ): Promise<Response> {
 	const path = url.pathname;
 
+	if (path === "/api/heartbeats/status") {
+		if (request.method !== "GET") {
+			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
+		}
+		const status = await deps.heartbeatPrograms.status();
+		return Response.json(status, { headers });
+	}
+
 	if (path === "/api/heartbeats") {
 		if (request.method !== "GET") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });

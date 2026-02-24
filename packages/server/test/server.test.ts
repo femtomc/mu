@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { getStorePaths } from "@femtomc/mu-core/node";
+import { FsJsonlStore, getStorePaths } from "@femtomc/mu-core/node";
+import { IssueStore } from "@femtomc/mu-issue";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1288,6 +1289,158 @@ describe("mu-server", () => {
 					row.prompt === "Review index health and repair stale memory references",
 			),
 		).toBe(true);
+	});
+
+	test("review-gated heartbeat loop continues until review succeeds then self-disables", async () => {
+		const issues = new IssueStore(
+			new FsJsonlStore(join(getStorePaths(tempDir).storeDir, "issues.jsonl")),
+		);
+		const root = await issues.create("Root: review-gated workflow");
+		const implementation = await issues.create("Implementation pass");
+		const review = await issues.create("Review pass");
+		await issues.add_dep(implementation.id, "parent", root.id);
+		await issues.add_dep(review.id, "parent", root.id);
+		await issues.add_dep(implementation.id, "blocks", review.id);
+
+		type HeartbeatRegistryHandle = {
+			update: (opts: { programId: string; enabled?: boolean; reason?: string }) => Promise<{ ok: boolean }>;
+		};
+		let heartbeatRegistryRef: HeartbeatRegistryHandle | null = null;
+		let passCount = 0;
+		const validations: Array<{ pass: number; is_final: boolean; reason: string }> = [];
+
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			submitAutonomousIngress: async (opts) => {
+				passCount += 1;
+				const metadata =
+					opts.metadata && typeof opts.metadata === "object" ? (opts.metadata as Record<string, unknown>) : {};
+				const programId = typeof metadata.program_id === "string" ? metadata.program_id : null;
+
+				if (passCount === 1) {
+					await issues.close(implementation.id, "success");
+					await issues.close(review.id, "needs_work");
+					const firstValidation = await issues.validate(root.id);
+					validations.push({
+						pass: passCount,
+						is_final: firstValidation.is_final,
+						reason: firstValidation.reason,
+					});
+					await issues.update(review.id, { status: "open", outcome: null });
+					await issues.update(implementation.id, { status: "open", outcome: null });
+					return {
+						kind: "operator_response",
+						message: "Review requested changes. Continue the loop.",
+					};
+				}
+
+				await issues.close(implementation.id, "success");
+				await issues.close(review.id, "success");
+				await issues.close(root.id, "success");
+				const finalValidation = await issues.validate(root.id);
+				validations.push({
+					pass: passCount,
+					is_final: finalValidation.is_final,
+					reason: finalValidation.reason,
+				});
+
+				if (finalValidation.is_final && programId && heartbeatRegistryRef) {
+					await heartbeatRegistryRef.update({
+						programId,
+						enabled: false,
+						reason: "review_complete",
+					});
+				}
+
+				return {
+					kind: "operator_response",
+					message: "Review accepted. Loop complete.",
+				};
+			},
+			notifyOperators: async () => ({ queued: 0, duplicate: 0, skipped: 0, decisions: [] }),
+			stop: async () => {},
+		};
+
+		const wakeServer = await createServerForTest({
+			repoRoot: tempDir,
+			controlPlane: wakeControlPlane,
+			serverOptions: { operatorWakeCoalesceMs: 0 },
+		});
+		heartbeatRegistryRef = wakeServer.heartbeatPrograms as HeartbeatRegistryHandle;
+
+		try {
+			const createRes = await wakeServer.fetch(
+				new Request("http://localhost/api/heartbeats/create", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						title: "Review-gated loop",
+						every_ms: 0,
+						reason: "review_gate",
+						enabled: true,
+					}),
+				}),
+			);
+			expect(createRes.status).toBe(201);
+			const createPayload = (await createRes.json()) as {
+				program: { program_id: string };
+			};
+			const programId = createPayload.program.program_id;
+
+			const triggerOne = await wakeServer.fetch(
+				new Request("http://localhost/api/heartbeats/trigger", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ program_id: programId, reason: "manual" }),
+				}),
+			);
+			expect(triggerOne.status).toBe(200);
+
+			const triggerTwo = await wakeServer.fetch(
+				new Request("http://localhost/api/heartbeats/trigger", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ program_id: programId, reason: "manual" }),
+				}),
+			);
+			expect(triggerTwo.status).toBe(200);
+
+			const getProgram = await wakeServer.fetch(new Request(`http://localhost/api/heartbeats/${programId}`));
+			expect(getProgram.status).toBe(200);
+			const program = (await getProgram.json()) as { enabled: boolean; reason: string; last_result: string | null };
+			expect(program.enabled).toBe(false);
+			expect(program.reason).toBe("review_complete");
+			expect(program.last_result).toBe("ok");
+
+			const triggerAfterDisable = await wakeServer.fetch(
+				new Request("http://localhost/api/heartbeats/trigger", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ program_id: programId, reason: "manual" }),
+				}),
+			);
+			expect(triggerAfterDisable.status).toBe(409);
+			const disabledPayload = (await triggerAfterDisable.json()) as { reason: string };
+			expect(disabledPayload.reason).toBe("not_running");
+
+			expect(passCount).toBe(2);
+			expect(validations).toHaveLength(2);
+			expect(validations[0]?.is_final).toBe(false);
+			expect(validations[0]?.reason.includes("needs work")).toBe(true);
+			expect(validations[1]?.is_final).toBe(true);
+			expect(validations[1]?.reason).toBe("all work completed");
+
+			const finalValidation = await issues.validate(root.id);
+			expect(finalValidation.is_final).toBe(true);
+			const reviewAfter = await issues.get(review.id);
+			expect(reviewAfter?.status).toBe("closed");
+			expect(reviewAfter?.outcome).toBe("success");
+		} finally {
+			wakeServer.heartbeatPrograms.stop();
+			wakeServer.cronPrograms.stop();
+			await wakeServer.controlPlane?.stop?.().catch(() => {});
+		}
 	});
 
 	test("cron program APIs persist schedules, emit events, and restore on startup", async () => {

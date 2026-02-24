@@ -69,9 +69,10 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"mu heartbeats - heartbeat program lifecycle (periodic operator wake)",
 					"",
 					"Usage:",
-					"  mu heartbeats <list|get|create|update|delete|trigger|enable|disable> [args...] [--pretty]",
+					"  mu heartbeats <stats|list|get|create|update|delete|trigger|enable|disable> [args...] [--pretty]",
 					"",
 					"Commands:",
+					"  stats     Show heartbeat scheduler summary",
 					"  list      List heartbeat programs",
 					"  get       Show a single heartbeat program",
 					"  create    Create a heartbeat program",
@@ -82,7 +83,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"  disable   Disable a heartbeat program",
 					"",
 					"Output mode:",
-					"  list/get are compact by default; add --json for full records.",
+					"  stats/list/get are compact by default; add --json for full records.",
 					"  create/update/delete/trigger/enable/disable return structured JSON.",
 					"",
 					"Telegram quick setup:",
@@ -104,6 +105,8 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 		const sub = argv0[0]!;
 		const rest = argv0.slice(1);
 		switch (sub) {
+			case "stats":
+				return await heartbeatsStats(rest, ctx, pretty);
 			case "list":
 				return await heartbeatsList(rest, ctx, pretty);
 			case "get":
@@ -123,6 +126,41 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 			default:
 				return jsonError(`unknown subcommand: ${sub}`, { pretty, recovery: ["mu heartbeats --help"] });
 		}
+	}
+
+	async function heartbeatsStats(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu heartbeats stats - show heartbeat scheduler summary",
+					"",
+					"Usage:",
+					"  mu heartbeats stats [--json] [--pretty]",
+					"",
+					"Examples:",
+					"  mu heartbeats stats",
+					"  mu heartbeats stats --json --pretty",
+				].join("\n") + "\n",
+			);
+		}
+		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+		const { present: compact, rest } = popFlag(argv0, "--compact");
+		if (rest.length > 0) {
+			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats stats"] });
+		}
+		const req = await requestServerJson<Record<string, unknown>>({
+			ctx,
+			pretty,
+			path: "/api/heartbeats/status",
+			recoveryCommand: "mu heartbeats stats",
+		});
+		if (!req.ok) {
+			return req.result;
+		}
+		if (!jsonMode || compact) {
+			return ok(renderHeartbeatsPayloadCompact(req.payload));
+		}
+		return ok(jsonText(req.payload, pretty));
 	}
 
 	async function heartbeatsList(argv: string[], ctx: Ctx, pretty: boolean): Promise<SchedulingCommandRunResult> {

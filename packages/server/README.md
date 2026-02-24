@@ -37,6 +37,11 @@ Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace
 
 ## API Endpoints
 
+> Security note: `mu-server` is designed for trusted local/operator environments.
+> The HTTP surface does not provide built-in authn/authz middleware for `/api/*`.
+> Do not expose this port directly to untrusted networks without an external
+> auth/reverse-proxy layer.
+
 ### Health Check
 
 - `GET /healthz` or `GET /health` - Returns 200 OK
@@ -135,6 +140,7 @@ Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace
 ### Control-plane Coordination Endpoints
 
 - Scheduling + coordination:
+  - `GET /api/heartbeats/status` (heartbeat scheduler summary: total/enabled/armed)
   - `GET|POST|PATCH|DELETE /api/heartbeats...`
   - `GET|POST|PATCH|DELETE /api/cron...`
   - Heartbeat programs support an optional free-form `prompt` field; when present it becomes the primary wake instruction sent to the operator turn path.

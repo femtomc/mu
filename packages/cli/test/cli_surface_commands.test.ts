@@ -105,6 +105,51 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 	}
 });
 
+test("heartbeats stats calls dedicated status endpoint", async () => {
+	const dir = await mkTempRepo();
+	const seen: Array<{ path: string }> = [];
+
+	const server = Bun.serve({
+		port: 0,
+		fetch: async (req) => {
+			const url = new URL(req.url);
+			seen.push({ path: url.pathname });
+			if (url.pathname === "/healthz") {
+				return Response.json({ ok: true });
+			}
+			if (url.pathname === "/api/heartbeats/status") {
+				return Response.json({
+					count: 2,
+					enabled_count: 2,
+					armed_count: 1,
+					armed: [
+						{ program_id: "hb-armed", every_ms: 15000, last_triggered_at_ms: null },
+					],
+				});
+			}
+			return Response.json({ error: "not found" }, { status: 404 });
+		},
+	});
+
+	const discovery = join(getStorePaths(dir).storeDir, "control-plane", "server.json");
+	await writeFile(
+		discovery,
+		`${JSON.stringify({ pid: process.pid, port: server.port, url: `http://localhost:${server.port}` })}\n`,
+		"utf8",
+	);
+
+	try {
+		const result = await run(["heartbeats", "stats"], { cwd: dir });
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Heartbeat status:");
+		expect(result.stdout).toContain("hb-armed");
+		expect(seen.some((entry) => entry.path === "/api/heartbeats/status")).toBe(true);
+	} finally {
+		server.stop(true);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("control reload uses running server API and does not schedule local process restart", async () => {
 	const dir = await mkTempRepo();
 	const seen: Array<{ method: string; path: string; body: unknown }> = [];

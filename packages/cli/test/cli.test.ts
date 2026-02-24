@@ -203,7 +203,12 @@ test("mu heartbeats help surfaces telegram setup and subcommand guidance", async
 	expect(rootHelp.exitCode).toBe(0);
 	expect(rootHelp.stdout).toContain("Telegram quick setup:");
 	expect(rootHelp.stdout).toContain("mu control link --channel telegram --actor-id <chat-id> --tenant-id telegram-bot");
+	expect(rootHelp.stdout).toContain("stats");
 	expect(rootHelp.stdout).toContain("Run `mu heartbeats <subcommand> --help`");
+
+	const statsHelp = await run(["heartbeats", "stats", "--help"], { cwd: dir });
+	expect(statsHelp.exitCode).toBe(0);
+	expect(statsHelp.stdout).toContain("mu heartbeats stats - show heartbeat scheduler summary");
 
 	const createHelp = await run(["heartbeats", "create", "--help"], { cwd: dir });
 	expect(createHelp.exitCode).toBe(0);

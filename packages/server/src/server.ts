@@ -30,6 +30,9 @@ import type { ServerRuntime } from "./server_runtime.js";
 import { toNonNegativeInt } from "./server_types.js";
 
 const DEFAULT_OPERATOR_WAKE_COALESCE_MS = 2_000;
+const OPERATOR_WAKE_DEDUPE_MAP_MAX_ENTRIES = 2_048;
+const OPERATOR_WAKE_DEDUPE_MIN_RETENTION_MS = 60_000;
+const OPERATOR_WAKE_DEDUPE_PRUNE_INTERVAL_MS = 15_000;
 
 export { createProcessSessionLifecycle };
 
@@ -179,6 +182,37 @@ function buildWakeTurnIngressText(opts: {
 	].join("\n");
 }
 
+function pruneOperatorWakeDedupeMap(opts: {
+	nowMs: number;
+	coalesceMs: number;
+	map: Map<string, number>;
+	lastPrunedAtMs: number;
+}): number {
+	if (opts.map.size === 0) {
+		return opts.lastPrunedAtMs;
+	}
+	const shouldPruneByTime = opts.nowMs - opts.lastPrunedAtMs >= OPERATOR_WAKE_DEDUPE_PRUNE_INTERVAL_MS;
+	const shouldPruneBySize = opts.map.size > OPERATOR_WAKE_DEDUPE_MAP_MAX_ENTRIES;
+	if (!shouldPruneByTime && !shouldPruneBySize) {
+		return opts.lastPrunedAtMs;
+	}
+
+	const retentionMs = Math.max(OPERATOR_WAKE_DEDUPE_MIN_RETENTION_MS, Math.max(0, opts.coalesceMs) * 4);
+	for (const [dedupeKey, tsMs] of opts.map.entries()) {
+		if (opts.nowMs - tsMs >= retentionMs) {
+			opts.map.delete(dedupeKey);
+		}
+	}
+	while (opts.map.size > OPERATOR_WAKE_DEDUPE_MAP_MAX_ENTRIES) {
+		const oldest = opts.map.keys().next().value;
+		if (typeof oldest !== "string" || oldest.length === 0) {
+			break;
+		}
+		opts.map.delete(oldest);
+	}
+	return opts.nowMs;
+}
+
 export function createContext(repoRoot: string): ServerContext {
 	const paths = getStorePaths(repoRoot);
 	const eventsStore = new FsJsonlStore<EventEnvelope>(paths.eventsPath);
@@ -200,6 +234,7 @@ function createServer(options: ServerOptions = {}) {
 
 	const operatorWakeCoalesceMs = toNonNegativeInt(options.operatorWakeCoalesceMs, DEFAULT_OPERATOR_WAKE_COALESCE_MS);
 	const operatorWakeLastByKey = new Map<string, number>();
+	let operatorWakeDedupeLastPrunedAtMs = 0;
 	const sessionLifecycle = options.sessionLifecycle ?? createProcessSessionLifecycle({ repoRoot });
 
 	const emitWakeDeliveryEvent = async (payload: Record<string, unknown>): Promise<void> => {
@@ -221,6 +256,12 @@ function createServer(options: ServerOptions = {}) {
 		}
 		const nowMs = Date.now();
 		const coalesceMs = Math.max(0, Math.trunc(opts.coalesceMs ?? operatorWakeCoalesceMs));
+		operatorWakeDedupeLastPrunedAtMs = pruneOperatorWakeDedupeMap({
+			nowMs,
+			coalesceMs,
+			map: operatorWakeLastByKey,
+			lastPrunedAtMs: operatorWakeDedupeLastPrunedAtMs,
+		});
 		const previous = operatorWakeLastByKey.get(dedupeKey);
 		if (typeof previous === "number" && nowMs - previous < coalesceMs) {
 			return { status: "coalesced", reason: "coalesced_window" };

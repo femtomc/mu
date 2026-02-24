@@ -52,6 +52,17 @@ export function createServerProgramCoordination(opts: {
 			}
 			return { status: "ok" };
 		},
+		onLifecycleEvent: async (event) => {
+			await opts.eventLog.emit("heartbeat_program.lifecycle", {
+				source: "mu-server.heartbeat-programs",
+				payload: {
+					action: event.action,
+					program_id: event.program_id,
+					message: event.message,
+					program: event.program,
+				},
+			});
+		},
 		onTickEvent: async (event) => {
 			await opts.eventLog.emit("heartbeat_program.tick", {
 				source: "mu-server.heartbeat-programs",

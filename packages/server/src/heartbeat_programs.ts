@@ -19,6 +19,27 @@ export type HeartbeatProgramSnapshot = {
 	last_error: string | null;
 };
 
+export type HeartbeatProgramLifecycleAction = "created" | "updated" | "deleted";
+
+export type HeartbeatProgramLifecycleEvent = {
+	ts_ms: number;
+	action: HeartbeatProgramLifecycleAction;
+	program_id: string;
+	message: string;
+	program: HeartbeatProgramSnapshot | null;
+};
+
+export type HeartbeatProgramStatusSnapshot = {
+	count: number;
+	enabled_count: number;
+	armed_count: number;
+	armed: Array<{
+		program_id: string;
+		every_ms: number;
+		last_triggered_at_ms: number | null;
+	}>;
+};
+
 export type HeartbeatProgramOperationResult = {
 	ok: boolean;
 	reason: "not_found" | "missing_target" | "not_running" | "failed" | null;
@@ -53,6 +74,7 @@ export type HeartbeatProgramRegistryOpts = {
 		triggeredAtMs: number;
 	}) => Promise<HeartbeatProgramDispatchResult>;
 	onTickEvent?: (event: HeartbeatProgramTickEvent) => void | Promise<void>;
+	onLifecycleEvent?: (event: HeartbeatProgramLifecycleEvent) => void | Promise<void>;
 };
 
 const HEARTBEAT_PROGRAMS_FILENAME = "heartbeats.jsonl";
@@ -138,6 +160,7 @@ export class HeartbeatProgramRegistry {
 	readonly #heartbeatScheduler: ActivityHeartbeatScheduler;
 	readonly #dispatchWake: HeartbeatProgramRegistryOpts["dispatchWake"];
 	readonly #onTickEvent: HeartbeatProgramRegistryOpts["onTickEvent"];
+	readonly #onLifecycleEvent: HeartbeatProgramRegistryOpts["onLifecycleEvent"];
 	readonly #nowMs: () => number;
 	readonly #programs = new Map<string, HeartbeatProgramSnapshot>();
 	#loaded: Promise<void> | null = null;
@@ -146,10 +169,14 @@ export class HeartbeatProgramRegistry {
 		this.#heartbeatScheduler = opts.heartbeatScheduler;
 		this.#dispatchWake = opts.dispatchWake;
 		this.#onTickEvent = opts.onTickEvent;
+		this.#onLifecycleEvent = opts.onLifecycleEvent;
 		this.#nowMs = opts.nowMs ?? defaultNowMs;
 		this.#store =
 			opts.store ??
 			new FsJsonlStore<HeartbeatProgramSnapshot>(join(getStorePaths(opts.repoRoot).storeDir, HEARTBEAT_PROGRAMS_FILENAME));
+		void this.#ensureLoaded().catch(() => {
+			// Best effort eager load for startup re-arming.
+		});
 	}
 
 	#scheduleId(programId: string): string {
@@ -161,6 +188,17 @@ export class HeartbeatProgramRegistry {
 			...program,
 			metadata: { ...program.metadata },
 		};
+	}
+
+	#normalizeEveryMs(raw: number): number {
+		if (!Number.isFinite(raw)) {
+			return 0;
+		}
+		const normalized = Math.max(0, Math.trunc(raw));
+		if (normalized <= 0) {
+			return 0;
+		}
+		return Math.max(this.#heartbeatScheduler.getMinIntervalMs(), normalized);
 	}
 
 	async #ensureLoaded(): Promise<void> {
@@ -177,6 +215,7 @@ export class HeartbeatProgramRegistry {
 			if (!normalized) {
 				continue;
 			}
+			normalized.every_ms = this.#normalizeEveryMs(normalized.every_ms);
 			this.#programs.set(normalized.program_id, normalized);
 		}
 		for (const program of this.#programs.values()) {
@@ -191,6 +230,7 @@ export class HeartbeatProgramRegistry {
 
 	#applySchedule(program: HeartbeatProgramSnapshot): void {
 		const scheduleId = this.#scheduleId(program.program_id);
+		program.every_ms = this.#normalizeEveryMs(program.every_ms);
 		if (!program.enabled || program.every_ms <= 0) {
 			this.#heartbeatScheduler.unregister(scheduleId);
 			return;
@@ -209,6 +249,13 @@ export class HeartbeatProgramRegistry {
 			return;
 		}
 		await this.#onTickEvent(event);
+	}
+
+	async #emitLifecycleEvent(event: HeartbeatProgramLifecycleEvent): Promise<void> {
+		if (!this.#onLifecycleEvent) {
+			return;
+		}
+		await this.#onLifecycleEvent(event);
 	}
 
 	async #tickProgram(programId: string, reason?: string): Promise<HeartbeatRunResult> {
@@ -297,6 +344,29 @@ export class HeartbeatProgramRegistry {
 			.map((program) => this.#snapshot(program));
 	}
 
+	public async status(): Promise<HeartbeatProgramStatusSnapshot> {
+		await this.#ensureLoaded();
+		const programs = sortPrograms([...this.#programs.values()]);
+		const armed = programs
+			.filter((program) => {
+				if (!program.enabled || program.every_ms <= 0) {
+					return false;
+				}
+				return this.#heartbeatScheduler.has(this.#scheduleId(program.program_id));
+			})
+			.map((program) => ({
+				program_id: program.program_id,
+				every_ms: program.every_ms,
+				last_triggered_at_ms: program.last_triggered_at_ms,
+			}));
+		return {
+			count: programs.length,
+			enabled_count: programs.filter((program) => program.enabled).length,
+			armed_count: armed.length,
+			armed,
+		};
+	}
+
 	public async get(programId: string): Promise<HeartbeatProgramSnapshot | null> {
 		await this.#ensureLoaded();
 		const program = this.#programs.get(programId.trim());
@@ -323,10 +393,9 @@ export class HeartbeatProgramRegistry {
 			title,
 			prompt: normalizePrompt(opts.prompt),
 			enabled: opts.enabled !== false,
-			every_ms:
-				typeof opts.everyMs === "number" && Number.isFinite(opts.everyMs)
-					? Math.max(0, Math.trunc(opts.everyMs))
-					: 15_000,
+			every_ms: this.#normalizeEveryMs(
+				typeof opts.everyMs === "number" && Number.isFinite(opts.everyMs) ? opts.everyMs : 15_000,
+			),
 			reason: opts.reason?.trim() || "scheduled",
 			metadata: sanitizeMetadata(opts.metadata),
 			created_at_ms: nowMs,
@@ -338,7 +407,17 @@ export class HeartbeatProgramRegistry {
 		this.#programs.set(program.program_id, program);
 		this.#applySchedule(program);
 		await this.#persist();
-		return this.#snapshot(program);
+		const snapshot = this.#snapshot(program);
+		await this.#emitLifecycleEvent({
+			ts_ms: nowMs,
+			action: "created",
+			program_id: program.program_id,
+			message: `heartbeat program created: ${program.title}`,
+			program: snapshot,
+		}).catch(() => {
+			// best effort only
+		});
+		return snapshot;
 	}
 
 	public async update(opts: {
@@ -366,7 +445,7 @@ export class HeartbeatProgramRegistry {
 			program.prompt = normalizePrompt(opts.prompt);
 		}
 		if (typeof opts.everyMs === "number" && Number.isFinite(opts.everyMs)) {
-			program.every_ms = Math.max(0, Math.trunc(opts.everyMs));
+			program.every_ms = this.#normalizeEveryMs(opts.everyMs);
 		}
 		if (typeof opts.reason === "string") {
 			program.reason = opts.reason.trim() || "scheduled";
@@ -377,10 +456,21 @@ export class HeartbeatProgramRegistry {
 		if (opts.metadata) {
 			program.metadata = sanitizeMetadata(opts.metadata);
 		}
-		program.updated_at_ms = Math.trunc(this.#nowMs());
+		const nowMs = Math.trunc(this.#nowMs());
+		program.updated_at_ms = nowMs;
 		this.#applySchedule(program);
 		await this.#persist();
-		return { ok: true, reason: null, program: this.#snapshot(program) };
+		const snapshot = this.#snapshot(program);
+		await this.#emitLifecycleEvent({
+			ts_ms: nowMs,
+			action: "updated",
+			program_id: program.program_id,
+			message: `heartbeat program updated: ${program.title}`,
+			program: snapshot,
+		}).catch(() => {
+			// best effort only
+		});
+		return { ok: true, reason: null, program: snapshot };
 	}
 
 	public async remove(programId: string): Promise<HeartbeatProgramOperationResult> {
@@ -393,10 +483,20 @@ export class HeartbeatProgramRegistry {
 		if (!program) {
 			return { ok: false, reason: "not_found", program: null };
 		}
+		const removed = this.#snapshot(program);
 		this.#heartbeatScheduler.unregister(this.#scheduleId(program.program_id));
 		this.#programs.delete(normalizedId);
 		await this.#persist();
-		return { ok: true, reason: null, program: this.#snapshot(program) };
+		await this.#emitLifecycleEvent({
+			ts_ms: Math.trunc(this.#nowMs()),
+			action: "deleted",
+			program_id: removed.program_id,
+			message: `heartbeat program deleted: ${removed.title}`,
+			program: removed,
+		}).catch(() => {
+			// best effort only
+		});
+		return { ok: true, reason: null, program: removed };
 	}
 
 	public async trigger(opts: {
