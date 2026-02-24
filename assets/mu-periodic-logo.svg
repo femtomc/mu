@@ -7,11 +7,11 @@
 
   <text
     id="mu-version"
-    x="64"
-    y="102"
+    x="56"
+    y="95"
     fill="#fe8019"
-    font-size="27"
-    letter-spacing="0.6"
+    font-size="30"
+    letter-spacing="0.5"
     font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
     font-weight="700"
   >
