@@ -22,19 +22,21 @@ As [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin
 ## The pitch for programmability
 
 `mu` is a "pi distribution" (analogous to Emacs or Neovim distributions -- layers which customize or extend the base system in a particular way): we take [`pi`](https://github.com/badlogic/pi-mono) and
-add a small set of capabilities -- good modular ideas inspired by (`beads`, `jules`, `openclaw`, etc). We retain the programmable spirit of pi, but
-_add programmable batteries_: we can emulate _anything_ added to any other harness (including Claude Code, Codex, your favorite *Claw) with a few compositional 
-ideas.
+add a small set of capabilities -- good modular ideas inspired by (`beads`, `jules`, `openclaw`, etc). 
 
-The ideas:
+We retain the programmable (customize it yourself) spirit of pi, and
+_add programmable batteries_:
+
 1. CLI issue tracker and forum
 2. Programmable (by your agent!) HUD
 3. Heartbeats and crons
-4. Skills first
 
-For instance, Claude's "plan mode" -- well, that's just a skill which directs the agent to work with the user to create a plan in the issue tracker, and communicate progress via the programmable HUD. Subagents ... skill, tmux, programmable HUD. Complex work orchestration project which you call GasTown? CLI issue tracker + forum, programmable HUD, heartbeats, and skills.
+These additions form a programmable substrate which you get to program via skills (already handled by `pi`).
 
-The core of this assistant is about _composition and modularity_ -- we want the minimal set of ingredients to express any harness idea.
+For instance, Claude's "plan mode" -- well, that's just a skill which directs the agent to work with the user to create a plan in the issue tracker, and communicate progress via the programmable HUD. Subagents ... skill, tmux, programmable HUD. Complex work orchestration project which you call Gas Town? CLI issue tracker + forum, programmable HUD, heartbeats, and skills.
+
+The core of this assistant is about _composition and modularity_ -- we want the minimal set of ingredients to express any harness idea. 
+Then, you can take our ingredients and do whatever you want with them
 
 ## Quickstart
 
