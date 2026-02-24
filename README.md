@@ -55,8 +55,10 @@ mu memory search --query "reload" --limit 20
 
 ## Skills are behavioral programs
 
-With the correct programmable substrate for your agent (_bash + CLI tools are all you need_), skills should be all that 
-you really need to customize. Skills can be dynamically improved, optimized by reflecting
+With the correct programmable substrate for your agent (_bash + CLI tools are all you need_), skills should 
+be the thing you customize most frequently. 
+
+Skills can be dynamically improved, optimized by reflecting
 on traces of interaction ... they're just Markdown, easy to change and modify, and immediately
 reflected in the agent's policy distribution.
 
