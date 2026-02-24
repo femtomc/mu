@@ -5,7 +5,7 @@
 `mu` is a personal assistant for technical work, designed for long-running execution,
 persistence, and reactivity.
 
-It is a _programmable_ assistant, in much the same spirit of systems like OpenClaw, but it's a bit more measured and focused on technical work. 
+It is a _programmable_ assistant, in much the same spirit of systems like OpenClaw (and, under the surface, [`pi`](https://github.com/badlogic/pi-mono) -- to which we owe a lot), but it's a bit more measured (in our claims, and our code) and focused on technical work.
 
 Features that are baked into other harnesses (Claude Code I'm looking at you) are expressed through a composition of modular primitives.
 
