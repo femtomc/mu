@@ -16,10 +16,12 @@ Install `mu` globally via npm:
 npm install -g @femtomc/mu
 ```
 
-`mu` requires an AI model to function. Export your API key before starting:
+`mu` requires an AI model to function. Export your API key before starting. `mu` supports multiple models; export the one(s) you intend to use:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-proj-..."
+export GOOGLE_API_KEY="AIza..."
 ```
 
 Start the `mu` server and attach a terminal operator session in your repository:
