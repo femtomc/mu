@@ -19,10 +19,7 @@ As [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin
 
 ## The pitch for programmability
 
-`mu` is a "pi distribution" (analogous to Emacs or Neovim distributions -- layers which customize or extend the base system in a particular way): we take [`pi`](https://github.com/badlogic/pi-mono) and
-add a small set of capabilities -- good modular ideas inspired by (`beads`, `jules`, `openclaw`, etc). 
-
-We retain the programmable (customize it yourself) spirit of pi, and
+`mu` is a "pi distribution" (analogous to Emacs or Neovim distributions -- layers which customize or extend the base system in a particular way): we take [`pi`](https://github.com/badlogic/pi-mono), retain the programmable (customize it yourself) spirit of pi, and
 _add programmable batteries_:
 
 1. CLI issue tracker and forum (thank [beads](https://github.com/steveyegge/beads) for the idea)
@@ -33,8 +30,8 @@ These additions form a programmable substrate which you get to program via skill
 
 For instance, Claude's "plan mode" -- well, that's just a skill which directs the agent to work with the user to create a plan in the issue tracker, and communicate progress via the programmable HUD. Subagents ... skill, tmux, programmable HUD. Complex work orchestration project which you call Gas Town? CLI issue tracker + forum, programmable HUD, heartbeats, and skills.
 
-The core of this assistant is about _composition and modularity_ -- we want the minimal set of ingredients to express any harness idea. 
-Then, you can take our ingredients and do whatever you want with them
+The core of this assistant is about _composition and modularity_ -- we want the minimal set of ingredients to express more complex harness ideas.
+Then, you can take our ingredients and do whatever you want with them.
 
 ## Quickstart
 
