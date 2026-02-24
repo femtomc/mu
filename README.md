@@ -53,16 +53,20 @@ mu forum post research:topic -m "found something" --author operator
 mu memory search --query "reload" --limit 20
 ```
 
-## Skills-first workflows
+## Skills are behavioral programs
 
-`mu` ships with bundled starter skills (bootstrapped into `~/.mu/skills/`
+With the correct programmable substrate for your agent, skills should be all that 
+you really need to customize. Skills can be dynamically improved, optimized by reflecting
+on traces of interaction ... they're just Markdown, easy to change and modify, and immediately
+reflected in the agent's policy distribution.
+
+`mu` ships with a set of starter skills (bootstrapped into `~/.mu/skills/`
 or `$MU_HOME/skills/` during store initialization):
 
-- `mu` — core operator workflow (bounded investigation, CLI-first state operations,
-  session/handoff patterns)
-- `memory` — cross-store context retrieval and index maintenance workflows
+- `mu` — core instruction concerning the `mu` CLI
+- `memory` — context retrieval and index maintenance
 - `planning` — investigate first, then draft/refine an issue DAG plan with user approval loops
-- `hud` — canonical HUD contract/workflow for `mu_hud` and `/mu hud`
+- `hud` — canonical HUD contract/workflow
 - `orchestration` — shared DAG planning/execution protocol used by both planning and subagents
 - `control-flow` — compositional loop/termination policy overlays (for example review-gated retries)
 - `subagents` — durable issue-driven subagent orchestration (heartbeat + tmux fan-out)
