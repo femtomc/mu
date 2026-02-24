@@ -17,7 +17,7 @@ It is a _programmable_ assistant: features that are baked into other harnesses a
 
 As [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) say, _bash is all you need_.
 
-## The pitch for programmability
+## The pitch for (natural language) programmability
 
 `mu` is a "pi distribution" (analogous to Emacs or Neovim distributions -- layers which customize or extend the base system in a particular way): we take [`pi`](https://github.com/badlogic/pi-mono), retain the programmable (customize it yourself) spirit of pi, and
 _add programmable batteries_:
@@ -26,7 +26,7 @@ _add programmable batteries_:
 2. Heartbeats and crons (thank [openclaw](https://github.com/openclaw/openclaw) for the idea)
 3. Programmable (by your agent!) HUD
 
-These additions form a programmable substrate which you get to program via skills (already handled by `pi`).
+These additions form a programmable substrate which you use to program via skills (already handled by `pi`).
 
 For instance, Claude's "plan mode" -- well, that's just a skill which directs the agent to work with the user to create a plan in the issue tracker, and communicate progress via the programmable HUD. Subagents ... skill, tmux, programmable HUD. Complex work orchestration project which you call Gas Town? CLI issue tracker + forum, programmable HUD, heartbeats, and skills.
 
