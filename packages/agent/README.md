@@ -22,7 +22,7 @@ These are loaded by runtime code and are the single source of truth for default 
 ## Bundled starter skills
 
 Bundled starter skills live under `packages/agent/prompts/skills/` and are bootstrapped
-into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
+into `~/.mu/skills/` (or `$MU_HOME/skills/`) by the CLI store-initialization path:
 
 - `mu`
 - `memory`
@@ -36,9 +36,10 @@ into `~/.mu/skills/` (or `$MU_HOME/skills/`) when missing:
 - `setup-discord`
 - `setup-telegram`
 - `setup-neovim`
+- `writing`
 
-Starter skills are version-synced by the CLI bootstrap path when users run `mu`
-commands after upgrading.
+Starter skills are version-synced by CLI bootstrap. Initial bootstrap seeds missing
+skills; bundled-version changes refresh installed starter skill files.
 
 ## Install
 

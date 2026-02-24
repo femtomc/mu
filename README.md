@@ -43,12 +43,13 @@ mu memory search --query "reload" --limit 20
 ## Skills-first workflows
 
 `mu` ships with bundled starter skills (bootstrapped into `~/.mu/skills/`
-or `$MU_HOME/skills/` when missing):
+or `$MU_HOME/skills/` during store initialization):
 
 - `mu` — core operator workflow (bounded investigation, CLI-first state operations,
   session/handoff patterns)
 - `memory` — cross-store context retrieval and index maintenance workflows
 - `planning` — investigate first, then draft/refine an issue DAG plan with user approval loops
+- `hud` — canonical HUD contract/workflow for `mu_hud` and `/mu hud`
 - `hierarchical-work-protocol` — shared DAG planning/execution protocol used by both planning and subagents
 - `subagents` — durable issue-driven subagent orchestration (heartbeat + tmux fan-out)
 - `heartbeats` — heartbeat program lifecycle for durable, bounded automation loops
@@ -57,13 +58,14 @@ or `$MU_HOME/skills/` when missing):
 - `setup-discord` — Discord adapter onboarding
 - `setup-telegram` — Telegram adapter onboarding
 - `setup-neovim` — Neovim frontend onboarding
+- `writing` — technical writing workflow for docs/READMEs/PR descriptions and operator-facing prose
 
-Starter skills are version-synced. When users upgrade `mu`, bundled starter skills in
-`~/.mu/skills/` (or `$MU_HOME/skills/`) are refreshed to the new bundled version.
+Starter skills are version-synced. Initial bootstrap seeds missing skills; bundled-version
+changes refresh installed starter skill files in `~/.mu/skills/` (or `$MU_HOME/skills/`).
 
 Recommended usage pattern:
 
-- Ask your operator to use a relevant skill (for historical context: "memory"; for DAG work: "planning", then "hierarchical-work-protocol", then "subagents"; for recurring automation: "heartbeats" and/or "crons").
+- Ask your operator to use a relevant skill (for historical context: `memory`; for DAG work: `planning` -> `hud` -> `hierarchical-work-protocol` -> `subagents`; for recurring automation: `heartbeats` and/or `crons`; for docs/prose: `writing`).
 
 Examples:
 
@@ -73,12 +75,14 @@ Examples:
 
 ### Skill loading + precedence
 
-- Mu global: `~/.mu/skills/`
+First-match precedence is:
+
 - Mu workspace: `~/.mu/workspaces/<workspace-id>/skills/`
+- Mu global: `~/.mu/skills/`
 - Repo top-level: `skills/`
 - Pi project/global (also loaded): `.pi/skills/`, `~/.pi/agent/skills/`
 
-On name collisions, mu-prefixed roots are preferred by default.
+On name collisions, roots earlier in this list win.
 
 ## Messaging setup (recommended)
 
