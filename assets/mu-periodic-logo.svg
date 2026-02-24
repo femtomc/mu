@@ -53,15 +53,15 @@
 
   <text
     x="256"
-    y="382"
+    y="390"
     fill="#b8bb26"
     text-anchor="middle"
-    font-size="72"
+    font-size="38"
     letter-spacing="1"
     font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
     font-weight="700"
   >
-    mu
+    assistant
   </text>
 
 </svg>
