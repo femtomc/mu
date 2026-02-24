@@ -22,6 +22,7 @@ npm install -g @femtomc/mu
 export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-proj-..."
 export GOOGLE_API_KEY="AIza..."
+export OPENROUTER_API_KEY="sk-or-v1-..."
 ```
 
 Start the `mu` server and attach a terminal operator session in your repository:
