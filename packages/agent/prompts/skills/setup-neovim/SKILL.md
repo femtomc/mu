@@ -9,6 +9,13 @@ Use this skill when the user asks to set up the Neovim messaging channel (`mu.nv
 
 Goal: get `:Mu ...` working against `mu` control-plane with minimal user-side editor actions.
 
+## Contents
+
+- [Required user-provided inputs](#required-user-provided-inputs)
+- [Agent-first workflow](#agent-first-workflow)
+- [Evaluation scenarios](#evaluation-scenarios)
+- [Safety and UX requirements](#safety-and-ux-requirements)
+
 ## Required user-provided inputs
 
 - Confirmation that `mu.nvim` is installed (or permission for the agent to provide install snippet)

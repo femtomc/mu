@@ -9,6 +9,13 @@ Use this skill when the user asks to set up Discord messaging for `mu`.
 
 Goal: get Discord `/mu` ingress working with minimal user effort outside the terminal.
 
+## Contents
+
+- [Required user-provided inputs](#required-user-provided-inputs)
+- [Agent-first workflow](#agent-first-workflow)
+- [Evaluation scenarios](#evaluation-scenarios)
+- [Notes and caveats](#notes-and-caveats)
+
 ## Required user-provided inputs
 
 - Public webhook base URL reachable by Discord (for example `https://mu.example.com`)

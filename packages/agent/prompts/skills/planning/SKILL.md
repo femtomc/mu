@@ -35,12 +35,6 @@ Default per-turn HUD loop:
 2. Keep checklist progress and root issue linkage synchronized with the live issue DAG.
 3. Emit `snapshot` (`compact` or `multiline`) and reflect it in your response.
 
-Planning teardown/handoff requirements:
-
-- On planning completion with no next HUD-owning skill:
-  - `{"action":"remove","hud_id":"planning"}` then `{"action":"off"}`
-- On handoff to another HUD-owning skill (for example `subagents`):
-  - remove `planning` doc first, keep HUD on, then next skill sets its own doc.
 
 ## HUD skill dependency
 

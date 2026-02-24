@@ -52,34 +52,18 @@ session lifecycle and bounded pass protocol.
 
 ## Minimal tmux execution loop
 
-Create/reuse a session:
+Follow the `Bounded execution protocol` in the `tmux` skill to create
+sessions, run commands with a completion marker, and capture output.
+
+Example session creation for a REPL:
 
 ```bash
 session="mu-code-py"
 tmux has-session -t "$session" 2>/dev/null || tmux new-session -d -s "$session" "python3 -q"
 ```
 
-Run one bounded pass with a completion marker:
-
-```bash
-token="__MU_DONE_$(date +%s%N)__"
-tmux send-keys -t "$session" "import math; print(math.sqrt(144))" C-m
-tmux send-keys -t "$session" "print('$token')" C-m
-
-for _ in $(seq 1 40); do
-  out="$(tmux capture-pane -pt "$session" -S -200)"
-  echo "$out" | grep -q "$token" && break
-  sleep 0.05
-done
-
-printf "%s\n" "$out"
-```
-
-Teardown when done:
-
-```bash
-tmux kill-session -t "$session"
-```
+Then send your REPL commands and the marker, according to the `tmux` skill.
+Teardown the session when finished.
 
 ## Context engineering contract
 

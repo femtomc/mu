@@ -216,10 +216,8 @@ Tool: `mu_hud`
   - actions: refresh/spawn command hooks (if desired)
   - metadata: include `style_preset:"subagents"` for consistent renderer emphasis
 - Example update:
-  - `{"action":"set","doc":{"v":1,"hud_id":"subagents","title":"Subagents HUD","scope":"mu-root-123","chips":[{"key":"health","label":"healthy","tone":"success"},{"key":"mode","label":"mode:operator","tone":"dim"},{"key":"paused","label":"paused:no","tone":"dim"}],"sections":[{"kind":"kv","title":"Queue","items":[{"key":"ready","label":"Ready","value":"3"},{"key":"active","label":"Active","value":"2"},{"key":"sessions","label":"Sessions","value":"2"}]},{"kind":"activity","title":"Activity","lines":["Spawned worker for mu-abc123","Posted ORCH_PASS update"]}],"actions":[{"id":"refresh","label":"Refresh","command_text":"/mu hud snapshot","kind":"secondary"}],"snapshot_compact":"HUD(subagents) · healthy · mode=operator · ready=3 · active=2","updated_at_ms":1771853115000,"metadata":{"style_preset":"subagents","spawn_mode":"operator","spawn_paused":false}}}`
-- Teardown/handoff is mandatory:
-  - On subagents completion with no next HUD-owning skill: remove `hud_id:"subagents"`, then turn HUD off.
-  - On transition to another HUD-owning skill: remove `subagents` doc first, keep HUD on, then let next skill set its own doc.
+  - `{"action":"set", "doc": {"hud_id":"subagents", ...}}` (see `hud` skill for exact shape)
+- Follow the HUD ownership and teardown protocol from `hud` skill for completion and handoff.
 
 ## Evaluation scenarios
 

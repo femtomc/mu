@@ -150,12 +150,7 @@ HUD usage is not optional for active control-flow execution.
 - If running control-flow standalone, own a dedicated `hud_id:"control-flow"` doc.
 - Update HUD state each bounded pass before reporting ORCH_PASS output.
 
-Teardown/handoff is mandatory:
-
-- On control-flow completion with no next HUD-owning skill:
-  - remove owned doc(s), then turn HUD off.
-- On handoff to another HUD-owning skill:
-  - remove current control-flow-owned doc(s), keep HUD on, then let next skill set its doc.
+- Follow the HUD ownership and teardown protocol from the `hud` skill when completing or handing off.
 
 ## Evaluation scenarios
 
