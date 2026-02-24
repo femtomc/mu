@@ -13,9 +13,7 @@ npm install -g @femtomc/mu
 `mu` is a personal assistant for technical work, designed for long-running execution,
 persistence, and reactivity.
 
-It is a _programmable_ assistant, in much the same spirit of systems like OpenClaw (and, under the surface, [`pi`](https://github.com/badlogic/pi-mono) -- to which we owe a lot), but it's a bit more measured (in our claims, and our code) and focused on technical work.
-
-Features that are baked into other harnesses (Claude Code I'm looking at you) are expressed through a composition of modular primitives.
+It is a _programmable_ assistant: features that are baked into other harnesses (Claude Code I'm looking at you) are expressed through a composition of modular primitives.
 
 As [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) say, _bash is all you need_.
 
@@ -27,9 +25,9 @@ add a small set of capabilities -- good modular ideas inspired by (`beads`, `jul
 We retain the programmable (customize it yourself) spirit of pi, and
 _add programmable batteries_:
 
-1. CLI issue tracker and forum
-2. Programmable (by your agent!) HUD
-3. Heartbeats and crons
+1. CLI issue tracker and forum (thank [beads](https://github.com/steveyegge/beads) for the idea)
+2. Heartbeats and crons (thank [openclaw](https://github.com/openclaw/openclaw) for the idea)
+3. Programmable (by your agent!) HUD
 
 These additions form a programmable substrate which you get to program via skills (already handled by `pi`).
 
