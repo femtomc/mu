@@ -5,6 +5,12 @@
 `mu` is a personal assistant for technical work, designed for long-running execution,
 persistence, and reactivity.
 
+It is a _programmable_ assistant, in much the same spirit of systems like OpenClaw, but it's a bit more measured and focused on technical work. 
+
+Features that are baked into other harnesses (Claude Code I'm looking at you) are expressed through a composition of modular primitives.
+
+As Mario and Armin say, _bash is all you need_.
+
 ---
 
 `mu` is a "pi distribution" (analogous to Emacs or Neovim distributions -- layers which customize or extend the base system in a particular way): we take [`pi`](https://github.com/badlogic/pi-mono) and
