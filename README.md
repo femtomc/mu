@@ -13,7 +13,7 @@ npm install -g @femtomc/mu
 `mu` is a personal assistant for technical work, designed for long-running execution,
 persistence, and reactivity.
 
-It is a _programmable_ assistant: features that are baked into other harnesses (Claude Code I'm looking at you) are expressed through a composition of modular primitives.
+It is a _programmable_ assistant: features that are baked into other harnesses are expressed through a composition of modular primitives.
 
 As [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) say, _bash is all you need_.
 
