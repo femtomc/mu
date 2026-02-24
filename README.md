@@ -29,7 +29,7 @@ You can also auth with various providers. I would not recommend Google or Anthro
 -- OpenAI is the only provider which has condoned this (and GPT 5.3 is _excellent_):
 
 ```bash
-mu login openai
+mu login openai-codex
 ```
 
 Start the `mu` server and attach a terminal operator session in your repository:
