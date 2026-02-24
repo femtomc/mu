@@ -1,8 +1,8 @@
+# mu
+
 <p align="center">
   <img src="assets/mu-periodic-logo.svg" alt="mu periodic table style logo" width="180" />
 </p>
-
-# mu
 
 **The little assistant that could.**
 
