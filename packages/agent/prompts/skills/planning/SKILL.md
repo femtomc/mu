@@ -61,6 +61,11 @@ If the user asks for explicit loop/termination behavior (for example review-gate
 retry rounds), load **`control-flow`** and encode policy via `flow:*` overlays
 without changing orchestration protocol semantics.
 
+If the user asks for per-issue model/provider/thinking recommendations based on
+live harness capabilities, load **`model-routing`** and encode policy via
+`route:*` overlays plus route packets (for example `ROUTE_POLICY`) without
+changing orchestration protocol semantics.
+
 ## Core contract
 
 1. **Investigate first**
@@ -71,6 +76,7 @@ without changing orchestration protocol semantics.
    - Create root and child issues that comply with `hierarchical-work.protocol/v1`.
    - Encode dependencies so the DAG reflects execution order and synth fan-in.
    - Add clear titles, scope, acceptance criteria, and protocol tags.
+   - When model specialization is required, attach explicit `route:*` intent tags/constraints to executable nodes.
 
 3. **Drive communication through the planning HUD**
    - Load `hud` and use its canonical `mu_hud`/`HudDoc` contract.
@@ -234,4 +240,5 @@ Required HUD updates during the loop:
 - Keep tasks small enough to complete in one focused pass.
 - Explicitly call out uncertain assumptions for user confirmation.
 - Prefer reversible plans and incremental checkpoints.
+- If `model-routing` is in scope, route intent/constraints are explicit and non-conflicting.
 - HUD state must be fresh, accurate, and aligned with user-visible status updates.

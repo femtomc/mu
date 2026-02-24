@@ -179,6 +179,7 @@ mu cron --help
 When work is multi-step and issue-graph driven, use `planning` to shape the DAG,
 then `hud` for canonical HUD behavior, then `orchestration` to keep DAG
 semantics consistent, then `control-flow` for explicit loop/termination policy,
+then `model-routing` for per-issue provider/model/thinking selection overlays,
 then `subagents` for durable execution.
 For REPL-driven exploration and context compression, use `code-mode`.
 For persistent terminal sessions and worker fan-out mechanics, use `tmux`.
@@ -206,6 +207,7 @@ For wall-clock schedules (one-shot, interval, cron-expression), use `crons`.
 - HUD contract/state updates across surfaces: **`hud`**
 - Shared DAG semantics for planning + execution: **`orchestration`**
 - Loop/termination policy overlays (review gates, retries, escalation): **`control-flow`**
+- Per-issue model/provider/thinking selection overlays: **`model-routing`**
 - Live REPL execution and context engineering via tmux: **`code-mode`**
 - Persistent tmux session management + worker fan-out primitives: **`tmux`**
 - Durable multi-agent orchestration: **`subagents`**
