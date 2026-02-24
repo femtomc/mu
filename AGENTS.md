@@ -92,14 +92,27 @@ Use this exact flow for `mu` releases so versioning, logos, tags, GitHub release
    - Tag format is `v<version>` (for example `v26.2.104`).
    - Create annotated tag at release commit and push it.
 
-7. **Cut GitHub release with notes**
-   - Use GitHub CLI generated notes:
-     ```bash
-     gh release create v<version> --title "v<version>" --generate-notes
-     ```
-   - If release already exists, update notes via `gh release edit`.
+7. **Draft release notes (required)**
+   - Build notes from the compare range `v<previous>..v<version>`.
+   - Include at least:
+     - Highlights
+     - User-visible changes (features/fixes)
+     - Operational/tooling changes (release, packaging, scripts)
+     - Docs/branding updates (if applicable)
+   - Save notes to a file (for example `/tmp/mu-v<version>-notes.md`).
 
-8. **Publish npm packages in dependency order**
+8. **Cut or update GitHub release with notes file**
+   - Preferred (explicit notes file):
+     ```bash
+     gh release create v<version> --title "v<version>" --notes-file <notes-file>
+     ```
+   - If the release already exists:
+     ```bash
+     gh release edit v<version> --notes-file <notes-file>
+     ```
+   - `--generate-notes` may be used as a starting point, but finalize with curated notes.
+
+9. **Publish npm packages in dependency order**
    - Preferred path:
      ```bash
      bun run publish:all
@@ -107,11 +120,11 @@ Use this exact flow for `mu` releases so versioning, logos, tags, GitHub release
    - If auth/workspace constraints block `bun publish`, pack tarballs with `bun pm pack` and publish via `npm publish <tgz>`.
    - Verify each package version on npm after publish.
 
-9. **Post-release verification**
+10. **Post-release verification**
    - Confirm:
      - `git status` clean
      - release tag exists locally/remotely
-     - GitHub release exists with notes
+     - GitHub release exists with final notes body
      - npm latest versions match target version
 
 ## File Editing Discipline
