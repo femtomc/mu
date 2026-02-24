@@ -25,6 +25,13 @@ export GOOGLE_API_KEY="AIza..."
 export OPENROUTER_API_KEY="sk-or-v1-..."
 ```
 
+You can also auth with various providers. I would not recommend Google or Anthropic, because it is against their ToS and they will ban you
+-- OpenAI is the only provider which has condoned this (and GPT 5.3 is _excellent_):
+
+```bash
+mu login openai
+```
+
 Start the `mu` server and attach a terminal operator session in your repository:
 
 ```bash
