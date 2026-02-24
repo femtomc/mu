@@ -50,6 +50,70 @@ bun test
 - Do not run destructive shell/git commands without explicit confirmation.
 - Do not run release/publish commands unless explicitly requested.
 
+## Release Workflow (only when explicitly requested)
+Use this exact flow for `mu` releases so versioning, logos, tags, GitHub releases, and npm stay in sync.
+
+1. **Confirm clean state + target version**
+   - Ensure `git status` is clean.
+   - Pick release version (CalVer) and use it consistently.
+
+2. **Bump versions in all publishable manifests**
+   - Update root `package.json` and package manifests:
+     - `packages/core/package.json`
+     - `packages/agent/package.json`
+     - `packages/control-plane/package.json`
+     - `packages/forum/package.json`
+     - `packages/issue/package.json`
+     - `packages/server/package.json`
+     - `packages/cli/package.json`
+
+3. **Sync versioned logo artifacts**
+   - Run:
+     ```bash
+     bun run logo:sync-version
+     ```
+   - Regenerate TUI logo PNG from SVG:
+     ```bash
+     convert assets/mu-periodic-logo.svg -resize 192x192 -colors 64 PNG8:packages/agent/assets/mu-tui-logo.png
+     ```
+
+4. **Refresh lock + validate**
+   - Run:
+     ```bash
+     bun run lock:refresh
+     bun run check
+     ```
+
+5. **Commit + push main**
+   - Commit release changes (version bump + logo sync + lockfile).
+   - Push `main`.
+
+6. **Create and push git tag**
+   - Tag format is `v<version>` (for example `v26.2.104`).
+   - Create annotated tag at release commit and push it.
+
+7. **Cut GitHub release with notes**
+   - Use GitHub CLI generated notes:
+     ```bash
+     gh release create v<version> --title "v<version>" --generate-notes
+     ```
+   - If release already exists, update notes via `gh release edit`.
+
+8. **Publish npm packages in dependency order**
+   - Preferred path:
+     ```bash
+     bun run publish:all
+     ```
+   - If auth/workspace constraints block `bun publish`, pack tarballs with `bun pm pack` and publish via `npm publish <tgz>`.
+   - Verify each package version on npm after publish.
+
+9. **Post-release verification**
+   - Confirm:
+     - `git status` clean
+     - release tag exists locally/remotely
+     - GitHub release exists with notes
+     - npm latest versions match target version
+
 ## File Editing Discipline
 - Read each file in full before modifying it.
 - Prefer surgical edits over full rewrites when practical.
