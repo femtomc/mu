@@ -12,7 +12,7 @@ ideas.
 
 The ideas:
 1. CLI issue tracker and forum
-2. Programmable HUD extension
+2. Programmable (by your agent!) HUD
 3. Heartbeats and crons
 4. Skills first
 
