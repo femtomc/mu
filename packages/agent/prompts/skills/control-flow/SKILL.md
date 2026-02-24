@@ -17,6 +17,7 @@ shared orchestration protocol.
 - [Transition table](#transition-table)
 - [Planning handoff contract](#planning-handoff-contract)
 - [Subagents/heartbeat execution contract](#subagentsheartbeat-execution-contract)
+- [HUD visibility and teardown](#hud-visibility-and-teardown)
 - [Evaluation scenarios](#evaluation-scenarios)
 
 ## Purpose
@@ -36,7 +37,7 @@ Load these skills before applying control-flow policies:
 - `orchestration` (protocol primitives/invariants)
 - `subagents` (durable execution runtime)
 - `heartbeats` and/or `crons` (scheduler clock)
-- `hud` (optional but recommended visibility surface)
+- `hud` (required visibility/handoff surface)
 
 ## Core contract
 
@@ -139,6 +140,22 @@ Run exactly one bounded control-flow transition pass, verify DAG state,
 post one ORCH_PASS, and stop. If validate is final, disable the supervising
 heartbeat and report completion.
 ```
+
+## HUD visibility and teardown
+
+HUD usage is not optional for active control-flow execution.
+
+- If subagents HUD is already active, publish control-flow state in that HUD doc
+  (for example policy mode, round counters, escalation state).
+- If running control-flow standalone, own a dedicated `hud_id:"control-flow"` doc.
+- Update HUD state each bounded pass before reporting ORCH_PASS output.
+
+Teardown/handoff is mandatory:
+
+- On control-flow completion with no next HUD-owning skill:
+  - remove owned doc(s), then turn HUD off.
+- On handoff to another HUD-owning skill:
+  - remove current control-flow-owned doc(s), keep HUD on, then let next skill set its doc.
 
 ## Evaluation scenarios
 

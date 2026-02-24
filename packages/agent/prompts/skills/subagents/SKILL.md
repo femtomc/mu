@@ -60,6 +60,7 @@ an overlay on orchestration primitives.
 ## HUD skill dependency
 
 Before emitting or mutating subagent HUD state, load **`hud`** and follow its canonical contract.
+HUD usage is not optional for this skill.
 
 - Treat `hud` as source-of-truth for generic `mu_hud` actions, `HudDoc` shape, and rendering constraints.
 - This subagents skill defines orchestration-specific conventions only (for example `hud_id: "subagents"`, queue/activity semantics).
@@ -117,11 +118,12 @@ mu forum read issue:<root-id> --limit 20 --pretty
 2. Choose exactly one action/primitive from `orchestration`.
 3. Apply it.
 4. Verify (`get`, `children`, `ready`, `validate`).
-5. Post a human-facing `ORCH_PASS` update to forum:
+5. Update `hud_id:"subagents"` (required) and emit a compact snapshot.
+6. Post a human-facing `ORCH_PASS` update to forum:
    - start with a short title that captures status in plain language
    - follow with one concise paragraph covering: project objective context, milestone moved this pass, impact, overall progress, and next high-level step
    - include queue/worker/drift internals only when diagnosing blocker/anomaly.
-6. Exit tick.
+7. Exit tick.
 
 Stop automation when `mu issues validate <root-id>` returns final.
 
@@ -186,7 +188,7 @@ done
 
 ## Subagents HUD
 
-Use HUD for user visibility. Truth still lives in issues/forum.
+HUD usage is required for this skill. Truth still lives in issues/forum.
 
 ```text
 /mu hud on
@@ -206,6 +208,9 @@ Tool: `mu_hud`
   - metadata: include `style_preset:"subagents"` for consistent renderer emphasis
 - Example update:
   - `{"action":"set","doc":{"v":1,"hud_id":"subagents","title":"Subagents HUD","scope":"mu-root-123","chips":[{"key":"health","label":"healthy","tone":"success"},{"key":"mode","label":"mode:operator","tone":"dim"},{"key":"paused","label":"paused:no","tone":"dim"}],"sections":[{"kind":"kv","title":"Queue","items":[{"key":"ready","label":"Ready","value":"3"},{"key":"active","label":"Active","value":"2"},{"key":"sessions","label":"Sessions","value":"2"}]},{"kind":"activity","title":"Activity","lines":["Spawned worker for mu-abc123","Posted ORCH_PASS update"]}],"actions":[{"id":"refresh","label":"Refresh","command_text":"/mu hud snapshot","kind":"secondary"}],"snapshot_compact":"HUD(subagents) · healthy · mode=operator · ready=3 · active=2","updated_at_ms":1771853115000,"metadata":{"style_preset":"subagents","spawn_mode":"operator","spawn_paused":false}}}`
+- Teardown/handoff is mandatory:
+  - On subagents completion with no next HUD-owning skill: remove `hud_id:"subagents"`, then turn HUD off.
+  - On transition to another HUD-owning skill: remove `subagents` doc first, keep HUD on, then let next skill set its own doc.
 
 ## Evaluation scenarios
 
@@ -227,6 +232,7 @@ Tool: `mu_hud`
 - Merge synth-node outputs into one final user-facing result.
 - Convert unresolved gaps into new child issues tagged `proto:hierarchical-work-v1`.
 - Tear down temporary tmux sessions.
+- Tear down/handoff `hud_id:"subagents"` ownership following the `hud` skill protocol.
 
 ## Safety
 

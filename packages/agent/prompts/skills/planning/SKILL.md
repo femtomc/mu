@@ -21,17 +21,26 @@ Use this skill when the user asks for planning, decomposition, or a staged execu
 ## Planning HUD is required
 
 For this skill, the planning HUD is the primary status/communication surface.
+HUD usage is not optional for planning turns.
 
 - Keep HUD state in sync with real planning progress.
 - Update HUD before and after each major planning turn.
 - Use `waiting_on_user`, `next_action`, and `blocker` to communicate exactly what the user needs to do.
 - Include a HUD snapshot in user-facing planning updates.
+- Teardown/handoff HUD state explicitly when planning ends or transitions to another HUD-owning skill.
 
 Default per-turn HUD loop:
 
 1. Emit a fresh `planning` HUD doc (`mu_hud` action `set` or `update`) with current `phase`, `waiting_on_user`, `next_action`, `blocker`, and `confidence` in sections/metadata.
 2. Keep checklist progress and root issue linkage synchronized with the live issue DAG.
 3. Emit `snapshot` (`compact` or `multiline`) and reflect it in your response.
+
+Planning teardown/handoff requirements:
+
+- On planning completion with no next HUD-owning skill:
+  - `{"action":"remove","hud_id":"planning"}` then `{"action":"off"}`
+- On handoff to another HUD-owning skill (for example `subagents`):
+  - remove `planning` doc first, keep HUD on, then next skill sets its own doc.
 
 ## HUD skill dependency
 
@@ -86,7 +95,10 @@ without changing orchestration protocol semantics.
    - Do not begin broad execution until the user signals satisfaction.
 
 6. **After user approval, ask user about next steps**
-   - On user acceptance of the plan, turn the planning HUD off.
+   - On user acceptance of the plan, teardown planning HUD ownership.
+   - If handing off to another HUD-owning skill (for example `subagents`), remove
+     `hud_id:"planning"` and keep HUD on for the next skill.
+   - If no next HUD-owning skill starts immediately, remove planning doc and turn HUD off.
    - Read the `subagents` skill and offer to supervise subagents to execute the plan.
 
 ## Suggested workflow
@@ -197,6 +209,7 @@ Required HUD updates during the loop:
 - Re-emit the `planning` HUD doc with current `phase`, checklist progress, `waiting_on_user`, `next_action`, and `blocker` after each meaningful planning step.
 - Use `{"action":"snapshot","snapshot_format":"compact"}` for concise user-facing HUD lines.
 - Keep `updated_at_ms` monotonic across updates so latest doc wins deterministically.
+- On plan completion/handoff, remove `hud_id:"planning"` and apply handoff/off semantics from the `hud` skill.
 
 ## Effective HUD usage heuristics
 

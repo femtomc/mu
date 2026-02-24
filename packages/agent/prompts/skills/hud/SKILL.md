@@ -18,6 +18,7 @@ This skill is the canonical HUD reference for:
 - [Core contract](#core-contract)
 - [HudDoc shape](#huddoc-shape)
 - [Recommended turn loop](#recommended-turn-loop)
+- [Ownership and teardown protocol](#ownership-and-teardown-protocol)
 - [Planning and subagents profiles](#planning-and-subagents-profiles)
 - [Determinism and rendering limits](#determinism-and-rendering-limits)
 - [Evaluation scenarios](#evaluation-scenarios)
@@ -135,6 +136,38 @@ Example checklist doc:
 
 4. Keep response text and HUD state aligned (no contradictions).
 
+## Ownership and teardown protocol
+
+HUD-using skills should treat HUD state as owned, explicit, and non-optional when
+that skill declares HUD-required behavior.
+
+1. **Own explicit `hud_id` values**
+   - Each active skill owns one canonical doc id (for example `planning`,
+     `subagents`, `control-flow`).
+   - Prefer `remove <hud_id>` over `clear` to avoid deleting other skills’ docs.
+
+2. **Teardown is mandatory at skill end**
+   - When a HUD-owning skill completes, remove its doc(s).
+   - If no other HUD-owning skill is active next, turn HUD off.
+
+3. **Teardown during HUD-to-HUD handoff**
+   - Remove current skill doc(s), keep HUD enabled, then let next skill set its doc.
+   - Never leave stale docs from prior skills during handoff.
+
+Example teardown/handoff calls:
+
+```json
+{"action":"remove","hud_id":"planning"}
+{"action":"set","doc":{"v":1,"hud_id":"subagents","title":"Subagents HUD","snapshot_compact":"HUD(subagents)","updated_at_ms":1771853115001}}
+```
+
+Example full teardown (no next HUD skill):
+
+```json
+{"action":"remove","hud_id":"subagents"}
+{"action":"off"}
+```
+
 ## Planning and subagents profiles
 
 Use profile-specific `hud_id` values:
@@ -168,4 +201,4 @@ If behavior is unclear, inspect implementation/tests before guessing:
    - Expected: `subagents` doc updates queue/activity/chips after each bounded pass.
 
 3. **HUD reset handoff**
-   - Expected: after phase completion, HUD is cleared or removed by `hud_id`, and status reflects no stale docs.
+   - Expected: after phase completion, owned HUD docs are removed; HUD is turned off when no next HUD skill is active, or ownership cleanly hands off to the next skill with no stale docs.
