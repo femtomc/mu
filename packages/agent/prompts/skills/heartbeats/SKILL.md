@@ -147,6 +147,7 @@ For hierarchical DAG execution, pair this skill with:
 - `planning`
 - `orchestration`
 - `control-flow` (when explicit loop/termination policy is required)
+- `model-routing` (when per-issue model/provider/thinking policy is required)
 - `subagents`
 
 For wall-clock scheduling semantics (`at`, `every`, `cron`), use `crons`.

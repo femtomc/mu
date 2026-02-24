@@ -13,7 +13,7 @@ This skill supersedes the previous `hierarchical-work-protocol` skill name.
 
 - [Protocol identity](#protocol-identity)
 - [Canonical tags and node roles](#canonical-tags-and-node-roles)
-- [Control-flow overlays](#control-flow-overlays)
+- [Policy overlays](#policy-overlays)
 - [Protocol primitives](#protocol-primitives)
 - [Required invariants](#required-invariants)
 - [Planning handoff contract](#planning-handoff-contract)
@@ -65,19 +65,24 @@ Node role rules:
    - Must include: `proto:hierarchical-work-v1`, `kind:ask`, `ctx:human`, `actor:user`
    - Must be non-executable (`node:agent` removed)
 
-## Control-flow overlays
+## Policy overlays
 
-Control-flow is layered on top of this protocol and should not redefine protocol
-primitives or `kind:*` semantics.
+Policy overlays are layered on top of this protocol and should not redefine
+protocol primitives or `kind:*` semantics.
 
 - Keep orchestration protocol tags/kinds as source-of-truth for structure.
-- Represent policy-specific behavior (for example review gates, retry rounds,
-  escalation thresholds) with `flow:*` tags/metadata.
-- Compile control-flow policy decisions into existing primitives (`spawn`, `fork`,
-  `expand`, `ask`, `complete`, `serial`) instead of introducing ad-hoc mutations.
+- Represent policy-specific behavior with overlay tags/metadata:
+  - loop/termination policy (for example review gates, retry rounds,
+    escalation thresholds): `flow:*`
+  - per-issue model/provider/thinking routing policy: `route:*`
+- Compile overlay decisions into existing primitives (`spawn`, `fork`, `expand`,
+  `ask`, `complete`, `serial`) and per-turn/per-session model overrides
+  (`mu exec` / `mu turn` with `--provider --model --thinking`) instead of
+  introducing ad-hoc mutations.
 
-Current compositional control-flow policy skill:
+Current compositional overlay skills:
 - `control-flow` (for example `flow:review-gated-v1` behavior)
+- `model-routing` (for example `route:model-routing-v1` behavior)
 
 ## Protocol primitives
 

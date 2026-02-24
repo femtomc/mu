@@ -56,7 +56,7 @@ mu memory search --query "reload" --limit 20
 Skills define the agent's behavior. Because `mu` relies on bash and CLI tools, you customize skills to change workflows. `mu` ships with a set of version-synced starter skills bootstrapped into `~/.mu/skills/`:
 
 - **Core**: `mu` (CLI usage), `memory` (context retrieval)
-- **Planning**: `planning` (issue DAGs), `hud` (HUD contract), `orchestration` (DAG protocol), `control-flow` (loop policies), `subagents` (durable orchestration)
+- **Planning**: `planning` (issue DAGs), `hud` (HUD contract), `orchestration` (DAG protocol), `control-flow` (loop policies), `model-routing` (per-issue model/provider/thinking overlays), `subagents` (durable orchestration)
 - **Sessions**: `code-mode` (REPLs), `tmux` (workspace fan-out)
 - **Automation**: `heartbeats` (lifecycle automation loops), `crons` (wall-clock scheduling)
 - **Messaging Setup**: `setup-slack`, `setup-discord`, `setup-telegram`, `setup-neovim`

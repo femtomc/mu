@@ -154,6 +154,7 @@ For DAG execution workloads, combine with:
 - `planning`
 - `orchestration`
 - `control-flow` (when explicit loop/termination policy is required)
+- `model-routing` (when per-issue model/provider/thinking policy is required)
 - `subagents`
 - `heartbeats` (for short-cadence wake loops)
 

@@ -19,7 +19,7 @@ This skill is the canonical HUD reference for:
 - [HudDoc shape](#huddoc-shape)
 - [Recommended turn loop](#recommended-turn-loop)
 - [Ownership and teardown protocol](#ownership-and-teardown-protocol)
-- [Planning and subagents profiles](#planning-and-subagents-profiles)
+- [Planning, subagents, and model-routing profiles](#planning-subagents-and-model-routing-profiles)
 - [Determinism and rendering limits](#determinism-and-rendering-limits)
 - [Evaluation scenarios](#evaluation-scenarios)
 
@@ -143,7 +143,7 @@ that skill declares HUD-required behavior.
 
 1. **Own explicit `hud_id` values**
    - Each active skill owns one canonical doc id (for example `planning`,
-     `subagents`, `control-flow`).
+     `subagents`, `control-flow`, `model-routing`).
    - Prefer `remove <hud_id>` over `clear` to avoid deleting other skills’ docs.
 
 2. **Teardown is mandatory at skill end**
@@ -168,12 +168,13 @@ Example full teardown (no next HUD skill):
 {"action":"off"}
 ```
 
-## Planning and subagents profiles
+## Planning, subagents, and model-routing profiles
 
 Use profile-specific `hud_id` values:
 
 - planning profile: `hud_id: "planning"`
 - subagents profile: `hud_id: "subagents"`
+- model-routing profile: `hud_id: "model-routing"`
 
 Treat these as conventions layered on top of this generic contract.
 
