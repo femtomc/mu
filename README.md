@@ -6,7 +6,7 @@
 
 `mu` is a programmable personal assistant for technical work, designed for long-running execution, persistence, and reactivity.
 
-Where other agents bake in complex logic, `mu` provides modular CLI primitives (issue tracking, heartbeats, programmable HUDs) that agents orchestrate using shell commands. This makes `mu` highly customizable: as [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) note, *bash is all you need*.
+Where other agents bake in complex logic, `mu` provides modular primitives (issue tracking, heartbeats, programmable HUDs) that agents orchestrate using shell commands. This makes `mu` highly customizable: as [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) note, *bash is all you need*.
 
 ## Quickstart
 
