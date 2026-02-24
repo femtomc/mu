@@ -13,7 +13,7 @@ It is a _programmable_ assistant, in much the same spirit of systems like OpenCl
 
 Features that are baked into other harnesses (Claude Code I'm looking at you) are expressed through a composition of modular primitives.
 
-As Mario and Armin say, _bash is all you need_.
+As [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) say, _bash is all you need_.
 
 ---
 
