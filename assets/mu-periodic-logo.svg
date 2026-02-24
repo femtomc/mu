@@ -6,26 +6,16 @@
   <rect x="44" y="44" width="424" height="424" rx="16" fill="none" stroke="#83a598" stroke-opacity="0.5" stroke-width="3" />
 
   <text
-    x="70"
-    y="106"
+    id="mu-version"
+    x="64"
+    y="102"
     fill="#fe8019"
-    font-size="42"
+    font-size="27"
+    letter-spacing="0.6"
     font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
     font-weight="700"
   >
-    119
-  </text>
-
-  <text
-    x="442"
-    y="106"
-    fill="#fe8019"
-    text-anchor="end"
-    font-size="34"
-    font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-    font-weight="600"
-  >
-    315
+    26.2.103
   </text>
 
   <text
