@@ -20,11 +20,11 @@
     x="70"
     y="106"
     fill="#bbf7d0"
-    font-size="46"
+    font-size="42"
     font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
     font-weight="700"
   >
-    00
+    119
   </text>
 
   <text
@@ -32,11 +32,11 @@
     y="106"
     fill="#bbf7d0"
     text-anchor="end"
-    font-size="38"
+    font-size="34"
     font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
     font-weight="600"
   >
-    ∞
+    315
   </text>
 
   <text
@@ -64,16 +64,4 @@
     mu
   </text>
 
-  <text
-    x="256"
-    y="436"
-    fill="#9ca3af"
-    text-anchor="middle"
-    font-size="28"
-    letter-spacing="4"
-    font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-    font-weight="500"
-  >
-    ASSISTANT
-  </text>
 </svg>
