@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 type CmdResult = { code: number; stdout: string; stderr: string };
+type PackedPackage = { name: string; dir: string };
 
 function repoRootFromHere(): string {
 	return resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -58,8 +59,13 @@ async function main(): Promise<void> {
 		join(repoRoot, "packages/core/dist/browser/index.d.ts"),
 		join(repoRoot, "packages/agent/dist/index.js"),
 		join(repoRoot, "packages/agent/dist/index.d.ts"),
+		join(repoRoot, "packages/control-plane/dist/index.js"),
+		join(repoRoot, "packages/control-plane/dist/index.d.ts"),
 		join(repoRoot, "packages/forum/dist/index.js"),
 		join(repoRoot, "packages/issue/dist/index.js"),
+		join(repoRoot, "packages/server/dist/index.js"),
+		join(repoRoot, "packages/server/dist/index.d.ts"),
+		join(repoRoot, "packages/server/dist/cli.js"),
 		join(repoRoot, "packages/cli/dist/index.js"),
 		join(repoRoot, "packages/cli/dist/cli.js"),
 	];
@@ -76,32 +82,49 @@ async function main(): Promise<void> {
 		await mkdir(packDir, { recursive: true });
 		await mkdir(projDir, { recursive: true });
 
-		const pkgs = [
+		const pkgs: PackedPackage[] = [
 			{ name: "@femtomc/mu-core", dir: join(repoRoot, "packages/core") },
 			{ name: "@femtomc/mu-agent", dir: join(repoRoot, "packages/agent") },
+			{ name: "@femtomc/mu-control-plane", dir: join(repoRoot, "packages/control-plane") },
 			{ name: "@femtomc/mu-forum", dir: join(repoRoot, "packages/forum") },
 			{ name: "@femtomc/mu-issue", dir: join(repoRoot, "packages/issue") },
+			{ name: "@femtomc/mu-server", dir: join(repoRoot, "packages/server") },
 			{ name: "@femtomc/mu", dir: join(repoRoot, "packages/cli") },
-		] as const;
+		];
 
-		const tarballs: string[] = [];
+		const dependencyTarballs: Record<string, string> = {};
 		for (const p of pkgs) {
-			const tgz = await bunPack(p.dir, packDir);
-			tarballs.push(tgz);
+			dependencyTarballs[p.name] = await bunPack(p.dir, packDir);
 		}
+
+		// Force all internal transitive dependencies to resolve from freshly packed
+		// tarballs instead of pulling same-version artifacts from npm.
+		const overrides = Object.fromEntries(
+			Object.entries(dependencyTarballs).filter(([name]) => name !== "@femtomc/mu"),
+		);
 
 		await writeFile(
 			join(projDir, "package.json"),
-			JSON.stringify({ name: "mu-pack-smoke", private: true, type: "module" }, null, 2) + "\n",
+			JSON.stringify(
+				{
+					name: "mu-pack-smoke",
+					private: true,
+					type: "module",
+					dependencies: dependencyTarballs,
+					overrides,
+				},
+				null,
+				2,
+			) + "\n",
 			"utf8",
 		);
 
-		const install = await runCmd("bun", ["install", ...tarballs], { cwd: projDir });
+		const install = await runCmd("bun", ["install"], { cwd: projDir });
 		if (install.code !== 0) {
 			throw new Error(`bun install failed (code=${install.code})\n${install.stderr || install.stdout}`);
 		}
 
-		const smokeMjs = `import { newRunId } from "@femtomc/mu-core";
+		const smokeMjs = `import { newRunId, parseUiDoc } from "@femtomc/mu-core";
 import { CommandContextResolver } from "@femtomc/mu-agent";
 import { readJsonl } from "@femtomc/mu-core/node";
 import { LocalStorageJsonlStore } from "@femtomc/mu-core/browser";
@@ -110,6 +133,7 @@ import { IssueStore } from "@femtomc/mu-issue";
 import { run } from "@femtomc/mu";
 
 if (typeof newRunId !== "function") throw new Error("@femtomc/mu-core missing newRunId");
+if (typeof parseUiDoc !== "function") throw new Error("@femtomc/mu-core missing parseUiDoc");
 if (typeof CommandContextResolver !== "function") throw new Error("@femtomc/mu-agent missing CommandContextResolver");
 if (typeof readJsonl !== "function") throw new Error("@femtomc/mu-core/node missing readJsonl");
 if (typeof LocalStorageJsonlStore !== "function") throw new Error("@femtomc/mu-core/browser missing LocalStorageJsonlStore");
