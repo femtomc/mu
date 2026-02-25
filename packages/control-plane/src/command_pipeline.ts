@@ -1,4 +1,4 @@
-import { normalizeHudDocs } from "@femtomc/mu-core";
+import { normalizeHudDocs, normalizeUiDocs } from "@femtomc/mu-core";
 import { ChannelSchema, type IdentityBinding, IdentityStore, TERMINAL_IDENTITY_BINDING } from "./identity_store.js";
 import {
 	allowsConversationalIngressForInbound,
@@ -17,6 +17,7 @@ function idempotencyTtlMs(): number {
 }
 
 const COMMAND_PIPELINE_HUD_DOCS_MAX = 16;
+const COMMAND_PIPELINE_UI_DOCS_MAX = 16;
 
 function normalizeOperatorMessage(message: string): string {
 	const trimmed = message.trim();
@@ -28,6 +29,14 @@ function normalizeOperatorMessage(message: string): string {
 
 function normalizedHudDocsForPipeline(input: unknown) {
 	const docs = normalizeHudDocs(input, { maxDocs: COMMAND_PIPELINE_HUD_DOCS_MAX });
+	if (docs.length === 0) {
+		return undefined;
+	}
+	return docs;
+}
+
+function normalizedUiDocsForPipeline(input: unknown) {
+	const docs = normalizeUiDocs(input, { maxDocs: COMMAND_PIPELINE_UI_DOCS_MAX });
 	if (docs.length === 0) {
 		return undefined;
 	}
@@ -136,6 +145,7 @@ export class ControlPlaneCommandPipeline {
 					kind: "operator_response",
 					message: normalizeOperatorMessage(decision.message),
 					hud_docs: normalizedHudDocsForPipeline(decision.hud_docs),
+					ui_docs: normalizedUiDocsForPipeline(decision.ui_docs),
 				};
 			case "reject":
 				if (decision.reason === "operator_cancelled") {
@@ -147,6 +157,7 @@ export class ControlPlaneCommandPipeline {
 					kind: "operator_response",
 					message: normalizeOperatorMessage(decision.commandText),
 					hud_docs: normalizedHudDocsForPipeline(decision.hud_docs),
+					ui_docs: normalizedUiDocsForPipeline(decision.ui_docs),
 				};
 		}
 	}

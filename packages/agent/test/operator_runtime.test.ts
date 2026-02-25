@@ -10,7 +10,7 @@ import {
 	type MessagingOperatorIdentityBinding,
 	type MessagingOperatorInboundEnvelope,
 } from "@femtomc/mu-agent";
-import type { HudDoc } from "@femtomc/mu-core";
+import type { HudDoc, UiDoc } from "@femtomc/mu-core";
 
 function mkInbound(conversationId: string): MessagingOperatorInboundEnvelope {
 	return {
@@ -62,6 +62,28 @@ function mkHudDoc(overrides: Partial<HudDoc> = {}): HudDoc {
 		actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu hud snapshot", kind: "secondary" }],
 		snapshot_compact: "HUD(plan) · phase=reviewing",
 		updated_at_ms: 123,
+		metadata: {},
+		...overrides,
+	};
+}
+
+function mkUiDoc(overrides: Partial<UiDoc> = {}): UiDoc {
+	return {
+		v: 1,
+		ui_id: "ui:panel",
+		title: "Panel",
+		summary: "Panel summary",
+		components: [
+			{
+				kind: "text",
+				id: "text-1",
+				text: "Panel contents",
+				metadata: {},
+			},
+		],
+		actions: [],
+		revision: { id: "rev:1", version: 1 },
+		updated_at_ms: 100,
 		metadata: {},
 		...overrides,
 	};
@@ -138,6 +160,32 @@ test("MessagingOperatorRuntime forwards hud_docs from backend responses", async 
 		}
 		expect(decision.message).toBe("ok");
 		expect(decision.hud_docs).toEqual([hudDoc]);
+	} finally {
+		await runtime.stop();
+	}
+});
+
+	test("MessagingOperatorRuntime forwards ui_docs from backend responses", async () => {
+	const uiDoc = mkUiDoc();
+	const runtime = new MessagingOperatorRuntime({
+		backend: {
+			runTurn: async () => ({
+				kind: "respond",
+				message: "ui ready",
+				ui_docs: [uiDoc],
+			}),
+		},
+		sessionIdFactory: () => "session-ui",
+		turnIdFactory: () => "turn-ui",
+	});
+	try {
+		const decision = await runtime.handleInbound({ inbound: mkInbound("chat-ui"), binding: mkBinding() });
+		expect(decision.kind).toBe("response");
+		if (decision.kind !== "response") {
+			throw new Error(`expected response decision, got ${decision.kind}`);
+		}
+		expect(decision.message).toBe("ui ready");
+		expect(decision.ui_docs).toEqual([uiDoc]);
 	} finally {
 		await runtime.stop();
 	}

@@ -10,6 +10,45 @@ import {
 	submitFrontendIngress,
 } from "@femtomc/mu-control-plane";
 
+const FULL_UI_COMPONENT_SUPPORT = {
+	text: true,
+	list: true,
+	key_value: true,
+	divider: true,
+} as const;
+
+const TEXT_ONLY_UI_COMPONENT_SUPPORT = {
+	text: true,
+	list: false,
+	key_value: false,
+	divider: false,
+} as const;
+
+const CHANNEL_UI_CAPABILITIES = {
+	slack: {
+		supported: true,
+		reason: null,
+		components: FULL_UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+	neovim: {
+		supported: true,
+		reason: null,
+		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+} as const;
+
+function expectedUiCapability(channel: keyof typeof CHANNEL_UI_CAPABILITIES) {
+	return CHANNEL_UI_CAPABILITIES[channel];
+}
+
 describe("frontend client bootstrap", () => {
 	test("readMuServerDiscovery returns null when discovery file is missing", async () => {
 		const repoRoot = await mkdtemp(join(tmpdir(), "mu-frontend-client-"));
@@ -58,6 +97,7 @@ describe("frontend client bootstrap", () => {
 								outbound_delivery: { supported: true, configured: false, reason: "slack_bot_token_missing" },
 								inbound_attachment_download: { supported: true, configured: false, reason: "slack_bot_token_missing" },
 							},
+							ui: expectedUiCapability("slack"),
 						},
 						{
 							channel: "neovim",
@@ -79,6 +119,7 @@ describe("frontend client bootstrap", () => {
 									reason: "channel_attachment_ingress_unsupported",
 								},
 							},
+							ui: expectedUiCapability("neovim"),
 						},
 					],
 				});

@@ -1,5 +1,16 @@
 import type { MessagingOperatorBackend, MessagingOperatorRuntime } from "@femtomc/mu-agent";
-import { applyHudStylePreset, normalizeHudDocs, type HudDoc, type HudTextStyle, type HudTone } from "@femtomc/mu-core";
+import {
+	applyHudStylePreset,
+	normalizeHudDocs,
+	normalizeUiDocs,
+	type HudDoc,
+	type HudTextStyle,
+	type HudTone,
+	type UiAction,
+	type UiComponent,
+	type UiDoc,
+	type UiEvent,
+} from "@femtomc/mu-core";
 import {
 	type AdapterIngressResult,
 	type AttachmentDescriptor,
@@ -11,11 +22,16 @@ import {
 	ControlPlaneRuntime,
 	type ControlPlaneSignalObserver,
 	type GenerationTelemetryRecorder,
+	buildSanitizedUiEventForAction,
 	buildSlackHudActionId,
 	getControlPlanePaths,
+	issueUiDocActionPayloads,
 	type OutboxDeliveryHandlerResult,
 	type OutboxRecord,
 	TelegramControlPlaneAdapterSpec,
+	uiActionPayloadContextFromOutboxRecord,
+	uiDocActionPayloadKey,
+	UiCallbackTokenStore,
 } from "@femtomc/mu-control-plane";
 import { DEFAULT_MU_CONFIG } from "./config.js";
 import {
@@ -296,8 +312,19 @@ const SLACK_BLOCK_TEXT_MAX_LEN = 3_000;
 const SLACK_BLOCKS_MAX = 50;
 const SLACK_ACTIONS_MAX_PER_BLOCK = 5;
 const SLACK_ACTIONS_MAX_TOTAL = 20;
+const SLACK_ACTION_VALUE_MAX_CHARS = 2_000;
+const SLACK_UI_EVENT_ACTION_ID = buildSlackHudActionId("ui_event");
 const SLACK_DOCS_MAX = 3;
 const SLACK_SECTION_LINE_MAX = 8;
+const UI_DOCS_MAX = 3;
+const UI_CALLBACK_TOKEN_TTL_MS = 15 * 60_000;
+export const UI_COMPONENT_SUPPORT = {
+	text: true,
+	list: true,
+	key_value: true,
+	divider: true,
+} as const;
+export const UI_ACTIONS_UNSUPPORTED_REASON = "ui_actions_not_implemented";
 
 function hudDocsForPresentation(input: unknown, maxDocs: number): HudDoc[] {
 	return normalizeHudDocs(input, { maxDocs }).map((doc) => applyHudStylePreset(doc) ?? doc);
@@ -424,6 +451,93 @@ function hudDocSectionLines(doc: HudDoc): string[] {
 	return lines;
 }
 
+function uiDocComponentLines(doc: UiDoc): string[] {
+	const lines: string[] = [];
+	const components = [...doc.components].sort((a, b) => a.id.localeCompare(b.id));
+	for (const component of components) {
+		switch (component.kind) {
+			case "text": {
+				lines.push(component.text);
+				break;
+			}
+			case "list": {
+				if (component.title) {
+					lines.push(component.title);
+				}
+				for (const item of component.items) {
+					lines.push(`• ${item.label}${item.detail ? ` · ${item.detail}` : ""}`);
+				}
+				break;
+			}
+			case "key_value": {
+				if (component.title) {
+					lines.push(component.title);
+				}
+				for (const row of component.rows) {
+					lines.push(`• ${row.key}: ${row.value}`);
+				}
+				break;
+			}
+			case "divider": {
+				lines.push("────────");
+				break;
+			}
+		}
+	}
+	return lines;
+}
+
+function uiDocActionLines(doc: UiDoc): string[] {
+	const actions = [...doc.actions].sort((a, b) => a.id.localeCompare(b.id));
+	return actions.map((action) => {
+		const parts = [`• ${action.label}`];
+		if (action.description) {
+			parts.push(action.description);
+		}
+		parts.push(`(id=${action.id})`);
+		return parts.join(" ");
+	});
+}
+
+export function uiDocTextLines(doc: UiDoc, opts: { includeActions?: boolean } = {}): string[] {
+	const lines = [`UI · ${doc.title}`];
+	if (doc.summary) {
+		lines.push(doc.summary);
+	}
+	const componentLines = uiDocComponentLines(doc);
+	if (componentLines.length > 0) {
+		lines.push(...componentLines);
+	}
+	if (opts.includeActions !== false) {
+		const actionLines = uiDocActionLines(doc);
+		if (actionLines.length > 0) {
+			lines.push("Actions:");
+			lines.push(...actionLines);
+		}
+	}
+	return lines;
+}
+
+export function uiDocsTextFallback(uiDocs: readonly UiDoc[]): string {
+	if (uiDocs.length === 0) {
+		return "";
+	}
+	const sections = uiDocs.map((doc) => uiDocTextLines(doc).join("\n"));
+	return sections.join("\n\n");
+}
+
+function appendUiDocText(body: string, uiDocs: readonly UiDoc[]): string {
+	const fallback = uiDocsTextFallback(uiDocs);
+	if (!fallback) {
+		return body;
+	}
+	const trimmed = body.trim();
+	if (trimmed.length === 0) {
+		return fallback;
+	}
+	return `${trimmed}\n\n${fallback}`;
+}
+
 function hudActionButtons(doc: HudDoc): SlackMessageButtonElement[] {
 	return doc.actions.slice(0, SLACK_ACTIONS_MAX_TOTAL).map((action) => ({
 		type: "button",
@@ -431,9 +545,51 @@ function hudActionButtons(doc: HudDoc): SlackMessageButtonElement[] {
 			type: "plain_text",
 			text: truncateSlackText(action.label, 75),
 		},
-		value: truncateSlackText(action.command_text, 2_000),
+		value: truncateSlackText(action.command_text, SLACK_ACTION_VALUE_MAX_CHARS),
 		action_id: buildSlackHudActionId(action.id),
 	}));
+}
+
+function uiDocActionTextLine(action: UiAction, opts: { suffix?: string } = {}): string {
+	const parts = [`• ${action.label}`];
+	if (action.description) {
+		parts.push(action.description);
+	}
+	parts.push(`(id=${action.id}${opts.suffix ? `; ${opts.suffix}` : ""})`);
+	return parts.join(" ");
+}
+
+function uiDocActionButtons(
+	doc: UiDoc,
+	actionPayloadsByKey: ReadonlyMap<string, string>,
+): {
+	buttons: SlackMessageButtonElement[];
+	fallbackLines: string[];
+} {
+	const buttons: SlackMessageButtonElement[] = [];
+	const fallbackLines: string[] = [];
+	const actions = [...doc.actions].sort((a, b) => a.id.localeCompare(b.id)).slice(0, SLACK_ACTIONS_MAX_TOTAL);
+	for (const action of actions) {
+		const payload = actionPayloadsByKey.get(uiDocActionPayloadKey(doc.ui_id, action.id));
+		if (!payload) {
+			fallbackLines.push(uiDocActionTextLine(action, { suffix: "interactive unavailable" }));
+			continue;
+		}
+		if (payload.length > SLACK_ACTION_VALUE_MAX_CHARS) {
+			fallbackLines.push(uiDocActionTextLine(action, { suffix: "interactive payload too large" }));
+			continue;
+		}
+		buttons.push({
+			type: "button",
+			text: {
+				type: "plain_text",
+				text: truncateSlackText(action.label, 75),
+			},
+			value: payload,
+			action_id: SLACK_UI_EVENT_ACTION_ID,
+		});
+	}
+	return { buttons, fallbackLines };
 }
 
 export function splitSlackMessageText(text: string, maxLen: number = SLACK_MESSAGE_MAX_LEN): string[] {
@@ -457,15 +613,24 @@ export function splitSlackMessageText(text: string, maxLen: number = SLACK_MESSA
 	return chunks;
 }
 
-function slackBlocksForOutboxRecord(record: OutboxRecord, body: string): SlackLayoutBlock[] | undefined {
+function slackBlocksForOutboxRecord(
+	record: OutboxRecord,
+	body: string,
+	uiDocs: readonly UiDoc[],
+	opts: {
+		uiDocActionPayloadsByKey?: ReadonlyMap<string, string>;
+	} = {},
+): SlackLayoutBlock[] | undefined {
 	const hudDocs = hudDocsForPresentation(record.envelope.metadata?.hud_docs, SLACK_DOCS_MAX);
-	if (hudDocs.length === 0) {
+	if (hudDocs.length === 0 && uiDocs.length === 0) {
 		return undefined;
 	}
+	const uiDocActionPayloadsByKey = opts.uiDocActionPayloadsByKey ?? new Map<string, string>();
 	const blocks: SlackLayoutBlock[] = [];
+	const headerText = body.trim().length > 0 ? body : "Update";
 	blocks.push({
 		type: "section",
-		text: { type: "mrkdwn", text: truncateSlackText(body) },
+		text: { type: "mrkdwn", text: truncateSlackText(headerText) },
 	});
 
 	for (const doc of hudDocs) {
@@ -494,6 +659,46 @@ function slackBlocksForOutboxRecord(record: OutboxRecord, body: string): SlackLa
 			blocks.push({
 				type: "actions",
 				elements: buttons.slice(idx, idx + SLACK_ACTIONS_MAX_PER_BLOCK),
+			});
+		}
+	}
+
+	for (const doc of uiDocs) {
+		if (blocks.length >= SLACK_BLOCKS_MAX) {
+			break;
+		}
+		const lines = uiDocTextLines(doc, { includeActions: false });
+		blocks.push({
+			type: "context",
+			elements: [{ type: "mrkdwn", text: truncateSlackText(lines[0]) }],
+		});
+		for (const line of lines.slice(1)) {
+			if (blocks.length >= SLACK_BLOCKS_MAX) {
+				break;
+			}
+			blocks.push({
+				type: "section",
+				text: { type: "mrkdwn", text: truncateSlackText(line) },
+			});
+		}
+
+		const actionRender = uiDocActionButtons(doc, uiDocActionPayloadsByKey);
+		for (let idx = 0; idx < actionRender.buttons.length; idx += SLACK_ACTIONS_MAX_PER_BLOCK) {
+			if (blocks.length >= SLACK_BLOCKS_MAX) {
+				break;
+			}
+			blocks.push({
+				type: "actions",
+				elements: actionRender.buttons.slice(idx, idx + SLACK_ACTIONS_MAX_PER_BLOCK),
+			});
+		}
+		if (actionRender.fallbackLines.length > 0 && blocks.length < SLACK_BLOCKS_MAX) {
+			blocks.push({
+				type: "section",
+				text: {
+					type: "mrkdwn",
+					text: truncateSlackText(`Actions:\n${actionRender.fallbackLines.join("\n")}`),
+				},
 			});
 		}
 	}
@@ -529,64 +734,157 @@ function utf8ByteLength(value: string): number {
 	return new TextEncoder().encode(value).length;
 }
 
-function telegramTextForOutboxRecord(record: OutboxRecord, body: string): string {
+function telegramTextForOutboxRecord(record: OutboxRecord, body: string, uiDocs: readonly UiDoc[]): string {
 	const hudDocs = hudDocsForPresentation(record.envelope.metadata?.hud_docs, TELEGRAM_DOCS_MAX);
-	if (hudDocs.length === 0) {
-		return body;
-	}
-
 	const lines: string[] = [body.trim()];
-	for (const doc of hudDocs) {
-		lines.push("", `HUD · ${doc.title}`);
-		for (const sectionLine of hudDocSectionLines(doc)) {
-			lines.push(stripSlackMrkdwn(sectionLine));
+	if (hudDocs.length > 0) {
+		for (const doc of hudDocs) {
+			lines.push("", `HUD · ${doc.title}`);
+			for (const sectionLine of hudDocSectionLines(doc)) {
+				lines.push(stripSlackMrkdwn(sectionLine));
+			}
 		}
+	}
+	const uiFallback = uiDocsTextFallback(uiDocs);
+	if (uiFallback) {
+		lines.push("", uiFallback);
 	}
 	return lines.join("\n").trim();
 }
 
-type TelegramCallbackDataEncoder = (commandText: string) => Promise<string>;
+type TelegramCallbackDataEncoder = (commandText: string, opts: { record: OutboxRecord; uiEvent?: UiEvent }) => Promise<string>;
 
-async function compileTelegramHudActions(opts: {
-	record: OutboxRecord;
-	encodeCallbackData?: TelegramCallbackDataEncoder;
-}): Promise<{ replyMarkup?: TelegramInlineKeyboardMarkup; overflowText: string }> {
-	const hudDocs = hudDocsForPresentation(opts.record.envelope.metadata?.hud_docs, TELEGRAM_DOCS_MAX);
-	if (hudDocs.length === 0) {
-		return { overflowText: "" };
+type TelegramActionRender = {
+	buttonEntries: Array<{ button: TelegramInlineKeyboardButton; fallbackLine: string }>;
+	overflowLines: string[];
+};
+
+function telegramReplyMarkupFromButtons(buttons: readonly TelegramInlineKeyboardButton[]): TelegramInlineKeyboardMarkup | undefined {
+	if (buttons.length === 0) {
+		return undefined;
 	}
-
-	const buttons: TelegramInlineKeyboardButton[] = [];
-	const overflowLines: string[] = [];
-	const actions = hudDocs.flatMap((doc) => doc.actions).slice(0, TELEGRAM_ACTIONS_MAX_TOTAL);
-	for (const action of actions) {
-		let callbackData = action.command_text;
-		if (opts.encodeCallbackData) {
-			try {
-				callbackData = await opts.encodeCallbackData(action.command_text);
-			} catch {
-				overflowLines.push(`• ${action.label}: ${action.command_text}`);
-				continue;
-			}
-		}
-		if (utf8ByteLength(callbackData) > TELEGRAM_CALLBACK_DATA_MAX_BYTES) {
-			overflowLines.push(`• ${action.label}: ${action.command_text}`);
-			continue;
-		}
-		buttons.push({
-			text: action.label.slice(0, 64),
-			callback_data: callbackData,
-		});
-	}
-
 	const inline_keyboard: TelegramInlineKeyboardButton[][] = [];
 	for (let idx = 0; idx < buttons.length; idx += TELEGRAM_ACTIONS_PER_ROW) {
 		inline_keyboard.push(buttons.slice(idx, idx + TELEGRAM_ACTIONS_PER_ROW));
 	}
+	return { inline_keyboard };
+}
+
+function telegramOverflowText(lines: readonly string[]): string {
+	if (lines.length === 0) {
+		return "";
+	}
+	return `\n\nActions:\n${lines.join("\n")}`;
+}
+
+async function compileTelegramHudActions(opts: {
+	record: OutboxRecord;
+	encodeCallbackData?: TelegramCallbackDataEncoder;
+}): Promise<TelegramActionRender> {
+	const hudDocs = hudDocsForPresentation(opts.record.envelope.metadata?.hud_docs, TELEGRAM_DOCS_MAX);
+	if (hudDocs.length === 0) {
+		return { buttonEntries: [], overflowLines: [] };
+	}
+
+	const buttonEntries: TelegramActionRender["buttonEntries"] = [];
+	const overflowLines: string[] = [];
+	const actions = hudDocs.flatMap((doc) => doc.actions).slice(0, TELEGRAM_ACTIONS_MAX_TOTAL);
+	for (const action of actions) {
+		const fallbackLine = `• ${action.label}: ${action.command_text}`;
+		let callbackData = action.command_text;
+		if (opts.encodeCallbackData) {
+			try {
+				callbackData = await opts.encodeCallbackData(action.command_text, { record: opts.record });
+			} catch {
+				overflowLines.push(fallbackLine);
+				continue;
+			}
+		}
+		if (utf8ByteLength(callbackData) > TELEGRAM_CALLBACK_DATA_MAX_BYTES) {
+			overflowLines.push(fallbackLine);
+			continue;
+		}
+		buttonEntries.push({
+			button: {
+				text: action.label.slice(0, 64),
+				callback_data: callbackData,
+			},
+			fallbackLine,
+		});
+	}
+
 	return {
-		replyMarkup: inline_keyboard.length > 0 ? { inline_keyboard } : undefined,
-		overflowText: overflowLines.length > 0 ? `\n\nActions:\n${overflowLines.join("\n")}` : "",
+		buttonEntries,
+		overflowLines,
 	};
+}
+
+function commandTextForUiDocAction(action: UiAction): string | null {
+	const fromMetadata = typeof action.metadata.command_text === "string" ? action.metadata.command_text.trim() : "";
+	if (fromMetadata.length === 0) {
+		return null;
+	}
+	return fromMetadata;
+}
+
+async function compileTelegramUiDocActions(opts: {
+	record: OutboxRecord;
+	uiDocs: readonly UiDoc[];
+	nowMs: number;
+	encodeCallbackData?: TelegramCallbackDataEncoder;
+}): Promise<TelegramActionRender> {
+	if (opts.uiDocs.length === 0) {
+		return { buttonEntries: [], overflowLines: [] };
+	}
+
+	const buttonEntries: TelegramActionRender["buttonEntries"] = [];
+	const overflowLines: string[] = [];
+	for (const doc of opts.uiDocs) {
+		const actions = [...doc.actions].sort((a, b) => a.id.localeCompare(b.id));
+		for (const action of actions) {
+			const uiEvent = buildSanitizedUiEventForAction({
+				doc,
+				action,
+				createdAtMs: opts.nowMs,
+			});
+			const commandText = commandTextForUiDocAction(action);
+			const fallbackLine = commandText
+				? `• ${action.label}: ${commandText}`
+				: `• ${action.label}: interactive unavailable (missing command_text)`;
+			if (!commandText || !uiEvent) {
+				overflowLines.push(fallbackLine);
+				continue;
+			}
+			if (!opts.encodeCallbackData) {
+				overflowLines.push(fallbackLine);
+				continue;
+			}
+
+			let callbackData: string;
+			try {
+				callbackData = await opts.encodeCallbackData(commandText, {
+					record: opts.record,
+					uiEvent,
+				});
+			} catch {
+				overflowLines.push(fallbackLine);
+				continue;
+			}
+			if (utf8ByteLength(callbackData) > TELEGRAM_CALLBACK_DATA_MAX_BYTES) {
+				overflowLines.push(fallbackLine);
+				continue;
+			}
+			buttonEntries.push({
+				button: {
+					text: action.label.slice(0, 64),
+					callback_data: callbackData,
+				},
+				fallbackLine,
+			});
+		}
+	}
+
+	return { buttonEntries, overflowLines };
 }
 
 async function postTelegramMessage(botToken: string, payload: TelegramSendMessagePayload): Promise<Response> {
@@ -696,13 +994,28 @@ export async function deliverTelegramOutboxRecord(opts: {
 	encodeCallbackData?: TelegramCallbackDataEncoder;
 }): Promise<OutboxDeliveryHandlerResult> {
 	const { botToken, record } = opts;
+	const uiDocs = normalizeUiDocs(record.envelope.metadata?.ui_docs, { maxDocs: TELEGRAM_DOCS_MAX });
+	const nowMs = Math.trunc(Date.now());
 	const hudActions = await compileTelegramHudActions({
 		record,
 		encodeCallbackData: opts.encodeCallbackData,
 	});
-	const replyMarkup = hudActions.replyMarkup;
+	const uiActions = await compileTelegramUiDocActions({
+		record,
+		uiDocs,
+		nowMs,
+		encodeCallbackData: opts.encodeCallbackData,
+	});
+	const combinedEntries = [...hudActions.buttonEntries, ...uiActions.buttonEntries];
+	const visibleEntries = combinedEntries.slice(0, TELEGRAM_ACTIONS_MAX_TOTAL);
+	const overflowLines = [
+		...hudActions.overflowLines,
+		...uiActions.overflowLines,
+		...combinedEntries.slice(TELEGRAM_ACTIONS_MAX_TOTAL).map((entry) => entry.fallbackLine),
+	];
+	const replyMarkup = telegramReplyMarkupFromButtons(visibleEntries.map((entry) => entry.button));
 	const replyToMessageId = maybeParseTelegramMessageId(record.envelope.metadata?.telegram_reply_to_message_id);
-	const telegramText = `${telegramTextForOutboxRecord(record, record.envelope.body)}${hudActions.overflowText}`.trim();
+	const telegramText = `${telegramTextForOutboxRecord(record, record.envelope.body, uiDocs)}${telegramOverflowText(overflowLines)}`.trim();
 	const fallbackMessagePayload = {
 		...buildTelegramSendMessagePayload({
 			chatId: record.envelope.channel_conversation_id,
@@ -857,8 +1170,10 @@ async function postSlackJson<T extends SlackApiOkResponse>(opts: {
 	botToken: string;
 	method: "chat.postMessage" | "chat.update";
 	payload: Record<string, unknown>;
+	fetchImpl?: typeof fetch;
 }): Promise<{ response: Response; payload: T | null }> {
-	const response = await fetch(`https://slack.com/api/${opts.method}`, {
+	const fetchImpl = opts.fetchImpl ?? fetch;
+	const response = await fetchImpl(`https://slack.com/api/${opts.method}`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${opts.botToken}`,
@@ -873,12 +1188,36 @@ async function postSlackJson<T extends SlackApiOkResponse>(opts: {
 export async function deliverSlackOutboxRecord(opts: {
 	botToken: string;
 	record: OutboxRecord;
+	uiCallbackTokenStore?: UiCallbackTokenStore;
+	nowMs?: () => number;
+	fetchImpl?: typeof fetch;
 }): Promise<OutboxDeliveryHandlerResult> {
 	const { botToken, record } = opts;
+	const fetchImpl = opts.fetchImpl ?? fetch;
 	const attachments = record.envelope.attachments ?? [];
-	const renderedBody = renderSlackMarkdown(record.envelope.body);
+	const uiDocs = normalizeUiDocs(record.envelope.metadata?.ui_docs, { maxDocs: UI_DOCS_MAX });
+	let uiDocActionPayloadsByKey = new Map<string, string>();
+	if (opts.uiCallbackTokenStore && uiDocs.some((doc) => doc.actions.length > 0)) {
+		const issued = await issueUiDocActionPayloads({
+			uiDocs,
+			tokenStore: opts.uiCallbackTokenStore,
+			context: uiActionPayloadContextFromOutboxRecord(record),
+			ttlMs: UI_CALLBACK_TOKEN_TTL_MS,
+			nowMs: Math.trunc((opts.nowMs ?? Date.now)()),
+		});
+		uiDocActionPayloadsByKey = new Map(issued.map((entry) => [entry.key, entry.payload_json]));
+	}
+	const renderedBodyForBlocks = renderSlackMarkdown(record.envelope.body);
+	const blocks = slackBlocksForOutboxRecord(record, renderedBodyForBlocks, uiDocs, {
+		uiDocActionPayloadsByKey,
+	});
+	const bodyForText = blocks
+		? record.envelope.body.trim().length > 0
+			? record.envelope.body
+			: "Update"
+		: appendUiDocText(record.envelope.body, uiDocs);
+	const renderedBody = renderSlackMarkdown(bodyForText);
 	const textChunks = splitSlackMessageText(renderedBody);
-	const blocks = slackBlocksForOutboxRecord(record, renderedBody);
 	const threadTs = slackThreadTsFromMetadata(record.envelope.metadata);
 	const statusMessageTs = slackStatusMessageTsFromMetadata(record.envelope.metadata);
 	if (attachments.length === 0) {
@@ -895,6 +1234,7 @@ export async function deliverSlackOutboxRecord(opts: {
 					unfurl_media: false,
 					...(blocks ? { blocks } : {}),
 				},
+				fetchImpl,
 			});
 			if (updated.response.ok && updated.payload?.ok) {
 				chunkStartIndex = 1;
@@ -928,6 +1268,7 @@ export async function deliverSlackOutboxRecord(opts: {
 					...(index === 0 && blocks ? { blocks } : {}),
 					...(threadTs ? { thread_ts: threadTs } : {}),
 				},
+				fetchImpl,
 			});
 			if (delivered.response.ok && delivered.payload?.ok) {
 				continue;
@@ -955,7 +1296,7 @@ export async function deliverSlackOutboxRecord(opts: {
 				error: `slack attachment ${index + 1} missing reference.url`,
 			};
 		}
-		const source = await fetch(referenceUrl);
+		const source = await fetchImpl(referenceUrl);
 		if (!source.ok) {
 			const sourceErr = await source.text().catch(() => "");
 			if (source.status === 429 || source.status >= 500) {
@@ -982,7 +1323,7 @@ export async function deliverSlackOutboxRecord(opts: {
 		}
 		form.set("file", new Blob([bytes], { type: contentType }), filename);
 
-		const uploaded = await fetch("https://slack.com/api/files.upload", {
+		const uploaded = await fetchImpl("https://slack.com/api/files.upload", {
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${botToken}`,
@@ -1021,6 +1362,7 @@ export async function deliverSlackOutboxRecord(opts: {
 					unfurl_media: false,
 					...(threadTs ? { thread_ts: threadTs } : {}),
 				},
+				fetchImpl,
 			});
 			if (fallback.response.ok && fallback.payload?.ok) {
 				continue;
@@ -1081,6 +1423,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 	}
 
 	const paths = getControlPlanePaths(opts.repoRoot);
+	const uiCallbackTokenStore = new UiCallbackTokenStore(paths.uiCallbackTokenPath);
 
 	const runtime = new ControlPlaneRuntime({ repoRoot: opts.repoRoot });
 	let pipeline: ControlPlaneCommandPipeline | null = null;
@@ -1097,6 +1440,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 	>();
 
 	try {
+		await uiCallbackTokenStore.load();
 		await runtime.start();
 
 		const operator =
@@ -1138,6 +1482,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 			config: controlPlaneConfig,
 			pipeline,
 			outbox,
+			uiCallbackTokenStore,
 		})) {
 			const route = adapter.spec.route;
 			if (adapterMap.has(route)) {
@@ -1199,6 +1544,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 					return await deliverSlackOutboxRecord({
 						botToken: slackBotToken,
 						record,
+						uiCallbackTokenStore,
 					});
 				},
 			},
@@ -1212,12 +1558,18 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 					return await deliverTelegramOutboxRecord({
 						botToken: telegramBotToken,
 						record,
-						encodeCallbackData: async (commandText: string) => {
+						encodeCallbackData: async (commandText: string, encodeOpts: { record: OutboxRecord; uiEvent?: UiEvent }) => {
 							const active = telegramManager.activeAdapter();
 							if (!active) {
 								return commandText;
 							}
-							return await active.issueCallbackToken({ commandText });
+							return await active.issueCallbackToken({
+								commandText,
+								actorId: encodeOpts.record.envelope.correlation.actor_id,
+								actorBindingId: encodeOpts.record.envelope.correlation.actor_binding_id,
+								conversationId: encodeOpts.record.envelope.channel_conversation_id,
+								uiEvent: encodeOpts.uiEvent,
+							});
 						},
 					});
 				},

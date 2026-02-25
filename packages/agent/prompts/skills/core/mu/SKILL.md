@@ -14,6 +14,7 @@ run focused execution loops, and hand off to specialized skills when needed.
 - [CLI capability map](#cli-capability-map)
 - [Default bounded investigation loop](#default-bounded-investigation-loop)
 - [Common mutation and diagnostics patterns](#common-mutation-and-diagnostics-patterns)
+- [Reference `/answer` flow (mu_ui-only)](#reference-answer-flow-mu_ui-only)
 - [Session, serve, and one-shot surfaces](#session-serve-and-one-shot-surfaces)
 - [Durable automation handoff](#durable-automation-handoff)
 - [Evaluation scenarios](#evaluation-scenarios)
@@ -140,6 +141,37 @@ mu store tail cp_adapter_audit --limit 20 --pretty
 mu store tail cp_operator_turns --limit 20 --pretty
 mu replay <issue-id-or-log-path>
 ```
+
+## Reference `/answer` flow (mu_ui-only)
+
+Use this as the canonical interactive-skill pattern. Keep all behavior in skill logic and
+`mu_ui` documents/events; do not add adapter- or extension-specific branches.
+
+1. Publish the answer prompt as a `UiDoc` via `mu_ui`:
+
+```json
+{
+  "action": "set",
+  "doc": {
+    "v": 1,
+    "ui_id": "ui:answer",
+    "title": "Answer",
+    "components": [{ "kind": "text", "id": "prompt", "text": "Choose an answer", "metadata": {} }],
+    "actions": [
+      { "id": "answer_yes", "label": "Answer yes", "payload": { "choice": "yes" }, "metadata": { "command_text": "/answer yes" } },
+      { "id": "answer_no", "label": "Answer no", "payload": { "choice": "no" }, "metadata": { "command_text": "/answer no" } }
+    ],
+    "revision": { "id": "rev:answer:1", "version": 1 },
+    "updated_at_ms": 1
+  }
+}
+```
+
+2. On `/answer <choice>` input, validate choice, clear/remove `ui:answer` via `mu_ui`, then emit a
+   normal response.
+3. Keep revisions monotonic (`revision.version`) so reconnect/replay keeps the highest revision.
+4. Rely on `metadata.command_text` for cross-surface parity: TUI + messaging channels should route
+   the same `/answer ...` command text.
 
 ## Session, serve, and one-shot surfaces
 

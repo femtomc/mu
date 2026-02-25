@@ -1,4 +1,11 @@
-import { HudDocSchema, type HudDoc, normalizeHudDocs } from "@femtomc/mu-core";
+import {
+	HudDocSchema,
+	UiDocSchema,
+	type HudDoc,
+	type UiDoc,
+	normalizeHudDocs,
+	normalizeUiDocs,
+} from "@femtomc/mu-core";
 import { appendJsonl, getStorePaths } from "@femtomc/mu-core/node";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -29,6 +36,7 @@ type IdentityBinding = MessagingOperatorIdentityBinding;
 
 const OPERATOR_RESPONSE_MAX_CHARS = 12_000;
 const OPERATOR_TURN_HUD_DOCS_MAX = 16;
+const OPERATOR_TURN_UI_DOCS_MAX = 16;
 const SAFE_RESPONSE_RE = new RegExp(`^[\\s\\S]{1,${OPERATOR_RESPONSE_MAX_CHARS}}$`);
 const OPERATOR_TIMEOUT_MIN_MS = 1_000;
 const OPERATOR_TIMEOUT_HARD_CAP_MS = 10 * 60 * 1_000;
@@ -69,17 +77,20 @@ export const OperatorApprovedCommandSchema = z.discriminatedUnion("kind", [
 export type OperatorApprovedCommand = z.infer<typeof OperatorApprovedCommandSchema>;
 
 const OperatorTurnHudDocsSchema = z.array(HudDocSchema).max(OPERATOR_TURN_HUD_DOCS_MAX).optional();
+const OperatorTurnUiDocsSchema = z.array(UiDocSchema).max(OPERATOR_TURN_UI_DOCS_MAX).optional();
 
 export const OperatorBackendTurnResultSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("respond"),
 		message: z.string().trim().min(1).max(OPERATOR_RESPONSE_MAX_CHARS),
 		hud_docs: OperatorTurnHudDocsSchema,
+		ui_docs: OperatorTurnUiDocsSchema,
 	}),
 	z.object({
 		kind: z.literal("command"),
 		command: OperatorApprovedCommandSchema,
 		hud_docs: OperatorTurnHudDocsSchema,
+		ui_docs: OperatorTurnUiDocsSchema,
 	}),
 ]);
 export type OperatorBackendTurnResult = z.infer<typeof OperatorBackendTurnResultSchema>;
@@ -102,6 +113,7 @@ export type OperatorDecision =
 			kind: "response";
 			message: string;
 			hud_docs?: HudDoc[];
+			ui_docs?: UiDoc[];
 			operatorSessionId: string;
 			operatorTurnId: string;
 	  }
@@ -109,6 +121,7 @@ export type OperatorDecision =
 			kind: "command";
 			commandText: string;
 			hud_docs?: HudDoc[];
+			ui_docs?: UiDoc[];
 			operatorSessionId: string;
 			operatorTurnId: string;
 	  }
@@ -386,6 +399,11 @@ function isHudToolName(toolName: string): boolean {
 	return normalized === "mu_hud";
 }
 
+function isUiToolName(toolName: string): boolean {
+	const normalized = toolName.trim().toLowerCase();
+	return normalized === "mu_ui";
+}
+
 function extractHudDocsFromToolResult(result: unknown): HudDoc[] {
 	const rec = asRecord(result);
 	if (!rec) {
@@ -409,6 +427,29 @@ function extractHudDocsFromToolResult(result: unknown): HudDoc[] {
 	return normalizeHudDocs(candidates, { maxDocs: OPERATOR_TURN_HUD_DOCS_MAX });
 }
 
+function extractUiDocsFromToolResult(result: unknown): UiDoc[] {
+	const rec = asRecord(result);
+	if (!rec) {
+		return [];
+	}
+	const details = asRecord(rec.details);
+	const candidates: unknown[] = [];
+
+	const topLevelUiDocs = rec.ui_docs;
+	if (Array.isArray(topLevelUiDocs)) {
+		candidates.push(...topLevelUiDocs);
+	}
+
+	if (details) {
+		const detailUiDocs = details.ui_docs;
+		if (Array.isArray(detailUiDocs)) {
+			candidates.push(...detailUiDocs);
+		}
+	}
+
+	return normalizeUiDocs(candidates, { maxDocs: OPERATOR_TURN_UI_DOCS_MAX });
+}
+
 function collectHudDocsFromToolExecutionEvent(event: unknown): HudDoc[] {
 	const rec = asRecord(event);
 	if (!rec) {
@@ -422,6 +463,21 @@ function collectHudDocsFromToolExecutionEvent(event: unknown): HudDoc[] {
 		return [];
 	}
 	return extractHudDocsFromToolResult(rec.result);
+}
+
+function collectUiDocsFromToolExecutionEvent(event: unknown): UiDoc[] {
+	const rec = asRecord(event);
+	if (!rec) {
+		return [];
+	}
+	if (nonEmptyString(rec.type) !== "tool_execution_end") {
+		return [];
+	}
+	const toolName = nonEmptyString(rec.toolName);
+	if (!toolName || !isUiToolName(toolName)) {
+		return [];
+	}
+	return extractUiDocsFromToolResult(rec.result);
 }
 
 type PersistedConversationSessionState = {
@@ -655,10 +711,17 @@ export class MessagingOperatorRuntime {
 					operatorTurnId: turnId,
 				};
 			}
+			const docPayload: { hud_docs?: HudDoc[]; ui_docs?: UiDoc[] } = {};
+			if (backendResult.hud_docs && backendResult.hud_docs.length > 0) {
+				docPayload.hud_docs = backendResult.hud_docs;
+			}
+			if (backendResult.ui_docs && backendResult.ui_docs.length > 0) {
+				docPayload.ui_docs = backendResult.ui_docs;
+			}
 			return {
 				kind: "response",
 				message,
-				...(backendResult.hud_docs && backendResult.hud_docs.length > 0 ? { hud_docs: backendResult.hud_docs } : {}),
+				...docPayload,
 				operatorSessionId: sessionId,
 				operatorTurnId: turnId,
 			};
@@ -678,10 +741,17 @@ export class MessagingOperatorRuntime {
 			};
 		}
 
+		const docPayload: { hud_docs?: HudDoc[]; ui_docs?: UiDoc[] } = {};
+		if (backendResult.hud_docs && backendResult.hud_docs.length > 0) {
+			docPayload.hud_docs = backendResult.hud_docs;
+		}
+		if (backendResult.ui_docs && backendResult.ui_docs.length > 0) {
+			docPayload.ui_docs = backendResult.ui_docs;
+		}
 		return {
 			kind: "command",
 			commandText: approved.commandText,
-			...(backendResult.hud_docs && backendResult.hud_docs.length > 0 ? { hud_docs: backendResult.hud_docs } : {}),
+			...docPayload,
 			operatorSessionId: sessionId,
 			operatorTurnId: turnId,
 		};
@@ -1014,6 +1084,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		let assistantText = "";
 		let capturedCommand: OperatorApprovedCommand | null = null;
 		let capturedHudDocs: HudDoc[] = [];
+		let capturedUiDocs: UiDoc[] = [];
 
 		const unsub = session.subscribe((event: any) => {
 			// Capture assistant text for fallback responses.
@@ -1045,6 +1116,12 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			if (hudDocs.length > 0) {
 				capturedHudDocs = normalizeHudDocs([...capturedHudDocs, ...hudDocs], {
 					maxDocs: OPERATOR_TURN_HUD_DOCS_MAX,
+				});
+			}
+			const uiDocs = collectUiDocsFromToolExecutionEvent(event);
+			if (uiDocs.length > 0) {
+				capturedUiDocs = normalizeUiDocs([...capturedUiDocs, ...uiDocs], {
+					maxDocs: OPERATOR_TURN_UI_DOCS_MAX,
 				});
 			}
 		});
@@ -1107,10 +1184,14 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 				command: capturedCommand,
 				messagePreview: assistantText,
 			});
+			const docPayload: { hud_docs?: HudDoc[]; ui_docs?: UiDoc[] } = {};
 			if (capturedHudDocs.length > 0) {
-				return { kind: "command", command: capturedCommand, hud_docs: capturedHudDocs };
+				docPayload.hud_docs = capturedHudDocs;
 			}
-			return { kind: "command", command: capturedCommand };
+			if (capturedUiDocs.length > 0) {
+				docPayload.ui_docs = capturedUiDocs;
+			}
+			return { kind: "command", command: capturedCommand, ...docPayload };
 		}
 
 		// Otherwise treat the assistant text as a plain response.
@@ -1128,10 +1209,14 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			outcome: "respond",
 			messagePreview: responseMessage,
 		});
+		const docPayload: { hud_docs?: HudDoc[]; ui_docs?: UiDoc[] } = {};
 		if (capturedHudDocs.length > 0) {
-			return { kind: "respond", message: responseMessage, hud_docs: capturedHudDocs };
+			docPayload.hud_docs = capturedHudDocs;
 		}
-		return { kind: "respond", message: responseMessage };
+		if (capturedUiDocs.length > 0) {
+			docPayload.ui_docs = capturedUiDocs;
+		}
+		return { kind: "respond", message: responseMessage, ...docPayload };
 	}
 
 	public dispose(): void {

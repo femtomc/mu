@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UiEventSchema } from "@femtomc/mu-core";
 
 export const FrontendChannelSchema = z.enum(["neovim"]);
 export type FrontendChannel = z.infer<typeof FrontendChannelSchema>;
@@ -14,6 +15,7 @@ export const FrontendIngressRequestSchema = z.object({
 	target_id: z.string().trim().min(1).optional(),
 	metadata: z.record(z.string(), z.unknown()).optional(),
 	client_context: z.unknown().optional(),
+	ui_event: UiEventSchema.optional(),
 });
 export type FrontendIngressRequest = z.infer<typeof FrontendIngressRequestSchema>;
 
@@ -51,6 +53,20 @@ export const ControlPlaneChannelCapabilitySchema = z.object({
 		inbound_attachment_download: z.object({
 			supported: z.boolean(),
 			configured: z.boolean(),
+			reason: z.string().nullable(),
+		}),
+	}),
+	ui: z.object({
+		supported: z.boolean(),
+		reason: z.string().nullable(),
+		components: z.object({
+			text: z.boolean(),
+			list: z.boolean(),
+			key_value: z.boolean(),
+			divider: z.boolean(),
+		}),
+		actions: z.object({
+			supported: z.boolean(),
 			reason: z.string().nullable(),
 		}),
 	}),

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ControlPlaneHandle } from "../src/control_plane.js";
+import { UI_COMPONENT_SUPPORT } from "../src/control_plane.js";
 import { composeServerRuntime, createServerFromRuntime } from "../src/server.js";
 
 async function waitFor<T>(
@@ -36,6 +37,56 @@ async function createServerForTest(opts: {
 		controlPlane: opts.controlPlane ?? null,
 	});
 	return createServerFromRuntime(runtime, opts.serverOptions);
+}
+
+const TEXT_ONLY_UI_COMPONENT_SUPPORT = {
+	text: true,
+	list: false,
+	key_value: false,
+	divider: false,
+} as const;
+
+const CHANNEL_UI_CAPABILITIES = {
+	slack: {
+		supported: true,
+		reason: null,
+		components: UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+	discord: {
+		supported: true,
+		reason: null,
+		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+	telegram: {
+		supported: true,
+		reason: null,
+		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+	neovim: {
+		supported: true,
+		reason: null,
+		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+};
+
+function expectedUiCapability(channel: string) {
+	return CHANNEL_UI_CAPABILITIES[channel as keyof typeof CHANNEL_UI_CAPABILITIES];
 }
 
 describe("mu-server", () => {
@@ -288,6 +339,20 @@ describe("mu-server", () => {
 					outbound_delivery: { supported: boolean; configured: boolean; reason: string | null };
 					inbound_attachment_download: { supported: boolean; configured: boolean; reason: string | null };
 				};
+				ui: {
+					supported: boolean;
+					reason: string | null;
+					components: {
+						text: boolean;
+						list: boolean;
+						key_value: boolean;
+						divider: boolean;
+					};
+					actions: {
+						supported: boolean;
+						reason: string | null;
+					};
+				};
 			}>;
 		};
 		expect(payload.ok).toBe(true);
@@ -318,6 +383,9 @@ describe("mu-server", () => {
 			configured: false,
 			reason: "telegram_bot_token_missing",
 		});
+		for (const channelName of ["neovim", "slack", "telegram", "discord"]) {
+			expect(byChannel.get(channelName)?.ui).toEqual(expectedUiCapability(channelName));
+		}
 	});
 
 	test("control-plane channels endpoint reports configured media capabilities for Slack and Telegram tokens", async () => {
@@ -368,6 +436,20 @@ describe("mu-server", () => {
 					outbound_delivery: { supported: boolean; configured: boolean; reason: string | null };
 					inbound_attachment_download: { supported: boolean; configured: boolean; reason: string | null };
 				};
+				ui: {
+					supported: boolean;
+					reason: string | null;
+					components: {
+						text: boolean;
+						list: boolean;
+						key_value: boolean;
+						divider: boolean;
+					};
+					actions: {
+						supported: boolean;
+						reason: string | null;
+					};
+				};
 			}>;
 		};
 		const byChannel = new Map(payload.channels.map((entry) => [entry.channel, entry]));
@@ -397,6 +479,9 @@ describe("mu-server", () => {
 			configured: true,
 			reason: null,
 		});
+		for (const channelName of ["slack", "telegram"]) {
+			expect(byChannel.get(channelName)?.ui).toEqual(expectedUiCapability(channelName));
+		}
 	});
 
 	test("control-plane turn endpoint requires a configured neovim shared secret", async () => {

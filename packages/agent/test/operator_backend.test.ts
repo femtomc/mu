@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type HudDoc } from "@femtomc/mu-core";
+import { UI_CONTRACT_VERSION, type HudDoc, type UiDoc } from "@femtomc/mu-core";
 import { getStorePaths } from "@femtomc/mu-core/node";
 import {
 	PiMessagingOperatorBackend,
@@ -125,6 +125,28 @@ function makeStubSession(opts: StubSessionOpts): MuSession {
 		},
 	};
 }
+function mkUiDoc(overrides: Partial<UiDoc> = {}): UiDoc {
+	return {
+		v: UI_CONTRACT_VERSION,
+		ui_id: "ui:panel",
+		title: "Panel",
+		summary: "Panel summary",
+		components: [
+			{
+				kind: "text",
+				id: "text-1",
+				text: "Panel contents",
+				metadata: {},
+			},
+		],
+		actions: [],
+		revision: { id: "rev:1", version: 1 },
+		updated_at_ms: 100,
+		metadata: {},
+		...overrides,
+	};
+}
+
 
 describe("PiMessagingOperatorBackend", () => {
 	test("reuses sessions by sessionId to preserve conversation memory", async () => {
@@ -454,6 +476,35 @@ describe("PiMessagingOperatorBackend", () => {
 			kind: "respond",
 			message: "Updated planning HUD.",
 			hud_docs: [planningHudDoc],
+		});
+	});
+
+	test("captures ui_docs from mu_ui tool execution results", async () => {
+		const uiDoc = mkUiDoc();
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () =>
+				makeStubSession({
+					responses: ["Updated UI doc."],
+					toolResults: [
+						{
+							toolName: "mu_ui",
+							result: {
+								details: {
+									ui_docs: [uiDoc],
+								},
+							},
+						},
+					],
+				}),
+		});
+
+		const result = await backend.runTurn(
+			mkInput({ sessionId: "session-ui-doc", turnId: "turn-1", commandText: "update ui" }),
+		);
+		expect(result).toEqual({
+			kind: "respond",
+			message: "Updated UI doc.",
+			ui_docs: [uiDoc],
 		});
 	});
 

@@ -58,17 +58,36 @@ mu memory search --query "reload" --limit 20
 - **Programmable HUD**: Real-time contextual display updated dynamically by the agent.
 - **Skill-based behavior**: Customize agent workflows entirely through Markdown files.
 
+## Programmable UI substrate
+
+`mu` ships a programmable **`mu_ui` tool + `/mu ui` command** so skills can publish interactive
+`UiDoc`s with components, actions, callback tokens, and metadata.
+
+End-user flows are agent-driven and channel-native: users interact through Slack/Discord/Telegram
+or the Neovim frontend, and adapters route those actions back into operator turns via
+`metadata.command_text` (for example `/answer yes`) and scoped callback tokens.
+
+`/mu ui run` remains available in the terminal operator UI as a debug/helper path. It is not
+required for product/reference user flows.
+
+Interactive actions must provide explicit `action.metadata.command_text`. When command text is
+missing, adapters render deterministic non-interactive fallback rows instead of implicit
+`/mu ui_event ...` routing.
+
+Rendering support is channel-specific (Slack rich blocks, other channels text-first projection with
+action controls), with deterministic text fallback when interactive controls cannot be rendered.
+
+Read the [Programmable UI substrate guide](docs/mu-ui.md) for the full developer/operator workflow.
+
 ## Skills
 
-Skills define the agent's behavior. Because `mu` relies on bash and CLI tools, you customize skills to change how `mu` works. `mu` ships with a set of 
-version-synced starter skills bootstrapped into `~/.mu/skills/`:
+Skills define the agent's behavior. Because `mu` relies on bash and CLI tools, you customize skills to change how `mu` works. `mu` ships with a hierarchy of version-synced starter skills bootstrapped into `~/.mu/skills/`:
 
-- **Core**: `mu` (CLI usage), `memory` (context retrieval)
-- **Planning**: `planning` (issue DAGs), `hud` (HUD contract), `orchestration` (DAG protocol), `control-flow` (loop policies), `model-routing` (per-issue model/provider/thinking overlays), `subagents` (durable orchestration)
-- **Sessions**: `code-mode` (REPLs), `tmux` (workspace fan-out)
-- **Automation**: `heartbeats` (lifecycle automation loops), `crons` (wall-clock scheduling)
-- **Messaging Setup**: `setup-slack`, `setup-discord`, `setup-telegram`, `setup-neovim`
-- **Writing**: `writing` (technical prose guidelines)
+- **Core (`core`)**: `mu` (CLI usage), `memory` (context retrieval), `tmux` (workspace fan-out), `code-mode` (REPL workflows)
+- **Subagents (`subagents`)**: `planning` (issue DAGs), `protocol` (shared DAG protocol), `execution` (durable orchestration runtime), `control-flow` (loop policies), `model-routing` (per-issue model/provider/thinking overlays), `hud` (HUD contract)
+- **Automation (`automation`)**: `heartbeats` (lifecycle automation loops), `crons` (wall-clock scheduling)
+- **Messaging (`messaging`)**: `setup-slack`, `setup-discord`, `setup-telegram`, `setup-neovim`
+- **Writing (`writing`)**: `writing` (technical prose guidelines)
 
 **Usage pattern:** Ask the agent to use a specific skill. For example: *"Can we plan and setup an implementation issue DAG?"* or *"Set up the slack messaging service."*
 

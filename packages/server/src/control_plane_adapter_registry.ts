@@ -5,6 +5,7 @@ import {
 	DiscordControlPlaneAdapter,
 	NeovimControlPlaneAdapter,
 	SlackControlPlaneAdapter,
+	UiCallbackTokenStore,
 } from "@femtomc/mu-control-plane";
 import type { ControlPlaneConfig } from "./control_plane_contract.js";
 
@@ -29,6 +30,7 @@ type StaticAdapterModule = {
 		outbox: ControlPlaneOutbox;
 		secret: string;
 		config: ControlPlaneConfig;
+		uiCallbackTokenStore: UiCallbackTokenStore;
 	}) => ControlPlaneAdapter;
 };
 
@@ -42,6 +44,7 @@ const STATIC_ADAPTER_MODULES: readonly StaticAdapterModule[] = [
 				outbox: opts.outbox,
 				signingSecret: opts.secret,
 				botToken: opts.config.adapters.slack.bot_token,
+				uiCallbackTokenStore: opts.uiCallbackTokenStore,
 			}),
 	},
 	{
@@ -52,6 +55,7 @@ const STATIC_ADAPTER_MODULES: readonly StaticAdapterModule[] = [
 				pipeline: opts.pipeline,
 				outbox: opts.outbox,
 				signingSecret: opts.secret,
+				uiCallbackTokenStore: opts.uiCallbackTokenStore,
 			}),
 	},
 	{
@@ -61,6 +65,7 @@ const STATIC_ADAPTER_MODULES: readonly StaticAdapterModule[] = [
 			new NeovimControlPlaneAdapter({
 				pipeline: opts.pipeline,
 				sharedSecret: opts.secret,
+				uiCallbackTokenStore: opts.uiCallbackTokenStore,
 			}),
 	},
 ];
@@ -104,6 +109,7 @@ export function createStaticAdaptersFromDetected(opts: {
 	config: ControlPlaneConfig;
 	pipeline: ControlPlaneCommandPipeline;
 	outbox: ControlPlaneOutbox;
+	uiCallbackTokenStore: UiCallbackTokenStore;
 }): ControlPlaneAdapter[] {
 	const adapters: ControlPlaneAdapter[] = [];
 	for (const detected of opts.detected) {
@@ -120,6 +126,7 @@ export function createStaticAdaptersFromDetected(opts: {
 				outbox: opts.outbox,
 				secret: detected.secret,
 				config: opts.config,
+				uiCallbackTokenStore: opts.uiCallbackTokenStore,
 			}),
 		);
 	}

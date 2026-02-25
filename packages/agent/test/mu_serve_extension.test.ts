@@ -21,6 +21,9 @@ describe("muServeExtension", () => {
 			registerCommand(name: string, command: unknown) {
 				commands.set(name, command);
 			},
+			registerShortcut() {
+				return undefined;
+			},
 			on() {
 				return undefined;
 			},
@@ -28,6 +31,7 @@ describe("muServeExtension", () => {
 
 		muServeExtension(api as any);
 		expect(tools.has("mu_hud")).toBe(true);
+		expect(tools.has("mu_ui")).toBe(true);
 		expect(tools.has("mu_planning_hud")).toBe(false);
 		expect(tools.has("mu_subagents_hud")).toBe(false);
 		expect(tools.has("query")).toBe(false);

@@ -1,4 +1,4 @@
-import { HUD_CONTRACT_VERSION, stableSerializeJson, type HudDoc } from "@femtomc/mu-core";
+import { HUD_CONTRACT_VERSION, UI_CONTRACT_VERSION, normalizeUiDocs, stableSerializeJson, type HudDoc, type UiDoc } from "@femtomc/mu-core";
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -46,6 +46,27 @@ function mkHudDoc(id: string, updatedAt: number, title = id): HudDoc {
 	};
 }
 
+function mkUiDoc(overrides: Partial<UiDoc> = {}): UiDoc {
+	return {
+		v: UI_CONTRACT_VERSION,
+		ui_id: "ui:panel",
+		title: "Panel",
+		components: [
+			{
+				kind: "text",
+				id: "panel-text",
+				text: "Panel text",
+				metadata: {},
+			},
+		],
+		actions: [],
+		revision: { id: "rev:1", version: 1 },
+		updated_at_ms: 100,
+		metadata: {},
+		...overrides,
+	};
+}
+
 describe("hud docs propagation through pipeline and outbox metadata", () => {
 	test("stores bounded deterministic hud metadata on operator outbox records", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "mu-hud-outbox-"));
@@ -58,6 +79,20 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 			mkHudDoc("hud-05", 50, "new-5"),
 			...Array.from({ length: 20 }, (_, idx) => mkHudDoc(`hud-${String(idx + 10).padStart(2, "0")}`, idx + 10)),
 		];
+		const uiDocs = [
+			mkUiDoc({ ui_id: "ui-09", revision: { id: "rev-9", version: 9 }, updated_at_ms: 9 }),
+			mkUiDoc({ ui_id: "ui-01", revision: { id: "rev-1", version: 1 }, updated_at_ms: 1 }),
+			mkUiDoc({ ui_id: "ui-05", revision: { id: "rev-5", version: 5 }, title: "old-5", updated_at_ms: 5 }),
+			mkUiDoc({ ui_id: "ui-05", revision: { id: "rev-50", version: 50 }, title: "new-5", updated_at_ms: 50 }),
+			...Array.from({ length: 20 }, (_, idx) =>
+				mkUiDoc({
+					ui_id: `ui-${String(idx + 10).padStart(2, "0")}`,
+					revision: { id: `rev-${idx + 10}`, version: idx + 10 },
+					updated_at_ms: idx + 10,
+					title: `ui-${String(idx + 10).padStart(2, "0")}`,
+				})
+			),
+		];
 
 		try {
 			const result = await runPipelineForInbound({
@@ -66,6 +101,7 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 						kind: "operator_response",
 						message: "ok",
 						hud_docs: docs,
+						ui_docs: uiDocs,
 					}),
 				} as any,
 				outbox,
@@ -99,6 +135,30 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 			]);
 			expect(hudDocs.find((doc) => doc.hud_id === "hud-05")?.title).toBe("new-5");
 			expect(metadata.hud_docs_json).toBe(stableSerializeJson(hudDocs));
+			const uiDocsNormalized = Array.isArray(metadata.ui_docs) ? (metadata.ui_docs as UiDoc[]) : [];
+			expect(metadata.ui_contract_version).toBe(UI_CONTRACT_VERSION);
+			expect(metadata.ui_docs_count).toBe(16);
+			expect(uiDocsNormalized).toHaveLength(16);
+			expect(uiDocsNormalized.map((doc) => doc.ui_id)).toEqual([
+				"ui-01",
+				"ui-05",
+				"ui-09",
+				"ui-10",
+				"ui-11",
+				"ui-12",
+				"ui-13",
+				"ui-14",
+				"ui-15",
+				"ui-16",
+				"ui-17",
+				"ui-18",
+				"ui-19",
+				"ui-20",
+				"ui-21",
+				"ui-22",
+			]);
+			expect(uiDocsNormalized.find((doc) => doc.ui_id === "ui-05")?.title).toBe("new-5");
+			expect(metadata.ui_docs_json).toBe(stableSerializeJson(uiDocsNormalized));
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
@@ -116,6 +176,13 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 						kind: "operator_response",
 						message: "ok",
 						hud_docs: [mkHudDoc("planning", 1)],
+						ui_docs: [
+							mkUiDoc({
+								ui_id: "ui:planning",
+								revision: { id: "rev:planning", version: 1 },
+								updated_at_ms: 1,
+							}),
+						],
 					}),
 				} as any,
 				outbox,
@@ -128,6 +195,13 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 						kind: "operator_response",
 						message: "ok 2",
 						hud_docs: [mkHudDoc("subagents", 2)],
+						ui_docs: [
+							mkUiDoc({
+								ui_id: "ui:subagents",
+								revision: { id: "rev:subagents", version: 2 },
+								updated_at_ms: 2,
+							}),
+						],
 					}),
 				} as any,
 				outbox,

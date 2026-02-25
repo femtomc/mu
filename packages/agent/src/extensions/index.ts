@@ -3,6 +3,7 @@ export { eventLogExtension } from "./event-log.js";
 export { hudExtension } from "./hud.js";
 export { muOperatorExtension } from "./mu-operator.js";
 export { muServeExtension } from "./mu-serve.js";
+export { uiExtension } from "./ui.js";
 
 const RUNTIME_EXTENSION = import.meta.url.endsWith(".ts") ? "ts" : "js";
 

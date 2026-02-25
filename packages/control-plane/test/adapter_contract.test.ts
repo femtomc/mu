@@ -12,6 +12,7 @@ import {
 	SlackControlPlaneAdapterSpec,
 	TelegramControlPlaneAdapter,
 	TelegramControlPlaneAdapterSpec,
+	UiCallbackTokenStore,
 } from "@femtomc/mu-control-plane";
 
 describe("adapter contract", () => {
@@ -46,11 +47,13 @@ describe("adapter contract", () => {
 			},
 		} as any;
 		const outbox = {} as any;
+		const uiCallbackTokenStore = new UiCallbackTokenStore("/tmp/mu-contract/ui_callback_tokens.jsonl");
 
 		const slack = new SlackControlPlaneAdapter({
 			pipeline,
 			outbox,
 			signingSecret: "slack-secret",
+			uiCallbackTokenStore,
 		});
 		expect(slack.spec).toEqual(SlackControlPlaneAdapterSpec);
 
@@ -58,6 +61,7 @@ describe("adapter contract", () => {
 			pipeline,
 			outbox,
 			signingSecret: "discord-secret",
+			uiCallbackTokenStore,
 		});
 		expect(discord.spec).toEqual(DiscordControlPlaneAdapterSpec);
 
@@ -71,6 +75,7 @@ describe("adapter contract", () => {
 		const neovim = new NeovimControlPlaneAdapter({
 			pipeline,
 			sharedSecret: "neovim-secret",
+			uiCallbackTokenStore,
 		});
 		expect(neovim.spec).toEqual(NeovimControlPlaneAdapterSpec);
 

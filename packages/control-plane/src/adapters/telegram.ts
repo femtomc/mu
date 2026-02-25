@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { UiEvent } from "@femtomc/mu-core";
 import { AdapterAuditLog } from "../adapter_audit.js";
 import {
 	DEFAULT_INBOUND_ATTACHMENT_POLICY,
@@ -125,7 +126,7 @@ function normalizeTelegramMessageCommand(text: string, _botUsername: string | nu
 	return text.trim();
 }
 
-function callbackDecodeFailureAck(reason: "invalid" | "expired" | "consumed"): string {
+function callbackDecodeFailureAck(reason: "invalid" | "expired" | "consumed" | "scope_mismatch"): string {
 	switch (reason) {
 		case "invalid":
 			return "This button is invalid or no longer recognized.";
@@ -133,6 +134,8 @@ function callbackDecodeFailureAck(reason: "invalid" | "expired" | "consumed"): s
 			return "This button expired. Please run the command again.";
 		case "consumed":
 			return "This button was already used.";
+		case "scope_mismatch":
+			return "This button is not valid in this context.";
 	}
 }
 
@@ -631,7 +634,15 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		this.#clearIngressRetryTimer();
 	}
 
-	public async issueCallbackToken(opts: { commandText: string; ttlMs?: number; nowMs?: number }): Promise<string> {
+	public async issueCallbackToken(opts: {
+		commandText: string;
+		ttlMs?: number;
+		nowMs?: number;
+		actorId: string;
+		actorBindingId: string;
+		conversationId: string;
+		uiEvent?: UiEvent;
+	}): Promise<string> {
 		const actionCommand = opts.commandText.trim();
 		if (actionCommand.length === 0) {
 			throw new Error("commandText must be non-empty");
@@ -640,6 +651,13 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			action: { kind: "command", command_text: actionCommand },
 			ttlMs: Math.max(1_000, Math.trunc(opts.ttlMs ?? this.#callbackTokenTtlMs)),
 			nowMs: opts.nowMs,
+			scope: {
+				channelTenantId: this.#tenantId,
+				channelConversationId: opts.conversationId,
+				actorId: opts.actorId,
+				actorBindingId: opts.actorBindingId,
+			},
+			uiEvent: opts.uiEvent,
 		});
 		return record.callback_data;
 	}
@@ -797,28 +815,49 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			duplicate_safe: true,
 			idempotency_scope: "telegram:update_or_callback_id",
 		};
+		let bindingHint: ReturnType<typeof resolveBindingHint> | null = null;
 
 		if (callbackQuery) {
 			sourceKind = "callback";
 			sourceId = stringId(callbackQuery.id) ?? updateId;
 			const callbackData = typeof callbackQuery.data === "string" ? callbackQuery.data : "";
+			actorId = stringId((callbackQuery.from as Record<string, unknown> | undefined)?.id) ?? actorId;
+			conversationId =
+				stringId(
+					(
+						(callbackQuery.message as Record<string, unknown> | undefined)?.chat as
+							| Record<string, unknown>
+							| undefined
+					)?.id,
+				) ?? conversationId;
+			const callbackBindingHint = resolveBindingHint(this.#pipeline, this.spec.channel, this.#tenantId, actorId);
 			const callbackDecision = await this.#callbackTokenStore.decodeAndConsume({
 				callbackData,
+				scope: {
+					channelTenantId: this.#tenantId,
+					channelConversationId: conversationId,
+					actorId,
+					actorBindingId: callbackBindingHint.actorBindingId,
+				},
 				nowMs: Math.trunc(this.#nowMs()),
 			});
 			if (callbackDecision.kind !== "ok") {
-				const reason =
-					callbackDecision.kind === "expired"
-						? "expired_telegram_callback_token"
-						: callbackDecision.kind === "consumed"
-							? "consumed_telegram_callback_token"
-							: "invalid_telegram_callback_token";
 				const failureKind =
 					callbackDecision.kind === "expired"
 						? "expired"
 						: callbackDecision.kind === "consumed"
 							? "consumed"
-							: "invalid";
+							: callbackDecision.kind === "scope_mismatch"
+								? "scope_mismatch"
+								: "invalid";
+				const reason =
+					callbackDecision.kind === "expired"
+						? "expired_telegram_callback_token"
+						: callbackDecision.kind === "consumed"
+							? "consumed_telegram_callback_token"
+							: callbackDecision.kind === "scope_mismatch"
+								? "ui_callback_scope_mismatch"
+								: "invalid_telegram_callback_token";
 				return rejectedIngressResult({
 					channel: this.spec.channel,
 					reason,
@@ -831,23 +870,20 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 				});
 			}
 			commandText = callbackDecision.record.action.command_text;
-			actorId = stringId((callbackQuery.from as Record<string, unknown> | undefined)?.id) ?? actorId;
-			conversationId =
-				stringId(
-					(
-						(callbackQuery.message as Record<string, unknown> | undefined)?.chat as
-							| Record<string, unknown>
-							| undefined
-					)?.id,
-				) ?? conversationId;
+			bindingHint = callbackBindingHint;
 			metadata.callback_query_id = sourceId;
 			metadata.callback_data = callbackData;
 			metadata.callback_token_id = callbackDecision.record.token_id;
 			metadata.callback_action_kind = callbackDecision.record.action.kind;
 			metadata.message_id = stringId((callbackQuery.message as Record<string, unknown> | undefined)?.message_id);
+			if (callbackDecision.record.ui_event) {
+				metadata.ui_event = callbackDecision.record.ui_event;
+			}
+			metadata.ui_event_token_id = callbackDecision.record.token_id;
 		} else if (message) {
 			actorId = stringId((message.from as Record<string, unknown> | undefined)?.id) ?? actorId;
 			conversationId = stringId((message.chat as Record<string, unknown> | undefined)?.id) ?? conversationId;
+			bindingHint = resolveBindingHint(this.#pipeline, this.spec.channel, this.#tenantId, actorId);
 			const rawText = typeof message.text === "string" ? message.text : "";
 			const rawCaption = typeof message.caption === "string" ? message.caption : "";
 			const attachmentCandidates = extractTelegramMessageAttachments(message);
@@ -903,7 +939,7 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 		const stableId = sha256Hex(source).slice(0, 32);
 		const requestId = `telegram-req-${stableId}`;
 		const deliveryId = `telegram-delivery-${stableId}`;
-		const bindingHint = resolveBindingHint(this.#pipeline, this.spec.channel, this.#tenantId, actorId);
+		const resolvedBindingHint = bindingHint ?? resolveBindingHint(this.#pipeline, this.spec.channel, this.#tenantId, actorId);
 		const nowMs = Math.trunc(this.#nowMs());
 		const normalizedCommandText = commandText.trim();
 		const inboundAttachments = Array.isArray(metadata.inbound_attachments)
@@ -920,8 +956,8 @@ export class TelegramControlPlaneAdapter implements ControlPlaneAdapter {
 			channel_tenant_id: this.#tenantId,
 			channel_conversation_id: conversationId,
 			actor_id: actorId,
-			actor_binding_id: bindingHint.actorBindingId,
-			assurance_tier: bindingHint.assuranceTier,
+			actor_binding_id: resolvedBindingHint.actorBindingId,
+			assurance_tier: resolvedBindingHint.assuranceTier,
 			repo_root: this.#pipeline.runtime.paths.repoRoot,
 			command_text: normalizedCommandText,
 			scope_required: "cp.read",

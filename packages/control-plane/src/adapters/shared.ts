@@ -1,4 +1,4 @@
-import { HUD_CONTRACT_VERSION, normalizeHudDocs, stableSerializeJson } from "@femtomc/mu-core";
+import { HUD_CONTRACT_VERSION, UI_CONTRACT_VERSION, normalizeHudDocs, normalizeUiDocs, stableSerializeJson } from "@femtomc/mu-core";
 import type { AdapterIngressResult } from "../adapter_contract.js";
 import type { CommandPipelineResult, ControlPlaneCommandPipeline } from "../command_pipeline.js";
 import { assuranceTierForChannel, type Channel, ChannelSchema } from "../identity_store.js";
@@ -189,6 +189,8 @@ export function syntheticStateForPipelineResult(result: CommandPipelineResult):
 	}
 }
 
+const ADAPTER_UI_DOCS_MAX = 16;
+
 function hudMetadataFromPipelineResult(result: CommandPipelineResult): Record<string, unknown> {
 	if (result.kind !== "operator_response") {
 		return {};
@@ -202,6 +204,22 @@ function hudMetadataFromPipelineResult(result: CommandPipelineResult): Record<st
 		hud_docs_count: hudDocs.length,
 		hud_docs: hudDocs,
 		hud_docs_json: stableSerializeJson(hudDocs),
+	};
+}
+
+function uiMetadataFromPipelineResult(result: CommandPipelineResult): Record<string, unknown> {
+	if (result.kind !== "operator_response") {
+		return {};
+	}
+	const uiDocs = normalizeUiDocs(result.ui_docs, { maxDocs: ADAPTER_UI_DOCS_MAX });
+	if (uiDocs.length === 0) {
+		return {};
+	}
+	return {
+		ui_contract_version: UI_CONTRACT_VERSION,
+		ui_docs_count: uiDocs.length,
+		ui_docs: uiDocs,
+		ui_docs_json: stableSerializeJson(uiDocs),
 	};
 }
 
@@ -256,6 +274,7 @@ export async function enqueueFallbackPipelineResult(opts: {
 			synthetic_correlation: true,
 			...(opts.metadata ?? {}),
 			...hudMetadataFromPipelineResult(opts.result),
+			...uiMetadataFromPipelineResult(opts.result),
 		},
 	};
 
@@ -322,6 +341,7 @@ export async function enqueueOperatorResponse(opts: {
 			interaction_render_mode: "chat_plain",
 			...(opts.metadata ?? {}),
 			...hudMetadataFromPipelineResult(opts.result),
+			...uiMetadataFromPipelineResult(opts.result),
 		},
 	};
 
@@ -347,6 +367,7 @@ export async function runPipelineForInbound(opts: {
 	nowMs: number;
 	metadata?: Record<string, unknown>;
 	forceOutbox?: boolean;
+	suppressOperatorOutbox?: boolean;
 }): Promise<AdapterPipelineDispatchResult> {
 	const pipelineResult = await opts.pipeline.handleAdapterIngress(opts.inbound);
 	const replyToMessageId = stringId(opts.inbound.metadata?.message_id);
@@ -356,7 +377,7 @@ export async function runPipelineForInbound(opts: {
 			: opts.metadata;
 
 	let outboxRecord: OutboxRecord | null = null;
-	if (pipelineResult.kind === "operator_response") {
+	if (pipelineResult.kind === "operator_response" && !opts.suppressOperatorOutbox) {
 		outboxRecord = await enqueueOperatorResponse({
 			outbox: opts.outbox,
 			inbound: opts.inbound,
@@ -367,7 +388,9 @@ export async function runPipelineForInbound(opts: {
 	}
 
 	if (!outboxRecord && opts.forceOutbox) {
-		const suppressForcedFallback = pipelineResult.kind === "noop" && pipelineResult.reason === "operator_cancelled";
+		const suppressForcedFallback =
+			(pipelineResult.kind === "noop" && pipelineResult.reason === "operator_cancelled") ||
+			(opts.suppressOperatorOutbox && pipelineResult.kind === "operator_response");
 		if (!suppressForcedFallback) {
 			outboxRecord = await enqueueFallbackPipelineResult({
 				outbox: opts.outbox,

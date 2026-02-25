@@ -16,6 +16,9 @@ function createPiMock() {
 		registerTool() {
 			return undefined;
 		},
+		registerShortcut() {
+			return undefined;
+		},
 		on() {
 			return undefined;
 		},

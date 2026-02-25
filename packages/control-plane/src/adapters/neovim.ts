@@ -2,6 +2,7 @@ import {
 	defaultWebhookRouteForChannel,
 } from "../adapter_contract.js";
 import type { ControlPlaneCommandPipeline } from "../command_pipeline.js";
+import { UiCallbackTokenStore } from "../ui_callback_token_store.js";
 import {
 	createFrontendAdapterSpec,
 	FrontendControlPlaneAdapter,
@@ -21,6 +22,7 @@ export type NeovimControlPlaneAdapterOpts = {
 	pipeline: ControlPlaneCommandPipeline;
 	sharedSecret: string;
 	nowMs?: () => number;
+	uiCallbackTokenStore: UiCallbackTokenStore;
 };
 
 export const NeovimIngressPayloadSchema = FrontendIngressPayloadSchema;
@@ -34,6 +36,7 @@ export class NeovimControlPlaneAdapter extends FrontendControlPlaneAdapter {
 			sharedSecretHeader: NEOVIM_SHARED_SECRET_HEADER,
 			sharedSecret: opts.sharedSecret,
 			nowMs: opts.nowMs,
+			uiCallbackTokenStore: opts.uiCallbackTokenStore,
 		});
 	}
 }

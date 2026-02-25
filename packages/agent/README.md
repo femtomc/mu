@@ -22,24 +22,29 @@ These are loaded by runtime code and are the single source of truth for default 
 ## Bundled starter skills
 
 Bundled starter skills live under `packages/agent/prompts/skills/` and are bootstrapped
-into `~/.mu/skills/` (or `$MU_HOME/skills/`) by the CLI store-initialization path:
+into `~/.mu/skills/` (or `$MU_HOME/skills/`) by the CLI store-initialization path.
+They are organized as category meta-skills plus subskills:
 
-- `mu`
-- `memory`
-- `planning`
-- `hud`
-- `orchestration`
-- `control-flow`
-- `model-routing`
-- `code-mode`
-- `tmux`
+- `core`
+  - `mu`
+  - `memory`
+  - `tmux`
+  - `code-mode`
 - `subagents`
-- `heartbeats`
-- `crons`
-- `setup-slack`
-- `setup-discord`
-- `setup-telegram`
-- `setup-neovim`
+  - `planning`
+  - `protocol`
+  - `execution`
+  - `control-flow`
+  - `model-routing`
+  - `hud`
+- `automation`
+  - `heartbeats`
+  - `crons`
+- `messaging`
+  - `setup-slack`
+  - `setup-discord`
+  - `setup-telegram`
+  - `setup-neovim`
 - `writing`
 
 Starter skills are version-synced by CLI bootstrap. Initial bootstrap seeds missing
@@ -84,6 +89,26 @@ Default operator UI theme is `mu-gruvbox-dark`.
 - `/mu brand on|off|toggle` — enable/disable UI branding
 - `/mu hud ...` — HUD command for enabling/inspecting/clearing HUD docs; does not inject HUD metadata into branding footer
 - `/mu help` — dispatcher catalog of registered `/mu` subcommands
+- `/mu ui ...` — inspect interactive `UiDoc`s; `run` is a debug/helper execution path for operators
+
+## Programmable UI documents
+
+Skills can publish interactive UI state via the `mu_ui` tool. Rendered `UiDoc`s survive session reconnects
+(30 minute retention per session ID), respect revision/version bumps, and route action clicks/taps back to
+plain command text via `metadata.command_text` (the `/answer` flow is the reference pattern).
+
+Actions without `metadata.command_text` are treated as non-interactive; `/mu ui run` now warns instead of
+sending implicit `MU_UI_EVENT` fallback payloads.
+
+Current runtime behavior is channel-specific:
+
+- Slack renders rich blocks + interactive action buttons.
+- Discord/Telegram/Neovim render text-first docs plus tokenized action callbacks.
+- When interactive controls cannot be rendered, adapters append deterministic text fallback.
+
+`/mu ui run` is kept as operator debug tooling and is not required for user-facing product flows.
+
+See the [Programmable UI substrate guide](../../docs/mu-ui.md) for the full support matrix and workflow.
 
 ## Tooling model (CLI-first)
 

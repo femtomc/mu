@@ -10,6 +10,7 @@ import {
 	OutboxRecordSchema,
 	SlackControlPlaneAdapterSpec,
 } from "@femtomc/mu-control-plane";
+import type { UiDoc } from "@femtomc/mu-core";
 import { DEFAULT_MU_CONFIG } from "../src/config.js";
 import {
 	bootstrapControlPlane,
@@ -25,6 +26,8 @@ import {
 	renderTelegramMarkdown,
 	splitSlackMessageText,
 	splitTelegramMessageText,
+	uiDocTextLines,
+	uiDocsTextFallback,
 } from "../src/control_plane.js";
 
 const handlesToCleanup = new Set<ControlPlaneHandle>();
@@ -57,6 +60,70 @@ function bootstrapControlPlaneForTest(
 		sessionLifecycle: opts.sessionLifecycle ?? TEST_SESSION_LIFECYCLE,
 	});
 }
+
+describe("ui doc fallback helpers", () => {
+	function mkUiDoc(overrides: Partial<UiDoc> = {}): UiDoc {
+		return {
+			v: 1,
+			ui_id: "ui:panel",
+			title: "Panel",
+			summary: "Panel summary",
+			components: [
+				{ kind: "text", id: "base", text: "Base text", metadata: {} },
+			],
+			actions: [],
+			revision: { id: "rev:1", version: 1 },
+			updated_at_ms: 100,
+			metadata: {},
+			...overrides,
+		};
+	}
+
+	test("ui doc lines sort components and actions deterministically", () => {
+		const doc = mkUiDoc({
+			components: [
+				{ kind: "text", id: "b", text: "Second text", metadata: {} },
+				{ kind: "text", id: "a", text: "First text", metadata: {} },
+			],
+			actions: [
+				{
+					id: "z",
+					label: "Z action",
+					description: "desc z",
+					kind: "primary",
+					payload: {},
+					metadata: {},
+				},
+				{
+					id: "y",
+					label: "Y action",
+					kind: "secondary",
+					payload: {},
+					metadata: {},
+				},
+			],
+		});
+		const lines = uiDocTextLines(doc);
+		expect(lines).toEqual([
+			"UI · Panel",
+			"Panel summary",
+			"First text",
+			"Second text",
+			"Actions:",
+			"• Y action (id=y)",
+			"• Z action desc z (id=z)",
+		]);
+	});
+
+	test("uiDocs text fallback concatenates multiple docs", () => {
+		const fallback = uiDocsTextFallback([
+			mkUiDoc(),
+			mkUiDoc({ ui_id: "ui:dialog", title: "Dialog" }),
+		]);
+		expect(fallback).toContain("UI · Panel");
+		expect(fallback).toContain("UI · Dialog");
+	});
+});
 
 function hmac(secret: string, input: string): string {
 	const hasher = new Bun.CryptoHasher("sha256", secret);
@@ -782,6 +849,48 @@ describe("telegram outbound media delivery", () => {
 			expect(payloads[0]?.reply_markup).toBeUndefined();
 			expect(String(payloads[0]?.text ?? "")).toContain("Actions:");
 			expect(String(payloads[0]?.text ?? "")).toContain(longCommand);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("degrades ui_docs actions to deterministic text when callback encoder is unavailable", async () => {
+		const payloads: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (!url.includes("/sendMessage")) {
+				throw new Error(`unexpected fetch: ${url}`);
+			}
+			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+			return new Response(JSON.stringify({ ok: true }), { status: 200 });
+		}) as typeof fetch;
+		try {
+			const record = mkTelegramOutboxRecord({
+				body: "Operator response",
+				metadata: {
+					ui_docs: [
+						{
+							v: 1,
+							ui_id: "ui:answer",
+							title: "Answer",
+							components: [{ kind: "text", id: "c1", text: "Proceed?", metadata: {} }],
+							actions: [{ id: "yes", label: "Yes", payload: {}, metadata: { command_text: "/mu answer yes" } }],
+							revision: { id: "rev-1", version: 1 },
+							updated_at_ms: 1,
+							metadata: {},
+						},
+					],
+				},
+			});
+			const result = await deliverTelegramOutboxRecord({ botToken: "telegram-token", record });
+			expect(result.kind).toBe("delivered");
+			expect(payloads).toHaveLength(1);
+			expect(payloads[0]?.reply_markup).toBeUndefined();
+			const text = String(payloads[0]?.text ?? "");
+			expect(text).toContain("UI · Answer");
+			expect(text).toContain("Actions:");
+			expect(text).toContain("/mu answer yes");
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
@@ -2128,6 +2237,115 @@ describe("bootstrapControlPlane operator wiring", () => {
 
 			await waitFor(() => telegramApiCalls.length >= 2);
 			expect(String(telegramApiCalls[1]?.body?.text ?? "")).toContain("hud response");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("Telegram UI docs render tokenized inline callbacks and round-trip via callback ingress", async () => {
+		const repoRoot = await mkRepoRoot();
+		await linkTelegramIdentity(repoRoot, ["cp.read"]);
+
+		const telegramApiCalls: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.startsWith("https://api.telegram.org/bot")) {
+				const parsedBody =
+					typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				telegramApiCalls.push({ url, body: parsedBody });
+				return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return await originalFetch(input as any, init);
+		}) as typeof fetch;
+
+		try {
+			const uiDoc: UiDoc = {
+				v: 1,
+				ui_id: "ui:answer",
+				title: "Answer",
+				components: [
+					{ kind: "text", id: "c1", text: "Would you like to proceed?", metadata: {} },
+				],
+				actions: [
+					{
+						id: "yes",
+						label: "Yes",
+						payload: { value: "yes" },
+						metadata: { command_text: "/mu answer yes" },
+					},
+				],
+				revision: { id: "rev-1", version: 1 },
+				updated_at_ms: 1,
+				metadata: {},
+			};
+
+			const handle = await bootstrapControlPlaneForTest({
+				repoRoot,
+				config: configWith({
+					telegramSecret: "telegram-secret",
+					telegramBotToken: "telegram-token",
+				}),
+				operatorBackend: new StaticOperatorBackend({
+					kind: "respond",
+					message: "ui response",
+					ui_docs: [uiDoc],
+				}),
+			});
+			expect(handle).not.toBeNull();
+			if (!handle) {
+				throw new Error("expected control plane handle");
+			}
+			handlesToCleanup.add(handle);
+
+			const response = await handle.handleWebhook(
+				"/webhooks/telegram",
+				telegramRequest({
+					secret: "telegram-secret",
+					updateId: 505,
+					text: "show ui",
+				}),
+			);
+			expect(response).not.toBeNull();
+			if (!response) {
+				throw new Error("expected webhook response");
+			}
+			expect(response.status).toBe(200);
+
+			await waitFor(() => telegramApiCalls.length >= 1);
+			const payload = telegramApiCalls[0]?.body as Record<string, unknown>;
+			const text = String(payload?.text ?? "");
+			expect(text).toContain("UI · Answer");
+			expect(text).toContain("Would you like to proceed?");
+			const markup = payload?.reply_markup as Record<string, unknown>;
+			const keyboard = markup?.inline_keyboard as Array<Array<Record<string, unknown>>>;
+			const callbackData = String(keyboard?.[0]?.[0]?.callback_data ?? "");
+			expect(callbackData.startsWith("mu1:")).toBe(true);
+
+			const callbackResponse = await handle.handleWebhook(
+				"/webhooks/telegram",
+				telegramCallbackRequest({
+					secret: "telegram-secret",
+					updateId: 506,
+					callbackQueryId: "cb-ui-1",
+					callbackData,
+					messageId: 505,
+				}),
+			);
+			expect(callbackResponse).not.toBeNull();
+			if (!callbackResponse) {
+				throw new Error("expected callback webhook response");
+			}
+			expect(callbackResponse.status).toBe(200);
+			const callbackAck = (await callbackResponse.json()) as { method?: string; callback_query_id?: string };
+			expect(callbackAck.method).toBe("answerCallbackQuery");
+			expect(callbackAck.callback_query_id).toBe("cb-ui-1");
+
+			await waitFor(() => telegramApiCalls.length >= 2);
+			expect(String(telegramApiCalls[1]?.body?.text ?? "")).toContain("ui response");
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

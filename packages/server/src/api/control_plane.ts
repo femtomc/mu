@@ -1,9 +1,11 @@
 import {
+	Channel,
 	CONTROL_PLANE_CHANNEL_ADAPTER_SPECS,
 	ingressModeForValue,
 	summarizeInboundAttachmentPolicy,
 } from "@femtomc/mu-control-plane";
 import type { MuConfig } from "../config.js";
+import { UI_ACTIONS_UNSUPPORTED_REASON, UI_COMPONENT_SUPPORT } from "../control_plane.js";
 import type { ServerRoutingDependencies } from "../server_routing.js";
 import { configRoutes } from "./config.js";
 import { eventRoutes } from "./events.js";
@@ -112,6 +114,87 @@ function mediaInboundAttachmentCapability(config: MuConfig, channel: string): {
 	};
 }
 
+const TEXT_ONLY_UI_COMPONENT_SUPPORT = {
+	text: true,
+	list: false,
+	key_value: false,
+	divider: false,
+} as const;
+
+type UiActionCapability = {
+	supported: boolean;
+	reason: string | null;
+};
+
+type UiCapability = {
+	supported: boolean;
+	reason: string | null;
+	components: {
+		text: boolean;
+		list: boolean;
+		key_value: boolean;
+		divider: boolean;
+	};
+	actions: UiActionCapability;
+};
+
+const CHANNEL_UI_CAPABILITIES: Record<Channel, UiCapability> = {
+	slack: {
+		supported: true,
+		reason: null,
+		components: UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+	discord: {
+		supported: true,
+		reason: null,
+		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+	telegram: {
+		supported: true,
+		reason: null,
+		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+	neovim: {
+		supported: true,
+		reason: null,
+		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: true,
+			reason: null,
+		},
+	},
+	terminal: {
+		supported: true,
+		reason: null,
+		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
+		actions: {
+			supported: false,
+			reason: UI_ACTIONS_UNSUPPORTED_REASON,
+		},
+	},
+};
+
+function uiCapabilityForChannel(channel: Channel): UiCapability {
+	return CHANNEL_UI_CAPABILITIES[channel] ?? {
+		supported: true,
+		reason: null,
+		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
+		actions: { supported: false, reason: UI_ACTIONS_UNSUPPORTED_REASON },
+	};
+}
+
 export async function controlPlaneRoutes(
 	request: Request,
 	url: URL,
@@ -202,6 +285,7 @@ export async function controlPlaneRoutes(
 				outbound_delivery: mediaOutboundCapability(config, spec.channel),
 				inbound_attachment_download: mediaInboundAttachmentCapability(config, spec.channel),
 			},
+			ui: uiCapabilityForChannel(spec.channel),
 		}));
 
 		return Response.json(

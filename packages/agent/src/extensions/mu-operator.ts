@@ -9,9 +9,11 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { brandingExtension } from "./branding.js";
 import { eventLogExtension } from "./event-log.js";
 import { hudExtension } from "./hud.js";
+import { uiExtension } from "./ui.js";
 
 export function muOperatorExtension(pi: ExtensionAPI) {
 	hudExtension(pi);
+	uiExtension(pi);
 	brandingExtension(pi);
 	eventLogExtension(pi);
 }

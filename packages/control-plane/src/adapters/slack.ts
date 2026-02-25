@@ -6,6 +6,7 @@ import {
 	defaultWebhookRouteForChannel,
 } from "../adapter_contract.js";
 import type { ControlPlaneCommandPipeline } from "../command_pipeline.js";
+import type { UiEvent } from "@femtomc/mu-core";
 import {
 	evaluateInboundAttachmentPostDownload,
 	evaluateInboundAttachmentPreDownload,
@@ -27,6 +28,15 @@ import {
 	textResponse,
 	timingSafeEqualUtf8,
 } from "./shared.js";
+import { UiCallbackTokenStore } from "../ui_callback_token_store.js";
+import {
+	commandTextFromUiEvent,
+	decodeUiEventToken,
+	parseUiEventPayload,
+	UiEventContext,
+	uiCallbackTokenFailurePayload,
+	uiEventForMetadata,
+} from "../ui_event_ingress.js";
 
 export const SlackControlPlaneAdapterSpec = ControlPlaneAdapterSpecSchema.parse({
 	channel: "slack",
@@ -53,6 +63,7 @@ export type SlackControlPlaneAdapterOpts = {
 	allowedTimestampSkewSec?: number;
 	fetchImpl?: typeof fetch;
 	inboundAttachmentPolicy?: InboundAttachmentPolicy;
+	uiCallbackTokenStore: UiCallbackTokenStore;
 };
 
 type SlackEventFile = {
@@ -154,6 +165,7 @@ type SlackActionPayloadHudAction = SlackActionPayloadBase & {
 	actionId: string;
 	hudActionId: string;
 	commandText: string | null;
+	value?: string | null;
 };
 
 export type SlackActionParseResult =
@@ -322,6 +334,7 @@ export function parseSlackActionPayload(payloadRaw: string | null): SlackActionP
 				actionId,
 				hudActionId,
 				commandText: actionCommandText,
+				value: nonEmptyString(action.value),
 				...basePayload,
 			},
 		};
@@ -448,6 +461,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 	readonly #adapterAudit: AdapterAuditLog | null;
 	readonly #conversationalEventInFlight = new Set<string>();
 	readonly #conversationalEventSeenUntilMs = new Map<string, number>();
+	readonly #uiCallbackTokenStore: UiCallbackTokenStore;
 
 	public constructor(opts: SlackControlPlaneAdapterOpts) {
 		this.#pipeline = opts.pipeline;
@@ -458,6 +472,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 		this.#allowedTimestampSkewSec = Math.max(1, Math.trunc(opts.allowedTimestampSkewSec ?? 5 * 60));
 		this.#fetchImpl = opts.fetchImpl ?? fetch;
 		this.#inboundAttachmentPolicy = opts.inboundAttachmentPolicy ?? DEFAULT_INBOUND_ATTACHMENT_POLICY;
+		this.#uiCallbackTokenStore = opts.uiCallbackTokenStore;
 		const runtimePaths = this.#pipeline?.runtime?.paths;
 		if (runtimePaths) {
 			this.#inboundAttachmentStore = new InboundAttachmentStore({
@@ -909,6 +924,10 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 
 		if (parsedAction.kind === "cancel_turn" || parsedAction.kind === "hud_action") {
 			const action = parsedAction.payload;
+			const uiEvent = action.kind === "hud_action" ? parseUiEventPayload(action.value) : null;
+			if (uiEvent && typeof uiEvent.callback_token === "string" && uiEvent.callback_token.trim().length > 0) {
+				return await this.#handleUiEventAction(action, uiEvent, req);
+			}
 			const normalizedText = safeCommandTextForSlackAction(action);
 			if (!normalizedText) {
 				return acceptedIngressResult({
@@ -1528,5 +1547,131 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			this.#conversationalEventInFlight.delete(conversationalEventKey);
 			this.#markConversationalEventSeen(conversationalEventKey, Math.trunc(this.#nowMs()));
 		}
+	}
+
+
+	async #handleUiEventAction(
+		action: SlackActionPayloadCancelTurn | SlackActionPayloadHudAction,
+		uiEvent: UiEvent,
+		req: Request,
+	): Promise<AdapterIngressResult> {
+		const nowMs = Math.trunc(this.#nowMs());
+		const bindingHint = resolveBindingHint(this.#pipeline, this.spec.channel, action.teamId, action.actorId);
+		const context: UiEventContext = {
+			channel: this.spec.channel,
+			channelTenantId: action.teamId,
+			channelConversationId: action.channelId,
+			actorBindingId: bindingHint.actorBindingId,
+		};
+		const tokenDecision = await decodeUiEventToken({
+			tokenStore: this.#uiCallbackTokenStore,
+			context,
+			uiEvent,
+			nowMs,
+		});
+		if (tokenDecision.kind !== "ok") {
+			const failure = uiCallbackTokenFailurePayload(tokenDecision);
+			return acceptedIngressResult({
+				channel: this.spec.channel,
+				reason: failure.reason,
+				response: jsonResponse(
+					{
+						response_type: "ephemeral",
+						text: failure.text,
+					},
+					{ status: 200 },
+				),
+				inbound: null,
+				pipelineResult: { kind: "noop", reason: failure.reason },
+				outboxRecord: null,
+			});
+		}
+
+		const resolvedUiEvent = tokenDecision.record.ui_event;
+		const normalizedText = commandTextFromUiEvent(resolvedUiEvent);
+		if (!normalizedText) {
+			const reason = "ui_event_missing_command_text";
+			return acceptedIngressResult({
+				channel: this.spec.channel,
+				reason,
+				response: jsonResponse(
+					{
+						response_type: "ephemeral",
+						text: "This action is missing command_text metadata. Please rerun the request.",
+					},
+					{ status: 200 },
+				),
+				inbound: null,
+				pipelineResult: { kind: "noop", reason },
+				outboxRecord: null,
+			});
+		}
+		const eventMetadata = uiEventForMetadata(resolvedUiEvent);
+		const stableSource = `${action.teamId}:${action.channelId}:${action.actorId}:${action.triggerId}:ui_event:${resolvedUiEvent.ui_id}:${resolvedUiEvent.action_id}:${resolvedUiEvent.revision.version}`;
+		const stableId = sha256Hex(stableSource).slice(0, 32);
+		const requestIdHeader = req.headers.get("x-slack-request-id");
+		const requestId =
+			requestIdHeader && requestIdHeader.trim().length > 0
+				? `slack-req-${requestIdHeader.trim()}`
+				: `slack-req-${stableId}`;
+		const deliveryId = `slack-delivery-ui-event-${stableId}`;
+
+		const metadata: Record<string, unknown> = {
+			adapter: this.spec.channel,
+			source: "slack:block_actions",
+			action_id: action.actionId,
+			action_ts: action.actionTs,
+			trigger_id: action.triggerId,
+			slack_message_ts: action.messageTs,
+			...(action.threadTs ? { slack_thread_ts: action.threadTs } : {}),
+			slack_status_message_ts: action.messageTs,
+			response_url: action.responseUrl,
+			action_provenance: "slack:block_actions",
+			ui_event: eventMetadata,
+			ui_event_token_id: tokenDecision.record.token_id,
+		};
+
+		const inbound = InboundEnvelopeSchema.parse({
+			v: 1,
+			received_at_ms: nowMs,
+			request_id: requestId,
+			delivery_id: deliveryId,
+			channel: this.spec.channel,
+			channel_tenant_id: action.teamId,
+			channel_conversation_id: action.channelId,
+			actor_id: action.actorId,
+			actor_binding_id: bindingHint.actorBindingId,
+			assurance_tier: bindingHint.assuranceTier,
+			repo_root: this.#pipeline.runtime.paths.repoRoot,
+			command_text: normalizedText,
+			scope_required: "cp.read",
+			scope_effective: "cp.read",
+			target_type: "status",
+			target_id: action.channelId,
+			idempotency_key: `slack-idem-ui-event-${stableId}`,
+			fingerprint: `slack-fp-ui-event-${sha256Hex(normalizedText.toLowerCase())}`,
+			metadata,
+			ui_event: eventMetadata,
+		});
+
+		const dispatched = await runPipelineForInbound({
+			pipeline: this.#pipeline,
+			outbox: this.#outbox,
+			inbound,
+			nowMs,
+			metadata: {
+				...metadata,
+				delivery_id: deliveryId,
+			},
+			forceOutbox: true,
+		});
+
+		return acceptedIngressResult({
+			channel: this.spec.channel,
+			response: textResponse("", { status: 200 }),
+			inbound,
+			pipelineResult: dispatched.pipelineResult,
+			outboxRecord: dispatched.outboxRecord,
+		});
 	}
 }

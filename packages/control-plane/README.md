@@ -147,6 +147,34 @@ Telegram behavior details:
 - Existing text-only envelopes (no `attachments`) continue to use channel text endpoints (`chat.postMessage` for Slack, `sendMessage` for Telegram).
 - Optional `attachments` remain schema-compatible; text-only payloads continue to work without changes.
 
+### UiDoc action support matrix
+
+`operator_response.ui_docs` actions are supported with channel-specific rendering and deterministic
+degradation.
+
+Interactive transport requires explicit `action.metadata.command_text`; actions missing command text are
+rendered as non-interactive fallback text and are not tokenized.
+
+| Channel | Component rendering | Action transport | Degrade behavior |
+| --- | --- | --- | --- |
+| Slack | Rich blocks (`text`, `list`, `key_value`, `divider`) | Slack block buttons carrying tokenized `UiEvent` payloads | Falls back to deterministic action text lines when token payloads cannot be rendered |
+| Discord | Text projection of `UiDoc` components | Discord component buttons with compact tokenized `custom_id` | Falls back to deterministic `Actions:` text lines when token issuance/size limits fail |
+| Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks encoded via callback-token store | Falls back to deterministic `Actions:` command text lines when callback encoding is unavailable/oversized |
+| Neovim | Frontend receives canonical `ui_docs` payload | Action `callback_token` returned to frontend, then posted back as `ui_event` | Missing/invalid/expired/consumed tokens return deterministic rejection payloads |
+| Terminal (`channel=terminal`) | Text-only | Not supported (`ui_actions_not_implemented`) | Interactive actions must use Slack/Discord/Telegram/Neovim |
+
+Temporary compatibility shims still present after rollout cleanup:
+
+- Discord ingress still accepts legacy JSON `custom_id` UI payloads (TODO remove after 2026-04-30).
+- Frontend ingress still accepts `text` as an alias for `command_text` (TODO remove after 2026-04-30).
+- Telegram callback token prefix remains `mu1:` for existing callback continuity (TODO migrate after 2026-06-30).
+
+Live channel capability flags (including `ui.components` and `ui.actions`) are exposed via:
+
+```bash
+curl -s http://localhost:3000/api/control-plane/channels | jq '.channels[] | {channel, ui}'
+```
+
 ## Adapter contract
 
 Adapter integration points are now explicitly specified in code (`adapter_contract.ts`):
