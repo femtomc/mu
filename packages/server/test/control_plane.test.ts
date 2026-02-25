@@ -1408,7 +1408,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 					tenant_id: "workspace-1",
 					conversation_id: "buffer:core/xx/src/runtime.zig",
 					actor_id: "neovim-actor",
-					text: "status",
+					command_text: "status",
 					client_context: {
 						file: "core/xx/src/runtime.zig",
 						selection: "const x = y + 1;",
@@ -2214,7 +2214,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			const markup = firstPayload?.reply_markup as Record<string, unknown>;
 			const keyboard = markup?.inline_keyboard as Array<Array<Record<string, unknown>>>;
 			const callbackData = String(keyboard?.[0]?.[0]?.callback_data ?? "");
-			expect(callbackData.startsWith("mu1:")).toBe(true);
+			expect(callbackData.startsWith("mu-ui:")).toBe(true);
 
 			const callbackResponse = await handle.handleWebhook(
 				"/webhooks/telegram",
@@ -2323,7 +2323,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			const markup = payload?.reply_markup as Record<string, unknown>;
 			const keyboard = markup?.inline_keyboard as Array<Array<Record<string, unknown>>>;
 			const callbackData = String(keyboard?.[0]?.[0]?.callback_data ?? "");
-			expect(callbackData.startsWith("mu1:")).toBe(true);
+			expect(callbackData.startsWith("mu-ui:")).toBe(true);
 
 			const callbackResponse = await handle.handleWebhook(
 				"/webhooks/telegram",

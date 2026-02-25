@@ -261,9 +261,7 @@ export class FrontendControlPlaneAdapter implements ControlPlaneAdapter {
 			metadata.ui_event_token_id = tokenDecision.record.token_id;
 			metadata.source = "frontend:ui_event";
 		} else {
-			// TODO(mu-b9553e35): remove legacy `text` alias fallback after 2026-04-30.
-			const rawText = payload.command_text ?? payload.text ?? "";
-			normalizedText = normalizeSlashMuCommand(rawText);
+			normalizedText = normalizeSlashMuCommand(payload.command_text ?? "");
 		}
 
 		const stableSource = [

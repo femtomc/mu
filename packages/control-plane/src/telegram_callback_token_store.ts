@@ -3,8 +3,7 @@ import { appendJsonl, readJsonl } from "@femtomc/mu-core/node";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 
-// TODO(mu-b9553e35): migrate Telegram callback_data to the unified UiCallbackTokenStore prefix after 2026-06-30.
-const CALLBACK_PREFIX = "mu1:";
+const CALLBACK_PREFIX = "mu-ui:";
 const TOKEN_ID_PATTERN = /^[A-Za-z0-9_-]{10,48}$/;
 const TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64;
 

@@ -4,19 +4,28 @@ import { UiEventSchema } from "@femtomc/mu-core";
 export const FrontendChannelSchema = z.enum(["neovim"]);
 export type FrontendChannel = z.infer<typeof FrontendChannelSchema>;
 
-export const FrontendIngressRequestSchema = z.object({
-	request_id: z.string().trim().min(1).optional(),
-	tenant_id: z.string().trim().min(1),
-	conversation_id: z.string().trim().min(1),
-	actor_id: z.string().trim().min(1),
-	text: z.string().optional(),
-	command_text: z.string().optional(),
-	target_type: z.string().trim().min(1).optional(),
-	target_id: z.string().trim().min(1).optional(),
-	metadata: z.record(z.string(), z.unknown()).optional(),
-	client_context: z.unknown().optional(),
-	ui_event: UiEventSchema.optional(),
-});
+export const FrontendIngressRequestSchema = z
+	.object({
+		request_id: z.string().trim().min(1).optional(),
+		tenant_id: z.string().trim().min(1),
+		conversation_id: z.string().trim().min(1),
+		actor_id: z.string().trim().min(1),
+		command_text: z.string().trim().min(1).optional(),
+		target_type: z.string().trim().min(1).optional(),
+		target_id: z.string().trim().min(1).optional(),
+		metadata: z.record(z.string(), z.unknown()).optional(),
+		client_context: z.unknown().optional(),
+		ui_event: UiEventSchema.optional(),
+	})
+	.superRefine((payload, ctx) => {
+		if (!payload.ui_event && !payload.command_text) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "command_text is required when ui_event is absent",
+				path: ["command_text"],
+			});
+		}
+	});
 export type FrontendIngressRequest = z.infer<typeof FrontendIngressRequestSchema>;
 
 export const FrontendIngressResponseSchema = z.object({

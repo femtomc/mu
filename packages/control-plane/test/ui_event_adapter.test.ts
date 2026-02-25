@@ -129,6 +129,16 @@ function createUiEvent(): UiEvent {
 	};
 }
 
+function encodeDiscordCustomId(event: UiEvent): string {
+	return [
+		"mu_evt",
+		encodeURIComponent(event.ui_id),
+		String(event.revision.version),
+		encodeURIComponent(event.action_id),
+		String(event.callback_token ?? ""),
+	].join("|");
+}
+
 async function setupSlackAdapter(
 	bindingId = "binding-1",
 	initialNowMs = 1_000,
@@ -361,7 +371,7 @@ describe("Discord UI event ingress", () => {
 			member: { user: { id: "user-1" } },
 			data: {
 				component_type: 2,
-				custom_id: JSON.stringify(event),
+				custom_id: encodeDiscordCustomId(event),
 			},
 			message: {
 				id: "message-1",
@@ -471,7 +481,7 @@ describe("Discord UI event ingress", () => {
 			member: { user: { id: "user-1" } },
 			data: {
 				component_type: 2,
-				custom_id: JSON.stringify(event),
+				custom_id: encodeDiscordCustomId(event),
 			},
 		};
 		const timestamp = Math.floor(env.nowClock.value / 1000);
@@ -496,7 +506,7 @@ describe("Discord UI event ingress", () => {
 			member: { user: { id: "user-1" } },
 			data: {
 				component_type: 2,
-				custom_id: JSON.stringify(event),
+				custom_id: encodeDiscordCustomId(event),
 			},
 		};
 		env.nowClock.value += ttlMs + 1;
@@ -518,7 +528,7 @@ describe("Discord UI event ingress", () => {
 			member: { user: { id: "user-1" } },
 			data: {
 				component_type: 2,
-				custom_id: JSON.stringify(event),
+				custom_id: encodeDiscordCustomId(event),
 			},
 		};
 		const timestamp = Math.floor(env.nowClock.value / 1000);
@@ -541,7 +551,7 @@ describe("Discord UI event ingress", () => {
 			member: { user: { id: "user-1" } },
 			data: {
 				component_type: 2,
-				custom_id: JSON.stringify(event),
+				custom_id: encodeDiscordCustomId(event),
 			},
 		};
 		const timestamp = Math.floor(env.nowClock.value / 1000);
@@ -570,7 +580,7 @@ describe("Discord UI event ingress", () => {
 			member: { user: { id: "user-1" } },
 			data: {
 				component_type: 2,
-				custom_id: JSON.stringify(event),
+				custom_id: encodeDiscordCustomId(event),
 			},
 		};
 		const timestamp = Math.floor(env.nowClock.value / 1000);
@@ -613,7 +623,7 @@ describe("Neovim frontend UI event ingress", () => {
 				tenant_id: "workspace-1",
 				conversation_id: "workspace:main",
 				actor_id: "actor-1",
-				text: "status",
+				command_text: "status",
 			}),
 		);
 		expect(initial.accepted).toBe(true);
@@ -660,6 +670,21 @@ describe("Neovim frontend UI event ingress", () => {
 		expect(seenCommandTexts).toContain("/mu status");
 		expect(seenCommandTexts).toContain("/mu confirm");
 		expect(followup.inbound?.metadata?.ui_event_token_id).toBeDefined();
+	});
+
+	test("rejects legacy text-only ingress payloads", async () => {
+		const env = await setupNeovimAdapter("binding-1", 1_000);
+		const result = await env.adapter.ingest(
+			neovimRequest("nvim-sign", {
+				tenant_id: "workspace-1",
+				conversation_id: "workspace:main",
+				actor_id: "actor-1",
+				text: "status",
+			}),
+		);
+		expect(result.accepted).toBe(false);
+		expect(result.reason).toBe("invalid_payload");
+		expect(result.response.status).toBe(400);
 	});
 
 	test("accepts explicit ui_event payload and emits metadata", async () => {

@@ -159,15 +159,15 @@ rendered as non-interactive fallback text and are not tokenized.
 | --- | --- | --- | --- |
 | Slack | Rich blocks (`text`, `list`, `key_value`, `divider`) | Slack block buttons carrying tokenized `UiEvent` payloads | Falls back to deterministic action text lines when token payloads cannot be rendered |
 | Discord | Text projection of `UiDoc` components | Discord component buttons with compact tokenized `custom_id` | Falls back to deterministic `Actions:` text lines when token issuance/size limits fail |
-| Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks encoded via callback-token store | Falls back to deterministic `Actions:` command text lines when callback encoding is unavailable/oversized |
+| Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks encoded via callback-token store (`mu-ui:*`) | Falls back to deterministic `Actions:` command text lines when callback encoding is unavailable/oversized |
 | Neovim | Frontend receives canonical `ui_docs` payload | Action `callback_token` returned to frontend, then posted back as `ui_event` | Missing/invalid/expired/consumed tokens return deterministic rejection payloads |
 | Terminal (`channel=terminal`) | Text-only | Not supported (`ui_actions_not_implemented`) | Interactive actions must use Slack/Discord/Telegram/Neovim |
 
-Temporary compatibility shims still present after rollout cleanup:
+Legacy compatibility shims from the rollout window are removed:
 
-- Discord ingress still accepts legacy JSON `custom_id` UI payloads (TODO remove after 2026-04-30).
-- Frontend ingress still accepts `text` as an alias for `command_text` (TODO remove after 2026-04-30).
-- Telegram callback token prefix remains `mu1:` for existing callback continuity (TODO migrate after 2026-06-30).
+- Discord no longer accepts legacy JSON `custom_id` UI payloads.
+- Frontend ingress no longer accepts `text` as an alias for `command_text`.
+- Telegram callback tokens use the unified `mu-ui:` prefix.
 
 Live channel capability flags (including `ui.components` and `ui.actions`) are exposed via:
 

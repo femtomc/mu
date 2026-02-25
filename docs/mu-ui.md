@@ -28,7 +28,7 @@ not required in product/reference end-user flows.
 
 No bespoke per-flow extension logic is required when this contract is followed.
 
-## Compatibility cleanup and migration notes (mu-b9553e35)
+## Compatibility cleanup and migration notes
 
 ### Removed in this cleanup pass
 
@@ -36,15 +36,12 @@ No bespoke per-flow extension logic is required when this contract is followed.
   Interactive action routing now requires explicit `metadata.command_text`.
 - **Terminal `/mu ui run` `MU_UI_EVENT ...` fallback dispatch** was removed.
   If an action is missing `metadata.command_text`, the operator UI now warns and does not send an implicit payload.
-
-### Retained temporary migration shims
-
-- **Discord ingress legacy JSON `custom_id` decode** is still accepted for already-rendered older messages.
-  - TODO horizon: remove after **2026-04-30**.
-- **Frontend ingress `text` alias for `command_text`** is still accepted for older clients.
-  - TODO horizon: remove after **2026-04-30**.
-- **Telegram callback token prefix `mu1:`** is retained to avoid breaking existing inline callbacks.
-  - TODO horizon: migrate to unified token format after **2026-06-30**.
+- **Discord ingress legacy JSON `custom_id` decode fallback** was removed.
+  Discord component callbacks must use compact tokenized payload format.
+- **Frontend ingress `text` alias for `command_text`** was removed.
+  Frontend command ingress now requires `command_text` (unless `ui_event` is provided).
+- **Telegram callback token prefix `mu1:`** was removed.
+  Telegram callback tokens now use the unified `mu-ui:` prefix.
 
 ### Migration requirement
 
@@ -57,7 +54,7 @@ Actions without `metadata.command_text` are treated as non-interactive fallback 
 | --- | --- | --- | --- |
 | Slack | Rich block rendering for `text`, `list`, `key_value`, `divider` | Block buttons backed by scoped callback tokens (`mu-ui:*`) | If token issuance/payload cannot be used, action lines are rendered as deterministic text in-message |
 | Discord | Text projection of `UiDoc` content | Discord button components with compact tokenized `custom_id` payload | If token issuance/size limits fail, deterministic `Actions:` text is appended with command text |
-| Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks using encoded callback tokens (`mu1:*`) | If callback encoding unavailable/overflow, deterministic `Actions:` command-text lines are appended |
+| Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks using encoded callback tokens (`mu-ui:*`) | If callback encoding unavailable/overflow, deterministic `Actions:` command-text lines are appended |
 | Neovim frontend | Frontend receives canonical `ui_docs` payload (default renderer is text-first) | Actions include `callback_token`; frontend sends `ui_event` payload back | Missing/invalid/expired token returns deterministic rejection; user can still send command text manually |
 | Terminal API channel (`channel=terminal`) | Text-only | **Unsupported** (`ui_actions_not_implemented`) | Use Slack/Discord/Telegram/Neovim for interactive action clicks |
 | Terminal operator UI (`mu serve`) | Local preview + interaction dialog | `/mu ui run` or `Ctrl+Alt+U` dispatches action command text/UI event | Debug/helper path only; not required for user-facing flows |

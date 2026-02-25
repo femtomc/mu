@@ -179,7 +179,7 @@ describe("frontend client bootstrap", () => {
 					tenant_id: "workspace-1",
 					conversation_id: "workspace:main",
 					actor_id: "actor-1",
-					text: "status",
+					command_text: "status",
 				},
 			});
 			expect(seenSecret ?? "").toBe("neovim-secret");

@@ -15,7 +15,7 @@ describe("TelegramCallbackTokenStore", () => {
 			nowMs: 1_000,
 		});
 		expect(record.callback_data.length).toBeLessThanOrEqual(64);
-		expect(record.callback_data.startsWith("mu1:")).toBe(true);
+		expect(record.callback_data.startsWith("mu-ui:")).toBe(true);
 
 		const first = await store.decodeAndConsume({ callbackData: record.callback_data, nowMs: 2_000 });
 		expect(first.kind).toBe("ok");

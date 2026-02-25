@@ -1,4 +1,4 @@
-import { normalizeUiDocs, type UiDoc } from "@femtomc/mu-core";
+import { normalizeUiDocs, type UiDoc, type UiEvent } from "@femtomc/mu-core";
 import {
 	type AdapterIngressResult,
 	type ControlPlaneAdapter,
@@ -24,7 +24,6 @@ import { UiCallbackTokenStore } from "../ui_callback_token_store.js";
 import {
 	commandTextFromUiEvent,
 	decodeUiEventToken,
-	parseUiEventPayload,
 	UiEventContext,
 	uiCallbackTokenFailurePayload,
 	uiEventForMetadata,
@@ -192,7 +191,7 @@ function encodeDiscordUiEventPayload(opts: {
 	].join("|");
 }
 
-function parseDiscordCompactUiEventPayload(value: string): ReturnType<typeof parseUiEventPayload> {
+function parseDiscordCompactUiEventPayload(value: string): UiEvent | null {
 	const parts = value.split("|");
 	if (parts.length !== 5 || parts[0] !== DISCORD_UI_EVENT_PAYLOAD_PREFIX) {
 		return null;
@@ -512,12 +511,7 @@ export class DiscordControlPlaneAdapter implements ControlPlaneAdapter {
 					? payload.user.id
 					: "unknown-user";
 		const dataName = typeof payload.data?.name === "string" ? payload.data.name : "mu";
-		const rawText =
-			typeof payload.data?.text === "string"
-				? payload.data.text
-				: typeof payload.text === "string"
-					? payload.text
-					: "";
+		const rawText = typeof payload.data?.text === "string" ? payload.data.text : "";
 		if (dataName !== "mu") {
 			return rejectedIngressResult({
 				channel: this.spec.channel,
@@ -606,10 +600,7 @@ export class DiscordControlPlaneAdapter implements ControlPlaneAdapter {
 			return null;
 		})();
 		const customId = typeof componentData?.custom_id === "string" ? componentData.custom_id : "";
-		const uiEvent =
-			parseDiscordCompactUiEventPayload(customId) ??
-			// TODO(mu-b9553e35): remove legacy JSON custom_id decode fallback after 2026-04-30.
-			parseUiEventPayload(customId);
+		const uiEvent = parseDiscordCompactUiEventPayload(customId);
 		if (!uiEvent || typeof uiEvent.callback_token !== "string" || uiEvent.callback_token.trim().length === 0) {
 			return rejectedIngressResult({
 				channel: this.spec.channel,
