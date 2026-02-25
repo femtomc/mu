@@ -5,9 +5,19 @@ description: "Runs issue-driven execution supervision with heartbeat orchestrati
 
 # execution
 
+Use this skill for **durable multi-agent orchestration**: work that must keep moving
+over time, not just one-shot execution.
+
+This skill is execution-supervision focused:
+
+- `mu heartbeats` / `mu cron` = orchestrator wake cadence
+- `tmux` + `mu exec` = parallel worker execution
+- subagents HUD = operator observability/control board
+
+Source of truth remains in `mu issues` + `mu forum`.
+
 ## Contents
 
-- [Purpose (what this skill is for)](#purpose-what-this-skill-is-for)
 - [Shared protocol dependency](#shared-protocol-dependency)
 - [Control-flow dependency](#control-flow-dependency)
 - [Model-routing dependency](#model-routing-dependency)
@@ -24,19 +34,6 @@ description: "Runs issue-driven execution supervision with heartbeat orchestrati
 - [Evaluation scenarios](#evaluation-scenarios)
 - [Reconciliation](#reconciliation)
 - [Safety](#safety)
-
-## Purpose (what this skill is for)
-
-Use this skill for **durable multi-agent orchestration**: work that must keep moving
-over time, not just one-shot execution.
-
-This skill is execution-supervision focused:
-
-- `mu heartbeats` / `mu cron` = orchestrator wake cadence
-- `tmux` + `mu exec` = parallel worker execution
-- subagents HUD = operator observability/control board
-
-Source of truth remains in `mu issues` + `mu forum`.
 
 ## Shared protocol dependency
 

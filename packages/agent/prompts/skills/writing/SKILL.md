@@ -14,6 +14,7 @@ Use this skill when asked to write, edit, or review technical prose. This includ
 - [Common patterns by document type](#common-patterns-by-document-type)
 - [Editing and review workflow](#editing-and-review-workflow)
 - [Evaluation scenarios](#evaluation-scenarios)
+- [Quality bar](#quality-bar)
 
 ## Core contract
 

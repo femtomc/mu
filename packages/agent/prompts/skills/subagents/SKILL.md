@@ -26,3 +26,9 @@ Use this meta-skill when work should run through the full multi-agent DAG stack.
 - Planning bundle: `planning` + `protocol` + `hud`
 - Execution bundle: `execution` + `protocol` + `hud`
 - Policy overlays: add `control-flow` and/or `model-routing` as needed
+
+## Common patterns
+
+- **End-to-End Orchestration**: Route to `planning` to get a structured issue DAG, present the plan in the `hud` to the user, then route to `execution` to drive the workers until the DAG is complete.
+- **DAG Recovery / Unblocking**: If a DAG stalls, route to `protocol` to inspect `mu issues ready` constraints, followed by a bounded `execution` pass to claim and manually unblock the stalled task.
+- **Differentiated Model Provisioning**: If different nodes need different abilities (e.g. specialized docs vs. complex refactoring), add `model-routing` to set `route:model-routing-v1` policies per issue. The `execution` worker shell will then automatically spin up the required model profiles based on those policies.

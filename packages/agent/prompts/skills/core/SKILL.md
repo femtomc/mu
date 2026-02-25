@@ -20,3 +20,9 @@ Use this meta-skill when the user asks for general `mu` operation guidance and y
 2. Add `memory` when historical context or timeline anchors are required.
 3. Add `tmux` when durable shell state or parallel worker shells are needed.
 4. Add `code-mode` when solving by live execution is cheaper than chat-only reasoning.
+
+## Common patterns
+
+- **Bounded investigation**: Use `mu` commands (`get`, `read`, `health`) to inspect current state, then use `memory` to find "when did this last work?" before attempting a fix.
+- **Context compression**: If a user asks for complex debugging that involves running code and printing huge errors, route to `code-mode`. The agent can spin up a REPL, iterate on a fix offline, and return only the root cause to the chat.
+- **Parallel fan-out**: If a command takes a long time, or needs to run across multiple directories, route to `tmux` to spawn parallel worker shells, keep them running in the background, and periodically read their output.

@@ -3,7 +3,7 @@ name: planning
 description: "Builds and refines issue-DAG plans using the planning HUD and approval loops. Use when the user asks for planning, decomposition, sequencing, or plan review."
 ---
 
-# Planning
+# planning
 
 Use this skill when the user asks for planning, decomposition, or a staged execution roadmap.
 
