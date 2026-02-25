@@ -256,6 +256,6 @@ The server uses:
 - Filesystem-backed JSONL event storage (FsJsonlStore)
 - Bun's built-in HTTP server
 - Control-plane adapter/webhook transport + session coordination routes
-- Generation-supervised control-plane hot reload lifecycle (see `docs/adr-0001-control-plane-hot-reload.md`)
+- Generation-supervised control-plane hot reload lifecycle
 
 Control-plane/coordination data is persisted under `<store>/` (for example `<store>/events.jsonl` and `<store>/control-plane/*`). Use `mu store paths` to resolve `<store>` for your repo.
