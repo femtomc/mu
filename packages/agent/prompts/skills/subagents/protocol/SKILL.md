@@ -1,9 +1,9 @@
 ---
-name: orchestration
-description: "Defines the shared planning/execution orchestration protocol for issue-DAG work. Use when creating, validating, or executing protocol-driven DAG work."
+name: protocol
+description: "Defines the shared planning/execution protocol for issue-DAG work. Use when creating, validating, or executing protocol-driven DAG work."
 ---
 
-# orchestration
+# protocol
 
 Use this skill when work should flow through one shared protocol from planning to execution.
 
@@ -70,7 +70,7 @@ Node role rules:
 Policy overlays are layered on top of this protocol and should not redefine
 protocol primitives or `kind:*` semantics.
 
-- Keep orchestration protocol tags/kinds as source-of-truth for structure.
+- Keep protocol tags/kinds as source-of-truth for structure.
 - Represent policy-specific behavior with overlay tags/metadata:
   - loop/termination policy (for example review gates, retry rounds,
     escalation thresholds): `flow:*`
@@ -192,7 +192,7 @@ mu issues dep <step-a> blocks <step-b>
 
 ## Planning handoff contract
 
-Before handoff from planning to subagent orchestration:
+Before handoff from planning to execution supervision:
 
 1. Root exists and is tagged `node:root`, `kind:root`, `proto:hierarchical-work-v1`.
 2. Every in-scope node carries `proto:hierarchical-work-v1`.
@@ -212,7 +212,7 @@ mu issues validate <root-id>
 Worker/orchestrator passes always choose one primitive at a time:
 
 1. `read_tree`
-2. Choose one primitive (`ask` | `expand` | `complete` | orchestration primitive)
+2. Choose one primitive (`ask` | `expand` | `complete` | protocol primitive)
 3. Apply
 4. Verify (`get`, `children`, `ready`, `validate`)
 5. Log human-facing progress to forum as a titled narrative update (context -> milestone moved -> impact -> overall progress -> next), using the reusable status-voice style from `heartbeats`
@@ -245,7 +245,7 @@ mu forum post issue:"$goal_id" -m "<goal brief + acceptance criteria>" --author 
 
 1. **Planning-to-execution continuity**
    - Setup: a freshly planned DAG.
-   - Expected: all nodes satisfy protocol tag/kind/context rules and can be consumed by subagents without re-shaping.
+   - Expected: all nodes satisfy protocol tag/kind/context rules and can be consumed by `execution` without re-shaping.
 
 2. **Decomposition with synthesis fan-in**
    - Setup: worker expands a complex node.

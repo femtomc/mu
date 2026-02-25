@@ -131,7 +131,7 @@ Quick diagnostics checklist:
 ## Integration map
 
 - `code-mode`: tmux-backed REPL persistence and context engineering loops
-- `subagents`: tmux fan-out for parallel worker execution
+- `execution`: tmux fan-out for parallel worker execution
 - `heartbeats` / `crons`: schedule bounded passes that dispatch into tmux workers
 
 ## Evaluation scenarios

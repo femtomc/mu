@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { getStorePaths as resolveStorePaths } from "@femtomc/mu-core/node";
@@ -39,6 +39,30 @@ async function writeFileIfMissing(path: string, content: string | Uint8Array): P
 
 const BUNDLED_SKILL_FILE_NAME = "SKILL.md";
 const STARTER_SKILLS_VERSION_FILE_NAME = ".starter-skills-version";
+
+const LEGACY_TOP_LEVEL_STARTER_SKILL_DIRS = [
+	"mu",
+	"memory",
+	"planning",
+	"hud",
+	"orchestration",
+	"control-flow",
+	"model-routing",
+	"code-mode",
+	"tmux",
+	"heartbeats",
+	"crons",
+	"setup-slack",
+	"setup-discord",
+	"setup-telegram",
+	"setup-neovim",
+] as const;
+
+async function removeLegacyTopLevelStarterSkillDirs(targetRoot: string): Promise<void> {
+	for (const dirName of LEGACY_TOP_LEVEL_STARTER_SKILL_DIRS) {
+		await rm(join(targetRoot, dirName), { recursive: true, force: true });
+	}
+}
 
 function bundledSkillsTemplateDir(): string | null {
 	try {
@@ -104,6 +128,9 @@ async function installBundledStarterSkills(muHomeDir: string): Promise<void> {
 		installedVersion = null;
 	}
 	const overwriteExisting = bundledVersion != null && installedVersion !== bundledVersion;
+	if (overwriteExisting) {
+		await removeLegacyTopLevelStarterSkillDirs(targetRoot);
+	}
 
 	const entries = await readdir(templateDir, { withFileTypes: true });
 	entries.sort((left, right) => left.name.localeCompare(right.name));

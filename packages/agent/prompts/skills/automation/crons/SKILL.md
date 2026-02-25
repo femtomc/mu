@@ -152,10 +152,10 @@ post concise summary, then exit.
 
 For DAG execution workloads, combine with:
 - `planning`
-- `orchestration`
+- `protocol`
 - `control-flow` (when explicit loop/termination policy is required)
 - `model-routing` (when per-issue model/provider/thinking policy is required)
-- `subagents`
+- `execution`
 - `heartbeats` (for short-cadence wake loops)
 
 ## Diagnostics and recovery

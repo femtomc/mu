@@ -6,7 +6,7 @@ description: "Defines compositional control-flow policies for orchestration DAGs
 # control-flow
 
 Use this skill when work needs explicit loop/termination policy on top of the
-shared orchestration protocol.
+shared protocol.
 
 ## Contents
 
@@ -22,7 +22,7 @@ shared orchestration protocol.
 
 ## Purpose
 
-Control-flow policies are overlays. They do not replace orchestration protocol
+Control-flow policies are overlays. They do not replace protocol
 semantics; they guide which protocol primitive to apply next.
 
 Examples:
@@ -34,8 +34,8 @@ Examples:
 
 Load these skills before applying control-flow policies:
 
-- `orchestration` (protocol primitives/invariants)
-- `subagents` (durable execution runtime)
+- `protocol` (protocol primitives/invariants)
+- `execution` (durable execution runtime)
 - `heartbeats` and/or `crons` (scheduler clock)
 - `hud` (required visibility/handoff surface)
 
@@ -134,7 +134,7 @@ Per orchestrator tick:
 Reusable bounded heartbeat prompt fragment:
 
 ```text
-Use skills orchestration, control-flow, subagents, and hud.
+Use skills subagents, protocol, execution, control-flow, and hud.
 For root <root-id>, enforce flow:review-gated-v1 with spawn-per-attempt rounds.
 Run exactly one bounded control-flow transition pass, verify DAG state,
 post one ORCH_PASS, and stop. If validate is final, disable the supervising

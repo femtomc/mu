@@ -45,8 +45,8 @@ Before emitting or mutating planning HUD state, load **`hud`** and follow its ca
 
 ## Shared protocol dependency
 
-This skill plans DAGs for execution by `subagents`, so planning must follow the
-shared protocol in **`orchestration`**.
+This skill plans DAGs for execution by `execution`, so planning must follow the
+shared protocol in **`protocol`**.
 
 Before creating or reshaping DAG nodes, load that skill and use its canonical:
 
@@ -59,12 +59,12 @@ Do not invent alternate protocol names or tag schemas.
 
 If the user asks for explicit loop/termination behavior (for example review-gated
 retry rounds), load **`control-flow`** and encode policy via `flow:*` overlays
-without changing orchestration protocol semantics.
+without changing protocol semantics.
 
 If the user asks for per-issue model/provider/thinking recommendations based on
 live harness capabilities, load **`model-routing`** and encode policy via
 `route:*` overlays plus route packets (for example `ROUTE_POLICY`) without
-changing orchestration protocol semantics.
+changing protocol semantics.
 
 ## Core contract
 
@@ -96,10 +96,10 @@ changing orchestration protocol semantics.
 
 6. **After user approval, ask user about next steps**
    - On user acceptance of the plan, teardown planning HUD ownership.
-   - If handing off to another HUD-owning skill (for example `subagents`), remove
+   - If handing off to another HUD-owning skill (for example `execution`), remove
      `hud_id:"planning"` and keep HUD on for the next skill.
    - If no next HUD-owning skill starts immediately, remove planning doc and turn HUD off.
-   - Read the `subagents` skill and offer to supervise subagents to execute the plan.
+   - Read the `execution` skill and offer to supervise execution to realize the plan.
 
 ## Suggested workflow
 

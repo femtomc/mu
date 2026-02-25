@@ -112,7 +112,7 @@ tmux new-session -d -s mu-code-sh "bash --noprofile --norc -i"
 ## Integration with other mu skills
 
 - Use with `planning` when a plan step needs exploratory coding.
-- Use with `orchestration`/`subagents` by assigning one tmux session per worker.
+- Use with `protocol`/`execution` by assigning one tmux session per worker.
 - Use with `control-flow` for explicit retry/termination policy around code passes.
 - Use with `heartbeats`/`crons` when bounded code passes should run on schedule.
 

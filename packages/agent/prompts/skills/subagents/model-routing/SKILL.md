@@ -6,7 +6,7 @@ description: "Adds a model-selection overlay for issue DAG execution, recommendi
 # model-routing
 
 Use this skill when execution should choose different models for different issue
-kinds (for example code vs docs), while preserving orchestration protocol
+kinds (for example code vs docs), while preserving protocol
 semantics.
 
 ## Contents
@@ -14,6 +14,7 @@ semantics.
 - [Purpose](#purpose)
 - [Required dependencies](#required-dependencies)
 - [Core contract](#core-contract)
+- [Quality profile policy (high-stakes orchestration)](#quality-profile-policy-high-stakes-orchestration)
 - [Overlay identity (`route:model-routing-v1`)](#overlay-identity-routemodel-routing-v1)
 - [Tag vocabulary](#tag-vocabulary)
 - [Recommendation packet contract](#recommendation-packet-contract)
@@ -27,8 +28,8 @@ semantics.
 
 ## Purpose
 
-Model-routing policies are overlays. They do not replace `orchestration`
-protocol semantics.
+Model-routing policies are overlays. They do not replace protocol
+semantics.
 
 Examples:
 - use a strong coding model for implementation leaves
@@ -40,8 +41,8 @@ Examples:
 
 Load these skills before applying model-routing policies:
 
-- `orchestration` (protocol primitives/invariants)
-- `subagents` (durable execution runtime)
+- `protocol` (protocol primitives/invariants)
+- `execution` (durable execution runtime)
 - `heartbeats` and/or `crons` (scheduler clock)
 - `hud` (required visibility/handoff surface)
 - `control-flow` (optional; when loop/termination overlays are also active)
@@ -70,6 +71,25 @@ Load these skills before applying model-routing policies:
 6. **Per-issue/session overrides preferred**
    - Use `mu exec --provider/--model/--thinking` or `mu turn ...` overrides.
    - Avoid changing workspace-global operator defaults for per-issue routing.
+
+## Quality profile policy (high-stakes orchestration)
+
+For protocol/runtime/schema/cross-adapter work, apply an explicit quality floor.
+Do not rely on implicit defaults.
+
+Recommended high-stakes profile:
+
+- provider: `openai-codex`
+- model: `gpt-5.3-codex`
+- thinking: `xhigh`
+
+Required guardrails:
+
+1. Always pass explicit `--provider --model --thinking` when launching workers.
+2. Do not use mini/fast profiles for root-close decisions, acceptance-signoff,
+   or architecture-contract issues unless the user explicitly requests it.
+3. If authenticated capability for the high-stakes profile is unavailable,
+   emit a `ROUTE_FALLBACK` packet that explains the downgrade rationale.
 
 ## Overlay identity (`route:model-routing-v1`)
 
@@ -151,6 +171,13 @@ Optional root-level packet for custom preferences:
 ROUTE_POLICY:
 {
   "version": "route:model-routing-v1",
+  "quality_profiles": {
+    "orchestration_critical": {
+      "provider": "openai-codex",
+      "model": "gpt-5.3-codex",
+      "thinking": "xhigh"
+    }
+  },
   "task_preferences": {
     "code": [
       { "provider": "openai-codex", "model": "gpt-5.3-codex", "thinking": "xhigh" }
@@ -218,7 +245,7 @@ For one-shot execution:
 
 ```bash
 mu exec --provider <provider> --model <model> --thinking <thinking> \
-  "Use skills subagents, orchestration, model-routing, and hud. Work issue <issue-id>."
+  "Use skills subagents, protocol, execution, model-routing, and hud. Work issue <issue-id>."
 ```
 
 For existing session turn:
@@ -257,7 +284,7 @@ When planning a routed subtree:
 2. Tag executable nodes with task/depth/budget intent.
 3. Record any hard constraints (modality/context) in issue body or forum packet.
 4. Optionally add root `ROUTE_POLICY` preferences.
-5. Ensure DAG remains valid under `orchestration` invariants:
+5. Ensure DAG remains valid under `protocol` invariants:
    - `mu issues ready --root <root-id> --tag proto:hierarchical-work-v1 --pretty`
    - `mu issues validate <root-id>`
 
@@ -279,7 +306,7 @@ Per orchestrator tick:
 Reusable heartbeat prompt fragment:
 
 ```text
-Use skills orchestration, model-routing, subagents, and hud.
+Use skills subagents, protocol, execution, model-routing, and hud.
 For root <root-id>, enforce route:model-routing-v1.
 Run exactly one bounded routing/orchestration transition pass: compute or validate
 one issue's model recommendation from live `mu control harness` capabilities,

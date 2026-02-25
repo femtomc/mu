@@ -16,21 +16,27 @@ function workspaceStoreDir(repoRoot: string): string {
 }
 
 const STARTER_SKILLS = [
-	"mu",
-	"memory",
-	"planning",
-	"hud",
-	"orchestration",
-	"control-flow",
-	"code-mode",
-	"tmux",
-	"subagents",
-	"heartbeats",
-	"crons",
-	"setup-slack",
-	"setup-discord",
-	"setup-telegram",
-	"setup-neovim",
+	{ name: "core", relPath: ["core"] },
+	{ name: "mu", relPath: ["core", "mu"] },
+	{ name: "memory", relPath: ["core", "memory"] },
+	{ name: "tmux", relPath: ["core", "tmux"] },
+	{ name: "code-mode", relPath: ["core", "code-mode"] },
+	{ name: "subagents", relPath: ["subagents"] },
+	{ name: "planning", relPath: ["subagents", "planning"] },
+	{ name: "protocol", relPath: ["subagents", "protocol"] },
+	{ name: "execution", relPath: ["subagents", "execution"] },
+	{ name: "control-flow", relPath: ["subagents", "control-flow"] },
+	{ name: "model-routing", relPath: ["subagents", "model-routing"] },
+	{ name: "hud", relPath: ["subagents", "hud"] },
+	{ name: "automation", relPath: ["automation"] },
+	{ name: "heartbeats", relPath: ["automation", "heartbeats"] },
+	{ name: "crons", relPath: ["automation", "crons"] },
+	{ name: "messaging", relPath: ["messaging"] },
+	{ name: "setup-slack", relPath: ["messaging", "setup-slack"] },
+	{ name: "setup-discord", relPath: ["messaging", "setup-discord"] },
+	{ name: "setup-telegram", relPath: ["messaging", "setup-telegram"] },
+	{ name: "setup-neovim", relPath: ["messaging", "setup-neovim"] },
+	{ name: "writing", relPath: ["writing"] },
 ] as const;
 
 async function writeConfigWithOperatorDefaults(
@@ -161,10 +167,10 @@ test("non-help CLI commands auto-initialize store and seed starter skills into M
 		expect(result.exitCode).toBe(0);
 
 		await expectStoreBootstrapped(dir);
-		for (const skillName of STARTER_SKILLS) {
-			const skillPath = join(muHome, "skills", skillName, "SKILL.md");
+		for (const skill of STARTER_SKILLS) {
+			const skillPath = join(muHome, "skills", ...skill.relPath, "SKILL.md");
 			const content = await readFile(skillPath, "utf8");
-			expect(content).toContain(`name: ${skillName}`);
+			expect(content).toContain(`name: ${skill.name}`);
 		}
 	} finally {
 		if (previousMuHome === undefined) {
