@@ -117,6 +117,9 @@ describe("mu-server", () => {
 		const response = await server.fetch(new Request("http://localhost/healthz"));
 		expect(response.status).toBe(200);
 		expect(await response.text()).toBe("ok");
+
+		const legacy = await server.fetch(new Request("http://localhost/health"));
+		expect(legacy.status).toBe(404);
 	});
 
 	test("status endpoint", async () => {

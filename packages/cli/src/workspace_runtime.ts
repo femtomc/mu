@@ -119,6 +119,11 @@ async function installBundledStarterSkills(muHomeDir: string): Promise<void> {
 	const targetRoot = join(muHomeDir, "skills");
 	await mkdir(targetRoot, { recursive: true });
 
+	// Hard-cutover: always remove known legacy top-level starter-skill directories.
+	// This prevents stale name-collisions from surviving once the version marker
+	// is already current.
+	await removeLegacyTopLevelStarterSkillDirs(targetRoot);
+
 	const versionPath = join(targetRoot, STARTER_SKILLS_VERSION_FILE_NAME);
 	const bundledVersion = bundledSkillsPackageVersion();
 	let installedVersion: string | null = null;
@@ -128,9 +133,6 @@ async function installBundledStarterSkills(muHomeDir: string): Promise<void> {
 		installedVersion = null;
 	}
 	const overwriteExisting = bundledVersion != null && installedVersion !== bundledVersion;
-	if (overwriteExisting) {
-		await removeLegacyTopLevelStarterSkillDirs(targetRoot);
-	}
 
 	const entries = await readdir(templateDir, { withFileTypes: true });
 	entries.sort((left, right) => left.name.localeCompare(right.name));

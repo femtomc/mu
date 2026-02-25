@@ -4,6 +4,7 @@ import {
 	type ControlPlaneSignalObserver,
 	type ReloadableGenerationIdentity,
 	TelegramControlPlaneAdapter,
+	UiCallbackTokenStore,
 } from "@femtomc/mu-control-plane";
 import type {
 	ControlPlaneConfig,
@@ -118,6 +119,7 @@ async function runWithTimeout<T>(opts: {
 export class TelegramAdapterGenerationManager {
 	readonly #pipeline: ControlPlaneCommandPipeline;
 	readonly #outbox: ControlPlaneOutbox;
+	readonly #uiCallbackTokenStore: UiCallbackTokenStore;
 	readonly #nowMs: () => number;
 	readonly #onOutboxEnqueued: (() => void) | null;
 	readonly #signalObserver: ControlPlaneSignalObserver | null;
@@ -130,6 +132,7 @@ export class TelegramAdapterGenerationManager {
 	public constructor(opts: {
 		pipeline: ControlPlaneCommandPipeline;
 		outbox: ControlPlaneOutbox;
+		uiCallbackTokenStore: UiCallbackTokenStore;
 		initialConfig: ControlPlaneConfig;
 		nowMs?: () => number;
 		onOutboxEnqueued?: () => void;
@@ -138,6 +141,7 @@ export class TelegramAdapterGenerationManager {
 	}) {
 		this.#pipeline = opts.pipeline;
 		this.#outbox = opts.outbox;
+		this.#uiCallbackTokenStore = opts.uiCallbackTokenStore;
 		this.#nowMs = opts.nowMs ?? Date.now;
 		this.#onOutboxEnqueued = opts.onOutboxEnqueued ?? null;
 		this.#signalObserver = opts.signalObserver ?? null;
@@ -168,6 +172,7 @@ export class TelegramAdapterGenerationManager {
 			acceptIngress: opts.acceptIngress,
 			ingressDrainEnabled: opts.ingressDrainEnabled,
 			nowMs: this.#nowMs,
+			uiCallbackTokenStore: this.#uiCallbackTokenStore,
 		});
 	}
 

@@ -203,7 +203,7 @@ export async function controlPlaneRoutes(
 ): Promise<Response> {
 	const path = url.pathname;
 
-	if (path === "/api/control-plane" || path === "/api/control-plane/status") {
+	if (path === "/api/control-plane/status") {
 		if (request.method !== "GET") {
 			return Response.json({ error: "Method Not Allowed" }, { status: 405, headers });
 		}

@@ -57,6 +57,7 @@ describe("server control-plane-only route surface", () => {
 
 	test("legacy business/session gateway endpoints return 404", async () => {
 		const legacyEndpoints = [
+			new Request("http://localhost/api/control-plane", { method: "GET" }),
 			new Request("http://localhost/api/commands/submit", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },

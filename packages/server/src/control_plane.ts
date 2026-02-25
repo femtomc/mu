@@ -707,13 +707,12 @@ function slackBlocksForOutboxRecord(
 }
 
 function slackThreadTsFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
-	const candidates = [metadata?.slack_thread_ts, metadata?.slack_message_ts, metadata?.thread_ts];
-	for (const value of candidates) {
-		if (typeof value === "string" && value.trim().length > 0) {
-			return value.trim();
-		}
+	const value = metadata?.slack_thread_ts;
+	if (typeof value !== "string") {
+		return undefined;
 	}
-	return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function slackStatusMessageTsFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
@@ -1468,6 +1467,7 @@ export async function bootstrapControlPlane(opts: BootstrapControlPlaneOpts): Pr
 		const telegramManager = new TelegramAdapterGenerationManager({
 			pipeline,
 			outbox,
+			uiCallbackTokenStore,
 			initialConfig: controlPlaneConfig,
 			onOutboxEnqueued: () => {
 				scheduleOutboxDrainRef?.();

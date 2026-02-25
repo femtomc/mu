@@ -121,6 +121,38 @@ test("ensureStoreInitialized hard-cutover prunes legacy top-level starter skill 
 	}
 });
 
+test("ensureStoreInitialized prunes legacy top-level starter skill dirs even when versions already match", async () => {
+	const repoRoot = await mkTempRepo();
+	const muHome = await mkdtemp(join(tmpdir(), "mu-cli-skill-home-"));
+	const previousMuHome = process.env.MU_HOME;
+	process.env.MU_HOME = muHome;
+
+	try {
+		const paths = getStorePaths(repoRoot);
+		await ensureStoreInitialized({ paths });
+
+		await mkdir(join(muHome, "skills", "control-flow"), { recursive: true });
+		await mkdir(join(muHome, "skills", "setup-neovim"), { recursive: true });
+		await writeFile(join(muHome, "skills", "control-flow", "SKILL.md"), "---\nname: control-flow\ndescription: legacy\n---\n", "utf8");
+		await writeFile(join(muHome, "skills", "setup-neovim", "SKILL.md"), "---\nname: setup-neovim\ndescription: legacy\n---\n", "utf8");
+
+		await ensureStoreInitialized({ paths });
+
+		expect(await Bun.file(join(muHome, "skills", "control-flow", "SKILL.md")).exists()).toBe(false);
+		expect(await Bun.file(join(muHome, "skills", "setup-neovim", "SKILL.md")).exists()).toBe(false);
+		expect(await Bun.file(join(muHome, "skills", "subagents", "control-flow", "SKILL.md")).exists()).toBe(true);
+		expect(await Bun.file(join(muHome, "skills", "messaging", "setup-neovim", "SKILL.md")).exists()).toBe(true);
+	} finally {
+		if (previousMuHome === undefined) {
+			delete process.env.MU_HOME;
+		} else {
+			process.env.MU_HOME = previousMuHome;
+		}
+		await rm(repoRoot, { recursive: true, force: true });
+		await rm(muHome, { recursive: true, force: true });
+	}
+});
+
 test("ensureStoreInitialized refreshes bundled starter skills when version marker is missing", async () => {
 	const repoRoot = await mkTempRepo();
 	const muHome = await mkdtemp(join(tmpdir(), "mu-cli-skill-home-"));

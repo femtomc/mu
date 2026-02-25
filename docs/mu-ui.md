@@ -12,9 +12,6 @@ session reconnects and routes actions back into normal operator turns.
 3. The adapter converts that interaction into command text (for example `/answer yes`) and sends
    it through the same turn pipeline as any other inbound command.
 
-`/mu ui run` is available in the terminal operator UI, but it is a **debug/helper path**. It is
-not required in product/reference end-user flows.
-
 ## Reference `/answer` flow (mu_ui-only)
 
 1. **Skill emits a `UiDoc`** via `mu_ui` with actions carrying
@@ -28,25 +25,15 @@ not required in product/reference end-user flows.
 
 No bespoke per-flow extension logic is required when this contract is followed.
 
-## Compatibility cleanup and migration notes
+## Action transport requirements
 
-### Removed in this cleanup pass
+For interactive `UiDoc` actions:
 
-- **Synthetic `/mu ui_event <ui>/<action>` command fallback** was removed from egress/ingress paths.
-  Interactive action routing now requires explicit `metadata.command_text`.
-- **Terminal `/mu ui run` `MU_UI_EVENT ...` fallback dispatch** was removed.
-  If an action is missing `metadata.command_text`, the operator UI now warns and does not send an implicit payload.
-- **Discord ingress legacy JSON `custom_id` decode fallback** was removed.
-  Discord component callbacks must use compact tokenized payload format.
-- **Frontend ingress `text` alias for `command_text`** was removed.
-  Frontend command ingress now requires `command_text` (unless `ui_event` is provided).
-- **Telegram callback token prefix `mu1:`** was removed.
-  Telegram callback tokens now use the unified `mu-ui:` prefix.
+- Set `action.metadata.command_text` explicitly.
+- Use callback-token transport (`mu-ui:*`) for channel action execution.
+- Treat terminal operator UI (`mu serve`) as preview/inspection only; execute actions through channel-native callbacks.
 
-### Migration requirement
-
-For all new interactive `UiDoc` actions, set `action.metadata.command_text` explicitly.
-Actions without `metadata.command_text` are treated as non-interactive fallback rows.
+Actions without `metadata.command_text` are rendered as deterministic non-interactive fallback rows.
 
 ## Channel action support and degrade matrix
 
@@ -57,7 +44,7 @@ Actions without `metadata.command_text` are treated as non-interactive fallback 
 | Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks using encoded callback tokens (`mu-ui:*`) | If callback encoding unavailable/overflow, deterministic `Actions:` command-text lines are appended |
 | Neovim frontend | Frontend receives canonical `ui_docs` payload (default renderer is text-first) | Actions include `callback_token`; frontend sends `ui_event` payload back | Missing/invalid/expired token returns deterministic rejection; user can still send command text manually |
 | Terminal API channel (`channel=terminal`) | Text-only | **Unsupported** (`ui_actions_not_implemented`) | Use Slack/Discord/Telegram/Neovim for interactive action clicks |
-| Terminal operator UI (`mu serve`) | Local preview + interaction dialog | `/mu ui run` or `Ctrl+Alt+U` dispatches action command text/UI event | Debug/helper path only; not required for user-facing flows |
+| Terminal operator UI (`mu serve`) | Local preview/status widget | Not supported (no local action-dispatch command/shortcut) | Use channel-native actions or type command text manually |
 
 To inspect live capability flags, query:
 
@@ -74,9 +61,9 @@ curl -s http://localhost:3000/api/control-plane/channels | jq '.channels[] | {ch
 
 ## Intentionally unsupported paths (current)
 
-1. **`/mu ui run` as primary end-user UX** — unsupported by design.
-   - Rationale: end-user interaction should be channel-native and agent-driven.
-   - Roadmap note: no plan to make `/mu ui run` a required user path; it remains operator debug tooling.
+1. **Local terminal action dispatch** — unsupported.
+   - Rationale: interactive action execution is channel-native and callback-token scoped.
+   - Roadmap note: keep terminal operator UI as preview/status surface; execute actions via messaging/frontends.
 
 2. **Rich non-text component parity on Discord/Telegram/Neovim** — not implemented yet.
    - Rationale: current baseline prioritizes deterministic cross-channel behavior and reliable action transport.
@@ -92,4 +79,3 @@ Use these when diagnosing UI state:
 
 - `/mu ui status`
 - `/mu ui snapshot [compact|multiline]`
-- `/mu ui run [ui-id]` (debug/helper only)

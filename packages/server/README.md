@@ -4,9 +4,9 @@ HTTP API server for mu control-plane infrastructure.
 Powers `mu serve`, messaging frontend transport routes, and
 control-plane/session coordination endpoints.
 
-> Scope note: server-routed business query/mutation gateway endpoints have
-> been removed. Business reads/writes are CLI-first, while long-lived runtime
-> coordination (runs/heartbeats/cron) stays server-owned.
+> Scope note: server-routed endpoints focus on runtime coordination only.
+> Business reads/writes are CLI-first, while long-lived runtime coordination
+> (runs/heartbeats/cron) stays server-owned.
 
 ## Installation
 
@@ -44,7 +44,7 @@ Use `mu store paths --pretty` to resolve `<store>` for the active repo/workspace
 
 ### Health Check
 
-- `GET /healthz` or `GET /health` - Returns 200 OK
+- `GET /healthz` - Returns 200 OK
 
 ### Status
 

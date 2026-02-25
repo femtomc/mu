@@ -89,7 +89,7 @@ Default operator UI theme is `mu-gruvbox-dark`.
 - `/mu brand on|off|toggle` — enable/disable UI branding
 - `/mu hud ...` — HUD command for enabling/inspecting/clearing HUD docs; does not inject HUD metadata into branding footer
 - `/mu help` — dispatcher catalog of registered `/mu` subcommands
-- `/mu ui ...` — inspect interactive `UiDoc`s; `run` is a debug/helper execution path for operators
+- `/mu ui ...` — inspect interactive `UiDoc`s (`status`/`snapshot`)
 
 ## Programmable UI documents
 
@@ -97,16 +97,13 @@ Skills can publish interactive UI state via the `mu_ui` tool. Rendered `UiDoc`s 
 (30 minute retention per session ID), respect revision/version bumps, and route action clicks/taps back to
 plain command text via `metadata.command_text` (the `/answer` flow is the reference pattern).
 
-Actions without `metadata.command_text` are treated as non-interactive; `/mu ui run` now warns instead of
-sending implicit `MU_UI_EVENT` fallback payloads.
+Actions without `metadata.command_text` are treated as non-interactive and rendered as deterministic fallback rows.
 
 Current runtime behavior is channel-specific:
 
 - Slack renders rich blocks + interactive action buttons.
 - Discord/Telegram/Neovim render text-first docs plus tokenized action callbacks.
 - When interactive controls cannot be rendered, adapters append deterministic text fallback.
-
-`/mu ui run` is kept as operator debug tooling and is not required for user-facing product flows.
 
 See the [Programmable UI substrate guide](../../docs/mu-ui.md) for the full support matrix and workflow.
 

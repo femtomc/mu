@@ -246,13 +246,6 @@ function safeCommandTextForSlackAction(action: SlackActionPayloadCancelTurn | Sl
 	if (action.kind === "cancel_turn") {
 		return "cancel";
 	}
-	const HUD_ACTION_COMMAND_MAP: Record<string, string> = {
-		"operator.cancel": "cancel",
-	};
-	const mapped = HUD_ACTION_COMMAND_MAP[action.hudActionId];
-	if (mapped) {
-		return mapped;
-	}
 	return normalizeSlackActionCommandText(action.commandText);
 }
 

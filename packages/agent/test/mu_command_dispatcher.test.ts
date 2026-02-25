@@ -70,7 +70,6 @@ describe("mu command dispatcher", () => {
 			subcommand: "events",
 			summary: "Inspect event log",
 			usage: "/mu events [n]",
-			aliases: ["ev"],
 			handler: async (args) => {
 				calls.push({ subcommand: "events", args });
 			},
@@ -85,7 +84,7 @@ describe("mu command dispatcher", () => {
 		const { ctx, notifications } = createCommandContext();
 
 		await command.handler("status", ctx);
-		await command.handler("ev tail 5", ctx);
+		await command.handler("events tail 5", ctx);
 		expect(calls).toEqual([
 			{ subcommand: "status", args: "" },
 			{ subcommand: "events", args: "tail 5" },

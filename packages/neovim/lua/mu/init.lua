@@ -11,7 +11,6 @@ local defaults = {
 	tenant_id = nil,
 	conversation_id = nil,
 	role = "operator",
-	enable_mu_alias = true,
 	auto_link_identity = false,
 	request_timeout_ms = 120000,
 	selection_max_chars = 12000,
@@ -41,7 +40,6 @@ local defaults = {
 local state = {
 	opts = vim.deepcopy(defaults),
 	command_registered = false,
-	alias_registered = false,
 	linked = false,
 	panel = {
 		bufnr = nil,
@@ -1062,8 +1060,7 @@ local function show_help()
 		"  :Mu help",
 		"",
 		"Notes:",
-		"  - :Mu is the real user command (Neovim requires uppercase command names).",
-		"  - :mu can be enabled as an abbreviation alias via setup({ enable_mu_alias = true }).",
+		"  - :Mu is the canonical user command (Neovim requires uppercase command names).",
 	}
 	render_output("mu help", table.concat(lines, "\n"))
 end
@@ -1337,19 +1334,9 @@ local function register_command()
 	state.command_registered = true
 end
 
-local function register_lowercase_alias()
-	if state.alias_registered or not state.opts.enable_mu_alias then
-		return
-	end
-	vim.cmd("silent! cunabbrev mu")
-	vim.cmd([[cnoreabbrev <expr> mu (getcmdtype() ==# ':' && getcmdline() ==# 'mu') ? 'Mu' : 'mu']])
-	state.alias_registered = true
-end
-
 function M.setup(opts)
 	state.opts = vim.tbl_deep_extend("force", vim.deepcopy(defaults), state.opts or {}, opts or {})
 	register_command()
-	register_lowercase_alias()
 	if state.opts.poll.enabled then
 		start_polling({ silent = true })
 	end

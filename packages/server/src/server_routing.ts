@@ -35,7 +35,7 @@ export function createServerRequestHandler(deps: ServerRoutingDependencies) {
 			return new Response(null, { status: 204, headers });
 		}
 
-		if (path === "/healthz" || path === "/health") {
+		if (path === "/healthz") {
 			return new Response("ok", { status: 200, headers });
 		}
 

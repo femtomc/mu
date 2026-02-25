@@ -1,12 +1,8 @@
-import type { Component } from "@mariozechner/pi-tui";
-import { Key, matchesKey } from "@mariozechner/pi-tui";
 import {
 	normalizeUiDocs,
 	parseUiDoc,
-	type UiAction,
 	type UiComponent,
 	type UiDoc,
-	type UiEvent,
 } from "@femtomc/mu-core";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
@@ -16,8 +12,6 @@ const UI_DISPLAY_DOCS_MAX = 16;
 const UI_WIDGET_COMPONENTS_MAX = 6;
 const UI_WIDGET_ACTIONS_MAX = 4;
 const UI_SESSION_KEY_FALLBACK = "__mu_ui_active_session__";
-const UI_INTERACTION_SHORTCUT_KEY = Key.ctrlAlt("u");
-const UI_INTERACTION_SHORTCUT_LABEL = "Ctrl+Alt+U";
 
 type UiToolAction = "status" | "snapshot" | "set" | "update" | "replace" | "remove" | "clear";
 
@@ -168,35 +162,6 @@ function parseSnapshotFormat(raw?: string): "compact" | "multiline" {
 	return normalized === "multiline" ? "multiline" : "compact";
 }
 
-function commandTextFromUiEvent(event: UiEvent): string | null {
-	const candidate = typeof event.metadata?.command_text === "string" ? event.metadata.command_text.trim() : "";
-	if (candidate.length === 0) {
-		return null;
-	}
-	return candidate;
-}
-
-function resolveInteractionDoc(state: UiState, targetId: string | undefined):
-	| { ok: true; doc: UiDoc }
-	| { ok: false; message: string } {
-	const docs = activeDocs(state);
-	if (docs.length === 0) {
-		return { ok: false, message: "No UI docs available." };
-	}
-	if (targetId) {
-		const candidate = state.docsById.get(targetId);
-		if (!candidate) {
-			return { ok: false, message: `UI doc not found: ${targetId}` };
-		}
-		return { ok: true, doc: candidate };
-	}
-	const preferred = docs.find((doc) => doc.actions.length > 0) ?? docs[0];
-	if (!preferred) {
-		return { ok: false, message: "No UI docs available." };
-	}
-	return { ok: true, doc: preferred };
-}
-
 function applyUiAction(params: UiToolParams, state: UiState): {
 	ok: boolean;
 	action: UiToolAction;
@@ -308,7 +273,7 @@ function renderDocPreview(theme: ExtensionContext["ui"]["theme"], doc: UiDoc): s
 		if (doc.actions.length > visibleActions.length) {
 			lines.push(`  ... (+${doc.actions.length - visibleActions.length} more actions)`);
 		}
-		lines.push(theme.fg("dim", `Interact: ${UI_INTERACTION_SHORTCUT_LABEL} (or /mu ui run for debug)`));
+		lines.push(theme.fg("dim", "Actions are handled through channel-native callbacks."));
 	} else {
 		lines.push(theme.fg("dim", "No interactive actions."));
 	}
@@ -356,177 +321,11 @@ function refreshUi(ctx: ExtensionContext): void {
 	ctx.ui.setWidget("mu-ui", renderDocPreview(ctx.ui.theme, docs[0]!), { placement: "belowEditor" });
 }
 
-class UiDocInteractionComponent implements Component {
-	private selectedIndex = 0;
-	private closed = false;
-
-	constructor(
-		private readonly doc: UiDoc,
-		private readonly theme: ExtensionContext["ui"]["theme"],
-		private readonly done: (value: UiEvent | null) => void,
-	) {}
-
-	render(_width: number): string[] {
-		const lines: string[] = [];
-		lines.push(`${this.theme.fg("accent", this.doc.title)} ${this.theme.fg("muted", `[${this.doc.ui_id}]`)}`);
-		if (this.doc.summary) {
-			lines.push(this.theme.fg("muted", short(this.doc.summary, 80)));
-		}
-		if (this.doc.actions.length > 0) {
-			lines.push(this.theme.fg("dim", "Actions:"));
-			for (let idx = 0; idx < this.doc.actions.length; idx += 1) {
-				const action = this.doc.actions[idx]!;
-				const indicator = this.selectedIndex === idx ? this.theme.fg("accent", "➤") : " ";
-				const label = `${indicator} ${idx + 1}. ${action.label}`;
-				lines.push(label);
-			}
-		} else {
-			lines.push(this.theme.fg("dim", "No actions available."));
-		}
-		lines.push(this.theme.fg("dim", "↑/↓ or 1-9 to pick, Enter to submit, Esc to cancel."));
-		return lines;
-	}
-
-	handleInput(data: string): void {
-		if (this.closed) {
-			return;
-		}
-		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
-			this.close(null);
-			return;
-		}
-		const actionCount = this.doc.actions.length;
-		if (actionCount === 0) {
-			if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
-				this.close(null);
-			}
-			return;
-		}
-		if (matchesKey(data, Key.up) || matchesKey(data, Key.left)) {
-			this.selectedIndex = (this.selectedIndex - 1 + actionCount) % actionCount;
-			return;
-		}
-		if (matchesKey(data, Key.down) || matchesKey(data, Key.right)) {
-			this.selectedIndex = (this.selectedIndex + 1) % actionCount;
-			return;
-		}
-		if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
-			this.triggerAction();
-			return;
-		}
-		const num = Number.parseInt(data, 10);
-		if (!Number.isNaN(num) && num >= 1 && num <= actionCount) {
-			this.selectedIndex = num - 1;
-			this.triggerAction();
-		}
-	}
-
-	invalidate(): void {
-		// no-op
-	}
-
-	private triggerAction(): void {
-		const action = this.doc.actions[this.selectedIndex];
-		if (!action) {
-			return;
-		}
-		this.close(this.buildEvent(action));
-	}
-
-	private close(event: UiEvent | null): void {
-		if (this.closed) {
-			return;
-		}
-		this.closed = true;
-		this.done(event);
-	}
-
-	private buildEvent(action: UiAction): UiEvent {
-		const metadata: Record<string, unknown> = {
-			source: "tui",
-			doc_title: this.doc.title,
-			...action.metadata,
-		};
-		const base: UiEvent = {
-			ui_id: this.doc.ui_id,
-			action_id: action.id,
-			revision: this.doc.revision,
-			payload: action.payload,
-			created_at_ms: Date.now(),
-			metadata,
-		};
-		if (action.component_id) {
-			base.component_id = action.component_id;
-		}
-		if (action.callback_token) {
-			base.callback_token = action.callback_token;
-		}
-		return base;
-	}
-}
-
-async function presentUiDoc(ctx: ExtensionContext, doc: UiDoc): Promise<UiEvent | null> {
-	if (!ctx.hasUI) {
-		ctx.ui.notify("Interactive UI rendering is unavailable in this mode.", "warning");
-		return null;
-	}
-	try {
-		const result = (await ctx.ui.custom(
-			(_tui, theme, _bindings, done) => new UiDocInteractionComponent(doc, theme, done),
-			{
-				overlay: true,
-				overlayOptions: { width: "70%", maxHeight: "80%", anchor: "center", margin: 1 },
-			},
-		)) as UiEvent | null;
-		return result ?? null;
-	} catch (err) {
-		ctx.ui.notify("Failed to render UI doc.", "error");
-		return null;
-	}
-}
-
-async function dispatchUiEventMessage(pi: ExtensionAPI, ctx: ExtensionContext, event: UiEvent): Promise<void> {
-	const commandText = commandTextFromUiEvent(event);
-	if (!commandText) {
-		ctx.ui.notify("UI action is missing command_text metadata; nothing was sent.", "warning");
-		return;
-	}
-	try {
-		await pi.sendUserMessage(commandText);
-		ctx.ui.notify(`Dispatched command: ${commandText}`, "info");
-	} catch (err) {
-		ctx.ui.notify("Failed to emit UI command.", "error");
-	}
-}
-
-async function runUiInteraction(opts: {
-	pi: ExtensionAPI;
-	ctx: ExtensionContext;
-	state: UiState;
-	targetId?: string;
-}): Promise<void> {
-	if (!opts.ctx.hasUI) {
-		opts.ctx.ui.notify("UI runtime is only available in interactive mode.", "warning");
-		return;
-	}
-	const resolved = resolveInteractionDoc(opts.state, opts.targetId);
-	if (!resolved.ok) {
-		opts.ctx.ui.notify(resolved.message, "warning");
-		return;
-	}
-	const event = await presentUiDoc(opts.ctx, resolved.doc);
-	if (!event) {
-		opts.ctx.ui.notify("UI interaction cancelled.", "info");
-		return;
-	}
-	await dispatchUiEventMessage(opts.pi, opts.ctx, event);
-}
-
 export function uiExtension(pi: ExtensionAPI) {
 	registerMuSubcommand(pi, {
 		subcommand: "ui",
-		summary: "Inspect interactive UI docs (run is debug/helper mode)",
-		usage: "/mu ui status|snapshot [compact|multiline]|run [ui-id]",
+		summary: "Inspect interactive UI docs",
+		usage: "/mu ui status|snapshot [compact|multiline]",
 		handler: async (args, ctx) => {
 			const tokens = args
 				.trim()
@@ -546,27 +345,10 @@ export function uiExtension(pi: ExtensionAPI) {
 				ctx.ui.notify(result.message, result.ok ? "info" : "error");
 				return;
 			}
-			if (subcommand === "run") {
-				await runUiInteraction({
-					pi,
-					ctx,
-					state,
-					targetId: tokens[1],
-				});
-				return;
-			}
-			ctx.ui.notify("Usage: /mu ui status|snapshot [compact|multiline]|run [ui-id]", "info");
+			ctx.ui.notify("Usage: /mu ui status|snapshot [compact|multiline]", "info");
 		},
 	});
 
-	pi.registerShortcut(UI_INTERACTION_SHORTCUT_KEY, {
-		description: "Open active mu_ui interaction dialog",
-		handler: async (ctx) => {
-			const key = sessionKey(ctx);
-			const state = ensureState(key);
-			await runUiInteraction({ pi, ctx, state });
-		},
-	});
 
 	pi.registerTool({
 		name: "mu_ui",

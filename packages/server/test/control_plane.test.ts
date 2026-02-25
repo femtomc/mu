@@ -1802,7 +1802,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			trigger_id: "action-trigger-1",
 			container: { message_ts: "171.5001", channel_id: "chan-1" },
 			message: { ts: "171.5001", thread_ts: "171.4000" },
-			actions: [{ action_id: "mu_hud_action:operator.cancel", action_ts: "171.5002" }],
+			actions: [{ action_id: "mu_hud_action:operator.cancel", action_ts: "171.5002", value: " cancel " }],
 		};
 
 		const first = await handle.handleWebhook(

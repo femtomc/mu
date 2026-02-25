@@ -1,10 +1,6 @@
 import { normalizeHudDocs, normalizeUiDocs } from "@femtomc/mu-core";
 import { ChannelSchema, type IdentityBinding, IdentityStore, TERMINAL_IDENTITY_BINDING } from "./identity_store.js";
-import {
-	allowsConversationalIngressForInbound,
-	CONVERSATIONAL_INGRESS_OVERRIDE_ALLOW,
-	CONVERSATIONAL_INGRESS_OVERRIDE_KEY,
-} from "./ingress_mode_policy.js";
+import { allowsConversationalIngressForInbound } from "./ingress_mode_policy.js";
 import { type InboundEnvelope, InboundEnvelopeSchema } from "./models.js";
 import type { MessagingOperatorRuntimeLike } from "./operator_contract.js";
 import type { ControlPlaneRuntime } from "./runtime.js";
@@ -120,7 +116,7 @@ export class ControlPlaneCommandPipeline {
 		if (!this.#operator) {
 			return { kind: "denied", reason: "operator_unavailable" };
 		}
-		if (!allowsConversationalIngressForInbound(inbound.channel, inbound.metadata)) {
+		if (!allowsConversationalIngressForInbound(inbound.channel)) {
 			return { kind: "denied", reason: "ingress_not_conversational" };
 		}
 
@@ -196,7 +192,6 @@ export class ControlPlaneCommandPipeline {
 		const binding = TERMINAL_IDENTITY_BINDING;
 		const metadata: Record<string, unknown> = {
 			source: "autonomous_ingress",
-			[CONVERSATIONAL_INGRESS_OVERRIDE_KEY]: CONVERSATIONAL_INGRESS_OVERRIDE_ALLOW,
 			...(opts.metadata ?? {}),
 		};
 

@@ -4,10 +4,9 @@ Operator-first conversational ingress runtime for messaging adapters,
 idempotent turn handling, and outbox delivery.
 The messaging operator runtime lives in `@femtomc/mu-agent`.
 
-> Breaking model change: command/mutation governance (command parser, policy,
-> confirmation workflow, mutation execution) has been removed from the active
-> control-plane runtime. Ingress now routes conversationally through the
-> operator runtime only.
+> Runtime model: command/mutation governance (command parser, policy,
+> confirmation workflow, mutation execution) is handled outside this package.
+> Ingress routes conversationally through the operator runtime.
 
 ## First-party messaging adapters
 
@@ -123,7 +122,7 @@ Both Slack and Telegram ingress are conversational-first:
 - Slack supports slash payloads and `app_mention` event callbacks.
 - Telegram supports private/group/supergroup message text/caption ingress.
 
-Interactive confirmation payloads (`confirm:<id>` / `cancel:<id>`) are no longer part of the active runtime contract. Adapters treat those payloads as unsupported (except Slack's built-in in-thread `Cancel turn` button action).
+Interactive confirmation payloads (`confirm:<id>` / `cancel:<id>`) are unsupported (except Slack's built-in in-thread `Cancel turn` button action).
 
 Slack behavior details:
 
@@ -138,14 +137,14 @@ Slack behavior details:
 
 Telegram behavior details:
 
-- Callback payloads that previously represented confirm/cancel now return deterministic unsupported-action ACKs.
+- Unsupported callback payloads return deterministic unsupported-action ACKs.
 - Outbound text remains deterministically chunked.
 - Reply anchoring (`telegram_reply_to_message_id`) is preserved when parseable.
 
 ### Text-only fallback invariants
 
-- Existing text-only envelopes (no `attachments`) continue to use channel text endpoints (`chat.postMessage` for Slack, `sendMessage` for Telegram).
-- Optional `attachments` remain schema-compatible; text-only payloads continue to work without changes.
+- Text-only envelopes (no `attachments`) use channel text endpoints (`chat.postMessage` for Slack, `sendMessage` for Telegram).
+- Optional `attachments` are schema-compatible; text-only payloads continue to work.
 
 ### UiDoc action support matrix
 
@@ -162,12 +161,6 @@ rendered as non-interactive fallback text and are not tokenized.
 | Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks encoded via callback-token store (`mu-ui:*`) | Falls back to deterministic `Actions:` command text lines when callback encoding is unavailable/oversized |
 | Neovim | Frontend receives canonical `ui_docs` payload | Action `callback_token` returned to frontend, then posted back as `ui_event` | Missing/invalid/expired/consumed tokens return deterministic rejection payloads |
 | Terminal (`channel=terminal`) | Text-only | Not supported (`ui_actions_not_implemented`) | Interactive actions must use Slack/Discord/Telegram/Neovim |
-
-Legacy compatibility shims from the rollout window are removed:
-
-- Discord no longer accepts legacy JSON `custom_id` UI payloads.
-- Frontend ingress no longer accepts `text` as an alias for `command_text`.
-- Telegram callback tokens use the unified `mu-ui:` prefix.
 
 Live channel capability flags (including `ui.components` and `ui.actions`) are exposed via:
 
@@ -227,7 +220,7 @@ For Telegram inbound media, attachment retrieval/policy failures are also conver
 
 - deterministic blob layout under `control-plane/attachments/blobs/sha256/<aa>/<bb>/<hash>.<ext>`
 - JSONL metadata index at `control-plane/attachments/index.jsonl` with append-only upsert/expire events
-- filename sanitization (`../../etc/passwd`-style traversal removed) before persisted metadata
+- filename sanitization (including `../../etc/passwd`-style traversal stripping) before persisted metadata
 - dedupe by `channel+source+source_file_id` first, then content hash fallback
 - TTL cleanup (`cleanupExpired`) that expires metadata and garbage-collects unreferenced blobs
 
@@ -276,7 +269,7 @@ The control-plane pipeline now focuses on:
 - operator turn execution,
 - deterministic outbox delivery.
 
-Command parsing/confirmation/mutation execution is no longer part of the active control-plane runtime.
+Command parsing/confirmation/mutation execution is handled outside the active control-plane runtime.
 
 ## Frontend client helpers
 

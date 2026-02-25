@@ -7,8 +7,6 @@ description: "Defines the shared planning/execution protocol for issue-DAG work.
 
 Use this skill when work should flow through one shared protocol from planning to execution.
 
-This skill supersedes the previous `hierarchical-work-protocol` skill name.
-
 ## Contents
 
 - [Protocol identity](#protocol-identity)
@@ -26,7 +24,6 @@ This skill supersedes the previous `hierarchical-work-protocol` skill name.
 - Protocol ID: `hierarchical-work.protocol/v1`
 - Required issue tag on all protocol nodes: `proto:hierarchical-work-v1`
 
-This system does **not** use backward-compatibility aliases for older protocol names.
 Use only the protocol ID and tag above.
 
 ## Canonical tags and node roles

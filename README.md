@@ -67,9 +67,6 @@ End-user flows are agent-driven and channel-native: users interact through Slack
 or the Neovim frontend, and adapters route those actions back into operator turns via
 `metadata.command_text` (for example `/answer yes`) and scoped callback tokens.
 
-`/mu ui run` remains available in the terminal operator UI as a debug/helper path. It is not
-required for product/reference user flows.
-
 Interactive actions must provide explicit `action.metadata.command_text`. When command text is
 missing, adapters render deterministic non-interactive fallback rows instead of implicit
 `/mu ui_event ...` routing.

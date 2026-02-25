@@ -116,7 +116,7 @@ describe("Telegram callback decode routing", () => {
 		);
 
 		expect(result.accepted).toBe(false);
-		expect(result.reason).toBe("invalid_telegram_callback_token");
+		expect(result.reason).toBe("ui_callback_invalid_callback_data");
 		const body = (await result.response.json()) as { method?: string };
 		expect(body.method).toBe("answerCallbackQuery");
 	});
@@ -143,7 +143,7 @@ describe("Telegram callback decode routing", () => {
 			}),
 		);
 		expect(result.accepted).toBe(false);
-		expect(result.reason).toBe("expired_telegram_callback_token");
+		expect(result.reason).toBe("expired_ui_callback_token");
 	});
 
 	test("consumed callback token is rejected on second use", async () => {
@@ -174,7 +174,7 @@ describe("Telegram callback decode routing", () => {
 			}),
 		);
 		expect(second.accepted).toBe(false);
-		expect(second.reason).toBe("consumed_telegram_callback_token");
+		expect(second.reason).toBe("consumed_ui_callback_token");
 	});
 
 	test("scope mismatch callback token is rejected", async () => {
@@ -192,7 +192,7 @@ describe("Telegram callback decode routing", () => {
 			telegramCallbackRequest({
 				callbackData,
 				actorId: "99",
-				chatId: "chat-1",
+				chatId: "chat-2",
 				callbackId: "cb-scope",
 				updateId: 16,
 			}),

@@ -18,7 +18,7 @@ It talks to the same control-plane channel pipeline as Slack/Discord/Telegram vi
 - Async control-plane event tail polling (`:Mu tail on|off|once|status`)
 - Session turn injection (`:Mu turn <session_id> <message>`) for real
   in-session turns (reply + context cursor)
-- `:Mu` command + optional lowercase `:mu` alias
+- `:Mu` command for control-plane ingress
 
 ## Install (local monorepo)
 
@@ -35,7 +35,6 @@ With `lazy.nvim` in this monorepo checkout:
 
       -- optional overrides
       server_url = nil, -- defaults to <store>/control-plane/server.json
-      enable_mu_alias = true, -- lets `:mu` expand to `:Mu`
       auto_link_identity = true,
 
       ui = {
@@ -97,7 +96,6 @@ mu control reload
 - `:Mu help` — help text
 
 Neovim requires user commands to start uppercase, so `:Mu` is canonical.
-If `enable_mu_alias=true`, typing `:mu` auto-expands to `:Mu`.
 
 ## Default identity/context behavior
 

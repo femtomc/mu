@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { UiDoc, UiEvent } from "@femtomc/mu-core";
-import { Key } from "@mariozechner/pi-tui";
+import type { UiDoc } from "@femtomc/mu-core";
 import { resetMuCommandDispatcher } from "../src/extensions/mu-command-dispatcher.js";
 import { uiExtension } from "../src/extensions/ui.js";
 
@@ -15,15 +14,10 @@ type RegisteredTool = {
 	) => Promise<unknown>;
 };
 
-type RegisteredShortcut = {
-	description?: string;
-	handler: (ctx: unknown) => Promise<void> | void;
-};
-
 function createExtensionApiMock() {
 	const tools = new Map<string, RegisteredTool>();
 	const commands = new Map<string, unknown>();
-	const shortcuts = new Map<string, RegisteredShortcut>();
+	const shortcuts = new Map<string, unknown>();
 	const sendUserMessageCalls: string[] = [];
 	const api = {
 		registerTool(tool: RegisteredTool) {
@@ -32,7 +26,7 @@ function createExtensionApiMock() {
 		registerCommand(name: string, command: unknown) {
 			commands.set(name, command);
 		},
-		registerShortcut(shortcut: string, options: RegisteredShortcut) {
+		registerShortcut(shortcut: string, options: unknown) {
 			shortcuts.set(shortcut, options);
 		},
 		on() {
@@ -70,7 +64,7 @@ function createToolContext(sessionId: string) {
 	};
 }
 
-function createCommandContext(sessionId: string, resultEvent: UiEvent) {
+function createCommandContext(sessionId: string) {
 	const base = createToolContext(sessionId);
 	const notifications: Array<{ text: string; level: string }> = [];
 	const ctx = {
@@ -79,12 +73,6 @@ function createCommandContext(sessionId: string, resultEvent: UiEvent) {
 			...base.ui,
 			notify(text: string, level: string) {
 				notifications.push({ text, level });
-			},
-			custom: async (renderFn: unknown) => {
-				if (typeof renderFn === "function") {
-					(renderFn as Function)(null, base.ui.theme, {}, () => null);
-				}
-				return resultEvent;
 			},
 		},
 	};
@@ -160,13 +148,13 @@ describe("uiExtension", () => {
 		resetMuCommandDispatcher();
 	});
 
-	test("registers mu_ui tool, /mu ui command, and interaction shortcut", () => {
+	test("registers mu_ui tool and /mu ui command without local interaction shortcut", () => {
 		const { api, tools, commands, shortcuts } = createExtensionApiMock();
 		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
 
 		expect(tools.has("mu_ui")).toBe(true);
 		expect(commands.has("mu")).toBe(true);
-		expect(shortcuts.has(Key.ctrlAlt("u"))).toBe(true);
+		expect(shortcuts.size).toBe(0);
 	});
 
 	test("mu_ui tool stores docs and reports status", async () => {
@@ -188,7 +176,13 @@ describe("uiExtension", () => {
 		expect(details.doc_count).toBe(1);
 		expect(details.ui_ids).toEqual(["panel-1"]);
 
-		const snapshotResult = await tool.execute("call-3", { action: "snapshot", snapshot_format: "compact" }, undefined, undefined, ctx);
+		const snapshotResult = await tool.execute(
+			"call-3",
+			{ action: "snapshot", snapshot_format: "compact" },
+			undefined,
+			undefined,
+			ctx,
+		);
 		expect(textOf(snapshotResult)).toContain("panel-1");
 	});
 
@@ -236,128 +230,17 @@ describe("uiExtension", () => {
 		expect(docs[0]?.revision.version).toBe(2);
 	});
 
-	test("interaction shortcut dispatches command_text for /answer-style actions", async () => {
-		const { api, tools, shortcuts, sendUserMessageCalls } = createExtensionApiMock();
+	test("/mu ui run is no longer supported and reports canonical usage", async () => {
+		const { api, commands } = createExtensionApiMock();
 		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
 
-		const tool = tools.get("mu_ui");
-		if (!tool) {
-			throw new Error("mu_ui tool missing");
-		}
-		const shortcut = shortcuts.get(Key.ctrlAlt("u"));
-		if (!shortcut) {
-			throw new Error("ui interaction shortcut not registered");
-		}
-
-		const ctx = createToolContext("session-shortcut");
-		const doc = mkUiDoc({
-			actions: [
-				{
-					id: "answer_yes",
-					label: "Answer yes",
-					payload: { choice: "yes" },
-					metadata: { command_text: "/answer yes" },
-				},
-			],
-		});
-		await tool.execute("call-1", { action: "set", doc }, undefined, undefined, ctx);
-
-		const event: UiEvent = {
-			ui_id: doc.ui_id,
-			action_id: "answer_yes",
-			revision: doc.revision,
-			payload: { choice: "yes" },
-			created_at_ms: 1,
-			metadata: { command_text: "/answer yes", from: "test" },
-		};
-
-		const { ctx: shortcutCtx } = createCommandContext("session-shortcut", event);
-		await shortcut.handler(shortcutCtx);
-		expect(sendUserMessageCalls).toEqual(["/answer yes"]);
-	});
-
-	test("/mu ui run dispatches command_text for /answer-style actions", async () => {
-		const { api, tools, sendUserMessageCalls, commands } = createExtensionApiMock();
-		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
-
-		const tool = tools.get("mu_ui");
-		if (!tool) {
-			throw new Error("mu_ui tool missing");
-		}
-
-		const ctx = createToolContext("session-run");
-		const doc = mkUiDoc({
-			actions: [
-				{
-					id: "answer_yes",
-					label: "Answer yes",
-					payload: { choice: "yes" },
-					metadata: { command_text: "/answer yes" },
-				},
-			],
-		});
-		await tool.execute("call-1", { action: "set", doc }, undefined, undefined, ctx);
-
-		const event: UiEvent = {
-			ui_id: doc.ui_id,
-			action_id: "answer_yes",
-			revision: doc.revision,
-			payload: { choice: "yes" },
-			created_at_ms: 1,
-			metadata: { command_text: "/answer yes", from: "test" },
-		};
-
-		const { ctx: commandCtx } = createCommandContext("session-run", event);
 		const command = commands.get("mu");
 		if (!command || typeof (command as any).handler !== "function") {
 			throw new Error("/mu command not registered");
 		}
 
+		const { ctx: commandCtx, notifications } = createCommandContext("session-no-run");
 		await (command as any).handler("ui run", commandCtx);
-		expect(sendUserMessageCalls).toHaveLength(1);
-		expect(sendUserMessageCalls[0]).toBe("/answer yes");
-	});
-
-	test("/mu ui run does not dispatch when action command_text is absent", async () => {
-		const { api, tools, sendUserMessageCalls, commands } = createExtensionApiMock();
-		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
-
-		const tool = tools.get("mu_ui");
-		if (!tool) {
-			throw new Error("mu_ui tool missing");
-		}
-
-		const ctx = createToolContext("session-run-fallback");
-		const doc = mkUiDoc({
-			actions: [
-				{
-					id: "launch",
-					label: "Launch",
-					payload: { target: "sky" },
-					metadata: {},
-				},
-			],
-		});
-		await tool.execute("call-1", { action: "set", doc }, undefined, undefined, ctx);
-
-		const event: UiEvent = {
-			ui_id: doc.ui_id,
-			action_id: "launch",
-			revision: doc.revision,
-			payload: { target: "sky" },
-			created_at_ms: 1,
-			metadata: { from: "test" },
-		};
-
-		const { ctx: commandCtx, notifications } = createCommandContext("session-run-fallback", event);
-		const command = commands.get("mu");
-		if (!command || typeof (command as any).handler !== "function") {
-			throw new Error("/mu command not registered");
-		}
-
-		await (command as any).handler("ui run", commandCtx);
-		expect(sendUserMessageCalls).toHaveLength(0);
-		expect(notifications.some((entry) => entry.text.includes("missing command_text metadata"))).toBe(true);
+		expect(notifications.some((entry) => entry.text.includes("Usage: /mu ui status|snapshot [compact|multiline]"))).toBe(true);
 	});
 });
-

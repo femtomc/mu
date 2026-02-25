@@ -18,6 +18,14 @@ export const UiCallbackTokenScopeSchema = z.object({
 });
 export type UiCallbackTokenScope = z.infer<typeof UiCallbackTokenScopeSchema>;
 
+export const UiCallbackTokenContextSchema = z.object({
+	channel: z.string().trim().min(1),
+	channelTenantId: z.string().trim().min(1),
+	channelConversationId: z.string().trim().min(1),
+	actorBindingId: z.string().trim().min(1),
+});
+export type UiCallbackTokenContext = z.infer<typeof UiCallbackTokenContextSchema>;
+
 const StoredUiEventSchema = UiEventSchema.transform((event) => {
 	const clone: UiEvent = { ...event };
 	if (clone.callback_token) {
@@ -147,6 +155,15 @@ function scopeMatches(record: UiCallbackTokenRecord, scope: UiCallbackTokenScope
 	);
 }
 
+function contextMatches(record: UiCallbackTokenRecord, context: UiCallbackTokenContext): boolean {
+	return (
+		record.channel === context.channel &&
+		record.channel_tenant_id === context.channelTenantId &&
+		record.channel_conversation_id === context.channelConversationId &&
+		record.actor_binding_id === context.actorBindingId
+	);
+}
+
 export type UiCallbackTokenStoreOpts = {
 	nowMs?: () => number;
 	tokenIdGenerator?: () => string;
@@ -239,6 +256,38 @@ export class UiCallbackTokenStore {
 		return cloneRecord(record);
 	}
 
+	async #consumeExisting(opts: {
+		existing: UiCallbackTokenRecord;
+		tokenId: string;
+		callbackData: string;
+		nowMs: number;
+	}): Promise<UiCallbackTokenDecodeDecision> {
+		if (opts.existing.consumed_at_ms != null) {
+			await appendJsonl(this.#path, {
+				kind: "decode_consumed",
+				ts_ms: opts.nowMs,
+				token_id: opts.tokenId,
+				callback_data: opts.callbackData,
+				record: cloneRecord(opts.existing),
+			});
+			return { kind: "consumed", record: cloneRecord(opts.existing) };
+		}
+
+		const consumed = UiCallbackTokenRecordSchema.parse({
+			...opts.existing,
+			consumed_at_ms: opts.nowMs,
+			consume_count: opts.existing.consume_count + 1,
+		});
+		await appendJsonl(this.#path, {
+			kind: "consume",
+			ts_ms: opts.nowMs,
+			token_id: opts.tokenId,
+			record: consumed,
+		});
+		this.#recordsByTokenId.set(opts.tokenId, cloneRecord(consumed));
+		return { kind: "ok", record: cloneRecord(consumed) };
+	}
+
 	public async decodeAndConsume(opts: {
 		callbackData: string;
 		scope: UiCallbackTokenScope;
@@ -293,29 +342,81 @@ export class UiCallbackTokenStore {
 			return { kind: "scope_mismatch", record: cloneRecord(existing) };
 		}
 
-		if (existing.consumed_at_ms != null) {
+		return await this.#consumeExisting({
+			existing,
+			tokenId,
+			callbackData,
+			nowMs,
+		});
+	}
+
+	public async decodeAndConsumeForContext(opts: {
+		callbackData: string;
+		context: UiCallbackTokenContext;
+		nowMs?: number;
+	}): Promise<UiCallbackTokenDecodeDecision> {
+		await this.#ensureLoaded();
+		const nowMs = Math.trunc(opts.nowMs ?? this.#nowMs());
+		const context = UiCallbackTokenContextSchema.parse(opts.context);
+		const callbackData = opts.callbackData;
+		const tokenId = decodeTokenId(callbackData);
+		if (!tokenId) {
 			await appendJsonl(this.#path, {
-				kind: "decode_consumed",
+				kind: "decode_invalid",
+				ts_ms: nowMs,
+				callback_data: callbackData,
+				reason: "format",
+			});
+			return { kind: "invalid", reason: "invalid_callback_data" };
+		}
+
+		const existing = this.#recordsByTokenId.get(tokenId);
+		if (!existing) {
+			await appendJsonl(this.#path, {
+				kind: "decode_invalid",
+				ts_ms: nowMs,
+				callback_data: callbackData,
+				reason: "unknown_token",
+			});
+			return { kind: "invalid", reason: "unknown_callback_token" };
+		}
+
+		if (existing.expires_at_ms <= nowMs) {
+			await appendJsonl(this.#path, {
+				kind: "decode_expired",
 				ts_ms: nowMs,
 				token_id: tokenId,
 				callback_data: callbackData,
 				record: cloneRecord(existing),
 			});
-			return { kind: "consumed", record: cloneRecord(existing) };
+			return { kind: "expired", record: cloneRecord(existing) };
 		}
 
-		const consumed = UiCallbackTokenRecordSchema.parse({
-			...existing,
-			consumed_at_ms: nowMs,
-			consume_count: existing.consume_count + 1,
+		if (!contextMatches(existing, context)) {
+			await appendJsonl(this.#path, {
+				kind: "decode_scope_mismatch",
+				ts_ms: nowMs,
+				token_id: tokenId,
+				callback_data: callbackData,
+				expected_scope: {
+					channel: context.channel,
+					channelTenantId: context.channelTenantId,
+					channelConversationId: context.channelConversationId,
+					actorBindingId: context.actorBindingId,
+					uiId: existing.ui_id,
+					revision: existing.revision,
+					actionId: existing.action_id,
+				},
+				record: cloneRecord(existing),
+			});
+			return { kind: "scope_mismatch", record: cloneRecord(existing) };
+		}
+
+		return await this.#consumeExisting({
+			existing,
+			tokenId,
+			callbackData,
+			nowMs,
 		});
-		await appendJsonl(this.#path, {
-			kind: "consume",
-			ts_ms: nowMs,
-			token_id: tokenId,
-			record: consumed,
-		});
-		this.#recordsByTokenId.set(tokenId, cloneRecord(consumed));
-		return { kind: "ok", record: cloneRecord(consumed) };
 	}
 }
