@@ -1,4 +1,4 @@
-import { HUD_CONTRACT_VERSION, UI_CONTRACT_VERSION, normalizeUiDocs, stableSerializeJson, type HudDoc, type UiDoc } from "@femtomc/mu-core";
+import { UI_CONTRACT_VERSION, stableSerializeJson, type UiDoc } from "@femtomc/mu-core";
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,21 +31,6 @@ function mkInbound(requestId: string): InboundEnvelope {
 	};
 }
 
-function mkHudDoc(id: string, updatedAt: number, title = id): HudDoc {
-	return {
-		v: HUD_CONTRACT_VERSION,
-		hud_id: id,
-		title,
-		scope: null,
-		chips: [],
-		sections: [],
-		actions: [],
-		snapshot_compact: `${title} compact`,
-		updated_at_ms: updatedAt,
-		metadata: {},
-	};
-}
-
 function mkUiDoc(overrides: Partial<UiDoc> = {}): UiDoc {
 	return {
 		v: UI_CONTRACT_VERSION,
@@ -67,18 +52,11 @@ function mkUiDoc(overrides: Partial<UiDoc> = {}): UiDoc {
 	};
 }
 
-describe("hud docs propagation through pipeline and outbox metadata", () => {
-	test("stores bounded deterministic hud metadata on operator outbox records", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "mu-hud-outbox-"));
+describe("ui docs propagation through pipeline and outbox metadata", () => {
+	test("stores bounded deterministic ui metadata on operator outbox records", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "mu-ui-outbox-"));
 		const outbox = new ControlPlaneOutbox(join(dir, "outbox.jsonl"));
-		const inbound = mkInbound("req-hud");
-		const docs = [
-			mkHudDoc("hud-09", 9),
-			mkHudDoc("hud-01", 1),
-			mkHudDoc("hud-05", 5, "old-5"),
-			mkHudDoc("hud-05", 50, "new-5"),
-			...Array.from({ length: 20 }, (_, idx) => mkHudDoc(`hud-${String(idx + 10).padStart(2, "0")}`, idx + 10)),
-		];
+		const inbound = mkInbound("req-ui");
 		const uiDocs = [
 			mkUiDoc({ ui_id: "ui-09", revision: { id: "rev-9", version: 9 }, updated_at_ms: 9 }),
 			mkUiDoc({ ui_id: "ui-01", revision: { id: "rev-1", version: 1 }, updated_at_ms: 1 }),
@@ -90,7 +68,7 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 					revision: { id: `rev-${idx + 10}`, version: idx + 10 },
 					updated_at_ms: idx + 10,
 					title: `ui-${String(idx + 10).padStart(2, "0")}`,
-				})
+				}),
 			),
 		];
 
@@ -100,7 +78,6 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 					handleAdapterIngress: async () => ({
 						kind: "operator_response",
 						message: "ok",
-						hud_docs: docs,
 						ui_docs: uiDocs,
 					}),
 				} as any,
@@ -111,30 +88,6 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 
 			expect(result.outboxRecord).not.toBeNull();
 			const metadata = result.outboxRecord?.envelope.metadata ?? {};
-			expect(metadata.hud_contract_version).toBe(HUD_CONTRACT_VERSION);
-			expect(metadata.hud_docs_count).toBe(16);
-			const hudDocs = Array.isArray(metadata.hud_docs) ? (metadata.hud_docs as HudDoc[]) : [];
-			expect(hudDocs).toHaveLength(16);
-			expect(hudDocs.map((doc) => doc.hud_id)).toEqual([
-				"hud-01",
-				"hud-05",
-				"hud-09",
-				"hud-10",
-				"hud-11",
-				"hud-12",
-				"hud-13",
-				"hud-14",
-				"hud-15",
-				"hud-16",
-				"hud-17",
-				"hud-18",
-				"hud-19",
-				"hud-20",
-				"hud-21",
-				"hud-22",
-			]);
-			expect(hudDocs.find((doc) => doc.hud_id === "hud-05")?.title).toBe("new-5");
-			expect(metadata.hud_docs_json).toBe(stableSerializeJson(hudDocs));
 			const uiDocsNormalized = Array.isArray(metadata.ui_docs) ? (metadata.ui_docs as UiDoc[]) : [];
 			expect(metadata.ui_contract_version).toBe(UI_CONTRACT_VERSION);
 			expect(metadata.ui_docs_count).toBe(16);
@@ -164,8 +117,8 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 		}
 	});
 
-	test("hud metadata does not change outbox dedupe semantics", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "mu-hud-dedupe-"));
+	test("ui metadata does not change outbox dedupe semantics", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "mu-ui-dedupe-"));
 		const outbox = new ControlPlaneOutbox(join(dir, "outbox.jsonl"));
 		const inbound = mkInbound("req-same");
 
@@ -175,7 +128,6 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 					handleAdapterIngress: async () => ({
 						kind: "operator_response",
 						message: "ok",
-						hud_docs: [mkHudDoc("planning", 1)],
 						ui_docs: [
 							mkUiDoc({
 								ui_id: "ui:planning",
@@ -194,7 +146,6 @@ describe("hud docs propagation through pipeline and outbox metadata", () => {
 					handleAdapterIngress: async () => ({
 						kind: "operator_response",
 						message: "ok 2",
-						hud_docs: [mkHudDoc("subagents", 2)],
 						ui_docs: [
 							mkUiDoc({
 								ui_id: "ui:subagents",

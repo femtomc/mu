@@ -1,11 +1,11 @@
 ---
 name: memory
-description: "Runs cross-store memory retrieval and index maintenance workflows with bounded filters and timeline anchors. Use when querying historical context or repairing memory index health."
+description: "Runs cross-store memory retrieval and index maintenance workflows with bounded filters and timeline anchors. Use when querying prior context or repairing memory index health."
 ---
 
 # memory
 
-Use this skill when the user asks for historical context lookup, timeline reconstruction,
+Use this skill when the user asks for prior-context lookup, timeline reconstruction,
 or memory index diagnostics.
 
 ## Contents

@@ -26,7 +26,7 @@ function slackPayload(event: SlackPayloadEvent) {
 		message: { ts: "1111.1111" },
 		actions: [
 			{
-				action_id: "mu_hud_action:ui_event",
+				action_id: "mu_ui_action:ui_event",
 				action_ts: "1111.1111",
 				value: JSON.stringify(event),
 			},
@@ -468,6 +468,81 @@ describe("Discord UI event ingress", () => {
 		expect(callbackResult.inbound?.metadata?.ui_event_token_id).toBeDefined();
 	});
 
+	test("degrades status-profile ui_docs actions to deterministic text fallback", async () => {
+		const statusDoc = {
+			v: 1,
+			ui_id: "ui:subagents",
+			title: "Subagents",
+			summary: "Queue healthy.",
+			components: [
+				{
+					kind: "key_value",
+					id: "queue",
+					title: "Queue",
+					rows: [
+						{ key: "Ready", value: "2" },
+						{ key: "Blocked", value: "0" },
+					],
+					metadata: {},
+				},
+			],
+			actions: [{ id: "refresh", label: "Refresh", payload: {}, metadata: { command_text: "/mu status" } }],
+			revision: { id: "rev-status", version: 7 },
+			updated_at_ms: 7,
+			metadata: {
+				profile: {
+					id: "subagents",
+					variant: "status",
+					snapshot: {
+						compact: "ready=2 blocked=0",
+						multiline: "Ready: 2\nBlocked: 0",
+					},
+				},
+			},
+		} as const;
+		const env = await setupDiscordAdapter(
+			"binding-1",
+			2_000,
+			undefined,
+			(inbound) => {
+				if (inbound.command_text === "/mu status") {
+					return { kind: "operator_response", message: "Status", ui_docs: [statusDoc] };
+				}
+				return { kind: "noop", reason: "test" };
+			},
+		);
+		const slashPayload = {
+			id: "interaction-slash-status",
+			type: 2,
+			guild_id: "guild-1",
+			channel_id: "channel-1",
+			token: "interaction-token",
+			member: { user: { id: "user-1" } },
+			data: {
+				name: "mu",
+				text: "status",
+			},
+		};
+		const timestamp = Math.floor(env.nowClock.value / 1000);
+		const slashResult = await env.adapter.ingest(discordRequest("discord-sign", slashPayload, timestamp));
+		expect(slashResult.accepted).toBe(true);
+		const slashBody = (await slashResult.response.json()) as {
+			type: number;
+			data?: {
+				content?: string;
+				components?: Array<{ components?: Array<{ custom_id?: string }> }>;
+			};
+		};
+		expect(slashBody.type).toBe(4);
+		expect(slashBody.data?.content).toContain("UI · Subagents");
+		expect(slashBody.data?.content).toContain("Queue healthy.");
+		expect(slashBody.data?.content).toContain("Ready: 2");
+		expect(slashBody.data?.content).toContain("Blocked: 0");
+		expect(slashBody.data?.content).toContain("Actions:\n• Refresh: /mu status");
+		expect(slashBody.data?.content).not.toContain("(id=refresh)");
+		expect(slashBody.data?.components).toBeUndefined();
+	});
+
 	test("rejects invalid callback tokens", async () => {
 		const env = await setupDiscordAdapter();
 		const event = createUiEvent();
@@ -670,6 +745,81 @@ describe("Neovim frontend UI event ingress", () => {
 		expect(seenCommandTexts).toContain("/mu status");
 		expect(seenCommandTexts).toContain("/mu confirm");
 		expect(followup.inbound?.metadata?.ui_event_token_id).toBeDefined();
+	});
+
+	test("degrades status-profile ui_docs actions to deterministic fallback without callback tokens", async () => {
+		const statusDoc = {
+			v: 1,
+			ui_id: "ui:subagents",
+			title: "Subagents",
+			summary: "Queue healthy.",
+			components: [
+				{
+					kind: "key_value",
+					id: "queue",
+					title: "Queue",
+					rows: [
+						{ key: "Ready", value: "2" },
+						{ key: "Blocked", value: "0" },
+					],
+					metadata: {},
+				},
+			],
+			actions: [{ id: "refresh", label: "Refresh", payload: {}, metadata: { command_text: "/mu status" } }],
+			revision: { id: "rev-status-1", version: 7 },
+			updated_at_ms: 7,
+			metadata: {
+				profile: {
+					id: "subagents",
+					variant: "status",
+					snapshot: {
+						compact: "ready=2 blocked=0",
+						multiline: "Ready: 2\nBlocked: 0",
+					},
+				},
+			},
+		} as const;
+		const env = await setupNeovimAdapter(
+			"binding-1",
+			1_000,
+			undefined,
+			(inbound) => {
+				if (inbound.command_text === "/mu status") {
+					return { kind: "operator_response", message: "Status", ui_docs: [statusDoc] };
+				}
+				return { kind: "noop", reason: "status_ok" };
+			},
+		);
+
+		const initial = await env.adapter.ingest(
+			neovimRequest("nvim-sign", {
+				tenant_id: "workspace-1",
+				conversation_id: "workspace:main",
+				actor_id: "actor-1",
+				command_text: "status",
+			}),
+		);
+		expect(initial.accepted).toBe(true);
+		const initialBody = (await initial.response.json()) as {
+			result?: {
+				kind?: string;
+				ui_docs?: Array<{
+					ui_id: string;
+					actions: Array<{
+						id: string;
+						metadata: Record<string, unknown>;
+						callback_token?: string;
+					}>;
+				}>;
+			};
+		};
+		expect(initialBody.result?.kind).toBe("operator_response");
+		const returnedDoc = initialBody.result?.ui_docs?.[0];
+		expect(returnedDoc?.ui_id).toBe("ui:subagents");
+		const returnedAction = returnedDoc?.actions?.[0];
+		expect(returnedAction?.id).toBe("refresh");
+		expect(returnedAction?.callback_token).toBeUndefined();
+		expect(returnedAction?.metadata.command_text).toBe("/mu status");
 	});
 
 	test("rejects legacy text-only ingress payloads", async () => {

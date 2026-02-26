@@ -17,7 +17,7 @@ shared protocol.
 - [Transition table](#transition-table)
 - [Planning handoff contract](#planning-handoff-contract)
 - [Subagents/heartbeat execution contract](#subagentsheartbeat-execution-contract)
-- [HUD visibility and teardown](#hud-visibility-and-teardown)
+- [mu_ui visibility and handoff](#mu_ui-visibility-and-handoff)
 - [Evaluation scenarios](#evaluation-scenarios)
 
 ## Purpose
@@ -37,7 +37,7 @@ Load these skills before applying control-flow policies:
 - `protocol` (protocol primitives/invariants)
 - `execution` (durable execution runtime)
 - `heartbeats` and/or `crons` (scheduler clock)
-- `hud` (required visibility/handoff surface)
+- `mu` (for `/mu ui` inspection commands and communication checks)
 
 ## Core contract
 
@@ -128,29 +128,134 @@ Per orchestrator tick:
 4. Verify with:
    - `mu issues ready --root <root-id> --tag proto:hierarchical-work-v1 --pretty`
    - `mu issues validate <root-id>`
-5. Post one concise ORCH_PASS update.
-6. If final: disable heartbeat program.
+5. Upsert control-flow visibility via `mu_ui` (`ui_id:"ui:subagents"` when orchestration is shared, or `ui_id:"ui:control-flow"` when standalone).
+6. Post one concise ORCH_PASS update.
+7. If final: disable heartbeat program.
 
 Reusable bounded heartbeat prompt fragment:
 
 ```text
-Use skills subagents, protocol, execution, control-flow, and hud.
+Use skills subagents, protocol, execution, control-flow, and mu.
 For root <root-id>, enforce flow:review-gated-v1 with spawn-per-attempt rounds.
-Run exactly one bounded control-flow transition pass, verify DAG state,
+Run exactly one bounded control-flow transition pass, keep control-flow visibility
+current via mu_ui (`ui:subagents` or `ui:control-flow`), verify DAG state,
 post one ORCH_PASS, and stop. If validate is final, disable the supervising
 heartbeat and report completion.
 ```
 
-## HUD visibility and teardown
+## mu_ui visibility and handoff
 
-HUD usage is not optional for active control-flow execution.
+Use `mu_ui` as the primary communication surface for active control-flow
+execution.
 
-- If subagents HUD is already active, publish control-flow state in that HUD doc
-  (for example policy mode, round counters, escalation state).
-- If running control-flow standalone, own a dedicated `hud_id:"control-flow"` doc.
-- Update HUD state each bounded pass before reporting ORCH_PASS output.
+- Publish control-flow status in one status-profile doc:
+  - shared orchestration: `ui_id:"ui:subagents"`
+  - standalone control-flow loop: `ui_id:"ui:control-flow"`
+- Set profile metadata for deterministic snapshots:
+  - `metadata.profile.id: "subagents"` or `"control-flow"`
+  - `metadata.profile.variant: "status"`
+  - `metadata.profile.snapshot.compact|multiline`
+- Keep status docs non-interactive (`actions: []`).
+- For user decisions (for example max-round escalation), publish a separate
+  interactive prompt doc (for example `ui_id:"ui:control-flow:escalation"`).
+- Update status docs each bounded pass before posting `ORCH_PASS`.
+- On completion or handoff, remove control-flow-owned docs with explicit
+  `mu_ui remove` actions. Prefer `remove` over `clear`.
 
-- Follow the HUD ownership and teardown protocol from the `hud` skill when completing or handing off.
+### Canonical status doc (`ui:control-flow`)
+
+```json
+{
+  "action": "set",
+  "doc": {
+    "v": 1,
+    "ui_id": "ui:control-flow",
+    "title": "Control-flow status",
+    "summary": "policy=review-gated · round=2/3 · state=review_pending",
+    "components": [
+      {
+        "kind": "key_value",
+        "id": "policy",
+        "title": "Review gate",
+        "rows": [
+          { "key": "policy", "value": "flow:review-gated-v1" },
+          { "key": "round", "value": "2/3" },
+          { "key": "attempt", "value": "mu-attempt-2" },
+          { "key": "review", "value": "mu-review-2" },
+          { "key": "next", "value": "Run review_2" }
+        ],
+        "metadata": {}
+      }
+    ],
+    "actions": [],
+    "revision": { "id": "control-flow-status", "version": 5 },
+    "updated_at_ms": 1772067720000,
+    "metadata": {
+      "profile": {
+        "id": "control-flow",
+        "variant": "status",
+        "snapshot": {
+          "compact": "round=2/3 · state=review_pending",
+          "multiline": "policy: review-gated\nround: 2/3\nstate: review_pending\nnext: run review_2"
+        }
+      }
+    }
+  }
+}
+```
+
+### Canonical escalation prompt (`ui:control-flow:escalation`)
+
+```json
+{
+  "action": "set",
+  "doc": {
+    "v": 1,
+    "ui_id": "ui:control-flow:escalation",
+    "title": "Review rounds exhausted",
+    "summary": "Need user decision after max failed review rounds.",
+    "components": [
+      {
+        "kind": "text",
+        "id": "question",
+        "text": "Max review rounds were reached. Should execution open another attempt or stop for manual intervention?",
+        "metadata": {}
+      }
+    ],
+    "actions": [
+      {
+        "id": "open-extra-round",
+        "label": "Open one extra round",
+        "kind": "primary",
+        "payload": {},
+        "metadata": { "command_text": "/answer open-extra-round" }
+      },
+      {
+        "id": "stop-and-handoff",
+        "label": "Stop and hand off",
+        "kind": "secondary",
+        "payload": {},
+        "metadata": { "command_text": "/answer stop-and-handoff" }
+      }
+    ],
+    "revision": { "id": "control-flow-escalation", "version": 1 },
+    "updated_at_ms": 1772067730000,
+    "metadata": {
+      "profile": {
+        "id": "control-flow-escalation",
+        "variant": "interactive"
+      }
+    }
+  }
+}
+```
+
+### Teardown / handoff
+
+```json
+{"action":"remove","ui_id":"ui:control-flow:escalation"}
+{"action":"remove","ui_id":"ui:control-flow"}
+```
 
 ## Evaluation scenarios
 

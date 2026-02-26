@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { UI_CONTRACT_VERSION, type HudDoc, type UiDoc } from "@femtomc/mu-core";
+import { UI_CONTRACT_VERSION, type UiDoc } from "@femtomc/mu-core";
 import { getStorePaths } from "@femtomc/mu-core/node";
 import {
 	PiMessagingOperatorBackend,
@@ -437,48 +437,6 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(result).toEqual({ kind: "respond", message: "The repo has 5 open issues." });
 	});
 
-	test("captures hud_docs from mu_hud tool execution results", async () => {
-		const planningHudDoc: HudDoc = {
-			v: 1,
-			hud_id: "planning",
-			title: "Planning",
-			scope: "issue:mu-root",
-			chips: [{ key: "phase", label: "reviewing", tone: "warning" }],
-			sections: [{ kind: "text", title: "status", text: "Awaiting approval", tone: "warning" }],
-			actions: [{ id: "snapshot", label: "Snapshot", command_text: "/mu hud snapshot", kind: "secondary" }],
-			snapshot_compact: "HUD(plan) · phase=reviewing",
-			snapshot_multiline: "Planning HUD snapshot",
-			updated_at_ms: 200,
-			metadata: {},
-		};
-
-		const backend = new PiMessagingOperatorBackend({
-			sessionFactory: async () =>
-				makeStubSession({
-					responses: ["Updated planning HUD."],
-					toolResults: [
-						{
-							toolName: "mu_hud",
-							result: {
-								details: {
-									hud_docs: [planningHudDoc],
-								},
-							},
-						},
-					],
-				}),
-		});
-
-		const result = await backend.runTurn(
-			mkInput({ sessionId: "session-hud-doc", turnId: "turn-1", commandText: "update planning hud" }),
-		);
-		expect(result).toEqual({
-			kind: "respond",
-			message: "Updated planning HUD.",
-			hud_docs: [planningHudDoc],
-		});
-	});
-
 	test("captures ui_docs from mu_ui tool execution results", async () => {
 		const uiDoc = mkUiDoc();
 		const backend = new PiMessagingOperatorBackend({
@@ -505,61 +463,6 @@ describe("PiMessagingOperatorBackend", () => {
 			kind: "respond",
 			message: "Updated UI doc.",
 			ui_docs: [uiDoc],
-		});
-	});
-
-	test("hud_docs capture is deterministic and does not break command capture", async () => {
-		const oldPlanningDoc: HudDoc = {
-			v: 1,
-			hud_id: "planning",
-			title: "Planning stale",
-			scope: null,
-			chips: [{ key: "phase", label: "drafting", tone: "accent" }],
-			sections: [],
-			actions: [],
-			snapshot_compact: "HUD(plan) · phase=drafting",
-			updated_at_ms: 50,
-			metadata: {},
-		};
-		const newPlanningDoc = {
-			...oldPlanningDoc,
-			title: "Planning latest",
-			snapshot_compact: "HUD(plan) · phase=reviewing",
-			updated_at_ms: 90,
-		};
-
-		const backend = new PiMessagingOperatorBackend({
-			sessionFactory: async () =>
-				makeStubSession({
-					responses: ["Issuing command."],
-					toolCalls: [
-						{
-							toolName: "command",
-							args: {
-								kind: "status",
-							},
-						},
-					],
-					toolResults: [
-						{
-							toolName: "mu_hud",
-							result: {
-								details: {
-									hud_docs: [newPlanningDoc, oldPlanningDoc, { hud_id: "bad" }],
-								},
-							},
-						},
-					],
-				}),
-		});
-
-		const result = await backend.runTurn(
-			mkInput({ sessionId: "session-command-hud", turnId: "turn-1", commandText: "status" }),
-		);
-		expect(result).toEqual({
-			kind: "command",
-			command: { kind: "status" },
-			hud_docs: [newPlanningDoc],
 		});
 	});
 

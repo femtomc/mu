@@ -197,7 +197,15 @@ One-shot prompt (no durable session):
 mu exec --message "<task>" --json
 ```
 
-In attached terminal operator chat, `/mu` helpers are available (`/mu events`, `/mu hud ...`, `/mu help`).
+In attached terminal operator chat, `/mu` helpers are available (`/mu events`, `/mu ui status`, `/mu ui snapshot compact`, `/mu help`).
+
+Canonical visibility checks while running orchestrated work:
+
+```bash
+/mu ui status
+/mu ui snapshot compact
+/mu ui snapshot multiline
+```
 
 ## Durable automation handoff
 
@@ -209,10 +217,13 @@ mu cron --help
 ```
 
 When work is multi-step and issue-graph driven, use `planning` to shape the DAG,
-then `hud` for canonical HUD behavior, then `protocol` to keep DAG
-semantics consistent, then `control-flow` for explicit loop/termination policy,
-then `model-routing` for per-issue provider/model/thinking selection overlays,
-then `execution` for durable execution supervision.
+then `protocol` to keep DAG semantics consistent, then `control-flow` for explicit
+loop/termination policy, then `model-routing` for per-issue provider/model/thinking
+selection overlays, then `execution` for durable execution supervision.
+Keep operator↔human communication mu_ui-first across these skills:
+- one non-interactive status doc per active profile (`metadata.profile.variant: "status"`)
+- separate interactive prompt docs for decisions (`metadata.command_text` actions)
+- explicit `mu_ui remove` teardown for resolved prompts and completed passes
 For REPL-driven exploration and context compression, use `code-mode`.
 For persistent terminal sessions and worker fan-out mechanics, use `tmux`.
 For recurring bounded automation loops, use `heartbeats`.
@@ -234,9 +245,9 @@ For wall-clock schedules (one-shot, interval, cron-expression), use `crons`.
 
 ## Escalation map
 
-- Historical context retrieval and index maintenance: **`memory`**
+- Prior-context retrieval and index maintenance: **`memory`**
 - Planning/decomposition and DAG review: **`planning`**
-- HUD contract/state updates across surfaces: **`hud`**
+- mu_ui-first status/prompt communication patterns for DAG work: **`planning`**, **`execution`**, **`control-flow`**, **`model-routing`**
 - Shared DAG semantics for planning + execution: **`protocol`**
 - Loop/termination policy overlays (review gates, retries, escalation): **`control-flow`**
 - Per-issue model/provider/thinking selection overlays: **`model-routing`**

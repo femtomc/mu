@@ -756,104 +756,6 @@ describe("telegram outbound media delivery", () => {
 		}
 	});
 
-	test("compiles HudDoc metadata into Telegram text and inline keyboard", async () => {
-		const payloads: Array<Record<string, unknown>> = [];
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (!url.includes("/sendMessage")) {
-				throw new Error(`unexpected fetch: ${url}`);
-			}
-			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-			return new Response(JSON.stringify({ ok: true }), { status: 200 });
-		}) as typeof fetch;
-		try {
-			const record = mkTelegramOutboxRecord({
-				body: "Operator response",
-				metadata: {
-					hud_docs: [
-						{
-							v: 1,
-							hud_id: "planning",
-							title: "Planning",
-							title_style: { italic: true },
-							scope: "issue:mu-e08f2ebb",
-							chips: [{ key: "status", label: "In progress", tone: "info", style: { italic: true } }],
-							sections: [
-								{ kind: "text", title: "Summary", text: "Build Telegram HUD renderer", style: { code: true } },
-								{ kind: "checklist", title: "Steps", items: [{ id: "a", label: "Compile text", done: true, style: { italic: true } }] },
-							],
-							actions: [
-								{ id: "refresh", label: "Refresh", command_text: "/mu status", kind: "secondary" },
-							],
-							snapshot_compact: "planning compact",
-							snapshot_style: { code: true },
-							updated_at_ms: 1,
-							metadata: {},
-						},
-					],
-				},
-			});
-			const result = await deliverTelegramOutboxRecord({ botToken: "telegram-token", record });
-			expect(result.kind).toBe("delivered");
-			expect(payloads).toHaveLength(1);
-			const telegramText = String(payloads[0]?.text ?? "");
-			expect(telegramText).toContain("HUD · Planning");
-			expect(telegramText).toContain("Compile text");
-			expect(telegramText).not.toContain("`");
-			expect(telegramText).not.toContain("_In progress_");
-			const markup = payloads[0]?.reply_markup as Record<string, unknown>;
-			const inlineKeyboard = markup?.inline_keyboard as Array<Array<Record<string, unknown>>>;
-			expect(inlineKeyboard?.[0]?.[0]?.text).toBe("Refresh");
-			expect(inlineKeyboard?.[0]?.[0]?.callback_data).toBe("/mu status");
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
-	test("falls back to text actions when callback payload exceeds Telegram limit", async () => {
-		const payloads: Array<Record<string, unknown>> = [];
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (!url.includes("/sendMessage")) {
-				throw new Error(`unexpected fetch: ${url}`);
-			}
-			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-			return new Response(JSON.stringify({ ok: true }), { status: 200 });
-		}) as typeof fetch;
-		try {
-			const longCommand = `/mu hud snapshot ${"x".repeat(80)}`;
-			const record = mkTelegramOutboxRecord({
-				body: "Operator response",
-				metadata: {
-					hud_docs: [
-						{
-							v: 1,
-							hud_id: "planning",
-							title: "Planning",
-							scope: null,
-							chips: [],
-							sections: [],
-							actions: [{ id: "long", label: "Run long", command_text: longCommand, kind: "secondary" }],
-							snapshot_compact: "planning compact",
-							updated_at_ms: 1,
-							metadata: {},
-						},
-					],
-				},
-			});
-			const result = await deliverTelegramOutboxRecord({ botToken: "telegram-token", record });
-			expect(result.kind).toBe("delivered");
-			expect(payloads).toHaveLength(1);
-			expect(payloads[0]?.reply_markup).toBeUndefined();
-			expect(String(payloads[0]?.text ?? "")).toContain("Actions:");
-			expect(String(payloads[0]?.text ?? "")).toContain(longCommand);
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
 	test("degrades ui_docs actions to deterministic text when callback encoder is unavailable", async () => {
 		const payloads: Array<Record<string, unknown>> = [];
 		const originalFetch = globalThis.fetch;
@@ -961,232 +863,6 @@ describe("telegram outbound media delivery", () => {
 			expect(result.kind).toBe("delivered");
 			expect(payloads).toHaveLength(1);
 			expect(payloads[0]?.text).toBe("*Heading*\n- one\n- two");
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
-	test("compiles HudDoc metadata into Slack blocks with section mappings", async () => {
-		const payloads: Array<Record<string, unknown>> = [];
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (url !== "https://slack.com/api/chat.postMessage") {
-				throw new Error(`unexpected fetch: ${url}`);
-			}
-			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-			return new Response(JSON.stringify({ ok: true, ts: "10.02b" }), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			});
-		}) as typeof fetch;
-		try {
-			const result = await deliverSlackOutboxRecord({
-				botToken: "xoxb-test-token",
-				record: mkSlackOutboxRecord({
-					body: "final summary",
-					metadata: {
-						hud_docs: [
-							{
-								v: 1,
-								hud_id: "planning",
-								title: "Planning",
-								title_style: { italic: true },
-								scope: null,
-								chips: [{ key: "phase", label: "review", tone: "warning", style: { weight: "normal", italic: true } }],
-								sections: [
-									{
-										kind: "kv",
-										title: "Status",
-										title_style: { italic: true },
-										items: [{ key: "root", label: "root", value: "mu-1", tone: "info", value_style: { code: true } }],
-									},
-									{
-										kind: "checklist",
-										title: "Steps",
-										items: [{ id: "s1", label: "compile Slack HUD blocks", done: true, style: { italic: true } }],
-									},
-									{
-										kind: "activity",
-										title: "Activity",
-										lines: ["Posted progress update"],
-									},
-									{ kind: "text", title: "Note", text: "Ready to close", tone: "success", style: { weight: "strong" } },
-								],
-								actions: [{ id: "a1", label: "Close issue", command_text: "mu issues close mu-1 --outcome success" }],
-								snapshot_compact: "phase=review",
-								snapshot_style: { code: true },
-								updated_at_ms: 100,
-								metadata: {},
-							},
-						],
-					},
-				}),
-			});
-			expect(result.kind).toBe("delivered");
-			expect(payloads).toHaveLength(1);
-			const blocks = payloads[0]?.blocks as Array<Record<string, unknown>>;
-			expect(Array.isArray(blocks)).toBe(true);
-			expect(blocks.some((block) => block.type === "context")).toBe(true);
-			expect(
-				blocks.some((block) => {
-					if (block.type !== "context") {
-						return false;
-					}
-					const elements = block.elements as Array<Record<string, unknown>> | undefined;
-					const text = elements?.[0]?.text;
-					return typeof text === "string" && text.includes("*HUD* · *_Planning_*");
-				}),
-			).toBe(true);
-			expect(
-				blocks.some((block) => {
-					if (block.type !== "section") {
-						return false;
-					}
-					const text = (block.text as Record<string, unknown>)?.text;
-					return typeof text === "string" && text.includes("⚠️ _review_");
-				}),
-			).toBe(true);
-			expect(
-				blocks.some((block) => {
-					if (block.type !== "section") {
-						return false;
-					}
-					const text = (block.text as Record<string, unknown>)?.text;
-					return typeof text === "string" && text.includes("`mu-1`");
-				}),
-			).toBe(true);
-			expect(
-				blocks.some((block) => {
-					if (block.type !== "section") {
-						return false;
-					}
-					const text = (block.text as Record<string, unknown>)?.text;
-					return typeof text === "string" && text.includes("compile Slack HUD blocks");
-				}),
-			).toBe(true);
-			expect(blocks.some((block) => block.type === "actions")).toBe(true);
-			const actionBlock = blocks.find((block) => block.type === "actions") as
-				| { elements?: Array<Record<string, unknown>> }
-				| undefined;
-			const actionButton = actionBlock?.elements?.[0] as Record<string, unknown> | undefined;
-			expect(typeof actionButton?.action_id).toBe("string");
-			expect(String(actionButton?.action_id ?? "")).toBe("mu_hud_action:a1");
-			expect(actionButton?.value).toBe("mu issues close mu-1 --outcome success");
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
-	test("applies planning style preset to Slack HUD blocks when explicit styles are omitted", async () => {
-		const payloads: Array<Record<string, unknown>> = [];
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (url !== "https://slack.com/api/chat.postMessage") {
-				throw new Error(`unexpected fetch: ${url}`);
-			}
-			payloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-			return new Response(JSON.stringify({ ok: true, ts: "10.02c" }), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			});
-		}) as typeof fetch;
-		try {
-			const result = await deliverSlackOutboxRecord({
-				botToken: "xoxb-test-token",
-				record: mkSlackOutboxRecord({
-					body: "summary",
-					metadata: {
-						hud_docs: [
-							{
-								v: 1,
-								hud_id: "planning",
-								title: "Planning",
-								scope: null,
-								chips: [],
-								sections: [],
-								actions: [],
-								snapshot_compact: "phase=review",
-								updated_at_ms: 1,
-								metadata: { style_preset: "planning" },
-							},
-						],
-					},
-				}),
-			});
-			expect(result.kind).toBe("delivered");
-			expect(payloads).toHaveLength(1);
-			const blocks = payloads[0]?.blocks as Array<Record<string, unknown>>;
-			expect(Array.isArray(blocks)).toBe(true);
-			expect(
-				blocks.some((block) => {
-					if (block.type !== "context") {
-						return false;
-					}
-					const elements = block.elements as Array<Record<string, unknown>> | undefined;
-					const text = elements?.[0]?.text;
-					return typeof text === "string" && text.includes("*HUD* · *Planning*");
-				}),
-			).toBe(true);
-			expect(
-				blocks.some((block) => {
-					if (block.type !== "section") {
-						return false;
-					}
-					const text = (block.text as Record<string, unknown>)?.text;
-					return typeof text === "string" && text.includes("*Snapshot*\n_phase=review_");
-				}),
-			).toBe(true);
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
-	test("preserves slack status-message anchor compatibility when HudDoc blocks are present", async () => {
-		const calls: Array<{ url: string; payload: Record<string, unknown> }> = [];
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (url !== "https://slack.com/api/chat.update" && url !== "https://slack.com/api/chat.postMessage") {
-				throw new Error(`unexpected fetch: ${url}`);
-			}
-			const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-			calls.push({ url, payload });
-			return new Response(JSON.stringify({ ok: true, ts: "10.20" }), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			});
-		}) as typeof fetch;
-		try {
-			const result = await deliverSlackOutboxRecord({
-				botToken: "xoxb-test-token",
-				record: mkSlackOutboxRecord({
-					body: "final output",
-					metadata: {
-						slack_thread_ts: "171.0002",
-						slack_status_message_ts: "171.0003",
-						hud_docs: [
-							{
-								v: 1,
-								hud_id: "planning",
-								title: "Planning",
-								scope: null,
-								chips: [],
-								sections: [{ kind: "text", title: "Status", text: "Done", tone: "success" }],
-								actions: [],
-								snapshot_compact: "done=yes",
-								updated_at_ms: 200,
-								metadata: {},
-							},
-						],
-					},
-				}),
-			});
-			expect(result.kind).toBe("delivered");
-			expect(calls).toHaveLength(1);
-			expect(calls[0]?.url).toBe("https://slack.com/api/chat.update");
-			expect(Array.isArray(calls[0]?.payload.blocks)).toBe(true);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
@@ -1780,7 +1456,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 		);
 	});
 
-	test("Slack HUD action callbacks route through ingress with deterministic outbox dedupe", async () => {
+	test("Slack UI action callbacks route through ingress with deterministic outbox dedupe", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
@@ -1802,7 +1478,7 @@ describe("bootstrapControlPlane operator wiring", () => {
 			trigger_id: "action-trigger-1",
 			container: { message_ts: "171.5001", channel_id: "chan-1" },
 			message: { ts: "171.5001", thread_ts: "171.4000" },
-			actions: [{ action_id: "mu_hud_action:operator.cancel", action_ts: "171.5002", value: " cancel " }],
+			actions: [{ action_id: "mu_ui_action:operator.cancel", action_ts: "171.5002", value: " cancel " }],
 		};
 
 		const first = await handle.handleWebhook(
@@ -1841,13 +1517,13 @@ describe("bootstrapControlPlane operator wiring", () => {
 		expect(slackRecords).toHaveLength(2);
 		for (const record of slackRecords) {
 			expect(record.envelope.metadata.action_provenance).toBe("slack:block_actions");
-			expect(record.envelope.metadata.hud_action_id).toBe("operator.cancel");
-			expect(record.envelope.metadata.hud_action_command_text).toBe("cancel");
-			expect(record.envelope.metadata.action_id).toBe("mu_hud_action:operator.cancel");
+			expect(record.envelope.metadata.ui_action_id).toBe("operator.cancel");
+			expect(record.envelope.metadata.ui_action_command_text).toBe("cancel");
+			expect(record.envelope.metadata.action_id).toBe("mu_ui_action:operator.cancel");
 		}
 	});
 
-	test("Slack malformed/unsupported HUD callbacks fail safely with deterministic noop responses", async () => {
+	test("Slack malformed/unsupported UI callbacks fail safely with deterministic noop responses", async () => {
 		const repoRoot = await mkRepoRoot();
 		await linkSlackIdentity(repoRoot, ["cp.read"]);
 
@@ -1897,13 +1573,13 @@ describe("bootstrapControlPlane operator wiring", () => {
 					trigger_id: "action-trigger-unsupported",
 					container: { message_ts: "171.9001", channel_id: "chan-1" },
 					message: { ts: "171.9001", thread_ts: "171.9000" },
-					actions: [{ action_id: "mu_hud_action:operator.pause", action_ts: "171.9002" }],
+					actions: [{ action_id: "mu_ui_action:operator.pause", action_ts: "171.9002" }],
 				},
 			}),
 		);
 		expect(unsupportedRes?.status).toBe(200);
 		const unsupportedAck = (await unsupportedRes?.json()) as { text?: string };
-		expect(unsupportedAck.text).toContain("Unsupported Slack HUD action callback");
+		expect(unsupportedAck.text).toContain("Unsupported Slack UI action callback");
 
 		const legacyRes = await handle.handleWebhook(
 			"/webhooks/slack",
@@ -2137,106 +1813,6 @@ describe("bootstrapControlPlane operator wiring", () => {
 			expect(telegramApiCalls[0]?.body?.chat_id).toBe("tg-chat-1");
 			expect(typeof telegramApiCalls[0]?.body?.text).toBe("string");
 			expect(telegramApiCalls[0]?.body?.reply_to_message_id).toBe(101);
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
-	test("Telegram HUD callback tokens render in keyboard and route back through callback ingress", async () => {
-		const repoRoot = await mkRepoRoot();
-		await linkTelegramIdentity(repoRoot, ["cp.read"]);
-
-		const telegramApiCalls: Array<{ url: string; body: Record<string, unknown> | null }> = [];
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (url.startsWith("https://api.telegram.org/bot")) {
-				const parsedBody =
-					typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
-				telegramApiCalls.push({ url, body: parsedBody });
-				return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
-					status: 200,
-					headers: { "content-type": "application/json" },
-				});
-			}
-			return await originalFetch(input as any, init);
-		}) as typeof fetch;
-
-		try {
-			const handle = await bootstrapControlPlaneForTest({
-				repoRoot,
-				config: configWith({
-					telegramSecret: "telegram-secret",
-					telegramBotToken: "telegram-token",
-				}),
-				operatorBackend: new StaticOperatorBackend({
-					kind: "respond",
-					message: "hud response",
-					hud_docs: [
-						{
-							v: 1,
-							hud_id: "planning",
-							title: "Planning",
-							scope: null,
-							chips: [],
-							sections: [{ kind: "text", title: "Summary", text: "Tap a button" }],
-							actions: [{ id: "refresh", label: "Refresh", command_text: "/mu status", kind: "secondary" }],
-							snapshot_compact: "planning compact",
-							updated_at_ms: 1,
-							metadata: {},
-						},
-					],
-				}),
-			});
-			expect(handle).not.toBeNull();
-			if (!handle) {
-				throw new Error("expected control plane handle");
-			}
-			handlesToCleanup.add(handle);
-
-			const firstResponse = await handle.handleWebhook(
-				"/webhooks/telegram",
-				telegramRequest({
-					secret: "telegram-secret",
-					updateId: 404,
-					text: "hello",
-					messageId: 404,
-				}),
-			);
-			expect(firstResponse).not.toBeNull();
-			if (!firstResponse) {
-				throw new Error("expected webhook response");
-			}
-			expect(firstResponse.status).toBe(200);
-
-			await waitFor(() => telegramApiCalls.length >= 1);
-			const firstPayload = telegramApiCalls[0]?.body as Record<string, unknown>;
-			const markup = firstPayload?.reply_markup as Record<string, unknown>;
-			const keyboard = markup?.inline_keyboard as Array<Array<Record<string, unknown>>>;
-			const callbackData = String(keyboard?.[0]?.[0]?.callback_data ?? "");
-			expect(callbackData.startsWith("mu-ui:")).toBe(true);
-
-			const callbackResponse = await handle.handleWebhook(
-				"/webhooks/telegram",
-				telegramCallbackRequest({
-					secret: "telegram-secret",
-					updateId: 405,
-					callbackQueryId: "cb-1",
-					callbackData,
-					messageId: 404,
-				}),
-			);
-			expect(callbackResponse).not.toBeNull();
-			if (!callbackResponse) {
-				throw new Error("expected callback webhook response");
-			}
-			expect(callbackResponse.status).toBe(200);
-			const callbackAck = (await callbackResponse.json()) as { method?: string; callback_query_id?: string };
-			expect(callbackAck.method).toBe("answerCallbackQuery");
-			expect(callbackAck.callback_query_id).toBe("cb-1");
-
-			await waitFor(() => telegramApiCalls.length >= 2);
-			expect(String(telegramApiCalls[1]?.body?.text ?? "")).toContain("hud response");
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

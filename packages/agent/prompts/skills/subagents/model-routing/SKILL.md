@@ -23,7 +23,7 @@ semantics.
 - [Planning handoff contract](#planning-handoff-contract)
 - [Subagents/heartbeat execution contract](#subagentsheartbeat-execution-contract)
 - [Failure + fallback policy](#failure--fallback-policy)
-- [HUD visibility and teardown](#hud-visibility-and-teardown)
+- [mu_ui visibility and handoff](#mu_ui-visibility-and-handoff)
 - [Evaluation scenarios](#evaluation-scenarios)
 
 ## Purpose
@@ -44,7 +44,7 @@ Load these skills before applying model-routing policies:
 - `protocol` (protocol primitives/invariants)
 - `execution` (durable execution runtime)
 - `heartbeats` and/or `crons` (scheduler clock)
-- `hud` (required visibility/handoff surface)
+- `mu` (for `/mu ui` inspection commands and communication checks)
 - `control-flow` (optional; when loop/termination overlays are also active)
 
 ## Core contract
@@ -245,7 +245,7 @@ For one-shot execution:
 
 ```bash
 mu exec --provider <provider> --model <model> --thinking <thinking> \
-  "Use skills subagents, protocol, execution, model-routing, and hud. Work issue <issue-id>."
+  "Use skills subagents, protocol, execution, model-routing, and mu. Work issue <issue-id> and keep routing visibility current via mu_ui."
 ```
 
 For existing session turn:
@@ -299,18 +299,19 @@ Per orchestrator tick:
 5. Verify with:
    - `mu issues ready --root <root-id> --tag proto:hierarchical-work-v1 --pretty`
    - `mu issues validate <root-id>`
-6. Update HUD state.
+6. Upsert routing visibility via `mu_ui` (`ui_id:"ui:subagents"` when orchestration is shared, or `ui_id:"ui:model-routing"` when standalone).
 7. Post one concise `ORCH_PASS` status update.
 8. If root is final, disable supervising heartbeat.
 
 Reusable heartbeat prompt fragment:
 
 ```text
-Use skills subagents, protocol, execution, model-routing, and hud.
+Use skills subagents, protocol, execution, model-routing, and mu.
 For root <root-id>, enforce route:model-routing-v1.
 Run exactly one bounded routing/orchestration transition pass: compute or validate
 one issue's model recommendation from live `mu control harness` capabilities,
-apply one action, verify DAG state, post one ORCH_PASS, then stop.
+apply one action, keep route status current via mu_ui (`ui:subagents` or
+`ui:model-routing`), verify DAG state, post one ORCH_PASS, then stop.
 If validate is final, disable the supervising heartbeat and report completion.
 ```
 
@@ -334,15 +335,147 @@ If validate is final, disable the supervising heartbeat and report completion.
    - every route change emits forum packet (`ROUTE_RECOMMENDATION`,
      `ROUTE_FALLBACK`, `ROUTE_DEGRADED`)
 
-## HUD visibility and teardown
+## mu_ui visibility and handoff
 
-HUD usage is not optional for active model-routing execution.
+Use `mu_ui` as the primary communication surface for active model-routing
+execution.
 
-- If subagents HUD is active, publish routing state there (selected model,
-  alternates remaining, last fallback reason).
-- If running model-routing standalone, own `hud_id:"model-routing"`.
-- Update HUD each bounded pass before ORCH_PASS output.
-- Follow `hud` skill ownership/teardown protocol on completion or handoff.
+- Publish routing status in one status-profile doc:
+  - shared orchestration: `ui_id:"ui:subagents"`
+  - standalone model-routing loop: `ui_id:"ui:model-routing"`
+- Set status profile metadata for deterministic snapshots:
+  - `metadata.profile.id: "subagents"` or `"model-routing"`
+  - `metadata.profile.variant: "status"`
+  - `metadata.profile.snapshot.compact|multiline`
+- Keep status docs non-interactive (`actions: []`).
+- For user decisions (for example hard-constraint escalation), publish a separate
+  interactive prompt doc (for example `ui_id:"ui:model-routing:escalation"`).
+- Update routing status docs each bounded pass before posting `ORCH_PASS`.
+- On completion or handoff, remove model-routing-owned docs with explicit
+  `mu_ui remove` actions. Prefer `remove` over `clear`.
+
+### Canonical status doc (`ui:model-routing`)
+
+```json
+{
+  "action": "set",
+  "doc": {
+    "v": 1,
+    "ui_id": "ui:model-routing",
+    "title": "Model-routing status",
+    "summary": "issue=<issue-id> · selected=openai-codex/gpt-5.3-codex/xhigh · alternates=2",
+    "components": [
+      {
+        "kind": "key_value",
+        "id": "route",
+        "title": "Current route",
+        "rows": [
+          { "key": "policy", "value": "route:model-routing-v1" },
+          { "key": "issue", "value": "<issue-id>" },
+          { "key": "selected", "value": "openai-codex/gpt-5.3-codex/xhigh" },
+          { "key": "alternates", "value": "2" },
+          { "key": "next", "value": "Launch worker with explicit overrides" }
+        ],
+        "metadata": {}
+      },
+      {
+        "kind": "list",
+        "id": "recent",
+        "title": "Recent routing events",
+        "items": [
+          {
+            "id": "e1",
+            "label": "ROUTE_RECOMMENDATION posted",
+            "detail": "selected openai-codex/gpt-5.3-codex/xhigh"
+          },
+          {
+            "id": "e2",
+            "label": "fallback budget",
+            "detail": "openrouter/google/gemini-3.1-pro-preview/high"
+          }
+        ],
+        "metadata": {}
+      }
+    ],
+    "actions": [],
+    "revision": { "id": "model-routing-status", "version": 7 },
+    "updated_at_ms": 1772069500000,
+    "metadata": {
+      "profile": {
+        "id": "model-routing",
+        "variant": "status",
+        "snapshot": {
+          "compact": "selected=openai-codex/gpt-5.3-codex/xhigh · alternates=2",
+          "multiline": "issue: <issue-id>\nselected: openai-codex/gpt-5.3-codex/xhigh\nalternates: 2\nnext: launch worker"
+        }
+      }
+    }
+  }
+}
+```
+
+### Canonical escalation prompt (`ui:model-routing:escalation`)
+
+```json
+{
+  "action": "set",
+  "doc": {
+    "v": 1,
+    "ui_id": "ui:model-routing:escalation",
+    "title": "Routing escalation required",
+    "summary": "No authenticated model satisfies image + deep reasoning constraints.",
+    "components": [
+      {
+        "kind": "text",
+        "id": "question",
+        "text": "Routing is blocked by missing provider capability. Should execution wait for provider auth or run with degraded constraints?",
+        "metadata": {}
+      },
+      {
+        "kind": "list",
+        "id": "options",
+        "title": "Choices",
+        "items": [
+          { "id": "opt-auth", "label": "Pause and authenticate provider" },
+          { "id": "opt-degrade", "label": "Proceed with degraded route" }
+        ],
+        "metadata": {}
+      }
+    ],
+    "actions": [
+      {
+        "id": "wait-for-auth",
+        "label": "Wait for provider auth",
+        "kind": "primary",
+        "payload": {},
+        "metadata": { "command_text": "/answer wait-for-auth" }
+      },
+      {
+        "id": "approve-degraded-route",
+        "label": "Approve degraded route",
+        "kind": "secondary",
+        "payload": {},
+        "metadata": { "command_text": "/answer approve-degraded-route" }
+      }
+    ],
+    "revision": { "id": "model-routing-escalation", "version": 1 },
+    "updated_at_ms": 1772069510000,
+    "metadata": {
+      "profile": {
+        "id": "model-routing-escalation",
+        "variant": "interactive"
+      }
+    }
+  }
+}
+```
+
+### Teardown / handoff
+
+```json
+{"action":"remove","ui_id":"ui:model-routing:escalation"}
+{"action":"remove","ui_id":"ui:model-routing"}
+```
 
 ## Evaluation scenarios
 

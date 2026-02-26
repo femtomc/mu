@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { HudToneSchema, stableSerializeJson } from "./hud.js";
+
+export const UiToneSchema = z.enum(["info", "success", "warning", "error", "muted", "accent", "dim"]);
+export type UiTone = z.infer<typeof UiToneSchema>;
 
 export const UI_CONTRACT_VERSION = 1 as const;
 
@@ -28,7 +30,7 @@ export const UiListItemSchema = z
 		id: NonEmptyId,
 		label: NonEmptyText(UI_ACTION_LABEL_MAX_LENGTH),
 		detail: NonEmptyText(UI_LIST_ITEM_DETAIL_MAX_LENGTH).optional(),
-		tone: HudToneSchema.optional(),
+		tone: UiToneSchema.optional(),
 	})
 	.strict();
 export type UiListItem = z.infer<typeof UiListItemSchema>;
@@ -37,7 +39,7 @@ export const UiKeyValueRowSchema = z
 	.object({
 		key: NonEmptyText(UI_KEY_MAX_LENGTH),
 		value: NonEmptyText(UI_VALUE_MAX_LENGTH),
-		tone: HudToneSchema.optional(),
+		tone: UiToneSchema.optional(),
 	})
 	.strict();
 export type UiKeyValueRow = z.infer<typeof UiKeyValueRowSchema>;
@@ -47,7 +49,7 @@ export const UiComponentTextSchema = z
 		kind: z.literal("text"),
 		id: NonEmptyId,
 		text: NonEmptyText(UI_TEXT_COMPONENT_MAX_LENGTH),
-		tone: HudToneSchema.optional(),
+		tone: UiToneSchema.optional(),
 		metadata: z.record(z.string(), z.unknown()).default({}),
 	})
 	.strict();
@@ -129,6 +131,9 @@ export const UiDocSchema = z
 	.strict();
 export type UiDoc = z.infer<typeof UiDocSchema>;
 
+export const UI_STATUS_PROFILE_NAMES = ["planning", "subagents", "control-flow", "model-routing"] as const;
+export type UiStatusProfileName = (typeof UI_STATUS_PROFILE_NAMES)[number];
+
 export const UiEventSchema = z
 	.object({
 		ui_id: NonEmptyId,
@@ -155,6 +160,68 @@ function parseUiDocCandidate(value: unknown): UiDoc | null {
 	return parsed.data;
 }
 
+const UI_PROFILE_VARIANTS = ["status", "interactive"] as const;
+type UiProfileVariant = (typeof UI_PROFILE_VARIANTS)[number];
+
+const UI_STATUS_PROFILE_UI_IDS: Record<UiStatusProfileName, string> = {
+	planning: "ui:planning",
+	subagents: "ui:subagents",
+	"control-flow": "ui:control-flow",
+	"model-routing": "ui:model-routing",
+};
+
+const UI_STATUS_PROFILE_COMPONENT_RECOMMENDATIONS: Record<UiStatusProfileName, readonly UiComponent["kind"][]> = {
+	planning: ["key_value", "list"],
+	subagents: ["key_value", "list"],
+	"control-flow": ["key_value"],
+	"model-routing": ["key_value", "list"],
+};
+
+function isUiStatusProfileName(value: string): value is UiStatusProfileName {
+	return (UI_STATUS_PROFILE_NAMES as readonly string[]).includes(value);
+}
+
+function isUiProfileVariant(value: string): value is UiProfileVariant {
+	return (UI_PROFILE_VARIANTS as readonly string[]).includes(value);
+}
+
+function uiProfileMetadata(doc: UiDoc): Record<string, unknown> | null {
+	const raw = doc.metadata.profile;
+	if (!isPlainObject(raw)) {
+		return null;
+	}
+	return raw;
+}
+
+function uiStatusProfileNameFromDoc(doc: UiDoc): UiStatusProfileName | null {
+	const profile = uiProfileMetadata(doc);
+	if (!profile) {
+		return null;
+	}
+	const raw = profile.id;
+	if (typeof raw !== "string") {
+		return null;
+	}
+	const normalized = raw.trim().toLowerCase();
+	if (!normalized || !isUiStatusProfileName(normalized)) {
+		return null;
+	}
+	return normalized;
+}
+
+function hasUiComponentKind(doc: UiDoc, kind: UiComponent["kind"]): boolean {
+	return doc.components.some((component) => component.kind === kind);
+}
+
+function hasProfileSnapshotCompact(profile: Record<string, unknown>): boolean {
+	const snapshot = profile.snapshot;
+	if (!isPlainObject(snapshot)) {
+		return false;
+	}
+	const compact = snapshot.compact;
+	return typeof compact === "string" && compact.trim().length > 0;
+}
+
 function uiDocCandidates(input: unknown): unknown[] {
 	if (Array.isArray(input)) {
 		return input;
@@ -179,6 +246,30 @@ function normalizedUiDocLimit(limit: unknown): number {
 	return parsed;
 }
 
+function canonicalizeJson(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map((entry) => canonicalizeJson(entry));
+	}
+	if (!isPlainObject(value)) {
+		return value;
+	}
+	const out: Record<string, unknown> = {};
+	for (const key of Object.keys(value).sort()) {
+		const nextValue = value[key];
+		if (nextValue === undefined) {
+			continue;
+		}
+		out[key] = canonicalizeJson(nextValue);
+	}
+	return out;
+}
+
+export function stableSerializeJson(value: unknown, opts: { pretty?: boolean } = {}): string {
+	const normalized = canonicalizeJson(value);
+	const text = JSON.stringify(normalized, null, opts.pretty ? 2 : undefined);
+	return text ?? "null";
+}
+
 function deterministicUiDocChoice(left: UiDoc, right: UiDoc): UiDoc {
 	if (left.revision.version !== right.revision.version) {
 		return left.revision.version > right.revision.version ? left : right;
@@ -193,6 +284,68 @@ function deterministicUiDocChoice(left: UiDoc, right: UiDoc): UiDoc {
 
 export function parseUiDoc(input: unknown): UiDoc | null {
 	return parseUiDocCandidate(input);
+}
+
+export function resolveUiStatusProfileName(input: unknown): UiStatusProfileName | null {
+	const doc = parseUiDocCandidate(input);
+	if (!doc) {
+		return null;
+	}
+	return uiStatusProfileNameFromDoc(doc);
+}
+
+export function uiStatusProfileWarnings(input: unknown): string[] {
+	const doc = parseUiDocCandidate(input);
+	if (!doc) {
+		return [];
+	}
+	const profileName = uiStatusProfileNameFromDoc(doc);
+	if (!profileName) {
+		return [];
+	}
+
+	const warnings: string[] = [];
+	const profile = uiProfileMetadata(doc);
+	if (!profile) {
+		return warnings;
+	}
+
+	const rawVariant = typeof profile.variant === "string" ? profile.variant.trim().toLowerCase() : "";
+	let variant: UiProfileVariant = "status";
+	if (rawVariant.length > 0) {
+		if (isUiProfileVariant(rawVariant)) {
+			variant = rawVariant;
+		} else {
+			warnings.push(`profile.id=${profileName} has unsupported metadata.profile.variant=${rawVariant}`);
+		}
+	}
+
+	if (variant !== "status") {
+		warnings.push(
+			`profile.id=${profileName} status validation expects metadata.profile.variant=status (got ${variant})`,
+		);
+	}
+
+	const expectedUiId = UI_STATUS_PROFILE_UI_IDS[profileName];
+	if (doc.ui_id !== expectedUiId) {
+		warnings.push(`profile.id=${profileName} expects ui_id=${expectedUiId} (got ${doc.ui_id})`);
+	}
+	if (!doc.summary) {
+		warnings.push(`profile.id=${profileName} recommends summary for deterministic status fallback`);
+	}
+	if (!hasProfileSnapshotCompact(profile)) {
+		warnings.push(`profile.id=${profileName} recommends metadata.profile.snapshot.compact`);
+	}
+	if (doc.actions.length > 0) {
+		warnings.push(`profile.id=${profileName} status docs should omit actions (got ${doc.actions.length})`);
+	}
+
+	for (const kind of UI_STATUS_PROFILE_COMPONENT_RECOMMENDATIONS[profileName]) {
+		if (!hasUiComponentKind(doc, kind)) {
+			warnings.push(`profile.id=${profileName} recommends a ${kind} component`);
+		}
+	}
+	return warnings;
 }
 
 export function normalizeUiDocs(input: unknown, opts: { maxDocs?: number } = {}): UiDoc[] {

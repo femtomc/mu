@@ -34,28 +34,15 @@ await runContext({ runId: newRunId() }, async () => {
 console.log(await jsonl.read());
 ```
 
-## HUD contract helpers
-
-`@femtomc/mu-core` exports a versioned HUD contract, deterministic JSON helper, and shared runtime loop:
-
-- `HudDocSchema`, `HUD_CONTRACT_VERSION`
-- `parseHudDoc(...)`, `normalizeHudDocs(...)`
-- `resolveHudStylePresetName(...)`, `applyHudStylePreset(...)`, `hudStylePresetWarnings(...)`
-- `serializeHudDocTextFallback(...)`, `serializeHudDocsTextFallback(...)`
-- `stableSerializeJson(...)`
-- `HudRuntime` + `HudProvider` for provider registration, reducer updates, ordered effect execution, and HUD snapshot emission
-
-`HudDoc` also supports optional presentation hints (`title_style`, `snapshot_style`, chip/item/section/action style objects) and metadata style presets (`metadata.style_preset` currently `planning|subagents`) so renderers can opt into richer emphasis while preserving deterministic plain-text fallbacks.
-
-These are runtime-agnostic primitives intended for shared HUD capture/render pipelines.
-
 ## UI contract helpers
 
 Interactive UI documents are modeled as first-class, versioned contracts that describe renderable components, actions, and revisions so any rendering surface can stay in sync with agents. `@femtomc/mu-core` exposes the following helpers:
 
 - `UI_CONTRACT_VERSION`, `UiDocSchema`, `UiRevisionSchema`, `UiComponentSchema`, and `UiActionSchema` for validating document payloads.
 - `parseUiDoc(...)`, `normalizeUiDocs(...)`, and `uiDocRevisionConflict(...)` for deterministic selection, conflict detection, and safe merging of candidate documents.
+- `resolveUiStatusProfileName(...)` and `uiStatusProfileWarnings(...)` for advisory validation of profile-scoped status docs (`planning`, `subagents`, `control-flow`, `model-routing`) carried in `metadata.profile`.
 - `UiEventSchema` + `parseUiEvent(...)` for structured event payloads emitted by frontends (every event includes `ui_id`, `action_id`, the originating `revision`, optional `callback_token`, `payload`, and `created_at_ms`).
+- `stableSerializeJson(...)` for deterministic metadata serialization and revision tie-breaking.
 
 ### Field limits
 

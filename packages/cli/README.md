@@ -145,7 +145,7 @@ If the same id exists in both, pass `--session-kind` (or `--session-dir`) to dis
 
 In-session `/mu` helpers include:
 
-- `/mu hud ...` (HUD surface for status/snapshot/on/off/toggle/clear/remove)
+- `/mu ui status` / `/mu ui snapshot [compact|multiline]` (primary `mu_ui` status inspection surface)
 - `/mu events ...` (event tail/watch)
 - `/mu brand ...` (chrome toggle)
 

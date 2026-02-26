@@ -36,7 +36,7 @@ Use this skill when asked to write, edit, or review technical prose. This includ
    - Inverted pyramid: conclusion, supporting details, background.
 
 4. **Actionability**
-   - Imperative for procedures: "Run the migration" not "The migration should be run."
+   - Imperative for procedures: "Run the command" not "The command should be run."
    - Explicit consequences: state what happens if the user does X.
    - Anticipate failure modes in troubleshooting sections.
 
@@ -77,7 +77,7 @@ Use this skill when asked to write, edit, or review technical prose. This includ
 1. **What changed** (imperative, present tense)
 2. **Why it changed** (context, motivation)
 3. **How to verify** (testing steps, expected outcomes)
-4. **Breaking changes** (if any, with migration path)
+4. **Breaking changes** (if any, with explicit adoption guidance)
 
 Keep under 80 characters per line in the summary. Body wraps at 72 characters.
 

@@ -138,6 +138,8 @@ type UiCapability = {
 	actions: UiActionCapability;
 };
 
+const STATUS_PROFILE_ACTIONS_FALLBACK_REASON = "status_profile_actions_degrade_to_text";
+
 const CHANNEL_UI_CAPABILITIES: Record<Channel, UiCapability> = {
 	slack: {
 		supported: true,
@@ -145,7 +147,7 @@ const CHANNEL_UI_CAPABILITIES: Record<Channel, UiCapability> = {
 		components: UI_COMPONENT_SUPPORT,
 		actions: {
 			supported: true,
-			reason: null,
+			reason: STATUS_PROFILE_ACTIONS_FALLBACK_REASON,
 		},
 	},
 	discord: {
@@ -154,7 +156,7 @@ const CHANNEL_UI_CAPABILITIES: Record<Channel, UiCapability> = {
 		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
 		actions: {
 			supported: true,
-			reason: null,
+			reason: STATUS_PROFILE_ACTIONS_FALLBACK_REASON,
 		},
 	},
 	telegram: {
@@ -163,7 +165,7 @@ const CHANNEL_UI_CAPABILITIES: Record<Channel, UiCapability> = {
 		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
 		actions: {
 			supported: true,
-			reason: null,
+			reason: STATUS_PROFILE_ACTIONS_FALLBACK_REASON,
 		},
 	},
 	neovim: {
@@ -172,7 +174,7 @@ const CHANNEL_UI_CAPABILITIES: Record<Channel, UiCapability> = {
 		components: TEXT_ONLY_UI_COMPONENT_SUPPORT,
 		actions: {
 			supported: true,
-			reason: null,
+			reason: STATUS_PROFILE_ACTIONS_FALLBACK_REASON,
 		},
 	},
 	terminal: {

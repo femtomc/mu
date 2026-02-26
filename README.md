@@ -6,7 +6,7 @@
 
 `mu` is a programmable personal assistant for technical work, designed for long-running execution, persistence, and reactivity.
 
-Where other agents bake in complex logic, `mu` provides modular primitives (issue tracking, heartbeats, programmable HUDs) that agents orchestrate using shell commands. This makes `mu` highly customizable: as [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) note, *bash is all you need*.
+Where other agents bake in complex logic, `mu` provides modular primitives (issue tracking, heartbeats, and programmable `mu_ui` docs) that agents orchestrate using shell commands. This makes `mu` highly customizable: as [Mario](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) and [Armin](https://lucumr.pocoo.org/2026/1/31/pi/) note, *bash is all you need*.
 
 ## Quickstart
 
@@ -55,7 +55,7 @@ mu memory search --query "reload" --limit 20
 
 - **CLI issue tracker & forum**: Native tools to manage work and discussions (inspired by [beads](https://github.com/steveyegge/beads)).
 - **Heartbeats & crons**: Durable automation loops for long-running tasks (inspired by [openclaw](https://github.com/openclaw/openclaw)).
-- **Programmable HUD**: Real-time contextual display updated dynamically by the agent.
+- **Programmable UI (`mu_ui`)**: Real-time contextual status and interactive prompts published as `UiDoc`s; this is the primary communication surface.
 - **Skill-based behavior**: Customize agent workflows entirely through Markdown files.
 
 ## Programmable UI substrate
@@ -81,7 +81,7 @@ Read the [Programmable UI substrate guide](docs/mu-ui.md) for the full developer
 Skills define the agent's behavior. Because `mu` relies on bash and CLI tools, you customize skills to change how `mu` works. `mu` ships with a hierarchy of version-synced starter skills bootstrapped into `~/.mu/skills/`:
 
 - **Core (`core`)**: `mu` (CLI usage), `memory` (context retrieval), `tmux` (workspace fan-out), `code-mode` (REPL workflows)
-- **Subagents (`subagents`)**: `planning` (issue DAGs), `protocol` (shared DAG protocol), `execution` (durable orchestration runtime), `control-flow` (loop policies), `model-routing` (per-issue model/provider/thinking overlays), `hud` (HUD contract)
+- **Subagents (`subagents`)**: `planning` (issue DAGs), `protocol` (shared DAG protocol), `execution` (durable orchestration runtime), `control-flow` (loop policies), `model-routing` (per-issue model/provider/thinking overlays)
 - **Automation (`automation`)**: `heartbeats` (lifecycle automation loops), `crons` (wall-clock scheduling)
 - **Messaging (`messaging`)**: `setup-slack`, `setup-discord`, `setup-telegram`, `setup-neovim`
 - **Writing (`writing`)**: `writing` (technical prose guidelines)

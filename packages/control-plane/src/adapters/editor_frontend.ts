@@ -1,4 +1,4 @@
-import { normalizeUiDocs, type UiDoc } from "@femtomc/mu-core";
+import { normalizeUiDocs, resolveUiStatusProfileName, type UiDoc } from "@femtomc/mu-core";
 import {
 	type AdapterIngressResult,
 	type ControlPlaneAdapter,
@@ -67,6 +67,23 @@ export type FrontendControlPlaneAdapterOpts = {
 
 const FRONTEND_UI_DOCS_MAX = 16;
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return null;
+	}
+	return value as Record<string, unknown>;
+}
+
+function statusProfileVariant(doc: UiDoc): string {
+	const profile = asRecord(doc.metadata.profile);
+	const rawVariant = typeof profile?.variant === "string" ? profile.variant.trim().toLowerCase() : "";
+	return rawVariant.length > 0 ? rawVariant : "status";
+}
+
+function isStatusProfileStatusVariant(doc: UiDoc): boolean {
+	return resolveUiStatusProfileName(doc) !== null && statusProfileVariant(doc) === "status";
+}
+
 async function tokenizedFrontendPipelineResult(opts: {
 	result: CommandPipelineResult;
 	uiCallbackTokenStore: UiCallbackTokenStore;
@@ -81,12 +98,16 @@ async function tokenizedFrontendPipelineResult(opts: {
 	}
 
 	const uiDocs = normalizeUiDocs(opts.result.ui_docs, { maxDocs: FRONTEND_UI_DOCS_MAX });
-	if (uiDocs.length === 0 || !uiDocs.some((doc) => doc.actions.length > 0)) {
+	if (uiDocs.length === 0) {
+		return opts.result;
+	}
+	const interactiveUiDocs = uiDocs.filter((doc) => !isStatusProfileStatusVariant(doc));
+	if (!interactiveUiDocs.some((doc) => doc.actions.length > 0)) {
 		return opts.result;
 	}
 
 	const issued = await issueUiDocActionPayloads({
-		uiDocs,
+		uiDocs: interactiveUiDocs,
 		tokenStore: opts.uiCallbackTokenStore,
 		context: {
 			channel: opts.channel,

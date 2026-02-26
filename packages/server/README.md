@@ -194,11 +194,7 @@ Operational fallbacks:
 - `telegram_reply_to_message_id` metadata anchors replies when parseable.
 - Missing Slack/Telegram bot tokens surface capability reason codes (`*_bot_token_missing`) and retry behavior.
 
-Server channel renderers consume canonical `hud_docs` metadata (`HudDoc`) for Slack/Telegram HUD
-rendering + actions. Optional HUD presentation hints (`title_style`, `snapshot_style`, chip/item styles)
-and metadata presets (`metadata.style_preset`) may be used by richer renderers and safely ignored by
-plain-text channels. New features should extend the shared HUD contract path instead of bespoke
-channel-specific HUD payload formats.
+Server channel renderers consume canonical `ui_docs` metadata (`UiDoc`) for Slack/Telegram/Discord/Neovim delivery. Interactive actions use callback tokens (`mu-ui:*`) with deterministic text fallbacks when tokens cannot be issued or rendered.
 
 ## Running the Server
 

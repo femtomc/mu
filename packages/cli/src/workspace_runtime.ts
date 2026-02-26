@@ -58,9 +58,17 @@ const LEGACY_TOP_LEVEL_STARTER_SKILL_DIRS = [
 	"setup-neovim",
 ] as const;
 
+const RETIRED_BUNDLED_SKILL_PATHS = [["subagents", "hud"]] as const;
+
 async function removeLegacyTopLevelStarterSkillDirs(targetRoot: string): Promise<void> {
 	for (const dirName of LEGACY_TOP_LEVEL_STARTER_SKILL_DIRS) {
 		await rm(join(targetRoot, dirName), { recursive: true, force: true });
+	}
+}
+
+async function removeRetiredBundledSkillPaths(targetRoot: string): Promise<void> {
+	for (const relPath of RETIRED_BUNDLED_SKILL_PATHS) {
+		await rm(join(targetRoot, ...relPath), { recursive: true, force: true });
 	}
 }
 
@@ -123,6 +131,7 @@ async function installBundledStarterSkills(muHomeDir: string): Promise<void> {
 	// This prevents stale name-collisions from surviving once the version marker
 	// is already current.
 	await removeLegacyTopLevelStarterSkillDirs(targetRoot);
+	await removeRetiredBundledSkillPaths(targetRoot);
 
 	const versionPath = join(targetRoot, STARTER_SKILLS_VERSION_FILE_NAME);
 	const bundledVersion = bundledSkillsPackageVersion();

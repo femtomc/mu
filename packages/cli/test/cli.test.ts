@@ -27,7 +27,6 @@ const STARTER_SKILLS = [
 	{ name: "execution", relPath: ["subagents", "execution"] },
 	{ name: "control-flow", relPath: ["subagents", "control-flow"] },
 	{ name: "model-routing", relPath: ["subagents", "model-routing"] },
-	{ name: "hud", relPath: ["subagents", "hud"] },
 	{ name: "automation", relPath: ["automation"] },
 	{ name: "heartbeats", relPath: ["automation", "heartbeats"] },
 	{ name: "crons", relPath: ["automation", "crons"] },

@@ -36,7 +36,6 @@ They are organized as category meta-skills plus subskills:
   - `execution`
   - `control-flow`
   - `model-routing`
-  - `hud`
 - `automation`
   - `heartbeats`
   - `crons`
@@ -76,9 +75,7 @@ Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
 - `eventLogExtension` — event tail + watch widget
-- `hudExtension` — HUD surface for skill-directed planning/subagents communication (`/mu hud ...`, `mu_hud`) with tone/style-aware TUI widget rows, including `metadata.style_preset` support for `planning|subagents` (plain deterministic snapshots remain available via `/mu hud snapshot`)
-
-Extensions emit contract-valid `hud_docs` (`HudDoc`) so control-plane/server renderers can provide a consistent cross-surface HUD experience.
+- `uiExtension` — programmable `UiDoc` surface (`/mu ui ...`, `mu_ui`) with terminal auto-prompt/awaiting behavior and deterministic action fallbacks
 
 Default operator UI theme is `mu-gruvbox-dark`.
 
@@ -87,9 +84,9 @@ Default operator UI theme is `mu-gruvbox-dark`.
 - `/mu events [n]` / `/mu events tail [n]` — event log tail
 - `/mu events watch on|off` — toggle event watch widget
 - `/mu brand on|off|toggle` — enable/disable UI branding
-- `/mu hud ...` — HUD command for enabling/inspecting/clearing HUD docs; does not inject HUD metadata into branding footer
-- `/mu help` — dispatcher catalog of registered `/mu` subcommands
 - `/mu ui ...` — inspect interactive `UiDoc`s (`status`/`snapshot`)
+- `/mu help` — dispatcher catalog of registered `/mu` subcommands
+- `ctrl+shift+u` — reopen local programmable-UI interaction flow (in-TUI doc/action picker, auto-fill payload-backed template values, prompt unresolved values, submit composed prompt)
 
 ## Programmable UI documents
 
@@ -102,7 +99,8 @@ Actions without `metadata.command_text` are treated as non-interactive and rende
 Current runtime behavior is channel-specific:
 
 - Slack renders rich blocks + interactive action buttons.
-- Discord/Telegram/Neovim render text-first docs plus tokenized action callbacks.
+- Discord/Telegram/Neovim render text-first docs; interactive actions are tokenized, while status-profile actions deterministically degrade to command-text fallback.
+- Terminal operator UI (`mu serve`) renders docs in-widget, auto-prompts when agent publishes new runnable actions, shows `awaiting` UI status/widget state until resolved, and supports manual reopen via `ctrl+shift+u` (in-TUI picker overlay + prompt composition).
 - When interactive controls cannot be rendered, adapters append deterministic text fallback.
 
 See the [Programmable UI substrate guide](../../docs/mu-ui.md) for the full support matrix and workflow.

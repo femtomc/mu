@@ -160,10 +160,10 @@ type SlackActionPayloadCancelTurn = SlackActionPayloadBase & {
 	actionId: typeof SLACK_CANCEL_ACTION_ID;
 };
 
-type SlackActionPayloadHudAction = SlackActionPayloadBase & {
-	kind: "hud_action";
+type SlackActionPayloadUiAction = SlackActionPayloadBase & {
+	kind: "ui_action";
 	actionId: string;
-	hudActionId: string;
+	uiActionId: string;
 	commandText: string | null;
 	value?: string | null;
 };
@@ -171,13 +171,13 @@ type SlackActionPayloadHudAction = SlackActionPayloadBase & {
 export type SlackActionParseResult =
 	| { kind: "none" }
 	| { kind: "cancel_turn"; payload: SlackActionPayloadCancelTurn }
-	| { kind: "hud_action"; payload: SlackActionPayloadHudAction }
+	| { kind: "ui_action"; payload: SlackActionPayloadUiAction }
 	| { kind: "unsupported"; reason: "unsupported_slack_action_payload" };
 
 export const SLACK_CANCEL_ACTION_ID = "mu_cancel_turn";
-export const SLACK_HUD_ACTION_ID_PREFIX = "mu_hud_action:";
-const SLACK_HUD_ACTION_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
-const SLACK_HUD_ACTION_COMMAND_MAX_CHARS = 2_000;
+export const SLACK_UI_ACTION_ID_PREFIX = "mu_ui_action:";
+const SLACK_UI_ACTION_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
+const SLACK_UI_ACTION_COMMAND_MAX_CHARS = 2_000;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -210,25 +210,25 @@ function firstActionRecord(value: unknown): Record<string, unknown> | null {
 	return null;
 }
 
-function normalizeSlackHudActionIdentifier(value: string): string | null {
+function normalizeSlackUiActionIdentifier(value: string): string | null {
 	const trimmed = value.trim();
-	if (!SLACK_HUD_ACTION_ID_RE.test(trimmed)) {
+	if (!SLACK_UI_ACTION_ID_RE.test(trimmed)) {
 		return null;
 	}
 	return trimmed;
 }
 
-export function buildSlackHudActionId(hudActionId: string): string {
-	const normalized = normalizeSlackHudActionIdentifier(hudActionId) ?? "action";
-	return `${SLACK_HUD_ACTION_ID_PREFIX}${normalized}`;
+export function buildSlackUiActionId(uiActionId: string): string {
+	const normalized = normalizeSlackUiActionIdentifier(uiActionId) ?? "action";
+	return `${SLACK_UI_ACTION_ID_PREFIX}${normalized}`;
 }
 
-function parseSlackHudActionId(actionId: string): string | null {
+function parseSlackUiActionId(actionId: string): string | null {
 	const trimmed = actionId.trim();
-	if (!trimmed.startsWith(SLACK_HUD_ACTION_ID_PREFIX)) {
+	if (!trimmed.startsWith(SLACK_UI_ACTION_ID_PREFIX)) {
 		return null;
 	}
-	return normalizeSlackHudActionIdentifier(trimmed.slice(SLACK_HUD_ACTION_ID_PREFIX.length));
+	return normalizeSlackUiActionIdentifier(trimmed.slice(SLACK_UI_ACTION_ID_PREFIX.length));
 }
 
 function normalizeSlackActionCommandText(value: string | null): string | null {
@@ -236,13 +236,13 @@ function normalizeSlackActionCommandText(value: string | null): string | null {
 		return null;
 	}
 	const trimmed = value.trim();
-	if (trimmed.length === 0 || trimmed.length > SLACK_HUD_ACTION_COMMAND_MAX_CHARS) {
+	if (trimmed.length === 0 || trimmed.length > SLACK_UI_ACTION_COMMAND_MAX_CHARS) {
 		return null;
 	}
 	return trimmed;
 }
 
-function safeCommandTextForSlackAction(action: SlackActionPayloadCancelTurn | SlackActionPayloadHudAction): string | null {
+function safeCommandTextForSlackAction(action: SlackActionPayloadCancelTurn | SlackActionPayloadUiAction): string | null {
 	if (action.kind === "cancel_turn") {
 		return "cancel";
 	}
@@ -318,14 +318,14 @@ export function parseSlackActionPayload(payloadRaw: string | null): SlackActionP
 			},
 		};
 	}
-	const hudActionId = parseSlackHudActionId(actionId);
-	if (hudActionId) {
+	const uiActionId = parseSlackUiActionId(actionId);
+	if (uiActionId) {
 		return {
-			kind: "hud_action",
+			kind: "ui_action",
 			payload: {
-				kind: "hud_action",
+				kind: "ui_action",
 				actionId,
-				hudActionId,
+				uiActionId,
 				commandText: actionCommandText,
 				value: nonEmptyString(action.value),
 				...basePayload,
@@ -915,9 +915,9 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 			});
 		}
 
-		if (parsedAction.kind === "cancel_turn" || parsedAction.kind === "hud_action") {
+		if (parsedAction.kind === "cancel_turn" || parsedAction.kind === "ui_action") {
 			const action = parsedAction.payload;
-			const uiEvent = action.kind === "hud_action" ? parseUiEventPayload(action.value) : null;
+			const uiEvent = action.kind === "ui_action" ? parseUiEventPayload(action.value) : null;
 			if (uiEvent && typeof uiEvent.callback_token === "string" && uiEvent.callback_token.trim().length > 0) {
 				return await this.#handleUiEventAction(action, uiEvent, req);
 			}
@@ -929,7 +929,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 					response: jsonResponse(
 						{
 							response_type: "ephemeral",
-							text: "Unsupported Slack HUD action callback.",
+							text: "Unsupported Slack UI action callback.",
 						},
 						{ status: 200 },
 					),
@@ -959,10 +959,10 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 				slack_status_message_ts: action.messageTs,
 				response_url: action.responseUrl,
 				action_provenance: "slack:block_actions",
-				...(action.kind === "hud_action"
+				...(action.kind === "ui_action"
 					? {
-						hud_action_id: action.hudActionId,
-						hud_action_command_text: normalizedText,
+						ui_action_id: action.uiActionId,
+						ui_action_command_text: normalizedText,
 					}
 					: {}),
 			};
@@ -1001,7 +1001,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 					message_ts: action.messageTs,
 					thread_ts: action.threadTs,
 					action_provenance: "slack:block_actions",
-					...(action.kind === "hud_action" ? { hud_action_id: action.hudActionId } : {}),
+					...(action.kind === "ui_action" ? { ui_action_id: action.uiActionId } : {}),
 				},
 			});
 
@@ -1544,7 +1544,7 @@ export class SlackControlPlaneAdapter implements ControlPlaneAdapter {
 
 
 	async #handleUiEventAction(
-		action: SlackActionPayloadCancelTurn | SlackActionPayloadHudAction,
+		action: SlackActionPayloadCancelTurn | SlackActionPayloadUiAction,
 		uiEvent: UiEvent,
 		req: Request,
 	): Promise<AdapterIngressResult> {

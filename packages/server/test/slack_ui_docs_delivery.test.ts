@@ -75,6 +75,47 @@ function mkUiDoc(): UiDoc {
 	};
 }
 
+function mkStatusProfileUiDoc(): UiDoc {
+	return {
+		v: 1,
+		ui_id: "ui:subagents",
+		title: "Subagents",
+		summary: "Queue healthy.",
+		components: [
+			{
+				kind: "key_value",
+				id: "queue",
+				title: "Queue",
+				rows: [
+					{ key: "Ready", value: "2" },
+					{ key: "Blocked", value: "0" },
+				],
+				metadata: {},
+			},
+		],
+		actions: [
+			{
+				id: "refresh",
+				label: "Refresh",
+				payload: {},
+				metadata: { command_text: "/mu status" },
+			},
+		],
+		revision: { id: "rev-status-1", version: 7 },
+		updated_at_ms: 1_000,
+		metadata: {
+			profile: {
+				id: "subagents",
+				variant: "status",
+				snapshot: {
+					compact: "ready=2 blocked=0",
+					multiline: "Ready: 2\nBlocked: 0",
+				},
+			},
+		},
+	};
+}
+
 function mkSlackOutboxRecord(uiDoc: UiDoc) {
 	return OutboxRecordSchema.parse({
 		outbox_id: "out-slack-ui-1",
@@ -259,6 +300,58 @@ describe("Slack ui_docs interactive delivery", () => {
 			}),
 		).toBe(false);
 		expect(delivered.uiEvent.callback_token?.startsWith("mu-ui:")).toBe(true);
+	});
+
+	test("degrades status-profile ui_docs actions to deterministic text fallback", async () => {
+		const repoRoot = await mkdtemp(join(tmpdir(), "mu-slack-ui-status-"));
+		dirsToCleanup.add(repoRoot);
+		const tokenStore = new UiCallbackTokenStore(join(repoRoot, "ui_callback_tokens.jsonl"));
+		await tokenStore.load();
+
+		const postPayloads: Array<Record<string, unknown>> = [];
+		const fetchImpl = (async (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url === "https://slack.com/api/chat.postMessage") {
+				postPayloads.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+				return new Response(JSON.stringify({ ok: true, ts: "171.7001" }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			throw new Error(`unexpected fetch: ${url}`);
+		}) as typeof fetch;
+
+		const result = await deliverSlackOutboxRecord({
+			botToken: "xoxb-test-token",
+			record: mkSlackOutboxRecord(mkStatusProfileUiDoc()),
+			uiCallbackTokenStore: tokenStore,
+			nowMs: () => 1_000,
+			fetchImpl,
+		});
+		expect(result.kind).toBe("delivered");
+		expect(postPayloads).toHaveLength(1);
+
+		const payload = postPayloads[0] as Record<string, unknown>;
+		const blocks = Array.isArray(payload.blocks) ? (payload.blocks as Array<Record<string, unknown>>) : [];
+		expect(
+			blocks.some((block) => {
+				if (block.type !== "context") {
+					return false;
+				}
+				const text = (block.elements as Array<Record<string, unknown>> | undefined)?.[0]?.text;
+				return typeof text === "string" && text.includes("UI · Subagents");
+			}),
+		).toBe(true);
+		expect(
+			blocks.some((block) => {
+				if (block.type !== "section") {
+					return false;
+				}
+				const text = (block.text as Record<string, unknown>)?.text;
+				return typeof text === "string" && text.includes("Actions:\n• Refresh: /mu status");
+			}),
+		).toBe(true);
+		expect(blocks.some((block) => block.type === "actions")).toBe(false);
 	});
 
 	test("routes delivery-emitted callback payloads through adapter ingress (success)", async () => {

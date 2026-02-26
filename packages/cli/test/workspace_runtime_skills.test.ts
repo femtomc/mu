@@ -24,7 +24,6 @@ const STARTER_SKILLS = [
 	{ name: "execution", relPath: ["subagents", "execution"] },
 	{ name: "control-flow", relPath: ["subagents", "control-flow"] },
 	{ name: "model-routing", relPath: ["subagents", "model-routing"] },
-	{ name: "hud", relPath: ["subagents", "hud"] },
 	{ name: "automation", relPath: ["automation"] },
 	{ name: "heartbeats", relPath: ["automation", "heartbeats"] },
 	{ name: "crons", relPath: ["automation", "crons"] },
@@ -77,9 +76,10 @@ test("bundled execution skill templates require explicit orchestration model arg
 
 		expect(executionSkill).toContain("usage: ./orch-heartbeat.sh <root-id> <provider> <model> <thinking>");
 		expect(executionSkill).toContain("usage: ./orch-fanout.sh <root-id> <provider> <model> <thinking> [limit]");
-		expect(executionSkill).toContain("example: ./orch-fanout.sh mu-4be265df openai-codex gpt-5.3-codex xhigh 3");
+		expect(executionSkill).toContain("example: ./orch-fanout.sh mu-root-1234 openai-codex gpt-5.3-codex xhigh 3");
 		expect(executionSkill).toContain("openai-codex / gpt-5.3-codex / xhigh");
-		expect(executionSkill).toContain("Use skills subagents, protocol, execution, control-flow, model-routing, and hud");
+		expect(executionSkill).toContain("Use skills subagents, protocol, execution, control-flow, model-routing, and mu");
+		expect(executionSkill).toContain("keep ui:subagents updated as a status-profile doc");
 	} finally {
 		if (previousMuHome === undefined) {
 			delete process.env.MU_HOME;
@@ -100,14 +100,17 @@ test("ensureStoreInitialized hard-cutover prunes legacy top-level starter skill 
 	try {
 		await mkdir(join(muHome, "skills", "orchestration"), { recursive: true });
 		await mkdir(join(muHome, "skills", "mu"), { recursive: true });
+		await mkdir(join(muHome, "skills", "subagents", "hud"), { recursive: true });
 		await writeFile(join(muHome, "skills", "orchestration", "SKILL.md"), "---\nname: orchestration\ndescription: legacy\n---\n", "utf8");
 		await writeFile(join(muHome, "skills", "mu", "SKILL.md"), "---\nname: mu\ndescription: legacy\n---\n", "utf8");
+		await writeFile(join(muHome, "skills", "subagents", "hud", "SKILL.md"), "---\nname: hud\ndescription: legacy\n---\n", "utf8");
 
 		const paths = getStorePaths(repoRoot);
 		await ensureStoreInitialized({ paths });
 
 		expect(await Bun.file(join(muHome, "skills", "orchestration", "SKILL.md")).exists()).toBe(false);
 		expect(await Bun.file(join(muHome, "skills", "mu", "SKILL.md")).exists()).toBe(false);
+		expect(await Bun.file(join(muHome, "skills", "subagents", "hud", "SKILL.md")).exists()).toBe(false);
 		expect(await Bun.file(join(muHome, "skills", "core", "mu", "SKILL.md")).exists()).toBe(true);
 		expect(await Bun.file(join(muHome, "skills", "subagents", "protocol", "SKILL.md")).exists()).toBe(true);
 	} finally {

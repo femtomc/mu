@@ -1,4 +1,4 @@
-import { normalizeUiDocs, type UiDoc, type UiEvent } from "@femtomc/mu-core";
+import { normalizeUiDocs, resolveUiStatusProfileName, type UiDoc, type UiEvent } from "@femtomc/mu-core";
 import {
 	type AdapterIngressResult,
 	type ControlPlaneAdapter,
@@ -100,6 +100,36 @@ function commandTextForUiAction(action: UiDoc["actions"][number]): string | null
 	return fromMetadata;
 }
 
+function statusProfileVariant(doc: UiDoc): string {
+	const profile = asRecord(doc.metadata.profile);
+	const rawVariant = typeof profile?.variant === "string" ? profile.variant.trim().toLowerCase() : "";
+	return rawVariant.length > 0 ? rawVariant : "status";
+}
+
+function isStatusProfileStatusVariant(doc: UiDoc): boolean {
+	return resolveUiStatusProfileName(doc) !== null && statusProfileVariant(doc) === "status";
+}
+
+function statusProfileSnapshotLines(doc: UiDoc): string[] {
+	if (!isStatusProfileStatusVariant(doc)) {
+		return [];
+	}
+	const profile = asRecord(doc.metadata.profile);
+	const snapshot = asRecord(profile?.snapshot);
+	const multiline = typeof snapshot?.multiline === "string" ? snapshot.multiline.trim() : "";
+	if (multiline.length > 0) {
+		const lines = multiline
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0);
+		if (lines.length > 0) {
+			return lines;
+		}
+	}
+	const compact = typeof snapshot?.compact === "string" ? snapshot.compact.trim() : "";
+	return compact.length > 0 ? [compact] : [];
+}
+
 function uiDocComponentLines(doc: UiDoc): string[] {
 	const lines: string[] = [];
 	const components = [...doc.components].sort((a, b) => a.id.localeCompare(b.id));
@@ -153,7 +183,18 @@ function uiDocTextLines(doc: UiDoc): string[] {
 	if (doc.summary) {
 		lines.push(doc.summary);
 	}
+	const statusProfile = isStatusProfileStatusVariant(doc);
+	if (statusProfile) {
+		const snapshotLines = statusProfileSnapshotLines(doc);
+		if (snapshotLines.length > 0) {
+			lines.push(...snapshotLines);
+			return lines;
+		}
+	}
 	lines.push(...uiDocComponentLines(doc));
+	if (statusProfile) {
+		return lines;
+	}
 	const actionLines = uiDocActionLines(doc);
 	if (actionLines.length > 0) {
 		lines.push("Actions:");
@@ -309,6 +350,8 @@ export class DiscordControlPlaneAdapter implements ControlPlaneAdapter {
 			)
 			.sort((a, b) => a.localeCompare(b));
 
+		const interactiveDocs = opts.uiDocs.filter((doc) => !isStatusProfileStatusVariant(doc));
+
 		let issuedByKey = new Map<
 			string,
 			{
@@ -316,33 +359,35 @@ export class DiscordControlPlaneAdapter implements ControlPlaneAdapter {
 				command_text: string;
 			}
 		>();
-		try {
-			const issued = await issueUiDocActionPayloads({
-				uiDocs: opts.uiDocs,
-				tokenStore: this.#uiCallbackTokenStore,
-				context: {
-					channel: this.spec.channel,
-					channelTenantId: opts.channelTenantId,
-					channelConversationId: opts.channelConversationId,
-					actorBindingId: opts.actorBindingId,
-				},
-				nowMs: opts.nowMs,
-			});
-			issuedByKey = new Map(
-				issued.map((entry) => {
-					const commandText =
-						typeof entry.ui_event.metadata.command_text === "string" ? entry.ui_event.metadata.command_text : "";
-					return [
-						entry.key,
-						{
-							callback_token: entry.callback_token,
-							command_text: commandText,
-						},
-					] as const;
-				}),
-			);
-		} catch {
-			return { components: [], overflowLines: fallbackForAll };
+		if (interactiveDocs.length > 0) {
+			try {
+				const issued = await issueUiDocActionPayloads({
+					uiDocs: interactiveDocs,
+					tokenStore: this.#uiCallbackTokenStore,
+					context: {
+						channel: this.spec.channel,
+						channelTenantId: opts.channelTenantId,
+						channelConversationId: opts.channelConversationId,
+						actorBindingId: opts.actorBindingId,
+					},
+					nowMs: opts.nowMs,
+				});
+				issuedByKey = new Map(
+					issued.map((entry) => {
+						const commandText =
+							typeof entry.ui_event.metadata.command_text === "string" ? entry.ui_event.metadata.command_text : "";
+						return [
+							entry.key,
+							{
+								callback_token: entry.callback_token,
+								command_text: commandText,
+							},
+						] as const;
+					}),
+				);
+			} catch {
+				return { components: [], overflowLines: fallbackForAll };
+			}
 		}
 
 		const buttonEntries: Array<{ button: DiscordButtonComponent; fallbackLine: string }> = [];
@@ -350,6 +395,12 @@ export class DiscordControlPlaneAdapter implements ControlPlaneAdapter {
 
 		for (const doc of opts.uiDocs) {
 			const actions = [...doc.actions].sort((a, b) => a.id.localeCompare(b.id));
+			if (isStatusProfileStatusVariant(doc)) {
+				for (const action of actions) {
+					overflowLines.push(actionFallbackLine(action.label, commandTextForUiAction(action)));
+				}
+				continue;
+			}
 			for (const action of actions) {
 				const key = uiDocActionPayloadKey(doc.ui_id, action.id);
 				const issued = issuedByKey.get(key);

@@ -122,7 +122,7 @@ describe("mu command dispatcher", () => {
 		const helpText = notifications.at(-1)?.text ?? "";
 		expect(helpText).toContain("/mu events");
 		expect(helpText).toContain("/mu brand");
-		expect(helpText).toContain("/mu hud");
+		expect(helpText).toContain("/mu ui");
 		expect(helpText).not.toContain("/mu plan");
 		expect(helpText).not.toContain("/mu subagents");
 	});

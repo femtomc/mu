@@ -1,6 +1,5 @@
 export { brandingExtension } from "./branding.js";
 export { eventLogExtension } from "./event-log.js";
-export { hudExtension } from "./hud.js";
 export { muOperatorExtension } from "./mu-operator.js";
 export { muServeExtension } from "./mu-serve.js";
 export { uiExtension } from "./ui.js";

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-	buildSlackHudActionId,
 	buildSlackProgressActionBlocks,
+	buildSlackUiActionId,
 	formatSlackWorkingHeartbeat,
 	parseSlackActionPayload,
 	SLACK_CANCEL_ACTION_ID,
@@ -69,7 +69,7 @@ describe("Slack progress heartbeat formatting", () => {
 		expect(parsed.payload.threadTs).toBe("1771767604.829589");
 	});
 
-	test("parses HUD action callback ids with deterministic prefix", () => {
+	test("parses UI action callback ids with deterministic prefix", () => {
 		const parsed = parseSlackActionPayload(
 			JSON.stringify({
 				type: "block_actions",
@@ -79,18 +79,18 @@ describe("Slack progress heartbeat formatting", () => {
 				trigger_id: "trigger-2",
 				container: { message_ts: "1771783328.941729", channel_id: "C456" },
 				message: { ts: "1771783328.941729", thread_ts: "1771767604.829589" },
-				actions: [{ action_id: buildSlackHudActionId("operator.cancel"), action_ts: "1771783330.000001" }],
+				actions: [{ action_id: buildSlackUiActionId("operator.cancel"), action_ts: "1771783330.000001" }],
 			}),
 		);
-		expect(parsed.kind).toBe("hud_action");
-		if (parsed.kind !== "hud_action") {
-			throw new Error(`expected hud_action parse, got ${parsed.kind}`);
+		expect(parsed.kind).toBe("ui_action");
+		if (parsed.kind !== "ui_action") {
+			throw new Error(`expected ui_action parse, got ${parsed.kind}`);
 		}
-		expect(parsed.payload.hudActionId).toBe("operator.cancel");
-		expect(parsed.payload.actionId).toBe("mu_hud_action:operator.cancel");
+		expect(parsed.payload.uiActionId).toBe("operator.cancel");
+		expect(parsed.payload.actionId).toBe("mu_ui_action:operator.cancel");
 	});
 
-	test("captures sanitized command text for canonical HUD action callbacks", () => {
+	test("captures sanitized command text for canonical UI action callbacks", () => {
 		const parsed = parseSlackActionPayload(
 			JSON.stringify({
 				type: "block_actions",
@@ -101,15 +101,15 @@ describe("Slack progress heartbeat formatting", () => {
 				container: { message_ts: "1771783328.941729", channel_id: "C456" },
 				message: { ts: "1771783328.941729", thread_ts: "1771767604.829589" },
 				actions: [
-					{ action_id: buildSlackHudActionId("refresh"), action_ts: "1771783330.000002", value: " /mu status " },
+					{ action_id: buildSlackUiActionId("refresh"), action_ts: "1771783330.000002", value: " /mu status " },
 				],
 			}),
 		);
-		expect(parsed.kind).toBe("hud_action");
-		if (parsed.kind !== "hud_action") {
-			throw new Error(`expected hud_action parse, got ${parsed.kind}`);
+		expect(parsed.kind).toBe("ui_action");
+		if (parsed.kind !== "ui_action") {
+			throw new Error(`expected ui_action parse, got ${parsed.kind}`);
 		}
-		expect(parsed.payload.hudActionId).toBe("refresh");
+		expect(parsed.payload.uiActionId).toBe("refresh");
 		expect(parsed.payload.commandText).toBe("/mu status");
 	});
 

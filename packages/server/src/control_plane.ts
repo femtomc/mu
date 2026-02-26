@@ -1,11 +1,7 @@
 import type { MessagingOperatorBackend, MessagingOperatorRuntime } from "@femtomc/mu-agent";
 import {
-	applyHudStylePreset,
-	normalizeHudDocs,
 	normalizeUiDocs,
-	type HudDoc,
-	type HudTextStyle,
-	type HudTone,
+	resolveUiStatusProfileName,
 	type UiAction,
 	type UiComponent,
 	type UiDoc,
@@ -23,7 +19,7 @@ import {
 	type ControlPlaneSignalObserver,
 	type GenerationTelemetryRecorder,
 	buildSanitizedUiEventForAction,
-	buildSlackHudActionId,
+	buildSlackUiActionId,
 	getControlPlanePaths,
 	issueUiDocActionPayloads,
 	type OutboxDeliveryHandlerResult,
@@ -313,9 +309,7 @@ const SLACK_BLOCKS_MAX = 50;
 const SLACK_ACTIONS_MAX_PER_BLOCK = 5;
 const SLACK_ACTIONS_MAX_TOTAL = 20;
 const SLACK_ACTION_VALUE_MAX_CHARS = 2_000;
-const SLACK_UI_EVENT_ACTION_ID = buildSlackHudActionId("ui_event");
-const SLACK_DOCS_MAX = 3;
-const SLACK_SECTION_LINE_MAX = 8;
+const SLACK_UI_EVENT_ACTION_ID = buildSlackUiActionId("ui_event");
 const UI_DOCS_MAX = 3;
 const UI_CALLBACK_TOKEN_TTL_MS = 15 * 60_000;
 export const UI_COMPONENT_SUPPORT = {
@@ -326,10 +320,6 @@ export const UI_COMPONENT_SUPPORT = {
 } as const;
 export const UI_ACTIONS_UNSUPPORTED_REASON = "ui_actions_not_implemented";
 
-function hudDocsForPresentation(input: unknown, maxDocs: number): HudDoc[] {
-	return normalizeHudDocs(input, { maxDocs }).map((doc) => applyHudStylePreset(doc) ?? doc);
-}
-
 function truncateSlackText(text: string, maxLen: number = SLACK_BLOCK_TEXT_MAX_LEN): string {
 	if (text.length <= maxLen) {
 		return text;
@@ -338,117 +328,6 @@ function truncateSlackText(text: string, maxLen: number = SLACK_BLOCK_TEXT_MAX_L
 		return text.slice(0, maxLen);
 	}
 	return `${text.slice(0, maxLen - 1)}…`;
-}
-
-function hudTonePrefix(tone: HudTone | undefined): string {
-	switch (tone) {
-		case "success":
-			return "✅";
-		case "warning":
-			return "⚠️";
-		case "error":
-			return "⛔";
-		case "accent":
-			return "🔹";
-		case "muted":
-			return "▫️";
-		case "dim":
-			return "·";
-		case "info":
-		default:
-			return "ℹ️";
-	}
-}
-
-function applySlackHudTextStyle(
-	text: string,
-	style: HudTextStyle | undefined,
-	opts: {
-		defaultWeight?: HudTextStyle["weight"];
-		defaultItalic?: boolean;
-		defaultCode?: boolean;
-	} = {},
-): string {
-	const weight = style?.weight ?? opts.defaultWeight;
-	const italic = style?.italic ?? opts.defaultItalic ?? false;
-	const code = style?.code ?? opts.defaultCode ?? false;
-	let out = text;
-	if (code) {
-		out = `\`${out}\``;
-	}
-	if (italic) {
-		out = `_${out}_`;
-	}
-	if (weight === "strong") {
-		out = `*${out}*`;
-	}
-	return out;
-}
-
-function stripSlackMrkdwn(text: string): string {
-	return text.replace(/[*_`~]/g, "");
-}
-
-function hudDocSectionLines(doc: HudDoc): string[] {
-	const lines: string[] = [];
-	const chipsLine = doc.chips
-		.slice(0, 8)
-		.map((chip) => {
-			const label = applySlackHudTextStyle(chip.label, chip.style, { defaultWeight: "strong" });
-			return `${hudTonePrefix(chip.tone)} ${label}`;
-		})
-		.join(" · ");
-	if (chipsLine.length > 0) {
-		lines.push(chipsLine);
-	}
-
-	for (const section of doc.sections) {
-		switch (section.kind) {
-			case "kv": {
-				const title = applySlackHudTextStyle(section.title ?? "Details", section.title_style, { defaultWeight: "strong" });
-				const items = section.items.slice(0, SLACK_SECTION_LINE_MAX).map((item) => {
-					const value = applySlackHudTextStyle(item.value, item.value_style);
-					return `• *${item.label}:* ${value}`;
-				});
-				if (items.length > 0) {
-					lines.push([title, ...items].join("\n"));
-				}
-				break;
-			}
-			case "checklist": {
-				const title = applySlackHudTextStyle(section.title ?? "Checklist", section.title_style, { defaultWeight: "strong" });
-				const items = section.items
-					.slice(0, SLACK_SECTION_LINE_MAX)
-					.map((item) => `${item.done ? "✅" : "⬜"} ${applySlackHudTextStyle(item.label, item.style)}`);
-				if (items.length > 0) {
-					lines.push([title, ...items].join("\n"));
-				}
-				break;
-			}
-			case "activity": {
-				const title = applySlackHudTextStyle(section.title ?? "Activity", section.title_style, { defaultWeight: "strong" });
-				const items = section.lines.slice(0, SLACK_SECTION_LINE_MAX).map((line) => `• ${line}`);
-				if (items.length > 0) {
-					lines.push([title, ...items].join("\n"));
-				}
-				break;
-			}
-			case "text": {
-				const title = section.title
-					? `${applySlackHudTextStyle(section.title, section.title_style, { defaultWeight: "strong" })}\n`
-					: "";
-				const text = applySlackHudTextStyle(section.text, section.style);
-				lines.push(`${title}${text}`);
-				break;
-			}
-		}
-	}
-
-	if (lines.length === 0) {
-		const snapshot = applySlackHudTextStyle(doc.snapshot_compact, doc.snapshot_style);
-		lines.push(`${applySlackHudTextStyle("Snapshot", undefined, { defaultWeight: "strong" })}\n${snapshot}`);
-	}
-	return lines;
 }
 
 function uiDocComponentLines(doc: UiDoc): string[] {
@@ -538,18 +417,6 @@ function appendUiDocText(body: string, uiDocs: readonly UiDoc[]): string {
 	return `${trimmed}\n\n${fallback}`;
 }
 
-function hudActionButtons(doc: HudDoc): SlackMessageButtonElement[] {
-	return doc.actions.slice(0, SLACK_ACTIONS_MAX_TOTAL).map((action) => ({
-		type: "button",
-		text: {
-			type: "plain_text",
-			text: truncateSlackText(action.label, 75),
-		},
-		value: truncateSlackText(action.command_text, SLACK_ACTION_VALUE_MAX_CHARS),
-		action_id: buildSlackHudActionId(action.id),
-	}));
-}
-
 function uiDocActionTextLine(action: UiAction, opts: { suffix?: string } = {}): string {
 	const parts = [`• ${action.label}`];
 	if (action.description) {
@@ -557,6 +424,30 @@ function uiDocActionTextLine(action: UiAction, opts: { suffix?: string } = {}): 
 	}
 	parts.push(`(id=${action.id}${opts.suffix ? `; ${opts.suffix}` : ""})`);
 	return parts.join(" ");
+}
+
+function statusProfileVariant(doc: UiDoc): string {
+	const profile = doc.metadata.profile;
+	if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+		return "status";
+	}
+	const rawVariant =
+		typeof (profile as Record<string, unknown>).variant === "string"
+			? ((profile as Record<string, unknown>).variant as string).trim().toLowerCase()
+			: "";
+	return rawVariant.length > 0 ? rawVariant : "status";
+}
+
+function isStatusProfileStatusVariant(doc: UiDoc): boolean {
+	return resolveUiStatusProfileName(doc) !== null && statusProfileVariant(doc) === "status";
+}
+
+function uiDocDeterministicActionFallbackLine(action: UiAction): string {
+	const commandText = commandTextForUiDocAction(action);
+	if (commandText) {
+		return `• ${action.label}: ${commandText}`;
+	}
+	return `• ${action.label}: interactive unavailable (missing command_text)`;
 }
 
 function uiDocActionButtons(
@@ -568,8 +459,13 @@ function uiDocActionButtons(
 } {
 	const buttons: SlackMessageButtonElement[] = [];
 	const fallbackLines: string[] = [];
+	const statusProfile = isStatusProfileStatusVariant(doc);
 	const actions = [...doc.actions].sort((a, b) => a.id.localeCompare(b.id)).slice(0, SLACK_ACTIONS_MAX_TOTAL);
 	for (const action of actions) {
+		if (statusProfile) {
+			fallbackLines.push(uiDocDeterministicActionFallbackLine(action));
+			continue;
+		}
 		const payload = actionPayloadsByKey.get(uiDocActionPayloadKey(doc.ui_id, action.id));
 		if (!payload) {
 			fallbackLines.push(uiDocActionTextLine(action, { suffix: "interactive unavailable" }));
@@ -614,15 +510,13 @@ export function splitSlackMessageText(text: string, maxLen: number = SLACK_MESSA
 }
 
 function slackBlocksForOutboxRecord(
-	record: OutboxRecord,
 	body: string,
 	uiDocs: readonly UiDoc[],
 	opts: {
 		uiDocActionPayloadsByKey?: ReadonlyMap<string, string>;
 	} = {},
 ): SlackLayoutBlock[] | undefined {
-	const hudDocs = hudDocsForPresentation(record.envelope.metadata?.hud_docs, SLACK_DOCS_MAX);
-	if (hudDocs.length === 0 && uiDocs.length === 0) {
+	if (uiDocs.length === 0) {
 		return undefined;
 	}
 	const uiDocActionPayloadsByKey = opts.uiDocActionPayloadsByKey ?? new Map<string, string>();
@@ -632,36 +526,6 @@ function slackBlocksForOutboxRecord(
 		type: "section",
 		text: { type: "mrkdwn", text: truncateSlackText(headerText) },
 	});
-
-	for (const doc of hudDocs) {
-		if (blocks.length >= SLACK_BLOCKS_MAX) {
-			break;
-		}
-		const styledTitle = applySlackHudTextStyle(doc.title, doc.title_style, { defaultWeight: "strong" });
-		blocks.push({
-			type: "context",
-			elements: [{ type: "mrkdwn", text: truncateSlackText(`*HUD* · ${styledTitle}`) }],
-		});
-		for (const line of hudDocSectionLines(doc)) {
-			if (blocks.length >= SLACK_BLOCKS_MAX) {
-				break;
-			}
-			blocks.push({
-				type: "section",
-				text: { type: "mrkdwn", text: truncateSlackText(line) },
-			});
-		}
-		const buttons = hudActionButtons(doc);
-		for (let idx = 0; idx < buttons.length; idx += SLACK_ACTIONS_MAX_PER_BLOCK) {
-			if (blocks.length >= SLACK_BLOCKS_MAX) {
-				break;
-			}
-			blocks.push({
-				type: "actions",
-				elements: buttons.slice(idx, idx + SLACK_ACTIONS_MAX_PER_BLOCK),
-			});
-		}
-	}
 
 	for (const doc of uiDocs) {
 		if (blocks.length >= SLACK_BLOCKS_MAX) {
@@ -727,23 +591,13 @@ function slackStatusMessageTsFromMetadata(metadata: Record<string, unknown> | un
 const TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64;
 const TELEGRAM_ACTIONS_MAX_TOTAL = 20;
 const TELEGRAM_ACTIONS_PER_ROW = 3;
-const TELEGRAM_DOCS_MAX = 2;
 
 function utf8ByteLength(value: string): number {
 	return new TextEncoder().encode(value).length;
 }
 
-function telegramTextForOutboxRecord(record: OutboxRecord, body: string, uiDocs: readonly UiDoc[]): string {
-	const hudDocs = hudDocsForPresentation(record.envelope.metadata?.hud_docs, TELEGRAM_DOCS_MAX);
+function telegramTextForOutboxRecord(body: string, uiDocs: readonly UiDoc[]): string {
 	const lines: string[] = [body.trim()];
-	if (hudDocs.length > 0) {
-		for (const doc of hudDocs) {
-			lines.push("", `HUD · ${doc.title}`);
-			for (const sectionLine of hudDocSectionLines(doc)) {
-				lines.push(stripSlackMrkdwn(sectionLine));
-			}
-		}
-	}
 	const uiFallback = uiDocsTextFallback(uiDocs);
 	if (uiFallback) {
 		lines.push("", uiFallback);
@@ -776,48 +630,6 @@ function telegramOverflowText(lines: readonly string[]): string {
 	return `\n\nActions:\n${lines.join("\n")}`;
 }
 
-async function compileTelegramHudActions(opts: {
-	record: OutboxRecord;
-	encodeCallbackData?: TelegramCallbackDataEncoder;
-}): Promise<TelegramActionRender> {
-	const hudDocs = hudDocsForPresentation(opts.record.envelope.metadata?.hud_docs, TELEGRAM_DOCS_MAX);
-	if (hudDocs.length === 0) {
-		return { buttonEntries: [], overflowLines: [] };
-	}
-
-	const buttonEntries: TelegramActionRender["buttonEntries"] = [];
-	const overflowLines: string[] = [];
-	const actions = hudDocs.flatMap((doc) => doc.actions).slice(0, TELEGRAM_ACTIONS_MAX_TOTAL);
-	for (const action of actions) {
-		const fallbackLine = `• ${action.label}: ${action.command_text}`;
-		let callbackData = action.command_text;
-		if (opts.encodeCallbackData) {
-			try {
-				callbackData = await opts.encodeCallbackData(action.command_text, { record: opts.record });
-			} catch {
-				overflowLines.push(fallbackLine);
-				continue;
-			}
-		}
-		if (utf8ByteLength(callbackData) > TELEGRAM_CALLBACK_DATA_MAX_BYTES) {
-			overflowLines.push(fallbackLine);
-			continue;
-		}
-		buttonEntries.push({
-			button: {
-				text: action.label.slice(0, 64),
-				callback_data: callbackData,
-			},
-			fallbackLine,
-		});
-	}
-
-	return {
-		buttonEntries,
-		overflowLines,
-	};
-}
-
 function commandTextForUiDocAction(action: UiAction): string | null {
 	const fromMetadata = typeof action.metadata.command_text === "string" ? action.metadata.command_text.trim() : "";
 	if (fromMetadata.length === 0) {
@@ -839,17 +651,22 @@ async function compileTelegramUiDocActions(opts: {
 	const buttonEntries: TelegramActionRender["buttonEntries"] = [];
 	const overflowLines: string[] = [];
 	for (const doc of opts.uiDocs) {
+		const statusProfile = isStatusProfileStatusVariant(doc);
 		const actions = [...doc.actions].sort((a, b) => a.id.localeCompare(b.id));
 		for (const action of actions) {
+			const commandText = commandTextForUiDocAction(action);
+			const fallbackLine = commandText
+				? `• ${action.label}: ${commandText}`
+				: `• ${action.label}: interactive unavailable (missing command_text)`;
+			if (statusProfile) {
+				overflowLines.push(fallbackLine);
+				continue;
+			}
 			const uiEvent = buildSanitizedUiEventForAction({
 				doc,
 				action,
 				createdAtMs: opts.nowMs,
 			});
-			const commandText = commandTextForUiDocAction(action);
-			const fallbackLine = commandText
-				? `• ${action.label}: ${commandText}`
-				: `• ${action.label}: interactive unavailable (missing command_text)`;
 			if (!commandText || !uiEvent) {
 				overflowLines.push(fallbackLine);
 				continue;
@@ -993,28 +810,22 @@ export async function deliverTelegramOutboxRecord(opts: {
 	encodeCallbackData?: TelegramCallbackDataEncoder;
 }): Promise<OutboxDeliveryHandlerResult> {
 	const { botToken, record } = opts;
-	const uiDocs = normalizeUiDocs(record.envelope.metadata?.ui_docs, { maxDocs: TELEGRAM_DOCS_MAX });
+	const uiDocs = normalizeUiDocs(record.envelope.metadata?.ui_docs, { maxDocs: UI_DOCS_MAX });
 	const nowMs = Math.trunc(Date.now());
-	const hudActions = await compileTelegramHudActions({
-		record,
-		encodeCallbackData: opts.encodeCallbackData,
-	});
 	const uiActions = await compileTelegramUiDocActions({
 		record,
 		uiDocs,
 		nowMs,
 		encodeCallbackData: opts.encodeCallbackData,
 	});
-	const combinedEntries = [...hudActions.buttonEntries, ...uiActions.buttonEntries];
-	const visibleEntries = combinedEntries.slice(0, TELEGRAM_ACTIONS_MAX_TOTAL);
+	const visibleEntries = uiActions.buttonEntries.slice(0, TELEGRAM_ACTIONS_MAX_TOTAL);
 	const overflowLines = [
-		...hudActions.overflowLines,
 		...uiActions.overflowLines,
-		...combinedEntries.slice(TELEGRAM_ACTIONS_MAX_TOTAL).map((entry) => entry.fallbackLine),
+		...uiActions.buttonEntries.slice(TELEGRAM_ACTIONS_MAX_TOTAL).map((entry) => entry.fallbackLine),
 	];
 	const replyMarkup = telegramReplyMarkupFromButtons(visibleEntries.map((entry) => entry.button));
 	const replyToMessageId = maybeParseTelegramMessageId(record.envelope.metadata?.telegram_reply_to_message_id);
-	const telegramText = `${telegramTextForOutboxRecord(record, record.envelope.body, uiDocs)}${telegramOverflowText(overflowLines)}`.trim();
+	const telegramText = `${telegramTextForOutboxRecord(record.envelope.body, uiDocs)}${telegramOverflowText(overflowLines)}`.trim();
 	const fallbackMessagePayload = {
 		...buildTelegramSendMessagePayload({
 			chatId: record.envelope.channel_conversation_id,
@@ -1195,10 +1006,11 @@ export async function deliverSlackOutboxRecord(opts: {
 	const fetchImpl = opts.fetchImpl ?? fetch;
 	const attachments = record.envelope.attachments ?? [];
 	const uiDocs = normalizeUiDocs(record.envelope.metadata?.ui_docs, { maxDocs: UI_DOCS_MAX });
+	const interactiveUiDocs = uiDocs.filter((doc) => !isStatusProfileStatusVariant(doc));
 	let uiDocActionPayloadsByKey = new Map<string, string>();
-	if (opts.uiCallbackTokenStore && uiDocs.some((doc) => doc.actions.length > 0)) {
+	if (opts.uiCallbackTokenStore && interactiveUiDocs.some((doc) => doc.actions.length > 0)) {
 		const issued = await issueUiDocActionPayloads({
-			uiDocs,
+			uiDocs: interactiveUiDocs,
 			tokenStore: opts.uiCallbackTokenStore,
 			context: uiActionPayloadContextFromOutboxRecord(record),
 			ttlMs: UI_CALLBACK_TOKEN_TTL_MS,
@@ -1207,7 +1019,7 @@ export async function deliverSlackOutboxRecord(opts: {
 		uiDocActionPayloadsByKey = new Map(issued.map((entry) => [entry.key, entry.payload_json]));
 	}
 	const renderedBodyForBlocks = renderSlackMarkdown(record.envelope.body);
-	const blocks = slackBlocksForOutboxRecord(record, renderedBodyForBlocks, uiDocs, {
+	const blocks = slackBlocksForOutboxRecord(renderedBodyForBlocks, uiDocs, {
 		uiDocActionPayloadsByKey,
 	});
 	const bodyForText = blocks
