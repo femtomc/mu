@@ -144,13 +144,36 @@ test("uiStatusProfileWarnings returns advisory guidance for status-profile misma
 	expect(warnings.some((warning) => warning.includes("status docs should omit actions"))).toBe(true);
 	expect(warnings.some((warning) => warning.includes("recommends a key_value component"))).toBe(true);
 	expect(warnings.some((warning) => warning.includes("recommends a list component"))).toBe(true);
+	expect(warnings.some((warning) => warning.includes("recommends key_value row key=phase"))).toBe(true);
+	expect(warnings.some((warning) => warning.includes("recommends metadata.phase"))).toBe(true);
+	expect(warnings.some((warning) => warning.includes("recommends metadata.waiting_on_user"))).toBe(true);
 
 	const none = uiStatusProfileWarnings(
 		mkUiDoc({
 			ui_id: "ui:planning",
-			components: [mkKeyValueComponent(), mkListComponent()],
+			components: [
+				mkKeyValueComponent({
+					rows: [
+						{ key: "phase", value: "drafting" },
+						{ key: "waiting", value: "no" },
+						{ key: "confidence", value: "medium" },
+						{ key: "next", value: "create DAG" },
+						{ key: "blocker", value: "(none)" },
+					],
+				}),
+				mkListComponent({
+					items: [
+						{ id: "c1", label: "Investigate code and docs", detail: "done" },
+						{ id: "c2", label: "Draft issue DAG", detail: "in-progress" },
+						{ id: "c3", label: "Request approval", detail: "pending" },
+					],
+				}),
+			],
 			actions: [],
 			metadata: {
+				phase: "drafting",
+				waiting_on_user: false,
+				confidence: "medium",
 				profile: {
 					id: "planning",
 					variant: "status",
@@ -160,6 +183,39 @@ test("uiStatusProfileWarnings returns advisory guidance for status-profile misma
 		}),
 	);
 	expect(none).toEqual([]);
+});
+
+test("uiStatusProfileWarnings flags low-information planning checklist payloads", () => {
+	const warnings = uiStatusProfileWarnings(
+		mkUiDoc({
+			ui_id: "ui:planning",
+			components: [
+				mkKeyValueComponent({
+					rows: [
+						{ key: "phase", value: "reviewing" },
+						{ key: "waiting", value: "yes" },
+						{ key: "confidence", value: "medium" },
+						{ key: "next", value: "approval" },
+						{ key: "blocker", value: "unknown scope" },
+					],
+				}),
+				mkListComponent({ items: [{ id: "only", label: "Collect user input" }] }),
+			],
+			actions: [],
+			metadata: {
+				phase: "reviewing",
+				waiting_on_user: true,
+				confidence: "medium",
+				profile: {
+					id: "planning",
+					variant: "status",
+					snapshot: { compact: "phase=reviewing" },
+				},
+			},
+		}),
+	);
+	expect(warnings.some((warning) => warning.includes("at least 3 items"))).toBe(true);
+	expect(warnings.some((warning) => warning.includes("item detail values"))).toBe(true);
 });
 
 test("UiAction schema accepts optional callback metadata", () => {

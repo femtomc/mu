@@ -15,12 +15,21 @@ import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 const UI_DISPLAY_DOCS_MAX = 16;
 const UI_WIDGET_COMPONENTS_MAX = 6;
 const UI_WIDGET_ACTIONS_MAX = 4;
+const UI_WIDGET_COMPONENT_DETAILS_MAX = 3;
 const UI_PICKER_COMPONENTS_MAX = 8;
 const UI_PICKER_LIST_ITEMS_MAX = 4;
 const UI_PICKER_KEYVALUE_ROWS_MAX = 4;
 const UI_SESSION_KEY_FALLBACK = "__mu_ui_active_session__";
 const UI_PROMPT_PREVIEW_MAX = 160;
 const UI_INTERACT_SHORTCUT = "ctrl+shift+u";
+const UI_INTERACT_OVERLAY_OPTIONS = {
+	anchor: "top-left",
+	row: 0,
+	col: 0,
+	width: "100%",
+	maxHeight: "100%",
+	margin: 0,
+} as const;
 
 type UiToolAction = "status" | "snapshot" | "set" | "update" | "replace" | "remove" | "clear";
 
@@ -42,6 +51,7 @@ type UiState = {
 	pendingPrompt: UiAutoPromptRequest | null;
 	promptedRevisionKeys: Set<string>;
 	awaitingUiIds: Set<string>;
+	interactionDepth: number;
 };
 
 type SessionStateEntry = {
@@ -58,6 +68,7 @@ function createState(): UiState {
 		pendingPrompt: null,
 		promptedRevisionKeys: new Set(),
 		awaitingUiIds: new Set(),
+		interactionDepth: 0,
 	};
 }
 
@@ -172,6 +183,25 @@ function preferredDocForState(state: UiState, candidate: UiDoc): UiDoc {
 
 function awaitingDocs(state: UiState, docs: readonly UiDoc[]): UiDoc[] {
 	return docs.filter((doc) => state.awaitingUiIds.has(doc.ui_id) && runnableActions(doc).length > 0);
+}
+
+function beginUiInteraction(ctx: ExtensionContext, state: UiState): void {
+	state.interactionDepth += 1;
+	refreshUi(ctx);
+}
+
+function endUiInteraction(ctx: ExtensionContext, state: UiState): void {
+	state.interactionDepth = Math.max(0, state.interactionDepth - 1);
+	refreshUi(ctx);
+}
+
+async function withUiInteraction<T>(ctx: ExtensionContext, state: UiState, run: () => Promise<T>): Promise<T> {
+	beginUiInteraction(ctx, state);
+	try {
+		return await run();
+	} finally {
+		endUiInteraction(ctx, state);
+	}
 }
 
 function short(text: string, max = 64): string {
@@ -769,12 +799,7 @@ async function pickUiActionInteractively(opts: {
 			}),
 		{
 			overlay: true,
-			overlayOptions: {
-				anchor: "center",
-				width: "78%",
-				maxHeight: "70%",
-				margin: 1,
-			},
+			overlayOptions: UI_INTERACT_OVERLAY_OPTIONS,
 		},
 	);
 	return selected ?? null;
@@ -935,7 +960,11 @@ function renderDocPreview(
 	if (components.length > 0) {
 		lines.push(theme.fg("dim", "Components:"));
 		for (const component of components) {
-			lines.push(`  ${componentPreview(component)}`);
+			const previewLines = componentPreviewLines(component);
+			for (let idx = 0; idx < previewLines.length; idx += 1) {
+				const line = previewLines[idx]!;
+				lines.push(`${idx === 0 ? "  " : "    "}${line}`);
+			}
 		}
 	}
 	const interactiveActions = runnableActions(doc);
@@ -959,19 +988,38 @@ function renderDocPreview(
 	return lines;
 }
 
-function componentPreview(component: UiComponent): string {
+function componentPreviewLines(component: UiComponent): string[] {
 	const { kind } = component;
 	switch (kind) {
 		case "text":
-			return `text · ${short(component.text, 80)}`;
-		case "list":
-			return `list · ${component.title ?? kind} · ${component.items.length} item(s)`;
-		case "key_value":
-			return `key_value · ${component.title ?? kind} · ${component.rows.length} row(s)`;
+			return [`text · ${short(component.text, 80)}`];
+		case "list": {
+			const lines = [`list · ${component.title ?? kind} · ${component.items.length} item(s)`];
+			const visible = component.items.slice(0, UI_WIDGET_COMPONENT_DETAILS_MAX);
+			for (const item of visible) {
+				const detail = item.detail ? ` — ${short(item.detail, 28)}` : "";
+				lines.push(`• ${short(item.label, 72)}${detail}`);
+			}
+			if (component.items.length > visible.length) {
+				lines.push(`... (+${component.items.length - visible.length} more items)`);
+			}
+			return lines;
+		}
+		case "key_value": {
+			const lines = [`key_value · ${component.title ?? kind} · ${component.rows.length} row(s)`];
+			const visible = component.rows.slice(0, UI_WIDGET_COMPONENT_DETAILS_MAX);
+			for (const row of visible) {
+				lines.push(`${short(row.key, 20)}: ${short(row.value, 52)}`);
+			}
+			if (component.rows.length > visible.length) {
+				lines.push(`... (+${component.rows.length - visible.length} more rows)`);
+			}
+			return lines;
+		}
 		case "divider":
-			return "divider";
+			return ["divider"];
 	}
-	return kind;
+	return [kind];
 }
 
 function refreshUi(ctx: ExtensionContext): void {
@@ -989,6 +1037,12 @@ function refreshUi(ctx: ExtensionContext): void {
 	}
 	const awaiting = awaitingDocs(state, docs);
 	const labels = docs.map((doc) => doc.ui_id).join(", ");
+	const readiness =
+		state.interactionDepth > 0
+			? ctx.ui.theme.fg("accent", "prompting")
+			: awaiting.length > 0
+				? ctx.ui.theme.fg("accent", `awaiting ${awaiting.length}`)
+				: ctx.ui.theme.fg("dim", "ready");
 	ctx.ui.setStatus(
 		"mu-ui",
 		[
@@ -996,13 +1050,15 @@ function refreshUi(ctx: ExtensionContext): void {
 			ctx.ui.theme.fg("muted", "·"),
 			ctx.ui.theme.fg("accent", `${docs.length}`),
 			ctx.ui.theme.fg("muted", "·"),
-			awaiting.length > 0
-				? ctx.ui.theme.fg("accent", `awaiting ${awaiting.length}`)
-				: ctx.ui.theme.fg("dim", "ready"),
+			readiness,
 			ctx.ui.theme.fg("muted", "·"),
 			ctx.ui.theme.fg("text", labels),
 		].join(" "),
 	);
+	if (state.interactionDepth > 0) {
+		ctx.ui.setWidget("mu-ui", undefined);
+		return;
+	}
 	const primaryDoc = awaiting[0] ?? docs[0]!;
 	ctx.ui.setWidget(
 		"mu-ui",
@@ -1018,104 +1074,105 @@ export function uiExtension(pi: ExtensionAPI) {
 	const commandUsage = "/mu ui status|snapshot [compact|multiline]|interact [ui_id [action_id]]";
 	const usage = `Usage: ${commandUsage}`;
 
-	const runUiActionFromDoc = async (ctx: ExtensionContext, state: UiState, uiId?: string, actionId?: string) => {
-		const docs = activeDocs(state, UI_DISPLAY_DOCS_MAX);
-		if (docs.length === 0) {
-			ctx.ui.notify("No UI docs are currently available.", "info");
-			return;
-		}
-
-		const entries = docs
-			.map((doc) => ({ doc, actions: runnableActions(doc) }))
-			.filter((entry) => entry.actions.length > 0);
-		if (entries.length === 0) {
-			ctx.ui.notify("No runnable UI actions are currently available.", "error");
-			return;
-		}
-
-		let selectedDoc: UiDoc | null = null;
-		let selectedAction: UiAction | null = null;
-		const normalizedUiId = uiId?.trim() ?? "";
-		const normalizedActionId = actionId?.trim() ?? "";
-		if (normalizedUiId.length > 0 && normalizedActionId.length > 0) {
-			const entry = entries.find((candidate) => candidate.doc.ui_id === normalizedUiId) ?? null;
-			if (!entry) {
-				ctx.ui.notify(`UI doc not found: ${normalizedUiId}`, "error");
+	const runUiActionFromDoc = async (ctx: ExtensionContext, state: UiState, uiId?: string, actionId?: string) =>
+		withUiInteraction(ctx, state, async () => {
+			const docs = activeDocs(state, UI_DISPLAY_DOCS_MAX);
+			if (docs.length === 0) {
+				ctx.ui.notify("No UI docs are currently available.", "info");
 				return;
 			}
-			const action = entry.actions.find((candidate) => candidate.id === normalizedActionId) ?? null;
-			if (!action) {
-				ctx.ui.notify(`Action not found: ${normalizedActionId} in ${normalizedUiId}`, "error");
+
+			const entries = docs
+				.map((doc) => ({ doc, actions: runnableActions(doc) }))
+				.filter((entry) => entry.actions.length > 0);
+			if (entries.length === 0) {
+				ctx.ui.notify("No runnable UI actions are currently available.", "error");
 				return;
 			}
-			selectedDoc = entry.doc;
-			selectedAction = action;
-		} else {
-			const picked = await pickUiActionInteractively({
+
+			let selectedDoc: UiDoc | null = null;
+			let selectedAction: UiAction | null = null;
+			const normalizedUiId = uiId?.trim() ?? "";
+			const normalizedActionId = actionId?.trim() ?? "";
+			if (normalizedUiId.length > 0 && normalizedActionId.length > 0) {
+				const entry = entries.find((candidate) => candidate.doc.ui_id === normalizedUiId) ?? null;
+				if (!entry) {
+					ctx.ui.notify(`UI doc not found: ${normalizedUiId}`, "error");
+					return;
+				}
+				const action = entry.actions.find((candidate) => candidate.id === normalizedActionId) ?? null;
+				if (!action) {
+					ctx.ui.notify(`Action not found: ${normalizedActionId} in ${normalizedUiId}`, "error");
+					return;
+				}
+				selectedDoc = entry.doc;
+				selectedAction = action;
+			} else {
+				const picked = await pickUiActionInteractively({
+					ctx,
+					entries,
+					uiId: normalizedUiId.length > 0 ? normalizedUiId : undefined,
+					actionId: normalizedActionId.length > 0 ? normalizedActionId : undefined,
+				});
+				if (!picked) {
+					ctx.ui.notify("UI interaction cancelled.", "info");
+					return;
+				}
+				selectedDoc = picked.doc;
+				selectedAction = picked.action;
+			}
+
+			if (!selectedDoc || !selectedAction) {
+				ctx.ui.notify("No UI action was selected.", "error");
+				return;
+			}
+
+			const commandText = actionCommandText(selectedAction);
+			if (!commandText) {
+				ctx.ui.notify(`Action ${selectedAction.id} is missing metadata.command_text.`, "error");
+				return;
+			}
+
+			const templateKeys = extractTemplateKeys(commandText);
+			const templateValues = await collectTemplateValues({
 				ctx,
-				entries,
-				uiId: normalizedUiId.length > 0 ? normalizedUiId : undefined,
-				actionId: normalizedActionId.length > 0 ? normalizedActionId : undefined,
+				action: selectedAction,
+				templateKeys,
 			});
-			if (!picked) {
+			if (!templateValues) {
 				ctx.ui.notify("UI interaction cancelled.", "info");
 				return;
 			}
-			selectedDoc = picked.doc;
-			selectedAction = picked.action;
-		}
 
-		if (!selectedDoc || !selectedAction) {
-			ctx.ui.notify("No UI action was selected.", "error");
-			return;
-		}
+			const composed = composePromptFromAction({
+				commandText,
+				templateValues,
+			});
+			const edited = await ctx.ui.editor(`Review prompt (${selectedDoc.ui_id}/${selectedAction.id})`, composed);
+			if (edited === undefined) {
+				ctx.ui.notify("UI submit cancelled.", "info");
+				return;
+			}
+			const finalPrompt = edited.trim();
+			if (finalPrompt.length === 0) {
+				ctx.ui.notify("Cannot submit an empty prompt.", "error");
+				return;
+			}
 
-		const commandText = actionCommandText(selectedAction);
-		if (!commandText) {
-			ctx.ui.notify(`Action ${selectedAction.id} is missing metadata.command_text.`, "error");
-			return;
-		}
+			const confirmed = await ctx.ui.confirm("Submit UI prompt", short(finalPrompt, UI_PROMPT_PREVIEW_MAX));
+			if (!confirmed) {
+				ctx.ui.notify("UI submit cancelled.", "info");
+				return;
+			}
 
-		const templateKeys = extractTemplateKeys(commandText);
-		const templateValues = await collectTemplateValues({
-			ctx,
-			action: selectedAction,
-			templateKeys,
+			pi.sendUserMessage(finalPrompt);
+			state.awaitingUiIds.delete(selectedDoc.ui_id);
+			if (state.pendingPrompt?.uiId === selectedDoc.ui_id) {
+				state.pendingPrompt = null;
+			}
+			retainAwaitingUiIdsForActiveDocs(state);
+			ctx.ui.notify(`Submitted prompt from ${selectedDoc.ui_id}/${selectedAction.id}.`, "info");
 		});
-		if (!templateValues) {
-			ctx.ui.notify("UI interaction cancelled.", "info");
-			return;
-		}
-
-		const composed = composePromptFromAction({
-			commandText,
-			templateValues,
-		});
-		const edited = await ctx.ui.editor(`Review prompt (${selectedDoc.ui_id}/${selectedAction.id})`, composed);
-		if (edited === undefined) {
-			ctx.ui.notify("UI submit cancelled.", "info");
-			return;
-		}
-		const finalPrompt = edited.trim();
-		if (finalPrompt.length === 0) {
-			ctx.ui.notify("Cannot submit an empty prompt.", "error");
-			return;
-		}
-
-		const confirmed = await ctx.ui.confirm("Submit UI prompt", short(finalPrompt, UI_PROMPT_PREVIEW_MAX));
-		if (!confirmed) {
-			ctx.ui.notify("UI submit cancelled.", "info");
-			return;
-		}
-
-		pi.sendUserMessage(finalPrompt);
-		state.awaitingUiIds.delete(selectedDoc.ui_id);
-		if (state.pendingPrompt?.uiId === selectedDoc.ui_id) {
-			state.pendingPrompt = null;
-		}
-		retainAwaitingUiIdsForActiveDocs(state);
-		ctx.ui.notify(`Submitted prompt from ${selectedDoc.ui_id}/${selectedAction.id}.`, "info");
-	};
 
 	registerMuSubcommand(pi, {
 		subcommand: "ui",

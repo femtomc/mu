@@ -177,6 +177,16 @@ const UI_STATUS_PROFILE_COMPONENT_RECOMMENDATIONS: Record<UiStatusProfileName, r
 	"model-routing": ["key_value", "list"],
 };
 
+const UI_PLANNING_STATUS_ROW_KEY_ALIASES = {
+	phase: ["phase"],
+	waiting: ["waiting", "waiting_on_user"],
+	confidence: ["confidence", "conf"],
+	next: ["next", "next_action"],
+	blocker: ["blocker"],
+} as const;
+
+const UI_PLANNING_CHECKLIST_MIN_ITEMS = 3;
+
 function isUiStatusProfileName(value: string): value is UiStatusProfileName {
 	return (UI_STATUS_PROFILE_NAMES as readonly string[]).includes(value);
 }
@@ -220,6 +230,80 @@ function hasProfileSnapshotCompact(profile: Record<string, unknown>): boolean {
 	}
 	const compact = snapshot.compact;
 	return typeof compact === "string" && compact.trim().length > 0;
+}
+
+function normalizeStatusRowKey(key: string): string {
+	return key
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "_");
+}
+
+function keyValueStatusRows(doc: UiDoc): Set<string> {
+	const rows = new Set<string>();
+	for (const component of doc.components) {
+		if (component.kind !== "key_value") {
+			continue;
+		}
+		for (const row of component.rows) {
+			rows.add(normalizeStatusRowKey(row.key));
+		}
+	}
+	return rows;
+}
+
+function firstChecklistComponent(doc: UiDoc): Extract<UiComponent, { kind: "list" }> | null {
+	for (const component of doc.components) {
+		if (component.kind === "list") {
+			return component;
+		}
+	}
+	return null;
+}
+
+function hasPlanningMetadataField(doc: UiDoc, key: "phase" | "waiting_on_user" | "confidence"): boolean {
+	const value = doc.metadata[key];
+	if (key === "waiting_on_user") {
+		return typeof value === "boolean";
+	}
+	return typeof value === "string" && value.trim().length > 0;
+}
+
+function planningStatusProfileWarnings(doc: UiDoc): string[] {
+	const warnings: string[] = [];
+	const statusRows = keyValueStatusRows(doc);
+	for (const [field, aliases] of Object.entries(UI_PLANNING_STATUS_ROW_KEY_ALIASES)) {
+		const hasField = aliases.some((alias) => statusRows.has(alias));
+		if (!hasField) {
+			warnings.push(`profile.id=planning recommends key_value row key=${field}`);
+		}
+	}
+
+	const checklist = firstChecklistComponent(doc);
+	if (checklist) {
+		if (checklist.items.length < UI_PLANNING_CHECKLIST_MIN_ITEMS) {
+			warnings.push(
+				`profile.id=planning recommends checklist lists with at least ${UI_PLANNING_CHECKLIST_MIN_ITEMS} items`,
+			);
+		}
+		const detailedItems = checklist.items.filter(
+			(item) => typeof item.detail === "string" && item.detail.trim().length > 0,
+		).length;
+		if (detailedItems === 0) {
+			warnings.push("profile.id=planning recommends checklist item detail values (for example done/pending)");
+		}
+	}
+
+	if (!hasPlanningMetadataField(doc, "phase")) {
+		warnings.push("profile.id=planning recommends metadata.phase");
+	}
+	if (!hasPlanningMetadataField(doc, "waiting_on_user")) {
+		warnings.push("profile.id=planning recommends metadata.waiting_on_user");
+	}
+	if (!hasPlanningMetadataField(doc, "confidence")) {
+		warnings.push("profile.id=planning recommends metadata.confidence");
+	}
+	return warnings;
 }
 
 function uiDocCandidates(input: unknown): unknown[] {
@@ -344,6 +428,9 @@ export function uiStatusProfileWarnings(input: unknown): string[] {
 		if (!hasUiComponentKind(doc, kind)) {
 			warnings.push(`profile.id=${profileName} recommends a ${kind} component`);
 		}
+	}
+	if (profileName === "planning") {
+		warnings.push(...planningStatusProfileWarnings(doc));
 	}
 	return warnings;
 }
