@@ -27,6 +27,7 @@ They are organized as category meta-skills plus subskills:
 
 - `core`
   - `mu`
+  - `programmable-ui`
   - `memory`
   - `tmux`
   - `code-mode`
@@ -48,6 +49,7 @@ They are organized as category meta-skills plus subskills:
 
 Starter skills are version-synced by CLI bootstrap. Initial bootstrap seeds missing
 skills; bundled-version changes refresh installed starter skill files.
+Operator-facing workflow detail lives in the skill docs (for example, `core/programmable-ui`).
 
 ## Install
 
@@ -75,7 +77,7 @@ Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
 - `eventLogExtension` — event tail + watch widget
-- `uiExtension` — programmable `UiDoc` surface (`/mu ui ...`, `mu_ui`) with terminal auto-prompt/awaiting behavior and deterministic action fallbacks
+- `uiExtension` — programmable `UiDoc` surface (`/mu ui ...`, `mu_ui`)
 
 Default operator UI theme is `mu-gruvbox-dark`.
 
@@ -86,24 +88,7 @@ Default operator UI theme is `mu-gruvbox-dark`.
 - `/mu brand on|off|toggle` — enable/disable UI branding
 - `/mu ui ...` — inspect interactive `UiDoc`s (`status`/`snapshot`)
 - `/mu help` — dispatcher catalog of registered `/mu` subcommands
-- `ctrl+shift+u` — reopen local programmable-UI interaction flow (in-TUI doc/action picker, auto-fill payload-backed template values, prompt unresolved values, submit composed prompt)
-
-## Programmable UI documents
-
-Skills can publish interactive UI state via the `mu_ui` tool. Rendered `UiDoc`s survive session reconnects
-(30 minute retention per session ID), respect revision/version bumps, and route action clicks/taps back to
-plain command text via `metadata.command_text` (the `/answer` flow is the reference pattern).
-
-Actions without `metadata.command_text` are treated as non-interactive and rendered as deterministic fallback rows.
-
-Current runtime behavior is channel-specific:
-
-- Slack renders rich blocks + interactive action buttons.
-- Discord/Telegram/Neovim render text-first docs; interactive actions are tokenized, while status-profile actions deterministically degrade to command-text fallback.
-- Terminal operator UI (`mu serve`) renders docs in-widget, auto-prompts when agent publishes new runnable actions, shows `awaiting` UI status/widget state until resolved, and supports manual reopen via `ctrl+shift+u` (in-TUI picker overlay + prompt composition).
-- When interactive controls cannot be rendered, adapters append deterministic text fallback.
-
-See the [Programmable UI substrate guide](../../docs/mu-ui.md) for the full support matrix and workflow.
+- `ctrl+shift+u` — reopen local programmable-UI interaction flow
 
 ## Tooling model (CLI-first)
 

@@ -224,6 +224,7 @@ Keep operator↔human communication mu_ui-first across these skills:
 - one non-interactive status doc per active profile (`metadata.profile.variant: "status"`)
 - separate interactive prompt docs for decisions (`metadata.command_text` actions)
 - explicit `mu_ui remove` teardown for resolved prompts and completed passes
+For focused `UiDoc` schema templates/action wiring/status diagnostics, use `programmable-ui`.
 For REPL-driven exploration and context compression, use `code-mode`.
 For persistent terminal sessions and worker fan-out mechanics, use `tmux`.
 For recurring bounded automation loops, use `heartbeats`.
@@ -247,6 +248,7 @@ For wall-clock schedules (one-shot, interval, cron-expression), use `crons`.
 
 - Prior-context retrieval and index maintenance: **`memory`**
 - Planning/decomposition and DAG review: **`planning`**
+- Programmable UI schema/templates/action-routing diagnostics: **`programmable-ui`**
 - mu_ui-first status/prompt communication patterns for DAG work: **`planning`**, **`execution`**, **`control-flow`**, **`model-routing`**
 - Shared DAG semantics for planning + execution: **`protocol`**
 - Loop/termination policy overlays (review gates, retries, escalation): **`control-flow`**
