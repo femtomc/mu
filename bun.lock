@@ -17,7 +17,7 @@
     },
     "packages/agent": {
       "name": "@femtomc/mu-agent",
-      "version": "26.2.109",
+      "version": "26.2.110",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
         "@mariozechner/pi-agent-core": "^0.54.2",
@@ -29,7 +29,7 @@
     },
     "packages/cli": {
       "name": "@femtomc/mu",
-      "version": "26.2.109",
+      "version": "26.2.110",
       "bin": {
         "mu": "./dist/cli.js",
       },
@@ -47,7 +47,7 @@
     },
     "packages/control-plane": {
       "name": "@femtomc/mu-control-plane",
-      "version": "26.2.109",
+      "version": "26.2.110",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
         "zod": "^4.1.9",
@@ -55,28 +55,28 @@
     },
     "packages/core": {
       "name": "@femtomc/mu-core",
-      "version": "26.2.109",
+      "version": "26.2.110",
       "dependencies": {
         "zod": "^4.1.9",
       },
     },
     "packages/forum": {
       "name": "@femtomc/mu-forum",
-      "version": "26.2.109",
+      "version": "26.2.110",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
       },
     },
     "packages/issue": {
       "name": "@femtomc/mu-issue",
-      "version": "26.2.109",
+      "version": "26.2.110",
       "dependencies": {
         "@femtomc/mu-core": "workspace:*",
       },
     },
     "packages/server": {
       "name": "@femtomc/mu-server",
-      "version": "26.2.109",
+      "version": "26.2.110",
       "bin": {
         "mu-server": "./dist/cli.js",
       },
@@ -382,7 +382,7 @@
 
     "bowser": ["bowser@2.14.1", "", {}, "sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg=="],
 
-    "brace-expansion": ["brace-expansion@5.0.3", "", { "dependencies": { "balanced-match": "^4.0.2" } }, "sha512-fy6KJm2RawA5RcHkLa1z/ScpBeA762UF9KmZQxwIbDtRJrgLzM10depAiEQ+CXYcoiqW1/m96OAAoke2nE9EeA=="],
+    "brace-expansion": ["brace-expansion@5.0.4", "", { "dependencies": { "balanced-match": "^4.0.2" } }, "sha512-h+DEnpVvxmfVefa4jFbCf5HdH5YMDXRsmKflpf1pILZWRFlTbJpxeU55nJl4Smt5HQaGzg1o6RHFPJaOqnmBDg=="],
 
     "buffer-equal-constant-time": ["buffer-equal-constant-time@1.0.1", "", {}, "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA=="],
 
