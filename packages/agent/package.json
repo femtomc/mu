@@ -20,7 +20,6 @@
 	},
 	"files": [
 		"dist/**",
-		"assets/**",
 		"prompts/**",
 		"themes/**"
 	],

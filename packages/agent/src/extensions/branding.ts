@@ -7,11 +7,8 @@
  * - Lightweight periodic status refresh (open/ready/control-plane)
  */
 
-import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Image as TuiImage, detectCapabilities } from "@mariozechner/pi-tui";
 import { MU_DEFAULT_THEME_NAME, MU_VERSION } from "../ui_defaults.js";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 import { fetchMuStatus, type MuControlPlaneRoute, muServerUrl } from "./shared.js";
@@ -32,28 +29,6 @@ const EMPTY_SNAPSHOT: StatusSnapshot = {
 	error: null,
 };
 
-const TUI_LOGO_MIME_TYPE = "image/png";
-const TUI_LOGO_FILENAME = "mu-tui-logo.png";
-const TUI_LOGO_MAX_WIDTH_CELLS = 16;
-
-function resolveTuiLogoPath(): string {
-	return fileURLToPath(new URL("../../assets/mu-tui-logo.png", import.meta.url));
-}
-
-function readTuiLogoBase64(): string | null {
-	try {
-		return readFileSync(resolveTuiLogoPath()).toString("base64");
-	} catch {
-		return null;
-	}
-}
-
-const TUI_LOGO_BASE64 = readTuiLogoBase64();
-
-function canRenderTuiLogoImage(): boolean {
-	return TUI_LOGO_BASE64 !== null && detectCapabilities().images !== null;
-}
-
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
 function visibleWidth(text: string): number {
@@ -73,13 +48,6 @@ function centerLine(text: string, width: number): string {
 	if (vw >= width) return truncateToWidth(text, width);
 	const pad = Math.floor((width - vw) / 2);
 	return " ".repeat(pad) + text;
-}
-
-function centerLogoLines(lines: string[], width: number): string[] {
-	const targetLogoWidth = Math.max(1, Math.min(TUI_LOGO_MAX_WIDTH_CELLS, width - 2));
-	const pad = Math.max(0, Math.floor((width - targetLogoWidth) / 2));
-	const prefix = " ".repeat(pad);
-	return lines.map((line) => (line.length > 0 ? `${prefix}${line}` : line));
 }
 
 function routesFromStatus(adapters: string[], routes: MuControlPlaneRoute[] | undefined): MuControlPlaneRoute[] {
@@ -136,43 +104,24 @@ export function brandingExtension(pi: ExtensionAPI) {
 		ctx.ui.setWorkingMessage("working…");
 		ctx.ui.setWidget("mu-quick-actions", undefined);
 
-		ctx.ui.setHeader((_tui, theme) => {
-			const logoComponent = canRenderTuiLogoImage()
-				? new TuiImage(
-						TUI_LOGO_BASE64!,
-						TUI_LOGO_MIME_TYPE,
-						{ fallbackColor: (text) => theme.fg("dim", text) },
-						{ maxWidthCells: TUI_LOGO_MAX_WIDTH_CELLS, filename: TUI_LOGO_FILENAME },
-					)
-				: null;
-
-			return {
-				render(width: number): string[] {
-					const cpPart = snapshot.error
-						? ""
-						: snapshot.controlPlaneActive
-							? ` ${theme.fg("muted", "·")} ${theme.fg("success", `cp:${snapshot.adapters.join(",") || "on"}`)}`
-							: "";
-					const line = [
-						theme.fg("accent", theme.bold("μ")),
-						theme.fg("muted", "·"),
-						theme.fg("dim", `v${MU_VERSION}`),
-						theme.fg("muted", "·"),
-						theme.fg("dim", repoName),
-					].join(" ") + cpPart;
-
-					if (!logoComponent) {
-						return [centerLine(line, width)];
-					}
-
-					const logoLines = centerLogoLines(logoComponent.render(width), width);
-					return [...logoLines, centerLine(line, width)];
-				},
-				invalidate() {
-					logoComponent?.invalidate();
-				},
-			};
-		});
+		ctx.ui.setHeader((_tui, theme) => ({
+			render(width: number): string[] {
+				const cpPart = snapshot.error
+					? ""
+					: snapshot.controlPlaneActive
+						? ` ${theme.fg("muted", "·")} ${theme.fg("success", `cp:${snapshot.adapters.join(",") || "on"}`)}`
+						: "";
+				const line = [
+					theme.fg("accent", theme.bold("μ")),
+					theme.fg("muted", "·"),
+					theme.fg("dim", `v${MU_VERSION}`),
+					theme.fg("muted", "·"),
+					theme.fg("dim", repoName),
+				].join(" ") + cpPart;
+				return [centerLine(line, width)];
+			},
+			invalidate() {},
+		}));
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			const requestRender = () => tui.requestRender();

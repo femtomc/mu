@@ -67,14 +67,10 @@ Use this exact flow for `mu` releases so versioning, logos, tags, GitHub release
      - `packages/server/package.json`
      - `packages/cli/package.json`
 
-3. **Sync versioned logo artifacts**
+3. **Sync versioned logo asset**
    - Run:
      ```bash
      bun run logo:sync-version
-     ```
-   - Regenerate TUI logo PNG from SVG:
-     ```bash
-     convert assets/mu-periodic-logo.svg -resize 192x192 -colors 64 PNG8:packages/agent/assets/mu-tui-logo.png
      ```
 
 4. **Refresh lock + validate**
