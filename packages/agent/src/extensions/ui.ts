@@ -24,6 +24,8 @@ const UI_PICKER_PANEL_MAX_WIDTH = 118;
 const UI_PICKER_PANEL_WIDTH_RATIO = 0.9;
 const UI_PICKER_PANEL_TOP_MARGIN = 1;
 const UI_PICKER_PANEL_BOTTOM_MARGIN = 1;
+const UI_PICKER_PANEL_INNER_PADDING_X = 2;
+const UI_PICKER_PANEL_INNER_PADDING_Y = 1;
 const UI_PICKER_TWO_PANE_MIN_WIDTH = 92;
 const UI_PICKER_TWO_PANE_LEFT_MIN = 24;
 const UI_PICKER_TWO_PANE_RIGHT_MIN = 32;
@@ -1049,12 +1051,23 @@ class UiActionPickerComponent implements Component {
 		);
 		const panelWidth = Math.max(4, Math.min(width, panelTargetWidth));
 		const innerWidth = Math.max(1, panelWidth - 2);
+		const horizontalPadding = Math.min(
+			UI_PICKER_PANEL_INNER_PADDING_X,
+			Math.max(0, Math.floor((innerWidth - 1) / 2)),
+		);
+		const contentWidth = Math.max(1, innerWidth - horizontalPadding * 2);
 		const selectedDoc = this.#currentEntry().doc;
 		const selectedActions = this.#currentActions();
 		const renderLines: PickerRenderLine[] = [];
+		const innerPadSegment =
+			horizontalPadding > 0 ? this.#theme.bg("customMessageBg", " ".repeat(horizontalPadding)) : "";
+		const contentRowText = (line: string, bg: "customMessageBg" | "selectedBg"): string => {
+			const core = this.#theme.bg(bg, fitStyledLine(line, contentWidth));
+			return `${innerPadSegment}${core}${innerPadSegment}`;
+		};
 		const pushFullLine = (line: string) => {
 			renderLines.push({
-				text: this.#theme.bg("customMessageBg", fitStyledLine(line, innerWidth)),
+				text: contentRowText(line, "customMessageBg"),
 			});
 		};
 
@@ -1062,18 +1075,21 @@ class UiActionPickerComponent implements Component {
 		pushFullLine(
 			`${this.#theme.fg("accent", "mu_ui")}${this.#theme.fg("dim", ` · ${this.#entries.length} ${pluralize(this.#entries.length, "doc")} · ${modeLabel}`)}`,
 		);
-		pushFullLine(this.#theme.fg("dim", short(UI_PICKER_INTERACTION_HINT, Math.max(8, innerWidth))));
-		pushFullLine(this.#theme.fg("borderMuted", "─".repeat(innerWidth)));
+		pushFullLine(this.#theme.fg("dim", short(UI_PICKER_INTERACTION_HINT, Math.max(8, contentWidth))));
+		pushFullLine(this.#theme.fg("borderMuted", "─".repeat(contentWidth)));
 
 		const minTwoPaneWidth =
 			UI_PICKER_TWO_PANE_LEFT_MIN + UI_PICKER_TWO_PANE_RIGHT_MIN + UI_PICKER_TWO_PANE_SEPARATOR_WIDTH;
-		const useTwoPane = innerWidth >= UI_PICKER_TWO_PANE_MIN_WIDTH && innerWidth >= minTwoPaneWidth;
+		const useTwoPane = contentWidth >= UI_PICKER_TWO_PANE_MIN_WIDTH && contentWidth >= minTwoPaneWidth;
 		if (useTwoPane) {
-			let leftWidth = Math.max(UI_PICKER_TWO_PANE_LEFT_MIN, Math.floor(innerWidth * 0.34));
-			let rightWidth = innerWidth - leftWidth - UI_PICKER_TWO_PANE_SEPARATOR_WIDTH;
+			let leftWidth = Math.max(UI_PICKER_TWO_PANE_LEFT_MIN, Math.floor(contentWidth * 0.34));
+			let rightWidth = contentWidth - leftWidth - UI_PICKER_TWO_PANE_SEPARATOR_WIDTH;
 			if (rightWidth < UI_PICKER_TWO_PANE_RIGHT_MIN) {
-				leftWidth = Math.max(UI_PICKER_TWO_PANE_LEFT_MIN, innerWidth - UI_PICKER_TWO_PANE_RIGHT_MIN - UI_PICKER_TWO_PANE_SEPARATOR_WIDTH);
-				rightWidth = innerWidth - leftWidth - UI_PICKER_TWO_PANE_SEPARATOR_WIDTH;
+				leftWidth = Math.max(
+					UI_PICKER_TWO_PANE_LEFT_MIN,
+					contentWidth - UI_PICKER_TWO_PANE_RIGHT_MIN - UI_PICKER_TWO_PANE_SEPARATOR_WIDTH,
+				);
+				rightWidth = contentWidth - leftWidth - UI_PICKER_TWO_PANE_SEPARATOR_WIDTH;
 			}
 			const leftLines = this.#buildDocsLines();
 			const rightLines = this.#buildDetailLines();
@@ -1091,7 +1107,7 @@ class UiActionPickerComponent implements Component {
 					fitStyledLine(right?.text ?? "", rightWidth),
 				);
 				const row: PickerRenderLine = {
-					text: `${leftCell}${separator}${rightCell}`,
+					text: `${innerPadSegment}${leftCell}${separator}${rightCell}${innerPadSegment}`,
 				};
 				if (left?.docIndex !== undefined) {
 					row.docTarget = {
@@ -1113,39 +1129,40 @@ class UiActionPickerComponent implements Component {
 			const singleColumn = this.#singleColumnLines();
 			for (const line of singleColumn) {
 				const row: PickerRenderLine = {
-					text: this.#theme.bg(line.selected ? "selectedBg" : "customMessageBg", fitStyledLine(line.text, innerWidth)),
+					text: contentRowText(line.text, line.selected ? "selectedBg" : "customMessageBg"),
 				};
 				if (line.docIndex !== undefined) {
 					row.docTarget = {
 						index: line.docIndex,
 						colStart: 1,
-						colEnd: innerWidth,
+						colEnd: contentWidth,
 					};
 				}
 				if (line.actionIndex !== undefined) {
 					row.actionTarget = {
 						index: line.actionIndex,
 						colStart: 1,
-						colEnd: innerWidth,
+						colEnd: contentWidth,
 					};
 				}
 				renderLines.push(row);
 			}
 		}
 
-		pushFullLine(this.#theme.fg("borderMuted", "─".repeat(innerWidth)));
+		pushFullLine(this.#theme.fg("borderMuted", "─".repeat(contentWidth)));
 		pushFullLine(
 			this.#theme.fg(
 				"dim",
 				short(
 					`selected ${selectedDoc.ui_id} · revision ${selectedDoc.revision.version} · ${selectedActions.length} ${pluralize(selectedActions.length, "action")}`,
-					Math.max(8, innerWidth),
+					Math.max(8, contentWidth),
 				),
 			),
 		);
 
 		const topMarginRows = Math.max(0, UI_PICKER_PANEL_TOP_MARGIN);
 		const bottomMarginRows = Math.max(0, UI_PICKER_PANEL_BOTTOM_MARGIN);
+		const verticalPadding = Math.max(0, UI_PICKER_PANEL_INNER_PADDING_Y);
 		const leftPadWidth = Math.max(0, Math.floor((width - panelWidth) / 2));
 		const leftPad = " ".repeat(leftPadWidth);
 		const panelColStart = leftPadWidth + 1;
@@ -1163,6 +1180,11 @@ class UiActionPickerComponent implements Component {
 		);
 
 		this.#mouseTargets = [];
+		const blankInnerRow = `${leftPad}${this.#theme.fg("border", "│")}${this.#theme.bg("customMessageBg", " ".repeat(innerWidth))}${this.#theme.fg("border", "│")}`;
+		for (let row = 0; row < verticalPadding; row += 1) {
+			frame.push(blankInnerRow);
+		}
+
 		const contentStartRow = frame.length + 1;
 		for (let idx = 0; idx < renderLines.length; idx += 1) {
 			const line = renderLines[idx]!;
@@ -1173,8 +1195,8 @@ class UiActionPickerComponent implements Component {
 					kind: "doc",
 					index: line.docTarget.index,
 					row,
-					colStart: panelColStart + line.docTarget.colStart,
-					colEnd: panelColStart + line.docTarget.colEnd,
+					colStart: panelColStart + horizontalPadding + line.docTarget.colStart,
+					colEnd: panelColStart + horizontalPadding + line.docTarget.colEnd,
 				});
 			}
 			if (line.actionTarget) {
@@ -1182,10 +1204,13 @@ class UiActionPickerComponent implements Component {
 					kind: "action",
 					index: line.actionTarget.index,
 					row,
-					colStart: panelColStart + line.actionTarget.colStart,
-					colEnd: panelColStart + line.actionTarget.colEnd,
+					colStart: panelColStart + horizontalPadding + line.actionTarget.colStart,
+					colEnd: panelColStart + horizontalPadding + line.actionTarget.colEnd,
 				});
 			}
+		}
+		for (let row = 0; row < verticalPadding; row += 1) {
+			frame.push(blankInnerRow);
 		}
 
 		frame.push(`${leftPad}${this.#theme.fg("borderAccent", `╰${"─".repeat(innerWidth)}╯`)}`);
@@ -1194,7 +1219,8 @@ class UiActionPickerComponent implements Component {
 		}
 
 		this.#panelRowStart = topMarginRows + 1;
-		this.#panelRowEnd = this.#panelRowStart + renderLines.length + 1;
+		const panelRows = 1 + verticalPadding + renderLines.length + verticalPadding + 1;
+		this.#panelRowEnd = this.#panelRowStart + panelRows - 1;
 		this.#panelColStart = panelColStart;
 		this.#panelColEnd = leftPadWidth + panelWidth;
 
