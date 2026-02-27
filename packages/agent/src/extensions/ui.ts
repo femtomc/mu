@@ -24,6 +24,12 @@ const UI_PICKER_PANEL_MAX_WIDTH = 118;
 const UI_PICKER_PANEL_WIDTH_RATIO = 0.9;
 const UI_PICKER_PANEL_TOP_MARGIN = 1;
 const UI_PICKER_PANEL_BOTTOM_MARGIN = 1;
+const UI_PICKER_TWO_PANE_MIN_WIDTH = 92;
+const UI_PICKER_TWO_PANE_LEFT_MIN = 24;
+const UI_PICKER_TWO_PANE_RIGHT_MIN = 32;
+const UI_PICKER_TWO_PANE_SEPARATOR_WIDTH = 3;
+const UI_PICKER_INTERACTION_HINT =
+	"↑/↓ move · tab switch pane · enter select/submit · esc cancel · click rows";
 const UI_ENABLE_MOUSE_TRACKING = "\x1b[?1000h\x1b[?1006h";
 const UI_DISABLE_MOUSE_TRACKING = "\x1b[?1000l\x1b[?1006l";
 const UI_INTERACT_OVERLAY_OPTIONS = {
@@ -635,6 +641,48 @@ function isPrimaryMouseRelease(event: ParsedMouseEvent): boolean {
 	return primaryButton === 0;
 }
 
+type PickerLine = {
+	text: string;
+	selected?: boolean;
+	docIndex?: number;
+	actionIndex?: number;
+};
+
+type PickerRenderLine = {
+	text: string;
+	docTarget?: {
+		index: number;
+		colStart: number;
+		colEnd: number;
+	};
+	actionTarget?: {
+		index: number;
+		colStart: number;
+		colEnd: number;
+	};
+};
+
+type PickerMouseTarget = {
+	kind: "doc" | "action";
+	index: number;
+	row: number;
+	colStart: number;
+	colEnd: number;
+};
+
+function fitStyledLine(text: string, width: number): string {
+	const trimmed = truncateToWidth(text, width, "…", true);
+	const missing = width - visibleWidth(trimmed);
+	if (missing <= 0) {
+		return trimmed;
+	}
+	return `${trimmed}${" ".repeat(missing)}`;
+}
+
+function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+	return count === 1 ? singular : plural;
+}
+
 function pickerComponentLines(component: UiComponent): string[] {
 	switch (component.kind) {
 		case "text":
@@ -686,8 +734,7 @@ class UiActionPickerComponent implements Component {
 	#panelRowEnd = 1;
 	#panelColStart = 1;
 	#panelColEnd = 1;
-	#docHitRows = new Map<number, number>();
-	#actionHitRows = new Map<number, number>();
+	#mouseTargets: PickerMouseTarget[] = [];
 
 	constructor(opts: {
 		tui: TUI;
@@ -773,6 +820,138 @@ class UiActionPickerComponent implements Component {
 		});
 	}
 
+	#kindChip(action: UiAction): string {
+		switch (action.kind) {
+			case "primary":
+				return this.#theme.fg("success", "[primary]");
+			case "danger":
+				return this.#theme.fg("error", "[danger]");
+			case "link":
+				return this.#theme.fg("accent", "[link]");
+			case "secondary":
+			default:
+				return this.#theme.fg("muted", "[secondary]");
+		}
+	}
+
+	#buildDocsLines(): PickerLine[] {
+		const lines: PickerLine[] = [];
+		lines.push({
+			text: this.#theme.fg(
+				this.#mode === "doc" ? "accent" : "dim",
+				`Documents (${this.#entries.length})`,
+			),
+		});
+		for (let idx = 0; idx < this.#entries.length; idx += 1) {
+			const entry = this.#entries[idx]!;
+			const active = idx === this.#docIndex;
+			const marker = active ? (this.#mode === "doc" ? "▶" : "▸") : " ";
+			const actionCount = entry.actions.length;
+			const actionLabel =
+				actionCount > 0
+					? `${actionCount} ${pluralize(actionCount, "action")}`
+					: "status";
+			const title = this.#theme.fg(active ? "text" : "muted", `${marker} ${entry.doc.title}`);
+			const meta = this.#theme.fg("dim", `${entry.doc.ui_id} · ${actionLabel}`);
+			lines.push({
+				text: `${title} ${meta}`,
+				selected: active,
+				docIndex: idx,
+			});
+		}
+		return lines;
+	}
+
+	#buildDetailLines(): PickerLine[] {
+		const lines: PickerLine[] = [];
+		const selectedDoc = this.#currentEntry().doc;
+		const selectedActions = this.#currentActions();
+		lines.push({ text: this.#theme.fg("accent", selectedDoc.title) });
+		lines.push({
+			text: this.#theme.fg(
+				"dim",
+				`${selectedDoc.ui_id} · revision ${selectedDoc.revision.version}`,
+			),
+		});
+		if (selectedDoc.summary) {
+			lines.push({ text: this.#theme.fg("dim", `Summary: ${selectedDoc.summary}`) });
+		}
+		lines.push({ text: "" });
+		lines.push({
+			text: this.#theme.fg(
+				"dim",
+				`Components (${selectedDoc.components.length})`,
+			),
+		});
+		const visibleComponents = selectedDoc.components.slice(0, UI_PICKER_COMPONENTS_MAX);
+		for (const component of visibleComponents) {
+			const componentLines = pickerComponentLines(component);
+			for (let idx = 0; idx < componentLines.length; idx += 1) {
+				const line = componentLines[idx]!;
+				const prefix = idx === 0 ? "  " : "    ";
+				lines.push({ text: this.#theme.fg("text", `${prefix}${line}`) });
+			}
+		}
+		if (selectedDoc.components.length > visibleComponents.length) {
+			lines.push({
+				text: this.#theme.fg(
+					"muted",
+					`  ... (+${selectedDoc.components.length - visibleComponents.length} more components)`,
+				),
+			});
+		}
+		lines.push({ text: "" });
+		lines.push({
+			text: this.#theme.fg(
+				this.#mode === "action" ? "accent" : "dim",
+				`Actions (${selectedActions.length})`,
+			),
+		});
+		for (let idx = 0; idx < selectedActions.length; idx += 1) {
+			const action = selectedActions[idx]!;
+			const active = idx === this.#actionIndex;
+			const marker = active ? (this.#mode === "action" ? "▶" : "▸") : " ";
+			const label = this.#theme.fg(active ? "text" : "muted", `${marker} ${action.label}`);
+			const chip = this.#kindChip(action);
+			const idLabel = this.#theme.fg("dim", `#${action.id}`);
+			lines.push({
+				text: `${label} ${chip} ${idLabel}`,
+				selected: active,
+				actionIndex: idx,
+			});
+		}
+		const action = this.#currentAction();
+		if (action?.description) {
+			lines.push({ text: "" });
+			lines.push({ text: this.#theme.fg("dim", `Ask: ${action.description}`) });
+		}
+		if (action?.component_id) {
+			lines.push({
+				text: this.#theme.fg("dim", `Targets component: ${action.component_id}`),
+			});
+		}
+		const commandText = action ? actionCommandText(action) : null;
+		if (commandText) {
+			lines.push({ text: "" });
+			lines.push({ text: this.#theme.fg("dim", `Prompt template: ${commandText}`) });
+		}
+		return lines;
+	}
+
+	#singleColumnLines(): PickerLine[] {
+		const lines: PickerLine[] = [];
+		const docs = this.#buildDocsLines();
+		const detail = this.#buildDetailLines();
+		for (const line of docs) {
+			lines.push(line);
+		}
+		lines.push({ text: "" });
+		for (const line of detail) {
+			lines.push(line);
+		}
+		return lines;
+	}
+
 	#handleMouseEvent(event: ParsedMouseEvent): void {
 		if (!isPrimaryMouseRelease(event)) {
 			return;
@@ -785,19 +964,25 @@ class UiActionPickerComponent implements Component {
 		) {
 			return;
 		}
-		const docIndex = this.#docHitRows.get(event.row);
-		if (docIndex !== undefined) {
-			this.#docIndex = boundedIndex(docIndex, this.#entries.length);
+		const target = this.#mouseTargets.find((candidate) => {
+			return (
+				candidate.row === event.row &&
+				event.col >= candidate.colStart &&
+				event.col <= candidate.colEnd
+			);
+		});
+		if (!target) {
+			return;
+		}
+		if (target.kind === "doc") {
+			this.#docIndex = boundedIndex(target.index, this.#entries.length);
 			this.#actionIndex = boundedIndex(this.#actionIndex, this.#currentActions().length);
 			this.#mode = "doc";
 			return;
 		}
-		const actionIndex = this.#actionHitRows.get(event.row);
-		if (actionIndex !== undefined) {
-			this.#mode = "action";
-			this.#actionIndex = boundedIndex(actionIndex, this.#currentActions().length);
-			this.#submit();
-		}
+		this.#mode = "action";
+		this.#actionIndex = boundedIndex(target.index, this.#currentActions().length);
+		this.#submit();
 	}
 
 	handleInput(data: string): void {
@@ -864,96 +1049,106 @@ class UiActionPickerComponent implements Component {
 		);
 		const panelWidth = Math.max(4, Math.min(width, panelTargetWidth));
 		const innerWidth = Math.max(1, panelWidth - 2);
-		const maxContentWidth = Math.max(8, innerWidth);
-		const content: string[] = [];
-		const docHitRowsByContentIndex = new Map<number, number>();
-		const actionHitRowsByContentIndex = new Map<number, number>();
-		const pushContent = (line: string) => {
-			content.push(truncateToWidth(line, innerWidth, "…", true));
+		const selectedDoc = this.#currentEntry().doc;
+		const selectedActions = this.#currentActions();
+		const renderLines: PickerRenderLine[] = [];
+		const pushFullLine = (line: string) => {
+			renderLines.push({
+				text: this.#theme.bg("customMessageBg", fitStyledLine(line, innerWidth)),
+			});
 		};
 
-		pushContent(this.#theme.fg("accent", short("Programmable UI", maxContentWidth)));
-		pushContent(
-			this.#theme.fg(
-				"dim",
-				short("↑/↓ move · tab switch · enter select/submit · esc cancel · click action to submit", maxContentWidth),
-			),
+		const modeLabel = this.#mode === "action" ? "action focus" : "document focus";
+		pushFullLine(
+			`${this.#theme.fg("accent", "mu_ui")}${this.#theme.fg("dim", ` · ${this.#entries.length} ${pluralize(this.#entries.length, "doc")} · ${modeLabel}`)}`,
 		);
-		pushContent("");
+		pushFullLine(this.#theme.fg("dim", short(UI_PICKER_INTERACTION_HINT, Math.max(8, innerWidth))));
+		pushFullLine(this.#theme.fg("borderMuted", "─".repeat(innerWidth)));
 
-		pushContent(
-			this.#theme.fg(
-				this.#mode === "doc" ? "accent" : "dim",
-				short(`Documents (${this.#entries.length})`, maxContentWidth),
-			),
-		);
-		for (let idx = 0; idx < this.#entries.length; idx += 1) {
-			const entry = this.#entries[idx]!;
-			const active = idx === this.#docIndex;
-			const marker = active ? (this.#mode === "doc" ? "▶" : "▸") : " ";
-			const label = `${marker} ${entry.doc.ui_id} · ${entry.doc.title}`;
-			docHitRowsByContentIndex.set(content.length, idx);
-			pushContent(this.#theme.fg(active ? "accent" : "muted", short(label, maxContentWidth)));
-		}
-
-		const selectedDoc = this.#currentEntry().doc;
-		if (selectedDoc.summary) {
-			pushContent("");
-			pushContent(this.#theme.fg("dim", short(`Summary: ${selectedDoc.summary}`, maxContentWidth)));
-		}
-
-		pushContent("");
-		pushContent(this.#theme.fg("dim", short(`Components (${selectedDoc.components.length})`, maxContentWidth)));
-		const visibleComponents = selectedDoc.components.slice(0, UI_PICKER_COMPONENTS_MAX);
-		for (const component of visibleComponents) {
-			const componentLines = pickerComponentLines(component);
-			for (let idx = 0; idx < componentLines.length; idx += 1) {
-				const line = componentLines[idx]!;
-				const prefix = idx === 0 ? "  " : "    ";
-				pushContent(this.#theme.fg("text", short(`${prefix}${line}`, maxContentWidth)));
+		const minTwoPaneWidth =
+			UI_PICKER_TWO_PANE_LEFT_MIN + UI_PICKER_TWO_PANE_RIGHT_MIN + UI_PICKER_TWO_PANE_SEPARATOR_WIDTH;
+		const useTwoPane = innerWidth >= UI_PICKER_TWO_PANE_MIN_WIDTH && innerWidth >= minTwoPaneWidth;
+		if (useTwoPane) {
+			let leftWidth = Math.max(UI_PICKER_TWO_PANE_LEFT_MIN, Math.floor(innerWidth * 0.34));
+			let rightWidth = innerWidth - leftWidth - UI_PICKER_TWO_PANE_SEPARATOR_WIDTH;
+			if (rightWidth < UI_PICKER_TWO_PANE_RIGHT_MIN) {
+				leftWidth = Math.max(UI_PICKER_TWO_PANE_LEFT_MIN, innerWidth - UI_PICKER_TWO_PANE_RIGHT_MIN - UI_PICKER_TWO_PANE_SEPARATOR_WIDTH);
+				rightWidth = innerWidth - leftWidth - UI_PICKER_TWO_PANE_SEPARATOR_WIDTH;
+			}
+			const leftLines = this.#buildDocsLines();
+			const rightLines = this.#buildDetailLines();
+			const rowCount = Math.max(leftLines.length, rightLines.length);
+			for (let idx = 0; idx < rowCount; idx += 1) {
+				const left = leftLines[idx];
+				const right = rightLines[idx];
+				const leftCell = this.#theme.bg(
+					left?.selected ? "selectedBg" : "customMessageBg",
+					fitStyledLine(left?.text ?? "", leftWidth),
+				);
+				const separator = this.#theme.bg("customMessageBg", this.#theme.fg("borderMuted", " │ "));
+				const rightCell = this.#theme.bg(
+					right?.selected ? "selectedBg" : "customMessageBg",
+					fitStyledLine(right?.text ?? "", rightWidth),
+				);
+				const row: PickerRenderLine = {
+					text: `${leftCell}${separator}${rightCell}`,
+				};
+				if (left?.docIndex !== undefined) {
+					row.docTarget = {
+						index: left.docIndex,
+						colStart: 1,
+						colEnd: leftWidth,
+					};
+				}
+				if (right?.actionIndex !== undefined) {
+					row.actionTarget = {
+						index: right.actionIndex,
+						colStart: leftWidth + UI_PICKER_TWO_PANE_SEPARATOR_WIDTH + 1,
+						colEnd: leftWidth + UI_PICKER_TWO_PANE_SEPARATOR_WIDTH + rightWidth,
+					};
+				}
+				renderLines.push(row);
+			}
+		} else {
+			const singleColumn = this.#singleColumnLines();
+			for (const line of singleColumn) {
+				const row: PickerRenderLine = {
+					text: this.#theme.bg(line.selected ? "selectedBg" : "customMessageBg", fitStyledLine(line.text, innerWidth)),
+				};
+				if (line.docIndex !== undefined) {
+					row.docTarget = {
+						index: line.docIndex,
+						colStart: 1,
+						colEnd: innerWidth,
+					};
+				}
+				if (line.actionIndex !== undefined) {
+					row.actionTarget = {
+						index: line.actionIndex,
+						colStart: 1,
+						colEnd: innerWidth,
+					};
+				}
+				renderLines.push(row);
 			}
 		}
-		if (selectedDoc.components.length > visibleComponents.length) {
-			pushContent(
-				this.#theme.fg(
-					"muted",
-					short(`  ... (+${selectedDoc.components.length - visibleComponents.length} more components)`, maxContentWidth),
+
+		pushFullLine(this.#theme.fg("borderMuted", "─".repeat(innerWidth)));
+		pushFullLine(
+			this.#theme.fg(
+				"dim",
+				short(
+					`selected ${selectedDoc.ui_id} · revision ${selectedDoc.revision.version} · ${selectedActions.length} ${pluralize(selectedActions.length, "action")}`,
+					Math.max(8, innerWidth),
 				),
-			);
-		}
-
-		const actions = this.#currentActions();
-		pushContent("");
-		pushContent(
-			this.#theme.fg(this.#mode === "action" ? "accent" : "dim", short(`Actions (${actions.length})`, maxContentWidth)),
+			),
 		);
-		for (let idx = 0; idx < actions.length; idx += 1) {
-			const action = actions[idx]!;
-			const active = idx === this.#actionIndex;
-			const marker = active ? (this.#mode === "action" ? "▶" : "▸") : " ";
-			const label = `${marker} ${action.id} · ${action.label}`;
-			actionHitRowsByContentIndex.set(content.length, idx);
-			pushContent(this.#theme.fg(active ? "accent" : "text", short(label, maxContentWidth)));
-		}
-
-		const action = this.#currentAction();
-		if (action?.description) {
-			pushContent("");
-			pushContent(this.#theme.fg("dim", short(`Ask: ${action.description}`, maxContentWidth)));
-		}
-		if (action?.component_id) {
-			pushContent(this.#theme.fg("dim", short(`Targets component: ${action.component_id}`, maxContentWidth)));
-		}
-		const commandText = action ? actionCommandText(action) : null;
-		if (commandText) {
-			pushContent("");
-			pushContent(this.#theme.fg("dim", short(`Prompt template: ${commandText}`, maxContentWidth)));
-		}
 
 		const topMarginRows = Math.max(0, UI_PICKER_PANEL_TOP_MARGIN);
 		const bottomMarginRows = Math.max(0, UI_PICKER_PANEL_BOTTOM_MARGIN);
 		const leftPadWidth = Math.max(0, Math.floor((width - panelWidth) / 2));
 		const leftPad = " ".repeat(leftPadWidth);
+		const panelColStart = leftPadWidth + 1;
 		const frame: string[] = [];
 		for (let row = 0; row < topMarginRows; row += 1) {
 			frame.push("");
@@ -967,24 +1162,29 @@ class UiActionPickerComponent implements Component {
 			`${leftPad}${this.#theme.fg("borderAccent", `╭${leftRule}`)}${this.#theme.fg("accent", title)}${this.#theme.fg("borderAccent", `${rightRule}╮`)}`,
 		);
 
-		this.#docHitRows.clear();
-		this.#actionHitRows.clear();
+		this.#mouseTargets = [];
 		const contentStartRow = frame.length + 1;
-		for (let idx = 0; idx < content.length; idx += 1) {
-			const line = content[idx] ?? "";
-			const visible = visibleWidth(line);
-			const fill = " ".repeat(Math.max(0, innerWidth - visible));
-			frame.push(
-				`${leftPad}${this.#theme.fg("border", "│")}${this.#theme.bg("customMessageBg", `${line}${fill}`)}${this.#theme.fg("border", "│")}`,
-			);
+		for (let idx = 0; idx < renderLines.length; idx += 1) {
+			const line = renderLines[idx]!;
+			frame.push(`${leftPad}${this.#theme.fg("border", "│")}${line.text}${this.#theme.fg("border", "│")}`);
 			const row = contentStartRow + idx;
-			const docIndex = docHitRowsByContentIndex.get(idx);
-			if (docIndex !== undefined) {
-				this.#docHitRows.set(row, docIndex);
+			if (line.docTarget) {
+				this.#mouseTargets.push({
+					kind: "doc",
+					index: line.docTarget.index,
+					row,
+					colStart: panelColStart + line.docTarget.colStart,
+					colEnd: panelColStart + line.docTarget.colEnd,
+				});
 			}
-			const actionIndex = actionHitRowsByContentIndex.get(idx);
-			if (actionIndex !== undefined) {
-				this.#actionHitRows.set(row, actionIndex);
+			if (line.actionTarget) {
+				this.#mouseTargets.push({
+					kind: "action",
+					index: line.actionTarget.index,
+					row,
+					colStart: panelColStart + line.actionTarget.colStart,
+					colEnd: panelColStart + line.actionTarget.colEnd,
+				});
 			}
 		}
 
@@ -994,8 +1194,8 @@ class UiActionPickerComponent implements Component {
 		}
 
 		this.#panelRowStart = topMarginRows + 1;
-		this.#panelRowEnd = this.#panelRowStart + content.length + 1;
-		this.#panelColStart = leftPadWidth + 1;
+		this.#panelRowEnd = this.#panelRowStart + renderLines.length + 1;
+		this.#panelColStart = panelColStart;
 		this.#panelColEnd = leftPadWidth + panelWidth;
 
 		return frame;
