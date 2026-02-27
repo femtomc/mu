@@ -34,9 +34,13 @@ For interactive `UiDoc` actions:
 
 - Set `action.metadata.command_text` explicitly.
 - Use callback-token transport (`mu-ui:*`) for channel action execution on Slack/Discord/Telegram/Neovim; terminal operator UI uses a local in-TUI component flow.
-- Terminal operator UI (`mu serve`) uses a fullscreen modal overlay for programmable-UI rendering (`ctrl+shift+u` / `/mu ui interact`) with responsive single-column/two-pane picker styling, selected-row highlighting, auto-prompts after agent turns when new runnable docs/actions are published, auto-opens review modals when status-profile revisions are published (queued behind runnable prompts when both arrive together), and supports mouse click selection on document/action rows when terminal mouse reporting is available.
+- Terminal operator UI (`mu serve`) uses a fullscreen modal overlay for programmable-UI rendering (`ctrl+shift+u` / `/mu ui interact`) with responsive single-column/two-pane picker styling, selected-row highlighting, auto-prompts after agent turns when new runnable docs/actions are published, and supports mouse click selection on document/action rows when terminal mouse reporting is available.
+- Status-profile docs support delivery modes via `metadata.profile.delivery`:
+  - `async` — no auto-open modal; doc revisions update the persistent `mu-ui` widget below the editor.
+  - `review` — auto-open modal review on new revisions (queued behind runnable prompts when both arrive together).
+  - If omitted for status variants, `planning|subagents|control-flow|model-routing` default to `async`; other profiles default to `review`.
 - In terminal operator UI, template placeholders are auto-filled from `action.payload` when possible; users are only prompted for unresolved values before review/submit.
-- Footer status shows `prompting` while the modal is active and `awaiting` while runnable docs are waiting for user action.
+- Footer status shows `prompting` while the modal is active, `awaiting` while runnable docs are waiting for user action, and `async <n>` when async status-profile docs are present.
 
 Actions without `metadata.command_text` are rendered as deterministic non-interactive fallback rows.
 
@@ -49,7 +53,7 @@ Actions without `metadata.command_text` are rendered as deterministic non-intera
 | Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks using encoded callback tokens (`mu-ui:*`) | If callback encoding unavailable/overflow, deterministic `Actions:` command-text lines are appended |
 | Neovim frontend | Frontend receives canonical `ui_docs` payload (default renderer is text-first) | Interactive actions include `callback_token`; status-profile actions degrade to deterministic command-text fallback (no callback token) | Missing/invalid/expired token returns deterministic rejection; user can still send command text manually |
 | Terminal API channel (`channel=terminal`) | Text-only | **Unsupported** (`ui_actions_not_implemented`) | Use Slack/Discord/Telegram/Neovim for interactive action clicks |
-| Terminal operator UI (`mu serve`) | Fullscreen in-TUI modal overlay (`ctrl+shift+u` / `/mu ui interact`) for doc browsing + action picking | Auto-prompts on newly published runnable docs/actions, auto-opens modal review on status-profile revisions (queued behind runnable prompts when both are published together), and manual reopen supports browse-only status docs plus interactive prompt submission with template autofill + review | If interactive UI is unavailable, user can still type command text manually |
+| Terminal operator UI (`mu serve`) | Fullscreen in-TUI modal overlay (`ctrl+shift+u` / `/mu ui interact`) for doc browsing + action picking, plus async status widget updates below editor | Auto-prompts on newly published runnable docs/actions; status-profile delivery mode controls behavior (`delivery=async` => passive widget updates, `delivery=review` => queued modal review behind runnable prompts); manual reopen supports browse-only status docs plus interactive prompt submission with template autofill + review | If interactive UI is unavailable, user can still type command text manually |
 
 To inspect live capability flags, query:
 
@@ -72,6 +76,10 @@ For profile-scoped status docs (`metadata.profile.id` in
 - `/mu ui status` includes status-profile counts and aggregated profile-shape warnings in tool `details`.
 - `/mu ui snapshot compact` prefers `metadata.profile.snapshot.compact` (falling back to summary/title).
 - `/mu ui snapshot multiline` prefers `metadata.profile.snapshot.multiline` and omits interactive action labels for status-profile docs, keeping status snapshots deterministic and non-interactive by default.
+- Status-profile delivery policy for terminal operator UI:
+  - `metadata.profile.delivery=async` keeps revisions passive/asynchronous (widget updates, no auto-open modal).
+  - `metadata.profile.delivery=review` keeps revisions review-gated (auto-open modal once per published revision).
+  - Omitted `delivery` defaults to `async` for `planning|subagents|control-flow|model-routing` status variants; otherwise defaults to `review`.
 - `profile.id=planning` warnings additionally check for richer planning status structure:
   - `metadata.phase`, `metadata.waiting_on_user`, `metadata.confidence`
   - key-value rows for `phase`, `waiting`, `confidence`, `next`, and `blocker`

@@ -32,6 +32,8 @@ const UI_PICKER_TWO_PANE_RIGHT_MIN = 32;
 const UI_PICKER_TWO_PANE_SEPARATOR_WIDTH = 3;
 const UI_PICKER_INTERACTION_HINT =
 	"↑/↓ move · tab switch pane · enter select/submit · esc cancel · click rows";
+const UI_ASYNC_WIDGET_DOCS_MAX = 4;
+const UI_ASYNC_WIDGET_SNAPSHOT_MAX = 96;
 const UI_ENABLE_MOUSE_TRACKING = "\x1b[?1000h\x1b[?1006h";
 const UI_DISABLE_MOUSE_TRACKING = "\x1b[?1000l\x1b[?1006l";
 const UI_INTERACT_OVERLAY_OPTIONS = {
@@ -158,7 +160,7 @@ function retainPendingPromptsForActiveDocs(state: UiState): void {
 			return false;
 		}
 		if (pending.kind === "review") {
-			return isStatusProfileStatusVariant(doc);
+			return isReviewStatusProfileStatusVariant(doc);
 		}
 		const actions = runnableActions(doc);
 		if (actions.length === 0) {
@@ -219,7 +221,9 @@ function armAutoPromptForUiDocs(state: UiState, changedUiIds: readonly string[])
 		state.promptedRevisionKeys.add(docRevisionKey(doc));
 	}
 
-	const statusCandidates = unpromptedDocs.filter((doc) => isStatusProfileStatusVariant(doc)).sort(byMostRecentRevision);
+	const statusCandidates = unpromptedDocs
+		.filter((doc) => isReviewStatusProfileStatusVariant(doc))
+		.sort(byMostRecentRevision);
 	if (statusCandidates.length > 0) {
 		const doc = statusCandidates[0]!;
 		enqueuePendingPrompt(state, { kind: "review", uiId: doc.ui_id });
@@ -289,8 +293,42 @@ function statusProfileVariant(doc: UiDoc): string {
 	return rawVariant.length > 0 ? rawVariant : "status";
 }
 
+const UI_STATUS_PROFILE_ASYNC_DEFAULT_IDS = new Set([
+	"planning",
+	"subagents",
+	"control-flow",
+	"model-routing",
+]);
+
 function isStatusProfileStatusVariant(doc: UiDoc): boolean {
 	return statusProfileId(doc) !== null && statusProfileVariant(doc) === "status";
+}
+
+function statusProfileDelivery(doc: UiDoc): "async" | "review" {
+	if (!isStatusProfileStatusVariant(doc)) {
+		return "review";
+	}
+	const profile = statusProfileMetadata(doc);
+	const rawDelivery = typeof profile?.delivery === "string" ? profile.delivery.trim().toLowerCase() : "";
+	if (rawDelivery === "async") {
+		return "async";
+	}
+	if (rawDelivery === "review") {
+		return "review";
+	}
+	const profileId = statusProfileId(doc)?.trim().toLowerCase();
+	if (profileId && UI_STATUS_PROFILE_ASYNC_DEFAULT_IDS.has(profileId)) {
+		return "async";
+	}
+	return "review";
+}
+
+function isAsyncStatusProfileStatusVariant(doc: UiDoc): boolean {
+	return isStatusProfileStatusVariant(doc) && statusProfileDelivery(doc) === "async";
+}
+
+function isReviewStatusProfileStatusVariant(doc: UiDoc): boolean {
+	return isStatusProfileStatusVariant(doc) && statusProfileDelivery(doc) === "review";
 }
 
 function statusProfileSnapshot(doc: UiDoc, format: "compact" | "multiline"): string | null {
@@ -1390,6 +1428,43 @@ function buildToolResult(opts: {
 	return result;
 }
 
+function asyncStatusWidgetLines(ctx: ExtensionContext, docs: readonly UiDoc[]): string[] | null {
+	if (!ctx.hasUI) {
+		return null;
+	}
+	const asyncDocs = docs
+		.filter((doc) => isAsyncStatusProfileStatusVariant(doc))
+		.sort((left, right) => {
+			if (left.updated_at_ms !== right.updated_at_ms) {
+				return right.updated_at_ms - left.updated_at_ms;
+			}
+			return left.ui_id.localeCompare(right.ui_id);
+		});
+	if (asyncDocs.length === 0) {
+		return null;
+	}
+	const visible = asyncDocs.slice(0, UI_ASYNC_WIDGET_DOCS_MAX);
+	const lines: string[] = [
+		ctx.ui.theme.fg("dim", `ui async status · ${asyncDocs.length} ${pluralize(asyncDocs.length, "doc")}`),
+	];
+	for (const doc of visible) {
+		const profileId = statusProfileId(doc) ?? doc.ui_id;
+		const snapshot = statusProfileSnapshot(doc, "compact") ?? doc.summary ?? `${doc.title} (${doc.revision.version})`;
+		lines.push(
+			[
+				ctx.ui.theme.fg("muted", "  •"),
+				ctx.ui.theme.fg("text", short(profileId, 24)),
+				ctx.ui.theme.fg("muted", "·"),
+				ctx.ui.theme.fg("dim", short(snapshot, UI_ASYNC_WIDGET_SNAPSHOT_MAX)),
+			].join(" "),
+		);
+	}
+	if (asyncDocs.length > visible.length) {
+		lines.push(ctx.ui.theme.fg("muted", `  ... (+${asyncDocs.length - visible.length} more)`));
+	}
+	return lines;
+}
+
 function refreshUi(ctx: ExtensionContext): void {
 	const key = sessionKey(ctx);
 	const state = ensureState(key);
@@ -1404,6 +1479,7 @@ function refreshUi(ctx: ExtensionContext): void {
 		return;
 	}
 	const awaiting = awaitingDocs(state, docs);
+	const asyncStatusDocs = docs.filter((doc) => isAsyncStatusProfileStatusVariant(doc));
 	const labels = docs.map((doc) => doc.ui_id).join(", ");
 	const readiness =
 		state.interactionDepth > 0
@@ -1411,19 +1487,27 @@ function refreshUi(ctx: ExtensionContext): void {
 			: awaiting.length > 0
 				? ctx.ui.theme.fg("accent", `awaiting ${awaiting.length}`)
 				: ctx.ui.theme.fg("dim", "ready");
-	ctx.ui.setStatus(
-		"mu-ui",
-		[
-			ctx.ui.theme.fg("dim", "ui"),
+	const statusParts: string[] = [
+		ctx.ui.theme.fg("dim", "ui"),
+		ctx.ui.theme.fg("muted", "·"),
+		ctx.ui.theme.fg("accent", `${docs.length}`),
+		ctx.ui.theme.fg("muted", "·"),
+		readiness,
+	];
+	if (asyncStatusDocs.length > 0) {
+		statusParts.push(
 			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg("accent", `${docs.length}`),
-			ctx.ui.theme.fg("muted", "·"),
-			readiness,
-			ctx.ui.theme.fg("muted", "·"),
-			ctx.ui.theme.fg("text", labels),
-		].join(" "),
-	);
-	ctx.ui.setWidget("mu-ui", undefined);
+			ctx.ui.theme.fg("dim", `async ${asyncStatusDocs.length}`),
+		);
+	}
+	statusParts.push(ctx.ui.theme.fg("muted", "·"), ctx.ui.theme.fg("text", labels));
+	ctx.ui.setStatus("mu-ui", statusParts.join(" "));
+	const widgetLines = asyncStatusWidgetLines(ctx, docs);
+	if (widgetLines && widgetLines.length > 0) {
+		ctx.ui.setWidget("mu-ui", widgetLines, { placement: "belowEditor" });
+	} else {
+		ctx.ui.setWidget("mu-ui", undefined);
+	}
 }
 
 export function uiExtension(pi: ExtensionAPI) {

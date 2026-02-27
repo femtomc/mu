@@ -849,7 +849,7 @@ describe("uiExtension", () => {
 		expect(sendUserMessageCalls).toEqual(["/answer choice=yes"]);
 	});
 
-	test("agent_end auto-opens modal for status-profile docs without submitting commands", async () => {
+	test("status-profile async docs update widget and do not auto-open modal", async () => {
 		const { api, tools, eventHandlers, sendUserMessageCalls } = createExtensionApiMock();
 		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
 
@@ -863,17 +863,17 @@ describe("uiExtension", () => {
 			throw new Error("agent_end handler missing");
 		}
 
-		const action = {
-			id: "submit",
-			label: "Submit",
-			payload: { choice: "yes" },
-			metadata: { command_text: "/answer choice={{choice}}" },
-		};
 		const statusDoc = mkUiDoc({
 			ui_id: "ui:planning",
 			title: "Planning status",
-			actions: [action],
-			metadata: { profile: { id: "planning", variant: "status" } },
+			actions: [],
+			metadata: {
+				profile: {
+					id: "planning",
+					variant: "status",
+					snapshot: { compact: "phase=investigating waiting=no" },
+				},
+			},
 		});
 		const toolCtx = createToolContext("session-status-no-auto");
 		await tool.execute("call-1", { action: "set", doc: statusDoc }, undefined, undefined, toolCtx);
@@ -889,8 +889,10 @@ describe("uiExtension", () => {
 		const statusText = capture.statusCalls[capture.statusCalls.length - 1]?.content;
 		expect(typeof statusText).toBe("string");
 		expect((statusText as string).includes("awaiting")).toBe(false);
+		expect((statusText as string).includes("async 1")).toBe(true);
 		const widgetContent = capture.widgetCalls[capture.widgetCalls.length - 1]?.content;
-		expect(widgetContent).toBeUndefined();
+		expect(Array.isArray(widgetContent)).toBe(true);
+		expect((widgetContent as string[]).some((line) => line.includes("planning"))).toBe(true);
 
 		const { ctx: commandCtx, uiCapture } = createCommandContext("session-status-no-auto", {
 			customResponses: [null],
@@ -898,20 +900,7 @@ describe("uiExtension", () => {
 		await agentEndHandler({ type: "agent_end", messages: [] }, commandCtx);
 
 		const commandCapture = uiCapture as { customCalls: Array<{ options: unknown }> };
-		expect(commandCapture.customCalls.length).toBeGreaterThan(0);
-		const firstCall = commandCapture.customCalls[0]?.options as {
-			overlay?: boolean;
-			overlayOptions?: Record<string, unknown>;
-		};
-		expect(firstCall?.overlay).toBe(true);
-		expect(firstCall?.overlayOptions).toEqual({
-			anchor: "top-left",
-			row: 0,
-			col: 0,
-			width: "100%",
-			maxHeight: "100%",
-			margin: 0,
-		});
+		expect(commandCapture.customCalls.length).toBe(0);
 		expect(sendUserMessageCalls).toEqual([]);
 	});
 
@@ -935,7 +924,7 @@ describe("uiExtension", () => {
 			actions: [],
 			revision: { id: "rev:subagents:1", version: 1 },
 			updated_at_ms: 100,
-			metadata: { profile: { id: "subagents", variant: "status" } },
+			metadata: { profile: { id: "subagents", variant: "status", delivery: "review" } },
 		});
 		const toolCtx = createToolContext("session-status-revision");
 		await tool.execute("call-1", { action: "set", doc: rev1 }, undefined, undefined, toolCtx);
@@ -954,7 +943,7 @@ describe("uiExtension", () => {
 			actions: [],
 			revision: { id: "rev:subagents:2", version: 2 },
 			updated_at_ms: 200,
-			metadata: { profile: { id: "subagents", variant: "status" } },
+			metadata: { profile: { id: "subagents", variant: "status", delivery: "review" } },
 		});
 		await tool.execute("call-2", { action: "set", doc: rev2 }, undefined, undefined, toolCtx);
 
@@ -996,7 +985,7 @@ describe("uiExtension", () => {
 			actions: [],
 			revision: { id: "rev:queue:status:1", version: 1 },
 			updated_at_ms: 100,
-			metadata: { profile: { id: "subagents", variant: "status" } },
+			metadata: { profile: { id: "subagents", variant: "status", delivery: "review" } },
 		});
 		const toolCtx = createToolContext("session-auto-queue");
 		await tool.execute(
