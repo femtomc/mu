@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-control-plane",
-	"version": "26.2.115",
+	"version": "26.2.116",
 	"description": "Operator-first messaging integration runtime for mu with idempotency and delivery.",
 	"keywords": [
 		"mu",
