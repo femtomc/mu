@@ -18,7 +18,10 @@ const UI_PICKER_LIST_ITEMS_MAX = 4;
 const UI_PICKER_KEYVALUE_ROWS_MAX = 4;
 const UI_SESSION_KEY_FALLBACK = "__mu_ui_active_session__";
 const UI_PROMPT_PREVIEW_MAX = 160;
-const UI_INTERACT_SHORTCUT = "ctrl+shift+u";
+const UI_INTERACT_SHORTCUT_PRIMARY = "ctrl+shift+u";
+const UI_INTERACT_SHORTCUT_FALLBACK = "alt+u";
+const UI_INTERACT_SHORTCUTS = [UI_INTERACT_SHORTCUT_PRIMARY, UI_INTERACT_SHORTCUT_FALLBACK] as const;
+const UI_INTERACT_SHORTCUT_HINT = `${UI_INTERACT_SHORTCUT_PRIMARY} or ${UI_INTERACT_SHORTCUT_FALLBACK}`;
 const UI_PICKER_PANEL_MIN_WIDTH = 56;
 const UI_PICKER_PANEL_MAX_WIDTH = 118;
 const UI_PICKER_PANEL_WIDTH_RATIO = 0.9;
@@ -1651,15 +1654,17 @@ export function uiExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerShortcut(UI_INTERACT_SHORTCUT, {
-		description: "Open programmable UI modal and optionally submit prompt",
-		handler: async (ctx) => {
-			const key = sessionKey(ctx);
-			const state = ensureState(key);
-			await runUiActionFromDoc(ctx, state);
-			refreshUi(ctx);
-		},
-	});
+	for (const shortcut of UI_INTERACT_SHORTCUTS) {
+		pi.registerShortcut(shortcut, {
+			description: "Open programmable UI modal and optionally submit prompt",
+			handler: async (ctx) => {
+				const key = sessionKey(ctx);
+				const state = ensureState(key);
+				await runUiActionFromDoc(ctx, state);
+				refreshUi(ctx);
+			},
+		});
+	}
 
 	pi.registerTool({
 		name: "mu_ui",
@@ -1714,7 +1719,7 @@ export function uiExtension(pi: ExtensionAPI) {
 		}
 		if (pending.kind === "action") {
 			ctx.ui.notify(
-				`Agent requested input via ${pending.uiId}. Submit now or press ${UI_INTERACT_SHORTCUT} later.`,
+				`Agent requested input via ${pending.uiId}. Submit now or press ${UI_INTERACT_SHORTCUT_HINT} later.`,
 				"info",
 			);
 		}

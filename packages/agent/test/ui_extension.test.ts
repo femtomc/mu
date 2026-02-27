@@ -223,13 +223,14 @@ describe("uiExtension", () => {
 		resetMuCommandDispatcher();
 	});
 
-	test("registers mu_ui tool and /mu ui command with local interaction shortcut", () => {
+	test("registers mu_ui tool, /mu ui command, and interaction shortcuts", () => {
 		const { api, tools, commands, shortcuts } = createExtensionApiMock();
 		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
 
 		expect(tools.has("mu_ui")).toBe(true);
 		expect(commands.has("mu")).toBe(true);
 		expect(shortcuts.has("ctrl+shift+u")).toBe(true);
+		expect(shortcuts.has("alt+u")).toBe(true);
 	});
 
 	test("mu_ui tool stores docs and reports status", async () => {

@@ -88,7 +88,7 @@ Default operator UI theme is `mu-gruvbox-dark`.
 - `/mu brand on|off|toggle` — enable/disable UI branding
 - `/mu ui ...` — inspect interactive `UiDoc`s (`status`/`snapshot`)
 - `/mu help` — dispatcher catalog of registered `/mu` subcommands
-- `ctrl+shift+u` — reopen local programmable-UI interaction flow
+- `ctrl+shift+u` (primary) or `alt+u` (fallback) — reopen local programmable-UI interaction flow
 
 ## Tooling model (CLI-first)
 

@@ -34,7 +34,7 @@ For interactive `UiDoc` actions:
 
 - Set `action.metadata.command_text` explicitly.
 - Use callback-token transport (`mu-ui:*`) for channel action execution on Slack/Discord/Telegram/Neovim; terminal operator UI uses a local in-TUI component flow.
-- Terminal operator UI (`mu serve`) uses a fullscreen modal overlay for programmable-UI rendering (`ctrl+shift+u` / `/mu ui interact`) with responsive single-column/two-pane picker styling, selected-row highlighting, auto-prompts after agent turns when new runnable docs/actions are published, and supports mouse click selection on document/action rows when terminal mouse reporting is available.
+- Terminal operator UI (`mu serve`) uses a fullscreen modal overlay for programmable-UI rendering (`ctrl+shift+u` or `alt+u`, and `/mu ui interact`) with responsive single-column/two-pane picker styling, selected-row highlighting, auto-prompts after agent turns when new runnable docs/actions are published, and supports mouse click selection on document/action rows when terminal mouse reporting is available.
 - Status-profile docs support delivery modes via `metadata.profile.delivery`:
   - `async` — no auto-open modal; doc revisions update the persistent `mu-ui` widget below the editor.
   - `review` — auto-open modal review on new revisions (queued behind runnable prompts when both arrive together).
@@ -53,7 +53,7 @@ Actions without `metadata.command_text` are rendered as deterministic non-intera
 | Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks using encoded callback tokens (`mu-ui:*`) | If callback encoding unavailable/overflow, deterministic `Actions:` command-text lines are appended |
 | Neovim frontend | Frontend receives canonical `ui_docs` payload (default renderer is text-first) | Interactive actions include `callback_token`; status-profile actions degrade to deterministic command-text fallback (no callback token) | Missing/invalid/expired token returns deterministic rejection; user can still send command text manually |
 | Terminal API channel (`channel=terminal`) | Text-only | **Unsupported** (`ui_actions_not_implemented`) | Use Slack/Discord/Telegram/Neovim for interactive action clicks |
-| Terminal operator UI (`mu serve`) | Fullscreen in-TUI modal overlay (`ctrl+shift+u` / `/mu ui interact`) for doc browsing + action picking, plus async status widget updates below editor | Auto-prompts on newly published runnable docs/actions; status-profile delivery mode controls behavior (`delivery=async` => passive widget updates, `delivery=review` => queued modal review behind runnable prompts); manual reopen supports browse-only status docs plus interactive prompt submission with template autofill + review | If interactive UI is unavailable, user can still type command text manually |
+| Terminal operator UI (`mu serve`) | Fullscreen in-TUI modal overlay (`ctrl+shift+u` or `alt+u`, and `/mu ui interact`) for doc browsing + action picking, plus async status widget updates below editor | Auto-prompts on newly published runnable docs/actions; status-profile delivery mode controls behavior (`delivery=async` => passive widget updates, `delivery=review` => queued modal review behind runnable prompts); manual reopen supports browse-only status docs plus interactive prompt submission with template autofill + review | If interactive UI is unavailable, user can still type command text manually |
 
 To inspect live capability flags, query:
 
@@ -101,4 +101,5 @@ Use these when diagnosing UI state:
 
 - `/mu ui status`
 - `/mu ui snapshot [compact|multiline]`
-- `ctrl+shift+u` (terminal operator UI): open/reopen local programmable-UI modal overlay (browse docs, pick actions, submit prompts)
+- `ctrl+shift+u` (primary) or `alt+u` (fallback, tmux-friendly) in terminal operator UI: open/reopen local programmable-UI modal overlay (browse docs, pick actions, submit prompts)
+  - Note: many tmux/remote terminal paths drop `shift` on Ctrl+letter chords unless Kitty keyboard protocol is preserved end-to-end; use `alt+u` if `ctrl+shift+u` does not register.
