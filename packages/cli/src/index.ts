@@ -139,7 +139,6 @@ function buildServeDeps(ctx: CliCtx): ServeDeps {
 
 async function runServeLifecycle(ctx: CliCtx, opts: ServeLifecycleOptions): Promise<RunResult> {
 	return await runServeLifecycleRuntime(ctx, opts, {
-		ensureStoreInitialized,
 		readServeOperatorDefaults,
 		defaultOperatorSessionStart,
 		buildServeDeps,

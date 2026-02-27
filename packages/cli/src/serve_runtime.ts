@@ -84,7 +84,6 @@ type BuildServeDepsOptions<Ctx extends { repoRoot: string; serveDeps?: Partial<S
 };
 
 type RunServeLifecycleDeps<Ctx extends { repoRoot: string; io?: ServeRuntimeIO; paths: unknown }> = {
-	ensureStoreInitialized: (ctx: Pick<Ctx, "paths">) => Promise<void>;
 	readServeOperatorDefaults: (repoRoot: string) => Promise<{ provider?: string; model?: string; thinking?: string }>;
 	defaultOperatorSessionStart: (repoRoot: string) => OperatorSessionStartOpts;
 	buildServeDeps: (ctx: Ctx) => ServeDeps;
@@ -257,7 +256,9 @@ export async function runServeLifecycle<Ctx extends { repoRoot: string; io?: Ser
 	opts: ServeLifecycleOptions,
 	deps: RunServeLifecycleDeps<Ctx>,
 ): Promise<ServeRuntimeRunResult> {
-	await deps.ensureStoreInitialized(ctx);
+	// The top-level CLI context initialization already calls ensureStoreInitialized().
+	// Avoid a second pass here so `mu serve` / `mu session` startup does not duplicate
+	// store + bundled-skill bootstrap I/O on the same process invocation.
 	const operatorDefaults = await deps.readServeOperatorDefaults(ctx.repoRoot);
 	const operatorSession = opts.operatorSession ?? deps.defaultOperatorSessionStart(ctx.repoRoot);
 	const shouldApplyWorkspaceDefaults = operatorSession.mode !== "open";
