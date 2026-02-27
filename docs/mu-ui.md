@@ -34,7 +34,7 @@ For interactive `UiDoc` actions:
 
 - Set `action.metadata.command_text` explicitly.
 - Use callback-token transport (`mu-ui:*`) for channel action execution on Slack/Discord/Telegram/Neovim; terminal operator UI uses a local in-TUI component flow.
-- Terminal operator UI (`mu serve`) uses a fullscreen modal overlay for programmable-UI rendering (`ctrl+shift+u` / `/mu ui interact`), auto-prompts after agent turns when new runnable docs/actions are published, and auto-opens review modals when status-profile revisions are published (queued behind runnable prompts when both arrive together).
+- Terminal operator UI (`mu serve`) uses a fullscreen modal overlay for programmable-UI rendering (`ctrl+shift+u` / `/mu ui interact`), auto-prompts after agent turns when new runnable docs/actions are published, auto-opens review modals when status-profile revisions are published (queued behind runnable prompts when both arrive together), and supports mouse click selection on action rows when terminal mouse reporting is available.
 - In terminal operator UI, template placeholders are auto-filled from `action.payload` when possible; users are only prompted for unresolved values before review/submit.
 - Footer status shows `prompting` while the modal is active and `awaiting` while runnable docs are waiting for user action.
 

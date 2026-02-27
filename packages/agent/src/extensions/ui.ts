@@ -9,7 +9,7 @@ import {
 } from "@femtomc/mu-core";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { type Component, matchesKey } from "@mariozechner/pi-tui";
+import { type Component, matchesKey, truncateToWidth, type TUI, visibleWidth } from "@mariozechner/pi-tui";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 
 const UI_DISPLAY_DOCS_MAX = 16;
@@ -19,6 +19,13 @@ const UI_PICKER_KEYVALUE_ROWS_MAX = 4;
 const UI_SESSION_KEY_FALLBACK = "__mu_ui_active_session__";
 const UI_PROMPT_PREVIEW_MAX = 160;
 const UI_INTERACT_SHORTCUT = "ctrl+shift+u";
+const UI_PICKER_PANEL_MIN_WIDTH = 56;
+const UI_PICKER_PANEL_MAX_WIDTH = 118;
+const UI_PICKER_PANEL_WIDTH_RATIO = 0.9;
+const UI_PICKER_PANEL_TOP_MARGIN = 1;
+const UI_PICKER_PANEL_BOTTOM_MARGIN = 1;
+const UI_ENABLE_MOUSE_TRACKING = "\x1b[?1000h\x1b[?1006h";
+const UI_DISABLE_MOUSE_TRACKING = "\x1b[?1000l\x1b[?1006l";
 const UI_INTERACT_OVERLAY_OPTIONS = {
 	anchor: "top-left",
 	row: 0,
@@ -591,6 +598,43 @@ function boundedIndex(index: number, length: number): number {
 	return index;
 }
 
+type ParsedMouseEvent = {
+	buttonCode: number;
+	col: number;
+	row: number;
+	release: boolean;
+};
+
+function parseSgrMouseEvent(data: string): ParsedMouseEvent | null {
+	const match = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
+	if (!match) {
+		return null;
+	}
+	const buttonCode = Number.parseInt(match[1] ?? "", 10);
+	const col = Number.parseInt(match[2] ?? "", 10);
+	const row = Number.parseInt(match[3] ?? "", 10);
+	if (!Number.isInteger(buttonCode) || !Number.isInteger(col) || !Number.isInteger(row)) {
+		return null;
+	}
+	return {
+		buttonCode,
+		col,
+		row,
+		release: match[4] === "m",
+	};
+}
+
+function isPrimaryMouseRelease(event: ParsedMouseEvent): boolean {
+	if (!event.release) {
+		return false;
+	}
+	if (event.buttonCode >= 64) {
+		return false;
+	}
+	const primaryButton = event.buttonCode & 0b11;
+	return primaryButton === 0;
+}
+
 function pickerComponentLines(component: UiComponent): string[] {
 	switch (component.kind) {
 		case "text":
@@ -630,20 +674,30 @@ function pickerComponentLines(component: UiComponent): string[] {
 }
 
 class UiActionPickerComponent implements Component {
+	readonly #tui: TUI;
 	readonly #entries: UiActionPickerEntry[];
 	readonly #theme: ThemeShape;
 	readonly #done: (result: UiActionSelection | null) => void;
 	#mode: "doc" | "action" = "doc";
 	#docIndex = 0;
 	#actionIndex = 0;
+	#mouseEnabled = false;
+	#panelRowStart = 1;
+	#panelRowEnd = 1;
+	#panelColStart = 1;
+	#panelColEnd = 1;
+	#docHitRows = new Map<number, number>();
+	#actionHitRows = new Map<number, number>();
 
 	constructor(opts: {
+		tui: TUI;
 		entries: UiActionPickerEntry[];
 		theme: ThemeShape;
 		done: (result: UiActionSelection | null) => void;
 		initialUiId?: string;
 		initialActionId?: string;
 	}) {
+		this.#tui = opts.tui;
 		this.#entries = opts.entries;
 		this.#theme = opts.theme;
 		this.#done = opts.done;
@@ -661,6 +715,23 @@ class UiActionPickerComponent implements Component {
 				this.#mode = "action";
 			}
 		}
+		this.#enableMouseTracking();
+	}
+
+	#enableMouseTracking(): void {
+		if (this.#mouseEnabled) {
+			return;
+		}
+		this.#tui.terminal.write(UI_ENABLE_MOUSE_TRACKING);
+		this.#mouseEnabled = true;
+	}
+
+	#disableMouseTracking(): void {
+		if (!this.#mouseEnabled) {
+			return;
+		}
+		this.#tui.terminal.write(UI_DISABLE_MOUSE_TRACKING);
+		this.#mouseEnabled = false;
 	}
 
 	#currentEntry(): UiActionPickerEntry {
@@ -702,7 +773,39 @@ class UiActionPickerComponent implements Component {
 		});
 	}
 
+	#handleMouseEvent(event: ParsedMouseEvent): void {
+		if (!isPrimaryMouseRelease(event)) {
+			return;
+		}
+		if (
+			event.row < this.#panelRowStart ||
+			event.row > this.#panelRowEnd ||
+			event.col < this.#panelColStart ||
+			event.col > this.#panelColEnd
+		) {
+			return;
+		}
+		const docIndex = this.#docHitRows.get(event.row);
+		if (docIndex !== undefined) {
+			this.#docIndex = boundedIndex(docIndex, this.#entries.length);
+			this.#actionIndex = boundedIndex(this.#actionIndex, this.#currentActions().length);
+			this.#mode = "doc";
+			return;
+		}
+		const actionIndex = this.#actionHitRows.get(event.row);
+		if (actionIndex !== undefined) {
+			this.#mode = "action";
+			this.#actionIndex = boundedIndex(actionIndex, this.#currentActions().length);
+			this.#submit();
+		}
+	}
+
 	handleInput(data: string): void {
+		const mouse = parseSgrMouseEvent(data);
+		if (mouse) {
+			this.#handleMouseEvent(mouse);
+			return;
+		}
 		if (matchesKey(data, "escape")) {
 			this.#done(null);
 			return;
@@ -750,17 +853,38 @@ class UiActionPickerComponent implements Component {
 		// No cached state.
 	}
 
-	render(width: number): string[] {
-		const maxWidth = Math.max(24, width - 2);
-		const lines: string[] = [];
-		lines.push(this.#theme.fg("accent", short("Programmable UI", maxWidth)));
-		lines.push(this.#theme.fg("dim", short("↑/↓ move · tab switch · enter select/submit · esc cancel", maxWidth)));
-		lines.push("");
+	dispose(): void {
+		this.#disableMouseTracking();
+	}
 
-		lines.push(
+	render(width: number): string[] {
+		const panelTargetWidth = Math.max(
+			UI_PICKER_PANEL_MIN_WIDTH,
+			Math.min(UI_PICKER_PANEL_MAX_WIDTH, Math.floor(width * UI_PICKER_PANEL_WIDTH_RATIO)),
+		);
+		const panelWidth = Math.max(4, Math.min(width, panelTargetWidth));
+		const innerWidth = Math.max(1, panelWidth - 2);
+		const maxContentWidth = Math.max(8, innerWidth);
+		const content: string[] = [];
+		const docHitRowsByContentIndex = new Map<number, number>();
+		const actionHitRowsByContentIndex = new Map<number, number>();
+		const pushContent = (line: string) => {
+			content.push(truncateToWidth(line, innerWidth, "…", true));
+		};
+
+		pushContent(this.#theme.fg("accent", short("Programmable UI", maxContentWidth)));
+		pushContent(
+			this.#theme.fg(
+				"dim",
+				short("↑/↓ move · tab switch · enter select/submit · esc cancel · click action to submit", maxContentWidth),
+			),
+		);
+		pushContent("");
+
+		pushContent(
 			this.#theme.fg(
 				this.#mode === "doc" ? "accent" : "dim",
-				short(`Documents (${this.#entries.length})`, maxWidth),
+				short(`Documents (${this.#entries.length})`, maxContentWidth),
 			),
 		);
 		for (let idx = 0; idx < this.#entries.length; idx += 1) {
@@ -768,62 +892,113 @@ class UiActionPickerComponent implements Component {
 			const active = idx === this.#docIndex;
 			const marker = active ? (this.#mode === "doc" ? "▶" : "▸") : " ";
 			const label = `${marker} ${entry.doc.ui_id} · ${entry.doc.title}`;
-			lines.push(this.#theme.fg(active ? "accent" : "muted", short(label, maxWidth)));
+			docHitRowsByContentIndex.set(content.length, idx);
+			pushContent(this.#theme.fg(active ? "accent" : "muted", short(label, maxContentWidth)));
 		}
 
 		const selectedDoc = this.#currentEntry().doc;
 		if (selectedDoc.summary) {
-			lines.push("");
-			lines.push(this.#theme.fg("dim", short(`Summary: ${selectedDoc.summary}`, maxWidth)));
+			pushContent("");
+			pushContent(this.#theme.fg("dim", short(`Summary: ${selectedDoc.summary}`, maxContentWidth)));
 		}
 
-		lines.push("");
-		lines.push(this.#theme.fg("dim", short(`Components (${selectedDoc.components.length})`, maxWidth)));
+		pushContent("");
+		pushContent(this.#theme.fg("dim", short(`Components (${selectedDoc.components.length})`, maxContentWidth)));
 		const visibleComponents = selectedDoc.components.slice(0, UI_PICKER_COMPONENTS_MAX);
 		for (const component of visibleComponents) {
 			const componentLines = pickerComponentLines(component);
 			for (let idx = 0; idx < componentLines.length; idx += 1) {
 				const line = componentLines[idx]!;
 				const prefix = idx === 0 ? "  " : "    ";
-				lines.push(this.#theme.fg("text", short(`${prefix}${line}`, maxWidth)));
+				pushContent(this.#theme.fg("text", short(`${prefix}${line}`, maxContentWidth)));
 			}
 		}
 		if (selectedDoc.components.length > visibleComponents.length) {
-			lines.push(
+			pushContent(
 				this.#theme.fg(
 					"muted",
-					short(`  ... (+${selectedDoc.components.length - visibleComponents.length} more components)`, maxWidth),
+					short(`  ... (+${selectedDoc.components.length - visibleComponents.length} more components)`, maxContentWidth),
 				),
 			);
 		}
 
 		const actions = this.#currentActions();
-		lines.push("");
-		lines.push(
-			this.#theme.fg(this.#mode === "action" ? "accent" : "dim", short(`Actions (${actions.length})`, maxWidth)),
+		pushContent("");
+		pushContent(
+			this.#theme.fg(this.#mode === "action" ? "accent" : "dim", short(`Actions (${actions.length})`, maxContentWidth)),
 		);
 		for (let idx = 0; idx < actions.length; idx += 1) {
 			const action = actions[idx]!;
 			const active = idx === this.#actionIndex;
 			const marker = active ? (this.#mode === "action" ? "▶" : "▸") : " ";
 			const label = `${marker} ${action.id} · ${action.label}`;
-			lines.push(this.#theme.fg(active ? "accent" : "text", short(label, maxWidth)));
+			actionHitRowsByContentIndex.set(content.length, idx);
+			pushContent(this.#theme.fg(active ? "accent" : "text", short(label, maxContentWidth)));
 		}
 
 		const action = this.#currentAction();
 		if (action?.description) {
-			lines.push("");
-			lines.push(this.#theme.fg("dim", short(`Ask: ${action.description}`, maxWidth)));
+			pushContent("");
+			pushContent(this.#theme.fg("dim", short(`Ask: ${action.description}`, maxContentWidth)));
 		}
 		if (action?.component_id) {
-			lines.push(this.#theme.fg("dim", short(`Targets component: ${action.component_id}`, maxWidth)));
+			pushContent(this.#theme.fg("dim", short(`Targets component: ${action.component_id}`, maxContentWidth)));
 		}
 		const commandText = action ? actionCommandText(action) : null;
 		if (commandText) {
-			lines.push("");
-			lines.push(this.#theme.fg("dim", short(`Prompt template: ${commandText}`, maxWidth)));
+			pushContent("");
+			pushContent(this.#theme.fg("dim", short(`Prompt template: ${commandText}`, maxContentWidth)));
 		}
-		return lines;
+
+		const topMarginRows = Math.max(0, UI_PICKER_PANEL_TOP_MARGIN);
+		const bottomMarginRows = Math.max(0, UI_PICKER_PANEL_BOTTOM_MARGIN);
+		const leftPadWidth = Math.max(0, Math.floor((width - panelWidth) / 2));
+		const leftPad = " ".repeat(leftPadWidth);
+		const frame: string[] = [];
+		for (let row = 0; row < topMarginRows; row += 1) {
+			frame.push("");
+		}
+
+		const title = " mu_ui ";
+		const titleWidth = Math.min(innerWidth, visibleWidth(title));
+		const leftRule = "─".repeat(Math.max(0, Math.floor((innerWidth - titleWidth) / 2)));
+		const rightRule = "─".repeat(Math.max(0, innerWidth - titleWidth - leftRule.length));
+		frame.push(
+			`${leftPad}${this.#theme.fg("borderAccent", `╭${leftRule}`)}${this.#theme.fg("accent", title)}${this.#theme.fg("borderAccent", `${rightRule}╮`)}`,
+		);
+
+		this.#docHitRows.clear();
+		this.#actionHitRows.clear();
+		const contentStartRow = frame.length + 1;
+		for (let idx = 0; idx < content.length; idx += 1) {
+			const line = content[idx] ?? "";
+			const visible = visibleWidth(line);
+			const fill = " ".repeat(Math.max(0, innerWidth - visible));
+			frame.push(
+				`${leftPad}${this.#theme.fg("border", "│")}${this.#theme.bg("customMessageBg", `${line}${fill}`)}${this.#theme.fg("border", "│")}`,
+			);
+			const row = contentStartRow + idx;
+			const docIndex = docHitRowsByContentIndex.get(idx);
+			if (docIndex !== undefined) {
+				this.#docHitRows.set(row, docIndex);
+			}
+			const actionIndex = actionHitRowsByContentIndex.get(idx);
+			if (actionIndex !== undefined) {
+				this.#actionHitRows.set(row, actionIndex);
+			}
+		}
+
+		frame.push(`${leftPad}${this.#theme.fg("borderAccent", `╰${"─".repeat(innerWidth)}╯`)}`);
+		for (let row = 0; row < bottomMarginRows; row += 1) {
+			frame.push("");
+		}
+
+		this.#panelRowStart = topMarginRows + 1;
+		this.#panelRowEnd = this.#panelRowStart + content.length + 1;
+		this.#panelColStart = leftPadWidth + 1;
+		this.#panelColEnd = leftPadWidth + panelWidth;
+
+		return frame;
 	}
 }
 
@@ -834,8 +1009,9 @@ async function pickUiActionInteractively(opts: {
 	actionId?: string;
 }): Promise<UiActionSelection | null> {
 	const selected = await opts.ctx.ui.custom<UiActionSelection | null>(
-		(_tui, theme, _keybindings, done) =>
+		(tui, theme, _keybindings, done) =>
 			new UiActionPickerComponent({
+				tui,
 				entries: opts.entries,
 				theme: theme as ThemeShape,
 				done,
