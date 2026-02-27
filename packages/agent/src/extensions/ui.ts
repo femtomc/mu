@@ -13,9 +13,6 @@ import { type Component, matchesKey } from "@mariozechner/pi-tui";
 import { registerMuSubcommand } from "./mu-command-dispatcher.js";
 
 const UI_DISPLAY_DOCS_MAX = 16;
-const UI_WIDGET_COMPONENTS_MAX = 6;
-const UI_WIDGET_ACTIONS_MAX = 4;
-const UI_WIDGET_COMPONENT_DETAILS_MAX = 3;
 const UI_PICKER_COMPONENTS_MAX = 8;
 const UI_PICKER_LIST_ITEMS_MAX = 4;
 const UI_PICKER_KEYVALUE_ROWS_MAX = 4;
@@ -42,13 +39,14 @@ type UiToolParams = {
 };
 
 type UiAutoPromptRequest = {
+	kind: "action" | "review";
 	uiId: string;
 	actionId?: string;
 };
 
 type UiState = {
 	docsById: Map<string, UiDoc>;
-	pendingPrompt: UiAutoPromptRequest | null;
+	pendingPrompts: UiAutoPromptRequest[];
 	promptedRevisionKeys: Set<string>;
 	awaitingUiIds: Set<string>;
 	interactionDepth: number;
@@ -65,7 +63,7 @@ const UI_STATE_TTL_MS = 30 * 60 * 1000; // keep session state for 30 minutes aft
 function createState(): UiState {
 	return {
 		docsById: new Map(),
-		pendingPrompt: null,
+		pendingPrompts: [],
 		promptedRevisionKeys: new Set(),
 		awaitingUiIds: new Set(),
 		interactionDepth: 0,
@@ -138,6 +136,43 @@ function retainAwaitingUiIdsForActiveDocs(state: UiState): void {
 	}
 }
 
+function retainPendingPromptsForActiveDocs(state: UiState): void {
+	state.pendingPrompts = state.pendingPrompts.filter((pending) => {
+		const doc = state.docsById.get(pending.uiId);
+		if (!doc) {
+			return false;
+		}
+		if (pending.kind === "review") {
+			return isStatusProfileStatusVariant(doc);
+		}
+		const actions = runnableActions(doc);
+		if (actions.length === 0) {
+			return false;
+		}
+		if (!pending.actionId) {
+			return true;
+		}
+		return actions.some((action) => action.id === pending.actionId);
+	});
+}
+
+function removePendingPromptsForUiId(state: UiState, uiId: string): void {
+	state.pendingPrompts = state.pendingPrompts.filter((pending) => pending.uiId !== uiId);
+}
+
+function enqueuePendingPrompt(state: UiState, pending: UiAutoPromptRequest): void {
+	const duplicate = state.pendingPrompts.some((existing) => {
+		return (
+			existing.kind === pending.kind &&
+			existing.uiId === pending.uiId &&
+			existing.actionId === pending.actionId
+		);
+	});
+	if (!duplicate) {
+		state.pendingPrompts.push(pending);
+	}
+}
+
 function armAutoPromptForUiDocs(state: UiState, changedUiIds: readonly string[]): void {
 	if (changedUiIds.length === 0) {
 		return;
@@ -149,26 +184,32 @@ function armAutoPromptForUiDocs(state: UiState, changedUiIds: readonly string[])
 			changedDocs.push(doc);
 		}
 	}
-	const candidates = changedDocs.filter((doc) => {
-		if (runnableActions(doc).length === 0) {
-			return false;
-		}
-		return !state.promptedRevisionKeys.has(docRevisionKey(doc));
-	});
-	if (candidates.length === 0) {
+	const unpromptedDocs = changedDocs.filter((doc) => !state.promptedRevisionKeys.has(docRevisionKey(doc)));
+	if (unpromptedDocs.length === 0) {
 		return;
 	}
-	candidates.sort((left, right) => {
+	const byMostRecentRevision = (left: UiDoc, right: UiDoc): number => {
 		if (left.updated_at_ms !== right.updated_at_ms) {
 			return right.updated_at_ms - left.updated_at_ms;
 		}
 		return left.ui_id.localeCompare(right.ui_id);
-	});
-	const doc = candidates[0]!;
-	const actions = runnableActions(doc);
-	const actionId = actions.length === 1 ? actions[0]!.id : undefined;
-	state.pendingPrompt = { uiId: doc.ui_id, actionId };
-	state.promptedRevisionKeys.add(docRevisionKey(doc));
+	};
+
+	const runnableCandidates = unpromptedDocs.filter((doc) => runnableActions(doc).length > 0).sort(byMostRecentRevision);
+	if (runnableCandidates.length > 0) {
+		const doc = runnableCandidates[0]!;
+		const actions = runnableActions(doc);
+		const actionId = actions.length === 1 ? actions[0]!.id : undefined;
+		enqueuePendingPrompt(state, { kind: "action", uiId: doc.ui_id, actionId });
+		state.promptedRevisionKeys.add(docRevisionKey(doc));
+	}
+
+	const statusCandidates = unpromptedDocs.filter((doc) => isStatusProfileStatusVariant(doc)).sort(byMostRecentRevision);
+	if (statusCandidates.length > 0) {
+		const doc = statusCandidates[0]!;
+		enqueuePendingPrompt(state, { kind: "review", uiId: doc.ui_id });
+		state.promptedRevisionKeys.add(docRevisionKey(doc));
+	}
 }
 
 function preferredDocForState(state: UiState, candidate: UiDoc): UiDoc {
@@ -553,9 +594,11 @@ function boundedIndex(index: number, length: number): number {
 function pickerComponentLines(component: UiComponent): string[] {
 	switch (component.kind) {
 		case "text":
-			return [`text · ${component.text}`];
+			return [component.text];
 		case "list": {
-			const lines = [`list${component.title ? ` · ${component.title}` : ""}`];
+			const title = component.title?.trim();
+			const prefix = title && title.length > 0 ? `${title} · ` : "";
+			const lines = [`${prefix}${component.items.length} item(s)`];
 			const visible = component.items.slice(0, UI_PICKER_LIST_ITEMS_MAX);
 			for (const item of visible) {
 				const detail = item.detail ? ` — ${item.detail}` : "";
@@ -567,7 +610,9 @@ function pickerComponentLines(component: UiComponent): string[] {
 			return lines;
 		}
 		case "key_value": {
-			const lines = [`key_value${component.title ? ` · ${component.title}` : ""}`];
+			const title = component.title?.trim();
+			const prefix = title && title.length > 0 ? `${title} · ` : "";
+			const lines = [`${prefix}${component.rows.length} row(s)`];
 			const visible = component.rows.slice(0, UI_PICKER_KEYVALUE_ROWS_MAX);
 			for (const row of visible) {
 				lines.push(`${row.key}: ${row.value}`);
@@ -578,7 +623,7 @@ function pickerComponentLines(component: UiComponent): string[] {
 			return lines;
 		}
 		case "divider":
-			return ["divider"];
+			return ["—"];
 		default:
 			return ["component"];
 	}
@@ -817,6 +862,7 @@ function applyUiAction(
 } {
 	retainPromptedRevisionKeysForActiveDocs(state);
 	retainAwaitingUiIdsForActiveDocs(state);
+	retainPendingPromptsForActiveDocs(state);
 	const docs = activeDocs(state);
 	const awaitingCount = awaitingDocs(state, docs).length;
 	switch (params.action) {
@@ -858,6 +904,7 @@ function applyUiAction(
 			}
 			retainPromptedRevisionKeysForActiveDocs(state);
 			retainAwaitingUiIdsForActiveDocs(state);
+			retainPendingPromptsForActiveDocs(state);
 			return {
 				ok: true,
 				action: params.action,
@@ -881,6 +928,7 @@ function applyUiAction(
 			}
 			retainPromptedRevisionKeysForActiveDocs(state);
 			retainAwaitingUiIdsForActiveDocs(state);
+			retainPendingPromptsForActiveDocs(state);
 			return {
 				ok: true,
 				action: "replace",
@@ -900,17 +948,16 @@ function applyUiAction(
 			if (!state.docsById.delete(uiId)) {
 				return { ok: false, action: "remove", message: `UI doc not found: ${uiId}` };
 			}
-			if (state.pendingPrompt?.uiId === uiId) {
-				state.pendingPrompt = null;
-			}
+			removePendingPromptsForUiId(state, uiId);
 			state.awaitingUiIds.delete(uiId);
 			retainPromptedRevisionKeysForActiveDocs(state);
 			retainAwaitingUiIdsForActiveDocs(state);
+			retainPendingPromptsForActiveDocs(state);
 			return { ok: true, action: "remove", message: `UI doc removed: ${uiId}` };
 		}
 		case "clear":
 			state.docsById.clear();
-			state.pendingPrompt = null;
+			state.pendingPrompts = [];
 			state.promptedRevisionKeys.clear();
 			state.awaitingUiIds.clear();
 			return { ok: true, action: "clear", message: "UI docs cleared." };
@@ -937,89 +984,6 @@ function buildToolResult(opts: {
 		},
 	};
 	return result;
-}
-
-function renderDocPreview(
-	theme: ExtensionContext["ui"]["theme"],
-	doc: UiDoc,
-	opts: { awaitingResponse: boolean; awaitingCount: number },
-): string[] {
-	const lines: string[] = [];
-	const headerParts = [theme.fg("accent", doc.title), theme.fg("muted", `[${doc.ui_id}]`)];
-	if (opts.awaitingResponse) {
-		headerParts.push(theme.fg("accent", "awaiting-response"));
-	}
-	lines.push(headerParts.join(" "));
-	if (doc.summary) {
-		lines.push(theme.fg("muted", short(doc.summary, 80)));
-	}
-	if (opts.awaitingCount > 0) {
-		lines.push(theme.fg("accent", `Awaiting user response for ${opts.awaitingCount} UI doc(s).`));
-	}
-	const components = doc.components.slice(0, UI_WIDGET_COMPONENTS_MAX);
-	if (components.length > 0) {
-		lines.push(theme.fg("dim", "Components:"));
-		for (const component of components) {
-			const previewLines = componentPreviewLines(component);
-			for (let idx = 0; idx < previewLines.length; idx += 1) {
-				const line = previewLines[idx]!;
-				lines.push(`${idx === 0 ? "  " : "    "}${line}`);
-			}
-		}
-	}
-	const interactiveActions = runnableActions(doc);
-	if (interactiveActions.length > 0) {
-		lines.push(theme.fg("muted", "Actions:"));
-		const visibleActions = interactiveActions.slice(0, UI_WIDGET_ACTIONS_MAX);
-		for (let idx = 0; idx < visibleActions.length; idx += 1) {
-			const action = visibleActions[idx]!;
-			lines.push(`  ${idx + 1}. ${action.label}`);
-		}
-		if (interactiveActions.length > visibleActions.length) {
-			lines.push(`  ... (+${interactiveActions.length - visibleActions.length} more actions)`);
-		}
-		if (opts.awaitingResponse) {
-			lines.push(theme.fg("accent", "Awaiting your response. Select an action to continue."));
-		}
-		lines.push(theme.fg("dim", `Press ${UI_INTERACT_SHORTCUT} to compose and submit a prompt from actions.`));
-	} else {
-		lines.push(theme.fg("dim", "No interactive actions."));
-	}
-	return lines;
-}
-
-function componentPreviewLines(component: UiComponent): string[] {
-	const { kind } = component;
-	switch (kind) {
-		case "text":
-			return [`text · ${short(component.text, 80)}`];
-		case "list": {
-			const lines = [`list · ${component.title ?? kind} · ${component.items.length} item(s)`];
-			const visible = component.items.slice(0, UI_WIDGET_COMPONENT_DETAILS_MAX);
-			for (const item of visible) {
-				const detail = item.detail ? ` — ${short(item.detail, 28)}` : "";
-				lines.push(`• ${short(item.label, 72)}${detail}`);
-			}
-			if (component.items.length > visible.length) {
-				lines.push(`... (+${component.items.length - visible.length} more items)`);
-			}
-			return lines;
-		}
-		case "key_value": {
-			const lines = [`key_value · ${component.title ?? kind} · ${component.rows.length} row(s)`];
-			const visible = component.rows.slice(0, UI_WIDGET_COMPONENT_DETAILS_MAX);
-			for (const row of visible) {
-				lines.push(`${short(row.key, 20)}: ${short(row.value, 52)}`);
-			}
-			if (component.rows.length > visible.length) {
-				lines.push(`... (+${component.rows.length - visible.length} more rows)`);
-			}
-			return lines;
-		}
-		case "divider":
-			return ["divider"];
-	}
-	return [kind];
 }
 
 function refreshUi(ctx: ExtensionContext): void {
@@ -1055,19 +1019,7 @@ function refreshUi(ctx: ExtensionContext): void {
 			ctx.ui.theme.fg("text", labels),
 		].join(" "),
 	);
-	if (state.interactionDepth > 0) {
-		ctx.ui.setWidget("mu-ui", undefined);
-		return;
-	}
-	const primaryDoc = awaiting[0] ?? docs[0]!;
-	ctx.ui.setWidget(
-		"mu-ui",
-		renderDocPreview(ctx.ui.theme, primaryDoc, {
-			awaitingResponse: state.awaitingUiIds.has(primaryDoc.ui_id),
-			awaitingCount: awaiting.length,
-		}),
-		{ placement: "belowEditor" },
-	);
+	ctx.ui.setWidget("mu-ui", undefined);
 }
 
 export function uiExtension(pi: ExtensionAPI) {
@@ -1082,13 +1034,8 @@ export function uiExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			const entries = docs
-				.map((doc) => ({ doc, actions: runnableActions(doc) }))
-				.filter((entry) => entry.actions.length > 0);
-			if (entries.length === 0) {
-				ctx.ui.notify("No runnable UI actions are currently available.", "error");
-				return;
-			}
+			const entries = docs.map((doc) => ({ doc, actions: runnableActions(doc) }));
+			const runnableEntries = entries.filter((entry) => entry.actions.length > 0);
 
 			let selectedDoc: UiDoc | null = null;
 			let selectedAction: UiAction | null = null;
@@ -1115,7 +1062,9 @@ export function uiExtension(pi: ExtensionAPI) {
 					actionId: normalizedActionId.length > 0 ? normalizedActionId : undefined,
 				});
 				if (!picked) {
-					ctx.ui.notify("UI interaction cancelled.", "info");
+					if (runnableEntries.length > 0) {
+						ctx.ui.notify("UI interaction cancelled.", "info");
+					}
 					return;
 				}
 				selectedDoc = picked.doc;
@@ -1123,7 +1072,10 @@ export function uiExtension(pi: ExtensionAPI) {
 			}
 
 			if (!selectedDoc || !selectedAction) {
-				ctx.ui.notify("No UI action was selected.", "error");
+				if (runnableEntries.length === 0) {
+					return;
+				}
+				ctx.ui.notify("No UI action was selected.", "info");
 				return;
 			}
 
@@ -1167,10 +1119,9 @@ export function uiExtension(pi: ExtensionAPI) {
 
 			pi.sendUserMessage(finalPrompt);
 			state.awaitingUiIds.delete(selectedDoc.ui_id);
-			if (state.pendingPrompt?.uiId === selectedDoc.ui_id) {
-				state.pendingPrompt = null;
-			}
+			removePendingPromptsForUiId(state, selectedDoc.ui_id);
 			retainAwaitingUiIdsForActiveDocs(state);
+			retainPendingPromptsForActiveDocs(state);
 			ctx.ui.notify(`Submitted prompt from ${selectedDoc.ui_id}/${selectedAction.id}.`, "info");
 		});
 
@@ -1213,7 +1164,7 @@ export function uiExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerShortcut(UI_INTERACT_SHORTCUT, {
-		description: "Interact with programmable UI docs and submit prompt",
+		description: "Open programmable UI modal and optionally submit prompt",
 		handler: async (ctx) => {
 			const key = sessionKey(ctx);
 			const state = ensureState(key);
@@ -1268,15 +1219,17 @@ export function uiExtension(pi: ExtensionAPI) {
 		}
 		const key = sessionKey(ctx);
 		const state = ensureState(key);
-		const pending = state.pendingPrompt;
+		retainPendingPromptsForActiveDocs(state);
+		const pending = state.pendingPrompts.shift();
 		if (!pending) {
 			return;
 		}
-		state.pendingPrompt = null;
-		ctx.ui.notify(
-			`Agent requested input via ${pending.uiId}. Submit now or press ${UI_INTERACT_SHORTCUT} later.`,
-			"info",
-		);
+		if (pending.kind === "action") {
+			ctx.ui.notify(
+				`Agent requested input via ${pending.uiId}. Submit now or press ${UI_INTERACT_SHORTCUT} later.`,
+				"info",
+			);
+		}
 		await runUiActionFromDoc(ctx, state, pending.uiId, pending.actionId);
 		refreshUi(ctx);
 	});

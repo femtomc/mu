@@ -656,7 +656,7 @@ describe("uiExtension", () => {
 		expect(typeof statusAfterPrompt).toBe("string");
 		expect((statusAfterPrompt as string).includes("prompting")).toBe(false);
 		const widgetAfterPrompt = capture.widgetCalls[capture.widgetCalls.length - 1]?.content;
-		expect(Array.isArray(widgetAfterPrompt)).toBe(true);
+		expect(widgetAfterPrompt).toBeUndefined();
 	});
 
 	test("ui shortcut auto-fills template values from payload defaults without extra prompts", async () => {
@@ -766,7 +766,7 @@ describe("uiExtension", () => {
 		expect(sendUserMessageCalls).toEqual(["/answer choice=yes"]);
 	});
 
-	test("agent_end does not auto-prompt for status-profile docs", async () => {
+	test("agent_end auto-opens modal for status-profile docs without submitting commands", async () => {
 		const { api, tools, eventHandlers, sendUserMessageCalls } = createExtensionApiMock();
 		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
 
@@ -807,15 +807,135 @@ describe("uiExtension", () => {
 		expect(typeof statusText).toBe("string");
 		expect((statusText as string).includes("awaiting")).toBe(false);
 		const widgetContent = capture.widgetCalls[capture.widgetCalls.length - 1]?.content;
-		expect(Array.isArray(widgetContent)).toBe(true);
-		expect((widgetContent as string[]).some((line) => line.includes("No interactive actions."))).toBe(true);
+		expect(widgetContent).toBeUndefined();
 
-		const { ctx: commandCtx } = createCommandContext("session-status-no-auto", {
-			confirmResponses: [true],
+		const { ctx: commandCtx, uiCapture } = createCommandContext("session-status-no-auto", {
+			customResponses: [null],
 		});
 		await agentEndHandler({ type: "agent_end", messages: [] }, commandCtx);
 
+		const commandCapture = uiCapture as { customCalls: Array<{ options: unknown }> };
+		expect(commandCapture.customCalls.length).toBeGreaterThan(0);
+		const firstCall = commandCapture.customCalls[0]?.options as {
+			overlay?: boolean;
+			overlayOptions?: Record<string, unknown>;
+		};
+		expect(firstCall?.overlay).toBe(true);
+		expect(firstCall?.overlayOptions).toEqual({
+			anchor: "top-left",
+			row: 0,
+			col: 0,
+			width: "100%",
+			maxHeight: "100%",
+			margin: 0,
+		});
 		expect(sendUserMessageCalls).toEqual([]);
+	});
+
+	test("agent_end auto-opens status modal once per published status revision", async () => {
+		const { api, tools, eventHandlers } = createExtensionApiMock();
+		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
+
+		const tool = tools.get("mu_ui");
+		if (!tool) {
+			throw new Error("mu_ui tool missing");
+		}
+		const agentEndHandlers = eventHandlers.get("agent_end") ?? [];
+		const agentEndHandler = agentEndHandlers[0];
+		if (typeof agentEndHandler !== "function") {
+			throw new Error("agent_end handler missing");
+		}
+
+		const rev1 = mkUiDoc({
+			ui_id: "ui:subagents",
+			title: "Subagents status",
+			actions: [],
+			revision: { id: "rev:subagents:1", version: 1 },
+			updated_at_ms: 100,
+			metadata: { profile: { id: "subagents", variant: "status" } },
+		});
+		const toolCtx = createToolContext("session-status-revision");
+		await tool.execute("call-1", { action: "set", doc: rev1 }, undefined, undefined, toolCtx);
+
+		const first = createCommandContext("session-status-revision", { customResponses: [null] });
+		await agentEndHandler({ type: "agent_end", messages: [] }, first.ctx);
+		expect((first.uiCapture as { customCalls: Array<{ options: unknown }> }).customCalls.length).toBeGreaterThan(0);
+
+		const second = createCommandContext("session-status-revision", { customResponses: [null] });
+		await agentEndHandler({ type: "agent_end", messages: [] }, second.ctx);
+		expect((second.uiCapture as { customCalls: Array<{ options: unknown }> }).customCalls.length).toBe(0);
+
+		const rev2 = mkUiDoc({
+			ui_id: "ui:subagents",
+			title: "Subagents status",
+			actions: [],
+			revision: { id: "rev:subagents:2", version: 2 },
+			updated_at_ms: 200,
+			metadata: { profile: { id: "subagents", variant: "status" } },
+		});
+		await tool.execute("call-2", { action: "set", doc: rev2 }, undefined, undefined, toolCtx);
+
+		const third = createCommandContext("session-status-revision", { customResponses: [null] });
+		await agentEndHandler({ type: "agent_end", messages: [] }, third.ctx);
+		expect((third.uiCapture as { customCalls: Array<{ options: unknown }> }).customCalls.length).toBeGreaterThan(0);
+	});
+
+	test("agent_end queues status review behind runnable auto-prompt when both are published", async () => {
+		const { api, tools, eventHandlers, sendUserMessageCalls } = createExtensionApiMock();
+		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
+
+		const tool = tools.get("mu_ui");
+		if (!tool) {
+			throw new Error("mu_ui tool missing");
+		}
+		const agentEndHandlers = eventHandlers.get("agent_end") ?? [];
+		const agentEndHandler = agentEndHandlers[0];
+		if (typeof agentEndHandler !== "function") {
+			throw new Error("agent_end handler missing");
+		}
+
+		const action = {
+			id: "submit",
+			label: "Submit",
+			payload: { choice: "yes" },
+			metadata: { command_text: "/answer choice={{choice}}" },
+		};
+		const runnableDoc = mkUiDoc({
+			ui_id: "panel-queue-action",
+			title: "Queue Action",
+			actions: [action],
+			revision: { id: "rev:queue:action:1", version: 1 },
+			updated_at_ms: 200,
+		});
+		const statusDoc = mkUiDoc({
+			ui_id: "ui:subagents",
+			title: "Subagents status",
+			actions: [],
+			revision: { id: "rev:queue:status:1", version: 1 },
+			updated_at_ms: 100,
+			metadata: { profile: { id: "subagents", variant: "status" } },
+		});
+		const toolCtx = createToolContext("session-auto-queue");
+		await tool.execute(
+			"call-1",
+			{
+				action: "replace",
+				docs: [statusDoc, runnableDoc],
+			},
+			undefined,
+			undefined,
+			toolCtx,
+		);
+
+		const first = createCommandContext("session-auto-queue", { confirmResponses: [true] });
+		await agentEndHandler({ type: "agent_end", messages: [] }, first.ctx);
+		expect(sendUserMessageCalls).toEqual(["/answer choice=yes"]);
+		expect((first.uiCapture as { customCalls: Array<{ options: unknown }> }).customCalls.length).toBe(0);
+
+		const second = createCommandContext("session-auto-queue", { customResponses: [null] });
+		await agentEndHandler({ type: "agent_end", messages: [] }, second.ctx);
+		expect((second.uiCapture as { customCalls: Array<{ options: unknown }> }).customCalls.length).toBeGreaterThan(0);
+		expect(sendUserMessageCalls).toEqual(["/answer choice=yes"]);
 	});
 
 	test("agent_end auto-prompt runs once per published revision", async () => {
@@ -850,7 +970,7 @@ describe("uiExtension", () => {
 		expect(sendUserMessageCalls).toEqual(["/answer choice=yes"]);
 	});
 
-	test("ui widget and status surface awaiting response state for runnable docs", async () => {
+	test("ui status surfaces awaiting response state for runnable docs while widget stays hidden", async () => {
 		const { api, tools } = createExtensionApiMock();
 		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
 
@@ -876,17 +996,20 @@ describe("uiExtension", () => {
 		expect(typeof statusText).toBe("string");
 		expect((statusText as string).includes("awaiting 1")).toBe(true);
 		const widgetContent = capture.widgetCalls[capture.widgetCalls.length - 1]?.content;
-		expect(Array.isArray(widgetContent)).toBe(true);
-		expect((widgetContent as string[]).some((line) => line.includes("Awaiting user response"))).toBe(true);
+		expect(widgetContent).toBeUndefined();
 	});
 
-	test("status widget previews key planning rows and checklist items", async () => {
-		const { api, tools } = createExtensionApiMock();
+	test("ui shortcut opens modal overlay for status docs without runnable actions", async () => {
+		const { api, tools, shortcuts } = createExtensionApiMock();
 		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
 
 		const tool = tools.get("mu_ui");
 		if (!tool) {
 			throw new Error("mu_ui tool missing");
+		}
+		const shortcut = shortcuts.get("ctrl+shift+u") as { handler?: (ctx: unknown) => Promise<void> } | undefined;
+		if (!shortcut || typeof shortcut.handler !== "function") {
+			throw new Error("ui interaction shortcut not registered");
 		}
 
 		const doc = mkUiDoc({
@@ -904,31 +1027,34 @@ describe("uiExtension", () => {
 					],
 					metadata: {},
 				},
-				{
-					kind: "list",
-					id: "checklist",
-					title: "Checklist",
-					items: [
-						{ id: "c1", label: "Investigate relevant code/docs/state", detail: "done" },
-						{ id: "c2", label: "Create root + child issue DAG", detail: "pending" },
-					],
-					metadata: {},
-				},
 			],
 			actions: [],
 			metadata: { profile: { id: "planning", variant: "status" } },
 		});
-		const ctx = createToolContext("session-widget-details");
-		await tool.execute("call-1", { action: "set", doc }, undefined, undefined, ctx);
+		const toolCtx = createToolContext("session-modal-status");
+		await tool.execute("call-1", { action: "set", doc }, undefined, undefined, toolCtx);
 
-		const capture = (ctx as { __uiCapture: { widgetCalls: Array<{ content: unknown }> } }).__uiCapture;
-		const widgetContent = capture.widgetCalls[capture.widgetCalls.length - 1]?.content;
-		expect(Array.isArray(widgetContent)).toBe(true);
-		expect((widgetContent as string[]).some((line) => line.includes("phase: investigating"))).toBe(true);
-		expect((widgetContent as string[]).some((line) => line.includes("waiting: no"))).toBe(true);
-		expect(
-			(widgetContent as string[]).some((line) => line.includes("Investigate relevant code/docs/state — done")),
-		).toBe(true);
+		const { ctx: commandCtx, uiCapture, notifications } = createCommandContext("session-modal-status", {
+			customResponses: [null],
+		});
+		await shortcut.handler(commandCtx);
+
+		const capture = uiCapture as { customCalls: Array<{ options: unknown }> };
+		expect(capture.customCalls.length).toBeGreaterThan(0);
+		const firstCall = capture.customCalls[0]?.options as {
+			overlay?: boolean;
+			overlayOptions?: Record<string, unknown>;
+		};
+		expect(firstCall?.overlay).toBe(true);
+		expect(firstCall?.overlayOptions).toEqual({
+			anchor: "top-left",
+			row: 0,
+			col: 0,
+			width: "100%",
+			maxHeight: "100%",
+			margin: 0,
+		});
+		expect(notifications.some((entry) => entry.text.includes("No runnable UI actions"))).toBe(false);
 	});
 
 	test("submitting a ui action clears awaiting response status", async () => {
@@ -969,8 +1095,7 @@ describe("uiExtension", () => {
 		expect((statusText as string).includes("awaiting 1")).toBe(false);
 		expect((statusText as string).includes("ready")).toBe(true);
 		const widgetContent = capture.widgetCalls[capture.widgetCalls.length - 1]?.content;
-		expect(Array.isArray(widgetContent)).toBe(true);
-		expect((widgetContent as string[]).some((line) => line.includes("Awaiting your response"))).toBe(false);
+		expect(widgetContent).toBeUndefined();
 	});
 
 	test("/mu ui interact runs local action flow via command dispatcher", async () => {

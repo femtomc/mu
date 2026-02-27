@@ -34,10 +34,9 @@ For interactive `UiDoc` actions:
 
 - Set `action.metadata.command_text` explicitly.
 - Use callback-token transport (`mu-ui:*`) for channel action execution on Slack/Discord/Telegram/Neovim; terminal operator UI uses a local in-TUI component flow.
-- Terminal operator UI (`mu serve`) auto-prompts after agent turns when new runnable docs/actions are published, and also supports manual reopen via `ctrl+shift+u` (fullscreen modal picker overlay for doc/action selection, then prompt composition).
+- Terminal operator UI (`mu serve`) uses a fullscreen modal overlay for programmable-UI rendering (`ctrl+shift+u` / `/mu ui interact`), auto-prompts after agent turns when new runnable docs/actions are published, and auto-opens review modals when status-profile revisions are published (queued behind runnable prompts when both arrive together).
 - In terminal operator UI, template placeholders are auto-filled from `action.payload` when possible; users are only prompted for unresolved values before review/submit.
-- While the local picker modal is open, the `mu-ui` widget is temporarily hidden and footer status switches to `prompting` to reduce visual interference with chat content.
-- Terminal UI status/widget surfaces show an explicit `awaiting` state until the user submits an action or the doc is removed/cleared.
+- Footer status shows `prompting` while the modal is active and `awaiting` while runnable docs are waiting for user action.
 
 Actions without `metadata.command_text` are rendered as deterministic non-interactive fallback rows.
 
@@ -50,7 +49,7 @@ Actions without `metadata.command_text` are rendered as deterministic non-intera
 | Telegram | Text projection in `sendMessage` body | Inline keyboard callbacks using encoded callback tokens (`mu-ui:*`) | If callback encoding unavailable/overflow, deterministic `Actions:` command-text lines are appended |
 | Neovim frontend | Frontend receives canonical `ui_docs` payload (default renderer is text-first) | Interactive actions include `callback_token`; status-profile actions degrade to deterministic command-text fallback (no callback token) | Missing/invalid/expired token returns deterministic rejection; user can still send command text manually |
 | Terminal API channel (`channel=terminal`) | Text-only | **Unsupported** (`ui_actions_not_implemented`) | Use Slack/Discord/Telegram/Neovim for interactive action clicks |
-| Terminal operator UI (`mu serve`) | Local preview/status widget + fullscreen in-TUI action picker overlay | Auto-prompts on newly published runnable docs/actions; manual reopen via `ctrl+shift+u` (pick doc/action in component UI, auto-fill payload-backed template vars, prompt unresolved vars, review, submit). During picker interaction, widget is hidden and footer status shows `prompting`. | If interactive UI is unavailable, user can still type command text manually |
+| Terminal operator UI (`mu serve`) | Fullscreen in-TUI modal overlay (`ctrl+shift+u` / `/mu ui interact`) for doc browsing + action picking | Auto-prompts on newly published runnable docs/actions, auto-opens modal review on status-profile revisions (queued behind runnable prompts when both are published together), and manual reopen supports browse-only status docs plus interactive prompt submission with template autofill + review | If interactive UI is unavailable, user can still type command text manually |
 
 To inspect live capability flags, query:
 
@@ -94,4 +93,4 @@ Use these when diagnosing UI state:
 
 - `/mu ui status`
 - `/mu ui snapshot [compact|multiline]`
-- `ctrl+shift+u` (terminal operator UI): reopen local action->prompt submit flow
+- `ctrl+shift+u` (terminal operator UI): open/reopen local programmable-UI modal overlay (browse docs, pick actions, submit prompts)
