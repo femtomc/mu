@@ -1059,8 +1059,10 @@ class UiActionPickerComponent implements Component {
 		const selectedDoc = this.#currentEntry().doc;
 		const selectedActions = this.#currentActions();
 		const renderLines: PickerRenderLine[] = [];
-		const innerPadSegment =
-			horizontalPadding > 0 ? this.#theme.bg("customMessageBg", " ".repeat(horizontalPadding)) : "";
+		const panelBg = (text: string): string => this.#theme.bg("customMessageBg", text);
+		const borderCell = (tone: "border" | "borderAccent", text: string): string =>
+			panelBg(this.#theme.fg(tone, text));
+		const innerPadSegment = horizontalPadding > 0 ? panelBg(" ".repeat(horizontalPadding)) : "";
 		const contentRowText = (line: string, bg: "customMessageBg" | "selectedBg"): string => {
 			const core = this.#theme.bg(bg, fitStyledLine(line, contentWidth));
 			return `${innerPadSegment}${core}${innerPadSegment}`;
@@ -1176,11 +1178,11 @@ class UiActionPickerComponent implements Component {
 		const leftRule = "─".repeat(Math.max(0, Math.floor((innerWidth - titleWidth) / 2)));
 		const rightRule = "─".repeat(Math.max(0, innerWidth - titleWidth - leftRule.length));
 		frame.push(
-			`${leftPad}${this.#theme.fg("borderAccent", `╭${leftRule}`)}${this.#theme.fg("accent", title)}${this.#theme.fg("borderAccent", `${rightRule}╮`)}`,
+			`${leftPad}${panelBg(`${this.#theme.fg("borderAccent", `╭${leftRule}`)}${this.#theme.fg("accent", title)}${this.#theme.fg("borderAccent", `${rightRule}╮`)}`)}`,
 		);
 
 		this.#mouseTargets = [];
-		const blankInnerRow = `${leftPad}${this.#theme.fg("border", "│")}${this.#theme.bg("customMessageBg", " ".repeat(innerWidth))}${this.#theme.fg("border", "│")}`;
+		const blankInnerRow = `${leftPad}${borderCell("border", "│")}${panelBg(" ".repeat(innerWidth))}${borderCell("border", "│")}`;
 		for (let row = 0; row < verticalPadding; row += 1) {
 			frame.push(blankInnerRow);
 		}
@@ -1188,7 +1190,7 @@ class UiActionPickerComponent implements Component {
 		const contentStartRow = frame.length + 1;
 		for (let idx = 0; idx < renderLines.length; idx += 1) {
 			const line = renderLines[idx]!;
-			frame.push(`${leftPad}${this.#theme.fg("border", "│")}${line.text}${this.#theme.fg("border", "│")}`);
+			frame.push(`${leftPad}${borderCell("border", "│")}${line.text}${borderCell("border", "│")}`);
 			const row = contentStartRow + idx;
 			if (line.docTarget) {
 				this.#mouseTargets.push({
@@ -1213,7 +1215,7 @@ class UiActionPickerComponent implements Component {
 			frame.push(blankInnerRow);
 		}
 
-		frame.push(`${leftPad}${this.#theme.fg("borderAccent", `╰${"─".repeat(innerWidth)}╯`)}`);
+		frame.push(`${leftPad}${borderCell("borderAccent", `╰${"─".repeat(innerWidth)}╯`)}`);
 		for (let row = 0; row < bottomMarginRows; row += 1) {
 			frame.push("");
 		}

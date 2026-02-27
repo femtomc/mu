@@ -599,6 +599,89 @@ describe("uiExtension", () => {
 		});
 	});
 
+	test("ui picker frame paints border rows on modal background", async () => {
+		const { api, tools, shortcuts } = createExtensionApiMock();
+		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
+
+		const tool = tools.get("mu_ui");
+		if (!tool) {
+			throw new Error("mu_ui tool missing");
+		}
+		const shortcut = shortcuts.get("ctrl+shift+u") as { handler?: (ctx: unknown) => Promise<void> } | undefined;
+		if (!shortcut || typeof shortcut.handler !== "function") {
+			throw new Error("ui interaction shortcut not registered");
+		}
+
+		const action = {
+			id: "submit",
+			label: "Submit",
+			payload: { choice: "yes" },
+			metadata: { command_text: "/answer choice={{choice}}" },
+		};
+		const doc = mkUiDoc({
+			ui_id: "panel-border-bg",
+			title: "Border Background Panel",
+			actions: [action],
+		});
+		const toolCtx = createToolContext("session-border-bg");
+		await tool.execute("call-1", { action: "set", doc }, undefined, undefined, toolCtx);
+
+		const renderedFrames: string[][] = [];
+		const baseCtx = createToolContext("session-border-bg");
+		const commandCtx = {
+			...baseCtx,
+			ui: {
+				...baseCtx.ui,
+				notify() {
+					return undefined;
+				},
+				custom<T>(factory: unknown, options?: unknown): Promise<T> {
+					(baseCtx as { __uiCapture: { customCalls: Array<{ options: unknown }> } }).__uiCapture.customCalls.push({
+						options,
+					});
+					const customBgAnsi = "\u001b[48;5;236m";
+					const selectedBgAnsi = "\u001b[48;5;237m";
+					const renderedTheme = {
+						fg: (_tone: string, text: string) => text,
+						bg: (tone: string, text: string) => {
+							if (tone === "selectedBg") {
+								return `${selectedBgAnsi}${text}\u001b[49m`;
+							}
+							return `${customBgAnsi}${text}\u001b[49m`;
+						},
+						bold: (text: string) => text,
+					};
+					const component = (
+						factory as (
+							tui: { terminal: { write: (data: string) => void }; requestRender: () => void },
+							theme: { fg: (tone: string, text: string) => string; bg: (tone: string, text: string) => string; bold: (text: string) => string },
+							keybindings: unknown,
+							done: (result: unknown) => void,
+						) => { render: (width: number) => string[]; dispose?: () => void }
+					)(
+						{
+							terminal: { write: () => undefined },
+							requestRender: () => undefined,
+						},
+						renderedTheme,
+						{},
+						() => undefined,
+					);
+					renderedFrames.push(component.render(120));
+					component.dispose?.();
+					return Promise.resolve(null as T);
+				},
+			},
+		};
+
+		await shortcut.handler(commandCtx);
+
+		expect(renderedFrames.length).toBe(1);
+		const frame = renderedFrames[0] ?? [];
+		expect(frame.some((line) => line.includes("\u001b[48;5;236m╭"))).toBe(true);
+		expect(frame.some((line) => line.includes("\u001b[48;5;236m╰"))).toBe(true);
+	});
+
 	test("ui shortcut hides widget while interactive picker is open", async () => {
 		const { api, tools, shortcuts } = createExtensionApiMock();
 		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
