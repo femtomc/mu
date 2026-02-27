@@ -1,6 +1,6 @@
 {
 	"name": "@femtomc/mu-agent",
-	"version": "26.2.113",
+	"version": "26.2.114",
 	"description": "Shared operator runtime for mu assistant sessions and serve extensions.",
 	"keywords": [
 		"mu",
