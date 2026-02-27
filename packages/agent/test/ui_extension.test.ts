@@ -303,6 +303,54 @@ describe("uiExtension", () => {
 		expect(planningWarnings.some((warning) => warning.includes("status docs should omit actions"))).toBe(true);
 	});
 
+	test("refreshUi skips redundant status/widget writes when ui state is unchanged", async () => {
+		const { api, tools } = createExtensionApiMock();
+		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
+
+		const tool = tools.get("mu_ui");
+		if (!tool) {
+			throw new Error("mu_ui tool missing");
+		}
+
+		const ctx = createToolContext("session-refresh-cache");
+		await tool.execute(
+			"call-1",
+			{
+				action: "set",
+				doc: mkUiDoc({
+					ui_id: "ui:planning",
+					title: "Planning",
+					actions: [],
+					metadata: {
+						profile: {
+							id: "planning",
+							variant: "status",
+							snapshot: { compact: "phase=investigating" },
+						},
+					},
+				}),
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		const capture = (
+			ctx as {
+				__uiCapture: {
+					statusCalls: Array<{ content: unknown }>;
+					widgetCalls: Array<{ content: unknown }>;
+				};
+			}
+		).__uiCapture;
+		const statusCallsBefore = capture.statusCalls.length;
+		const widgetCallsBefore = capture.widgetCalls.length;
+
+		await tool.execute("call-2", { action: "status" }, undefined, undefined, ctx);
+
+		expect(capture.statusCalls.length).toBe(statusCallsBefore);
+		expect(capture.widgetCalls.length).toBe(widgetCallsBefore);
+	});
+
 	test("mu_ui snapshot compact prefers status-profile metadata and keeps deterministic ui_id ordering", async () => {
 		const { api, tools } = createExtensionApiMock();
 		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);

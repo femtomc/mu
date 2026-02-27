@@ -70,6 +70,8 @@ type UiState = {
 	promptedRevisionKeys: Set<string>;
 	awaitingUiIds: Set<string>;
 	interactionDepth: number;
+	lastStatusText: string | null;
+	lastWidgetSignature: string | null;
 };
 
 type SessionStateEntry = {
@@ -87,6 +89,8 @@ function createState(): UiState {
 		promptedRevisionKeys: new Set(),
 		awaitingUiIds: new Set(),
 		interactionDepth: 0,
+		lastStatusText: null,
+		lastWidgetSignature: null,
 	};
 }
 
@@ -1474,11 +1478,32 @@ function refreshUi(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) {
 		return;
 	}
+
+	const commitStatus = (next: string | null): void => {
+		if (state.lastStatusText === next) {
+			return;
+		}
+		state.lastStatusText = next;
+		ctx.ui.setStatus("mu-ui", next ?? undefined);
+	};
+	const commitWidget = (next: string[] | null): void => {
+		const signature = next && next.length > 0 ? next.join("\n") : null;
+		if (state.lastWidgetSignature === signature) {
+			return;
+		}
+		state.lastWidgetSignature = signature;
+		if (next && next.length > 0) {
+			ctx.ui.setWidget("mu-ui", next, { placement: "belowEditor" });
+			return;
+		}
+		ctx.ui.setWidget("mu-ui", undefined);
+	};
+
 	retainAwaitingUiIdsForActiveDocs(state);
 	const docs = activeDocs(state);
 	if (docs.length === 0) {
-		ctx.ui.setStatus("mu-ui", undefined);
-		ctx.ui.setWidget("mu-ui", undefined);
+		commitStatus(null);
+		commitWidget(null);
 		return;
 	}
 	const awaiting = awaitingDocs(state, docs);
@@ -1504,13 +1529,8 @@ function refreshUi(ctx: ExtensionContext): void {
 		);
 	}
 	statusParts.push(ctx.ui.theme.fg("muted", "·"), ctx.ui.theme.fg("text", labels));
-	ctx.ui.setStatus("mu-ui", statusParts.join(" "));
-	const widgetLines = asyncStatusWidgetLines(ctx, docs);
-	if (widgetLines && widgetLines.length > 0) {
-		ctx.ui.setWidget("mu-ui", widgetLines, { placement: "belowEditor" });
-	} else {
-		ctx.ui.setWidget("mu-ui", undefined);
-	}
+	commitStatus(statusParts.join(" "));
+	commitWidget(asyncStatusWidgetLines(ctx, docs));
 }
 
 export function uiExtension(pi: ExtensionAPI) {
@@ -1730,6 +1750,9 @@ export function uiExtension(pi: ExtensionAPI) {
 	pi.on("session_shutdown", (_event, ctx) => {
 		const key = sessionKey(ctx);
 		touchState(key);
+		const state = ensureState(key);
+		state.lastStatusText = null;
+		state.lastWidgetSignature = null;
 		if (!ctx.hasUI) {
 			return;
 		}

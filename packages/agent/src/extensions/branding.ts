@@ -29,6 +29,8 @@ const EMPTY_SNAPSHOT: StatusSnapshot = {
 	error: null,
 };
 
+const BRANDING_STATUS_REFRESH_TIMEOUT_MS = 2_000;
+
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
 function visibleWidth(text: string): number {
@@ -88,6 +90,7 @@ export function brandingExtension(pi: ExtensionAPI) {
 	let activeCtx: ExtensionContext | null = null;
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 	let footerRequestRender: (() => void) | null = null;
+	let refreshInFlight: Promise<void> | null = null;
 
 	function applyDefaultTheme(ctx: ExtensionContext): void {
 		if (!ctx.hasUI) return;
@@ -178,7 +181,10 @@ export function brandingExtension(pi: ExtensionAPI) {
 	}
 
 	async function refreshStatus(ctx: ExtensionContext): Promise<void> {
-		if (!ctx.hasUI || !enabled) return;
+		const isActiveUiContext = (): boolean => activeCtx === ctx && ctx.hasUI && enabled;
+		if (!isActiveUiContext()) {
+			return;
+		}
 		if (!muServerUrl()) {
 			snapshot = {
 				...EMPTY_SNAPSHOT,
@@ -190,7 +196,10 @@ export function brandingExtension(pi: ExtensionAPI) {
 		}
 
 		try {
-			const status = await fetchMuStatus(4_000);
+			const status = await fetchMuStatus(BRANDING_STATUS_REFRESH_TIMEOUT_MS);
+			if (!isActiveUiContext()) {
+				return;
+			}
 			const cp = status.control_plane ?? {
 				active: false,
 				adapters: [] as string[],
@@ -211,6 +220,9 @@ export function brandingExtension(pi: ExtensionAPI) {
 				),
 			);
 		} catch (err) {
+			if (!isActiveUiContext()) {
+				return;
+			}
 			snapshot = {
 				...EMPTY_SNAPSHOT,
 				error: err instanceof Error ? err.message : String(err),
@@ -218,14 +230,26 @@ export function brandingExtension(pi: ExtensionAPI) {
 			ctx.ui.setStatus("mu-overview", ctx.ui.theme.fg("warning", "μ status refresh failed"));
 		}
 
+		if (!isActiveUiContext()) {
+			return;
+		}
 		footerRequestRender?.();
+	}
+
+	function requestStatusRefresh(ctx: ExtensionContext): void {
+		if (refreshInFlight) {
+			return;
+		}
+		refreshInFlight = refreshStatus(ctx).finally(() => {
+			refreshInFlight = null;
+		});
 	}
 
 	function ensurePolling() {
 		if (pollTimer) return;
 		pollTimer = setInterval(() => {
 			if (!activeCtx) return;
-			void refreshStatus(activeCtx);
+			requestStatusRefresh(activeCtx);
 		}, 12_000);
 	}
 
@@ -235,7 +259,7 @@ export function brandingExtension(pi: ExtensionAPI) {
 		pollTimer = null;
 	}
 
-	async function initialize(ctx: ExtensionContext): Promise<void> {
+	function initialize(ctx: ExtensionContext): void {
 		activeCtx = ctx;
 		repoName = basename(ctx.cwd);
 		currentModelLabel = shortModelLabel(ctx);
@@ -243,7 +267,7 @@ export function brandingExtension(pi: ExtensionAPI) {
 		if (enabled) {
 			applyDefaultTheme(ctx);
 			applyChrome(ctx);
-			await refreshStatus(ctx);
+			requestStatusRefresh(ctx);
 			ensurePolling();
 		} else {
 			clearChrome(ctx);
@@ -251,12 +275,12 @@ export function brandingExtension(pi: ExtensionAPI) {
 		}
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
-		await initialize(ctx);
+	pi.on("session_start", (_event, ctx) => {
+		initialize(ctx);
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
-		await initialize(ctx);
+	pi.on("session_switch", (_event, ctx) => {
+		initialize(ctx);
 	});
 
 	pi.on("model_select", async (event, ctx) => {
@@ -274,6 +298,7 @@ export function brandingExtension(pi: ExtensionAPI) {
 		stopPolling();
 		footerRequestRender = null;
 		activeCtx = null;
+		refreshInFlight = null;
 	});
 
 	registerMuSubcommand(pi, {
@@ -298,7 +323,7 @@ export function brandingExtension(pi: ExtensionAPI) {
 			if (enabled) {
 				applyDefaultTheme(ctx);
 				applyChrome(ctx);
-				await refreshStatus(ctx);
+				requestStatusRefresh(ctx);
 				ensurePolling();
 			} else {
 				clearChrome(ctx);

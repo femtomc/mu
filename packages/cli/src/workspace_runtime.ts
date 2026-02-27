@@ -72,25 +72,39 @@ async function removeRetiredBundledSkillPaths(targetRoot: string): Promise<void>
 	}
 }
 
+let cachedBundledSkillsTemplateDir: string | null | undefined;
+let cachedBundledSkillsPackageVersion: string | null | undefined;
+
 function bundledSkillsTemplateDir(): string | null {
+	if (cachedBundledSkillsTemplateDir !== undefined) {
+		return cachedBundledSkillsTemplateDir;
+	}
 	try {
 		const agentPkgPath = require.resolve("@femtomc/mu-agent/package.json");
-		return join(dirname(agentPkgPath), "prompts", "skills");
+		cachedBundledSkillsTemplateDir = join(dirname(agentPkgPath), "prompts", "skills");
+		return cachedBundledSkillsTemplateDir;
 	} catch {
+		cachedBundledSkillsTemplateDir = null;
 		return null;
 	}
 }
 
 function bundledSkillsPackageVersion(): string | null {
+	if (cachedBundledSkillsPackageVersion !== undefined) {
+		return cachedBundledSkillsPackageVersion;
+	}
 	try {
 		const agentPkgPath = require.resolve("@femtomc/mu-agent/package.json");
 		const parsed = JSON.parse(readFileSync(agentPkgPath, "utf8")) as { version?: unknown };
 		if (typeof parsed.version !== "string") {
+			cachedBundledSkillsPackageVersion = null;
 			return null;
 		}
 		const normalized = parsed.version.trim();
-		return normalized.length > 0 ? normalized : null;
+		cachedBundledSkillsPackageVersion = normalized.length > 0 ? normalized : null;
+		return cachedBundledSkillsPackageVersion;
 	} catch {
+		cachedBundledSkillsPackageVersion = null;
 		return null;
 	}
 }
@@ -107,6 +121,9 @@ async function copyDirectoryFiles(sourceDir: string, targetDir: string, overwrit
 			continue;
 		}
 		if (!entry.isFile()) {
+			continue;
+		}
+		if (!overwriteExisting && (await fileExists(targetPath))) {
 			continue;
 		}
 		const content = await readFile(sourcePath);
@@ -252,10 +269,15 @@ export async function readServeOperatorDefaults(
 }
 
 export async function ensureCtx(cwd: string): Promise<WorkspaceCliContext> {
-	const { FsJsonlStore, fsEventLog, getStorePaths } = await import("@femtomc/mu-core/node");
-	const { IssueStore } = await import("@femtomc/mu-issue");
-	const { ForumStore } = await import("@femtomc/mu-forum");
-	const repoRoot = await findRepoRoot(cwd);
+	const [coreNode, issueModule, forumModule, repoRoot] = await Promise.all([
+		import("@femtomc/mu-core/node"),
+		import("@femtomc/mu-issue"),
+		import("@femtomc/mu-forum"),
+		findRepoRoot(cwd),
+	]);
+	const { FsJsonlStore, fsEventLog, getStorePaths } = coreNode;
+	const { IssueStore } = issueModule;
+	const { ForumStore } = forumModule;
 	const paths = getStorePaths(repoRoot);
 	const events = fsEventLog(paths.eventsPath);
 	const store = new IssueStore(new FsJsonlStore(paths.issuesPath), { events });
