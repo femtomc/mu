@@ -20,6 +20,8 @@ type EventEnvelope = {
 	issue_id?: string;
 };
 
+const EVENT_LOG_FETCH_TIMEOUT_MS = 2_000;
+
 function eventTime(tsMs: number): string {
 	return new Date(tsMs).toLocaleTimeString();
 }
@@ -33,7 +35,9 @@ function formatEventLine(event: EventEnvelope): string {
 async function fetchTail(n: number): Promise<EventEnvelope[]> {
 	if (!muServerUrl()) return [];
 	try {
-		return await fetchMuJson<EventEnvelope[]>(`/api/control-plane/events/tail?n=${n}`, { timeoutMs: 6_000 });
+		return await fetchMuJson<EventEnvelope[]>(`/api/control-plane/events/tail?n=${n}`, {
+			timeoutMs: EVENT_LOG_FETCH_TIMEOUT_MS,
+		});
 	} catch {
 		return [];
 	}
@@ -43,11 +47,18 @@ export function eventLogExtension(pi: ExtensionAPI) {
 	let watchEnabled = false;
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 	let activeCtx: ExtensionContext | null = null;
+	let refreshInFlight: Promise<void> | null = null;
 
-	async function refresh(ctx: ExtensionContext, opts: { tail?: number } = {}) {
-		if (!ctx.hasUI) return;
+	async function refresh(ctx: ExtensionContext, opts: { tail?: number } = {}): Promise<void> {
+		const isActiveUiContext = (): boolean => activeCtx === ctx && ctx.hasUI;
+		if (!isActiveUiContext()) {
+			return;
+		}
 		const tail = clampInt(opts.tail, 8, 1, 50);
 		const events = await fetchTail(tail);
+		if (!isActiveUiContext()) {
+			return;
+		}
 		if (events.length === 0) {
 			ctx.ui.setStatus("mu-events", ctx.ui.theme.fg("dim", "events: none"));
 			if (watchEnabled) {
@@ -65,6 +76,15 @@ export function eventLogExtension(pi: ExtensionAPI) {
 		}
 	}
 
+	function requestRefresh(ctx: ExtensionContext, opts: { tail?: number } = {}): void {
+		if (refreshInFlight) {
+			return;
+		}
+		refreshInFlight = refresh(ctx, opts).finally(() => {
+			refreshInFlight = null;
+		});
+	}
+
 	function stopPolling() {
 		if (!pollTimer) return;
 		clearInterval(pollTimer);
@@ -75,7 +95,7 @@ export function eventLogExtension(pi: ExtensionAPI) {
 		if (pollTimer) return;
 		pollTimer = setInterval(() => {
 			if (!activeCtx) return;
-			void refresh(activeCtx);
+			requestRefresh(activeCtx);
 		}, 8_000);
 	}
 
@@ -84,7 +104,7 @@ export function eventLogExtension(pi: ExtensionAPI) {
 		if (watchEnabled) {
 			ensurePolling();
 			if (activeCtx) {
-				void refresh(activeCtx);
+				requestRefresh(activeCtx);
 			}
 			return;
 		}
@@ -94,22 +114,23 @@ export function eventLogExtension(pi: ExtensionAPI) {
 		stopPolling();
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", (_event, ctx) => {
 		activeCtx = ctx;
 		if (!ctx.hasUI) return;
-		await refresh(ctx);
+		requestRefresh(ctx);
 		if (watchEnabled) ensurePolling();
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
+	pi.on("session_switch", (_event, ctx) => {
 		activeCtx = ctx;
 		if (!ctx.hasUI) return;
-		await refresh(ctx);
+		requestRefresh(ctx);
 		if (watchEnabled) ensurePolling();
 	});
 
 	pi.on("session_shutdown", async () => {
 		stopPolling();
+		refreshInFlight = null;
 		activeCtx = null;
 	});
 

@@ -1,34 +1,4 @@
 import type { IssueStore } from "@femtomc/mu-issue";
-import { cmdControl as cmdControlCommand } from "./commands/control.js";
-import { cmdEvents as cmdEventsCommand } from "./commands/events.js";
-import { cmdForum as cmdForumCommand } from "./commands/forum.js";
-import { cmdIssues as cmdIssuesCommand } from "./commands/issues.js";
-import { cmdReplay as cmdReplayCommand } from "./commands/replay.js";
-import { cmdOperatorSession as cmdOperatorSessionCommand } from "./commands/operator_session.js";
-import { cmdServe as cmdServeCommand, cmdStop as cmdStopCommand } from "./commands/serve.js";
-import { cmdSession as cmdSessionCommand } from "./commands/session.js";
-import { cmdStore as cmdStoreCommand } from "./commands/store.js";
-import { cmdStatus as cmdStatusCommand } from "./commands/status.js";
-import { cmdCron as cmdCronCommand, cmdHeartbeats as cmdHeartbeatsCommand } from "./commands/scheduling.js";
-import { cmdMemory as cmdMemoryCommand } from "./commands/memory.js";
-import { cmdLogin as cmdLoginCommand } from "./commands/login.js";
-import { cmdTurn as cmdTurnCommand } from "./commands/turn.js";
-import {
-	controlCommandDeps,
-	eventsCommandDeps,
-	forumCommandDeps,
-	issuesCommandDeps,
-	loginCommandDeps,
-	memoryCommandDeps,
-	operatorSessionCommandDeps,
-	replayCommandDeps,
-	schedulingCommandDeps,
-	sessionCommandDeps,
-	serveCommandDeps,
-	statusCommandDeps,
-	storeCommandDeps,
-	turnCommandDeps,
-} from "./command_deps.js";
 import { hasHelpFlag, jsonError, ok } from "./cli_primitives.js";
 import type { ServeDeps, ServeLifecycleOptions } from "./serve_runtime.js";
 import type { CliCtx, RunResult } from "./types.js";
@@ -64,33 +34,76 @@ export function createCommandHandlers(deps: CreateCommandHandlersDeps) {
 			return ok(`${guideText()}\n`);
 		},
 		cmdStatus: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdStatus: cmdStatusCommand }, { statusCommandDeps }] = await Promise.all([
+				import("./commands/status.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdStatusCommand(argv, ctx, statusCommandDeps());
 		},
 		cmdStore: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdStore: cmdStoreCommand }, { storeCommandDeps }] = await Promise.all([
+				import("./commands/store.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdStoreCommand(argv, ctx, storeCommandDeps());
 		},
 		cmdIssues: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdIssues: cmdIssuesCommand }, { issuesCommandDeps }] = await Promise.all([
+				import("./commands/issues.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdIssuesCommand(argv, ctx, issuesCommandDeps(deps.resolveIssueId));
 		},
 		cmdForum: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdForum: cmdForumCommand }, { forumCommandDeps }] = await Promise.all([
+				import("./commands/forum.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdForumCommand(argv, ctx, forumCommandDeps());
 		},
 		cmdEvents: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdEvents: cmdEventsCommand }, { eventsCommandDeps }] = await Promise.all([
+				import("./commands/events.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdEventsCommand(argv, ctx, eventsCommandDeps());
 		},
 		cmdHeartbeats: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdHeartbeats: cmdHeartbeatsCommand }, { schedulingCommandDeps }] = await Promise.all([
+				import("./commands/scheduling.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdHeartbeatsCommand(argv, ctx, schedulingCommandDeps(deps.requestServerJson));
 		},
 		cmdCron: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdCron: cmdCronCommand }, { schedulingCommandDeps }] = await Promise.all([
+				import("./commands/scheduling.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdCronCommand(argv, ctx, schedulingCommandDeps(deps.requestServerJson));
 		},
 		cmdMemoryDelegated: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdMemory: cmdMemoryCommand }, { memoryCommandDeps }] = await Promise.all([
+				import("./commands/memory.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdMemoryCommand(argv, ctx, memoryCommandDeps());
 		},
 		cmdTurn: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdTurn: cmdTurnCommand }, { turnCommandDeps }] = await Promise.all([
+				import("./commands/turn.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdTurnCommand(argv, ctx, turnCommandDeps());
 		},
 		cmdExec: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [
+				{ cmdOperatorSession: cmdOperatorSessionCommand },
+				{ operatorSessionCommandDeps },
+			] = await Promise.all([
+				import("./commands/operator_session.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdOperatorSessionCommand(
 				argv,
 				ctx,
@@ -99,18 +112,38 @@ export function createCommandHandlers(deps: CreateCommandHandlersDeps) {
 			);
 		},
 		cmdLogin: async (argv: string[]): Promise<RunResult> => {
+			const [{ cmdLogin: cmdLoginCommand }, { loginCommandDeps }] = await Promise.all([
+				import("./commands/login.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdLoginCommand(argv, loginCommandDeps());
 		},
 		cmdReplay: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdReplay: cmdReplayCommand }, { replayCommandDeps }] = await Promise.all([
+				import("./commands/replay.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdReplayCommand(argv, ctx, replayCommandDeps());
 		},
 		cmdControl: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdControl: cmdControlCommand }, { controlCommandDeps }] = await Promise.all([
+				import("./commands/control.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdControlCommand(argv, ctx, controlCommandDeps());
 		},
 		cmdSession: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdSession: cmdSessionCommand }, { sessionCommandDeps }] = await Promise.all([
+				import("./commands/session.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdSessionCommand(argv, ctx, sessionCommandDeps(deps.runServeLifecycle));
 		},
 		cmdServe: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdServe: cmdServeCommand }, { serveCommandDeps }] = await Promise.all([
+				import("./commands/serve.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdServeCommand(
 				argv,
 				ctx,
@@ -118,6 +151,10 @@ export function createCommandHandlers(deps: CreateCommandHandlersDeps) {
 			);
 		},
 		cmdStop: async (argv: string[], ctx: CliCtx): Promise<RunResult> => {
+			const [{ cmdStop: cmdStopCommand }, { serveCommandDeps }] = await Promise.all([
+				import("./commands/serve.js"),
+				import("./command_deps.js"),
+			]);
 			return await cmdStopCommand(
 				argv,
 				ctx,

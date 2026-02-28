@@ -6,6 +6,8 @@ function storePathForRepoRoot(repoRoot: string, ...parts: string[]): string {
 	return join(resolveStorePaths(repoRoot).storeDir, ...parts);
 }
 
+const SERVER_HEALTH_PROBE_TIMEOUT_MS = 1_200;
+
 export function asRecord(value: unknown): Record<string, unknown> | null {
 	if (typeof value !== "object" || value == null || Array.isArray(value)) {
 		return null;
@@ -60,7 +62,9 @@ export async function detectRunningServer(repoRoot: string): Promise<{ url: stri
 		// Probe health endpoint
 		const url = `http://localhost:${port}`;
 		try {
-			const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(2000) });
+			const res = await fetch(`${url}/healthz`, {
+				signal: AbortSignal.timeout(SERVER_HEALTH_PROBE_TIMEOUT_MS),
+			});
 			if (res.ok) return { url, port, pid };
 		} catch {
 			/* server not responding — PID alive but not healthy yet or different process */
