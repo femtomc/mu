@@ -269,13 +269,15 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"mu heartbeats create - create a heartbeat program",
 					"",
 					"Usage:",
-					"  mu heartbeats create [--title <text>] [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
-					"  mu heartbeats create <title> [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
+					"  mu heartbeats create [--title <text>] [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--provider <id> --model <id> [--thinking <lvl>]] [--session-id <id>] [--session-file <path>] [--session-dir <path>] [--pretty]",
+					"  mu heartbeats create <title> [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--provider <id> --model <id> [--thinking <lvl>]] [--session-id <id>] [--session-file <path>] [--session-dir <path>] [--pretty]",
 					"",
 					"Notes:",
 					"  - --prompt is an optional free-form operator instruction (can be multi-line).",
 					"  - every-ms omitted: defaults to 15000ms.",
 					"  - every-ms 0: event-driven heartbeat (no periodic timer).",
+					"  - --provider/--model route this heartbeat through a specific operator model profile.",
+					"  - --session-id/--session-file/--session-dir pin autonomous wake turns to a context checkpoint.",
 					"  - Heartbeats wake operator; delivery depends on linked channel identities.",
 					"",
 					"Examples:",
@@ -305,7 +307,13 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 		const { value: promptRaw, rest: argv1 } = getFlagValue(argv0, "--prompt");
 		const { value: everyMsRaw, rest: argv2 } = getFlagValue(argv1, "--every-ms");
 		const { value: reason, rest: argv3 } = getFlagValue(argv2, "--reason");
-		const { value: enabledRaw, rest } = getFlagValue(argv3, "--enabled");
+		const { value: enabledRaw, rest: argv4 } = getFlagValue(argv3, "--enabled");
+		const { value: providerRaw, rest: argv5 } = getFlagValue(argv4, "--provider");
+		const { value: modelRaw, rest: argv6 } = getFlagValue(argv5, "--model");
+		const { value: thinkingRaw, rest: argv7 } = getFlagValue(argv6, "--thinking");
+		const { value: sessionIdRaw, rest: argv8 } = getFlagValue(argv7, "--session-id");
+		const { value: sessionFileRaw, rest: argv9 } = getFlagValue(argv8, "--session-file");
+		const { value: sessionDirRaw, rest } = getFlagValue(argv9, "--session-dir");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats create --help"] });
 		}
@@ -325,6 +333,24 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 		}
 		const prompt =
 			promptRaw == null ? undefined : promptRaw.trim().length === 0 ? null : promptRaw;
+		const provider = providerRaw?.trim() || null;
+		const model = modelRaw?.trim() || null;
+		const thinking = thinkingRaw?.trim() || null;
+		const sessionId = sessionIdRaw?.trim() || null;
+		const sessionFile = sessionFileRaw?.trim() || null;
+		const sessionDir = sessionDirRaw?.trim() || null;
+		if ((provider == null) !== (model == null)) {
+			return jsonError("--provider and --model must be provided together", {
+				pretty,
+				recovery: ["mu heartbeats create --provider <id> --model <id>"],
+			});
+		}
+		if (thinking != null && provider == null) {
+			return jsonError("--thinking requires --provider and --model", {
+				pretty,
+				recovery: ["mu heartbeats create --provider <id> --model <id> --thinking high"],
+			});
+		}
 		const req = await requestServerJson<Record<string, unknown>>({
 			ctx,
 			pretty,
@@ -336,6 +362,12 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 				every_ms: everyMs,
 				reason: reason ?? null,
 				enabled,
+				operator_provider: provider,
+				operator_model: model,
+				operator_thinking: thinking,
+				context_session_id: sessionId,
+				context_session_file: sessionFile,
+				context_session_dir: sessionDir,
 			},
 			recoveryCommand: "mu heartbeats create --title <title> --every-ms 15000",
 		});
@@ -352,12 +384,13 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 					"mu heartbeats update - update a heartbeat program",
 					"",
 					"Usage:",
-					"  mu heartbeats update <program-id> [--title <text>] [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--pretty]",
-					"  mu heartbeats update --program-id <id> [--title <text>] [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false]",
+					"  mu heartbeats update <program-id> [--title <text>] [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--provider <id>] [--model <id>] [--thinking <lvl>] [--session-id <id>] [--session-file <path>] [--session-dir <path>] [--pretty]",
+					"  mu heartbeats update --program-id <id> [--title <text>] [--prompt <text>] [--every-ms N] [--reason <text>] [--enabled true|false] [--provider <id>] [--model <id>] [--thinking <lvl>] [--session-id <id>] [--session-file <path>] [--session-dir <path>]",
 					"",
 					"Examples:",
 					"  mu heartbeats update hb-123 --every-ms 600000",
 					"  mu heartbeats update hb-123 --prompt \"Re-plan from current blockers and act\"",
+					"  mu heartbeats update hb-123 --provider openrouter --model google/gemini-3.1-pro-preview --thinking high",
 					"  mu heartbeats update --program-id hb-123 --enabled false",
 				].join("\n") + "\n",
 			);
@@ -377,7 +410,13 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 		const { value: promptRaw, rest: argv2 } = getFlagValue(argv1, "--prompt");
 		const { value: everyMsRaw, rest: argv3 } = getFlagValue(argv2, "--every-ms");
 		const { value: reason, rest: argv4 } = getFlagValue(argv3, "--reason");
-		const { value: enabledRaw, rest } = getFlagValue(argv4, "--enabled");
+		const { value: enabledRaw, rest: argv5 } = getFlagValue(argv4, "--enabled");
+		const { value: providerRaw, rest: argv6 } = getFlagValue(argv5, "--provider");
+		const { value: modelRaw, rest: argv7 } = getFlagValue(argv6, "--model");
+		const { value: thinkingRaw, rest: argv8 } = getFlagValue(argv7, "--thinking");
+		const { value: sessionIdRaw, rest: argv9 } = getFlagValue(argv8, "--session-id");
+		const { value: sessionFileRaw, rest: argv10 } = getFlagValue(argv9, "--session-file");
+		const { value: sessionDirRaw, rest } = getFlagValue(argv10, "--session-dir");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu heartbeats update --help"] });
 		}
@@ -403,6 +442,30 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 		if (everyMs != null) body.every_ms = everyMs;
 		if (reason != null) body.reason = reason;
 		if (enabled != null) body.enabled = enabled;
+		if (providerRaw != null) {
+			const value = providerRaw.trim();
+			body.operator_provider = value.length === 0 ? null : value;
+		}
+		if (modelRaw != null) {
+			const value = modelRaw.trim();
+			body.operator_model = value.length === 0 ? null : value;
+		}
+		if (thinkingRaw != null) {
+			const value = thinkingRaw.trim();
+			body.operator_thinking = value.length === 0 ? null : value;
+		}
+		if (sessionIdRaw != null) {
+			const value = sessionIdRaw.trim();
+			body.context_session_id = value.length === 0 ? null : value;
+		}
+		if (sessionFileRaw != null) {
+			const value = sessionFileRaw.trim();
+			body.context_session_file = value.length === 0 ? null : value;
+		}
+		if (sessionDirRaw != null) {
+			const value = sessionDirRaw.trim();
+			body.context_session_dir = value.length === 0 ? null : value;
+		}
 		const req = await requestServerJson<Record<string, unknown>>({
 			ctx,
 			pretty,

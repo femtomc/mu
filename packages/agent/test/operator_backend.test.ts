@@ -213,6 +213,81 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(session?.sessionFile).toBe(`${storeDir}/control-plane/operator-sessions/session-persist.jsonl`);
 	});
 
+	test("autonomous metadata can override provider/model/thinking and session checkpoint path", async () => {
+		const seenSessionOpts: Array<Record<string, unknown>> = [];
+		const backend = new PiMessagingOperatorBackend({
+			provider: "openai-codex",
+			model: "gpt-5.3-codex",
+			thinking: "xhigh",
+			sessionFactory: async (opts) => {
+				seenSessionOpts.push(opts as unknown as Record<string, unknown>);
+				return makeStubSession({ responses: ["override ok"] });
+			},
+		});
+
+		const result = await backend.runTurn(
+			mkInput({
+				sessionId: "session-override",
+				turnId: "turn-1",
+				commandText: "hello",
+				metadata: {
+					source: "autonomous_ingress",
+					operator_provider: "openrouter",
+					operator_model: "google/gemini-3.1-pro-preview",
+					operator_thinking: "high",
+					operator_session_file: ".mu/control-plane/operator-sessions/checkpoint.jsonl",
+				},
+				repoRoot: "/repo-root",
+			}),
+		);
+		expect(result).toEqual({ kind: "respond", message: "override ok" });
+		expect(seenSessionOpts).toHaveLength(1);
+		expect(seenSessionOpts[0]?.provider).toBe("openrouter");
+		expect(seenSessionOpts[0]?.model).toBe("google/gemini-3.1-pro-preview");
+		expect(seenSessionOpts[0]?.thinking).toBe("high");
+		const session = seenSessionOpts[0]?.session as Record<string, unknown> | undefined;
+		expect(session?.mode).toBe("open");
+		expect(session?.sessionFile).toBe("/repo-root/.mu/control-plane/operator-sessions/checkpoint.jsonl");
+	});
+
+	test("session profile changes recreate backend sessions for the same session id", async () => {
+		let created = 0;
+		const backend = new PiMessagingOperatorBackend({
+			sessionFactory: async () => {
+				created += 1;
+				return makeStubSession({ responses: ["ok"] });
+			},
+		});
+
+		await backend.runTurn(
+			mkInput({
+				sessionId: "session-profile",
+				turnId: "turn-1",
+				commandText: "hello",
+				metadata: {
+					source: "autonomous_ingress",
+					operator_provider: "openai-codex",
+					operator_model: "gpt-5.3-codex",
+					operator_thinking: "high",
+				},
+			}),
+		);
+		await backend.runTurn(
+			mkInput({
+				sessionId: "session-profile",
+				turnId: "turn-2",
+				commandText: "hello again",
+				metadata: {
+					source: "autonomous_ingress",
+					operator_provider: "openrouter",
+					operator_model: "google/gemini-3.1-pro-preview",
+					operator_thinking: "high",
+				},
+			}),
+		);
+		expect(created).toBe(2);
+	});
+
 	test("command tool call produces approved command payload", async () => {
 		const backend = new PiMessagingOperatorBackend({
 			sessionFactory: async () =>

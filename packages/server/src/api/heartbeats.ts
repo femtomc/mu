@@ -40,6 +40,12 @@ export async function heartbeatRoutes(
 			reason?: unknown;
 			enabled?: unknown;
 			metadata?: unknown;
+			operator_provider?: unknown;
+			operator_model?: unknown;
+			operator_thinking?: unknown;
+			context_session_id?: unknown;
+			context_session_file?: unknown;
+			context_session_dir?: unknown;
 		};
 		try {
 			body = (await request.json()) as {
@@ -49,6 +55,12 @@ export async function heartbeatRoutes(
 				reason?: unknown;
 				enabled?: unknown;
 				metadata?: unknown;
+				operator_provider?: unknown;
+				operator_model?: unknown;
+				operator_thinking?: unknown;
+				context_session_id?: unknown;
+				context_session_file?: unknown;
+				context_session_dir?: unknown;
 			};
 		} catch {
 			return Response.json({ error: "invalid json body" }, { status: 400, headers });
@@ -59,6 +71,36 @@ export async function heartbeatRoutes(
 		}
 		if ("prompt" in body && typeof body.prompt !== "string" && body.prompt !== null) {
 			return Response.json({ error: "prompt must be string or null" }, { status: 400, headers });
+		}
+		const parseNullableString = (value: unknown): string | null | undefined => {
+			if (value === undefined) return undefined;
+			if (value === null) return null;
+			if (typeof value === "string") return value;
+			return undefined;
+		};
+		const operatorProvider = parseNullableString(body.operator_provider);
+		if ("operator_provider" in body && operatorProvider === undefined) {
+			return Response.json({ error: "operator_provider must be string or null" }, { status: 400, headers });
+		}
+		const operatorModel = parseNullableString(body.operator_model);
+		if ("operator_model" in body && operatorModel === undefined) {
+			return Response.json({ error: "operator_model must be string or null" }, { status: 400, headers });
+		}
+		const operatorThinking = parseNullableString(body.operator_thinking);
+		if ("operator_thinking" in body && operatorThinking === undefined) {
+			return Response.json({ error: "operator_thinking must be string or null" }, { status: 400, headers });
+		}
+		const contextSessionId = parseNullableString(body.context_session_id);
+		if ("context_session_id" in body && contextSessionId === undefined) {
+			return Response.json({ error: "context_session_id must be string or null" }, { status: 400, headers });
+		}
+		const contextSessionFile = parseNullableString(body.context_session_file);
+		if ("context_session_file" in body && contextSessionFile === undefined) {
+			return Response.json({ error: "context_session_file must be string or null" }, { status: 400, headers });
+		}
+		const contextSessionDir = parseNullableString(body.context_session_dir);
+		if ("context_session_dir" in body && contextSessionDir === undefined) {
+			return Response.json({ error: "context_session_dir must be string or null" }, { status: 400, headers });
 		}
 		const prompt =
 			typeof body.prompt === "string" ? body.prompt : body.prompt === null ? null : undefined;
@@ -79,6 +121,12 @@ export async function heartbeatRoutes(
 					body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
 						? (body.metadata as Record<string, unknown>)
 						: undefined,
+				operatorProvider,
+				operatorModel,
+				operatorThinking,
+				contextSessionId,
+				contextSessionFile,
+				contextSessionDir,
 			});
 			return Response.json({ ok: true, program }, { status: 201, headers });
 		} catch (err) {
@@ -98,6 +146,12 @@ export async function heartbeatRoutes(
 			reason?: unknown;
 			enabled?: unknown;
 			metadata?: unknown;
+			operator_provider?: unknown;
+			operator_model?: unknown;
+			operator_thinking?: unknown;
+			context_session_id?: unknown;
+			context_session_file?: unknown;
+			context_session_dir?: unknown;
 		};
 		try {
 			body = (await request.json()) as {
@@ -108,6 +162,12 @@ export async function heartbeatRoutes(
 				reason?: unknown;
 				enabled?: unknown;
 				metadata?: unknown;
+				operator_provider?: unknown;
+				operator_model?: unknown;
+				operator_thinking?: unknown;
+				context_session_id?: unknown;
+				context_session_file?: unknown;
+				context_session_dir?: unknown;
 			};
 		} catch {
 			return Response.json({ error: "invalid json body" }, { status: 400, headers });
@@ -117,6 +177,12 @@ export async function heartbeatRoutes(
 			return Response.json({ error: "program_id is required" }, { status: 400, headers });
 		}
 		try {
+			const parseNullableString = (value: unknown): string | null | undefined => {
+				if (value === undefined) return undefined;
+				if (value === null) return null;
+				if (typeof value === "string") return value;
+				return undefined;
+			};
 			const updateOpts: {
 				programId: string;
 				title?: string;
@@ -125,6 +191,12 @@ export async function heartbeatRoutes(
 				reason?: string;
 				enabled?: boolean;
 				metadata?: Record<string, unknown>;
+				operatorProvider?: string | null;
+				operatorModel?: string | null;
+				operatorThinking?: string | null;
+				contextSessionId?: string | null;
+				contextSessionFile?: string | null;
+				contextSessionDir?: string | null;
 			} = {
 				programId,
 				title: typeof body.title === "string" ? body.title : undefined,
@@ -147,6 +219,48 @@ export async function heartbeatRoutes(
 				} else {
 					return Response.json({ error: "prompt must be string or null" }, { status: 400, headers });
 				}
+			}
+			if ("operator_provider" in body) {
+				const value = parseNullableString(body.operator_provider);
+				if (value === undefined) {
+					return Response.json({ error: "operator_provider must be string or null" }, { status: 400, headers });
+				}
+				updateOpts.operatorProvider = value;
+			}
+			if ("operator_model" in body) {
+				const value = parseNullableString(body.operator_model);
+				if (value === undefined) {
+					return Response.json({ error: "operator_model must be string or null" }, { status: 400, headers });
+				}
+				updateOpts.operatorModel = value;
+			}
+			if ("operator_thinking" in body) {
+				const value = parseNullableString(body.operator_thinking);
+				if (value === undefined) {
+					return Response.json({ error: "operator_thinking must be string or null" }, { status: 400, headers });
+				}
+				updateOpts.operatorThinking = value;
+			}
+			if ("context_session_id" in body) {
+				const value = parseNullableString(body.context_session_id);
+				if (value === undefined) {
+					return Response.json({ error: "context_session_id must be string or null" }, { status: 400, headers });
+				}
+				updateOpts.contextSessionId = value;
+			}
+			if ("context_session_file" in body) {
+				const value = parseNullableString(body.context_session_file);
+				if (value === undefined) {
+					return Response.json({ error: "context_session_file must be string or null" }, { status: 400, headers });
+				}
+				updateOpts.contextSessionFile = value;
+			}
+			if ("context_session_dir" in body) {
+				const value = parseNullableString(body.context_session_dir);
+				if (value === undefined) {
+					return Response.json({ error: "context_session_dir must be string or null" }, { status: 400, headers });
+				}
+				updateOpts.contextSessionDir = value;
 			}
 			const result = await deps.heartbeatPrograms.update(updateOpts);
 			if (result.ok) {

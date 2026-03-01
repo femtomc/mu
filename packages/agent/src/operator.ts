@@ -1,7 +1,7 @@
 import { UiDocSchema, type UiDoc, normalizeUiDocs } from "@femtomc/mu-core";
 import { appendJsonl, getStorePaths } from "@femtomc/mu-core/node";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { CommandContextResolver } from "./command_context.js";
 import { createMuSession, type CreateMuSessionOpts, type MuSession } from "./session_factory.js";
@@ -381,6 +381,14 @@ function nonEmptyString(value: unknown): string | null {
 	return trimmed.length > 0 ? trimmed : null;
 }
 
+function autonomousSessionIdOverride(metadata: Record<string, unknown>): string | null {
+	const source = nonEmptyString(metadata.source);
+	if (source !== "autonomous_ingress") {
+		return null;
+	}
+	return nonEmptyString(metadata.operator_session_id);
+}
+
 function autonomousTurnEnvironment(metadata: Record<string, unknown>): Record<string, string> {
 	const source = nonEmptyString(metadata.source);
 	if (source !== "autonomous_ingress") {
@@ -406,6 +414,58 @@ function autonomousTurnEnvironment(metadata: Record<string, unknown>): Record<st
 		out.MU_AUTONOMOUS_SOURCE_TS_MS = String(Math.trunc(sourceTsMs));
 	}
 	return out;
+}
+
+type AutonomousOperatorSessionOverrides = {
+	provider?: string;
+	model?: string;
+	thinking?: string;
+	sessionFile?: string;
+	sessionDir?: string;
+};
+
+function resolveRepoPath(repoRoot: string, candidate: string): string {
+	return isAbsolute(candidate) ? candidate : join(repoRoot, candidate);
+}
+
+function autonomousOperatorSessionOverrides(
+	metadata: Record<string, unknown>,
+	repoRoot: string,
+): AutonomousOperatorSessionOverrides {
+	const source = nonEmptyString(metadata.source);
+	if (source !== "autonomous_ingress") {
+		return {};
+	}
+	const provider = nonEmptyString(metadata.operator_provider);
+	const model = nonEmptyString(metadata.operator_model);
+	const thinking = nonEmptyString(metadata.operator_thinking);
+	const sessionFileRaw = nonEmptyString(metadata.operator_session_file);
+	const sessionDirRaw = nonEmptyString(metadata.operator_session_dir);
+	const sessionFile = sessionFileRaw ? resolveRepoPath(repoRoot, sessionFileRaw) : undefined;
+	const sessionDir = sessionDirRaw ? resolveRepoPath(repoRoot, sessionDirRaw) : undefined;
+	return {
+		...(provider ? { provider } : {}),
+		...(model ? { model } : {}),
+		...(thinking ? { thinking } : {}),
+		...(sessionFile ? { sessionFile } : {}),
+		...(sessionDir ? { sessionDir } : {}),
+	};
+}
+
+function operatorSessionProfileKey(opts: {
+	provider?: string;
+	model?: string;
+	thinking?: string;
+	sessionFile?: string;
+	sessionDir?: string;
+}): string {
+	return JSON.stringify({
+		provider: opts.provider ?? null,
+		model: opts.model ?? null,
+		thinking: opts.thinking ?? null,
+		sessionFile: opts.sessionFile ?? null,
+		sessionDir: opts.sessionDir ?? null,
+	});
 }
 
 function isUiToolName(toolName: string): boolean {
@@ -559,6 +619,11 @@ export class MessagingOperatorRuntime {
 	}
 
 	async #resolveSessionId(inbound: InboundEnvelope, binding: IdentityBinding): Promise<string> {
+		const explicitSessionId = autonomousSessionIdOverride(inbound.metadata);
+		if (explicitSessionId) {
+			return explicitSessionId;
+		}
+
 		const key = conversationKey(inbound, binding);
 		const existing = this.#sessionByConversation.get(key);
 		if (existing) {
@@ -825,6 +890,7 @@ type PiOperatorSessionRecord = {
 	repoRoot: string;
 	createdAtMs: number;
 	lastUsedAtMs: number;
+	profileKey: string;
 };
 
 type OperatorTurnAuditEntry = {
@@ -927,9 +993,27 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		this.#activePromptCountsBySession.set(sessionId, current - 1);
 	}
 
-	#sessionPersistence(repoRoot: string, sessionId: string): CreateMuSessionOpts["session"] | undefined {
+	#sessionPersistence(
+		repoRoot: string,
+		sessionId: string,
+		overrides: AutonomousOperatorSessionOverrides,
+	): CreateMuSessionOpts["session"] | undefined {
 		if (!this.#persistSessions) {
 			return undefined;
+		}
+		if (overrides.sessionFile) {
+			return {
+				mode: "open",
+				sessionDir: overrides.sessionDir,
+				sessionFile: overrides.sessionFile,
+			};
+		}
+		if (overrides.sessionDir) {
+			return {
+				mode: "open",
+				sessionDir: overrides.sessionDir,
+				sessionFile: join(overrides.sessionDir, `${sessionFileStem(sessionId)}.jsonl`),
+			};
 		}
 		const sessionDir = this.#sessionDirForRepoRoot(repoRoot);
 		const sessionFile = join(sessionDir, `${sessionFileStem(sessionId)}.jsonl`);
@@ -940,15 +1024,30 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		};
 	}
 
-	async #createSession(repoRoot: string, sessionId: string, nowMs: number): Promise<PiOperatorSessionRecord> {
+	async #createSession(
+		repoRoot: string,
+		sessionId: string,
+		nowMs: number,
+		overrides: AutonomousOperatorSessionOverrides,
+	): Promise<PiOperatorSessionRecord> {
+		const provider = overrides.provider ?? this.#provider;
+		const model = overrides.model ?? this.#model;
+		const thinking = overrides.thinking ?? this.#thinking;
+		const profileKey = operatorSessionProfileKey({
+			provider,
+			model,
+			thinking,
+			sessionFile: overrides.sessionFile,
+			sessionDir: overrides.sessionDir,
+		});
 		const session = await this.#sessionFactory({
 			cwd: repoRoot,
 			systemPrompt: this.#systemPrompt,
-			provider: this.#provider,
-			model: this.#model,
-			thinking: this.#thinking,
+			provider,
+			model,
+			thinking,
 			extensionPaths: this.#extensionPaths,
-			session: this.#sessionPersistence(repoRoot, sessionId),
+			session: this.#sessionPersistence(repoRoot, sessionId, overrides),
 			bashToolOptions: {
 				spawnHook: (context) => {
 					const turnEnv = this.#autonomousTurnEnvBySession.get(sessionId);
@@ -983,23 +1082,35 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			repoRoot,
 			createdAtMs: nowMs,
 			lastUsedAtMs: nowMs,
+			profileKey,
 		};
 	}
 
-	async #resolveSession(sessionId: string, repoRoot: string): Promise<PiOperatorSessionRecord> {
+	async #resolveSession(
+		sessionId: string,
+		repoRoot: string,
+		overrides: AutonomousOperatorSessionOverrides,
+	): Promise<PiOperatorSessionRecord> {
 		const nowMs = Math.trunc(this.#nowMs());
 		this.#pruneSessions(nowMs);
+		const requestedProfileKey = operatorSessionProfileKey({
+			provider: overrides.provider ?? this.#provider,
+			model: overrides.model ?? this.#model,
+			thinking: overrides.thinking ?? this.#thinking,
+			sessionFile: overrides.sessionFile,
+			sessionDir: overrides.sessionDir,
+		});
 
 		const existing = this.#sessions.get(sessionId);
-		if (existing && existing.repoRoot === repoRoot) {
+		if (existing && existing.repoRoot === repoRoot && existing.profileKey === requestedProfileKey) {
 			existing.lastUsedAtMs = nowMs;
 			return existing;
 		}
-		if (existing && existing.repoRoot !== repoRoot) {
+		if (existing) {
 			this.#disposeSession(sessionId);
 		}
 
-		const created = await this.#createSession(repoRoot, sessionId, nowMs);
+		const created = await this.#createSession(repoRoot, sessionId, nowMs, overrides);
 		this.#sessions.set(sessionId, created);
 		this.#pruneSessions(nowMs);
 		return created;
@@ -1060,7 +1171,8 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 	}
 
 	public async runTurn(input: OperatorBackendTurnInput): Promise<OperatorBackendTurnResult> {
-		const sessionRecord = await this.#resolveSession(input.sessionId, input.inbound.repo_root);
+		const overrides = autonomousOperatorSessionOverrides(input.inbound.metadata, input.inbound.repo_root);
+		const sessionRecord = await this.#resolveSession(input.sessionId, input.inbound.repo_root, overrides);
 		const session = sessionRecord.session;
 
 		let assistantText = "";

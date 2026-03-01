@@ -12,6 +12,12 @@ export type HeartbeatProgramSnapshot = {
 	every_ms: number;
 	reason: string;
 	metadata: Record<string, unknown>;
+	operator_provider: string | null;
+	operator_model: string | null;
+	operator_thinking: string | null;
+	context_session_id: string | null;
+	context_session_file: string | null;
+	context_session_dir: string | null;
 	created_at_ms: number;
 	updated_at_ms: number;
 	last_triggered_at_ms: number | null;
@@ -71,6 +77,12 @@ export type HeartbeatProgramRegistryOpts = {
 		prompt: string | null;
 		reason: string;
 		metadata: Record<string, unknown>;
+		operatorProvider: string | null;
+		operatorModel: string | null;
+		operatorThinking: string | null;
+		contextSessionId: string | null;
+		contextSessionFile: string | null;
+		contextSessionDir: string | null;
 		triggeredAtMs: number;
 	}) => Promise<HeartbeatProgramDispatchResult>;
 	onTickEvent?: (event: HeartbeatProgramTickEvent) => void | Promise<void>;
@@ -98,6 +110,14 @@ function normalizePrompt(value: unknown): string | null {
 		return null;
 	}
 	return value;
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
 }
 
 function normalizeProgram(row: unknown): HeartbeatProgramSnapshot | null {
@@ -129,7 +149,7 @@ function normalizeProgram(row: unknown): HeartbeatProgramSnapshot | null {
 	const lastResult = lastResultRaw === "ok" || lastResultRaw === "coalesced" || lastResultRaw === "failed" ? lastResultRaw : null;
 	const reason =
 		typeof record.reason === "string" && record.reason.trim().length > 0 ? record.reason.trim() : "scheduled";
-	return {
+	const normalized: HeartbeatProgramSnapshot = {
 		v: 1,
 		program_id: programId,
 		title,
@@ -138,12 +158,28 @@ function normalizeProgram(row: unknown): HeartbeatProgramSnapshot | null {
 		every_ms: everyMs,
 		reason,
 		metadata: sanitizeMetadata(record.metadata),
+		operator_provider: normalizeOptionalString(record.operator_provider),
+		operator_model: normalizeOptionalString(record.operator_model),
+		operator_thinking: normalizeOptionalString(record.operator_thinking),
+		context_session_id: normalizeOptionalString(record.context_session_id),
+		context_session_file: normalizeOptionalString(record.context_session_file),
+		context_session_dir: normalizeOptionalString(record.context_session_dir),
 		created_at_ms: createdAt,
 		updated_at_ms: updatedAt,
 		last_triggered_at_ms: lastTriggeredAt,
 		last_result: lastResult,
 		last_error: typeof record.last_error === "string" ? record.last_error : null,
 	};
+	const hasProvider = Boolean(normalized.operator_provider);
+	const hasModel = Boolean(normalized.operator_model);
+	if (hasProvider !== hasModel) {
+		normalized.operator_provider = null;
+		normalized.operator_model = null;
+		normalized.operator_thinking = null;
+	} else if (!hasProvider) {
+		normalized.operator_thinking = null;
+	}
+	return normalized;
 }
 
 function sortPrograms(programs: HeartbeatProgramSnapshot[]): HeartbeatProgramSnapshot[] {
@@ -153,6 +189,17 @@ function sortPrograms(programs: HeartbeatProgramSnapshot[]): HeartbeatProgramSna
 		}
 		return a.program_id.localeCompare(b.program_id);
 	});
+}
+
+function validateOperatorRouting(program: HeartbeatProgramSnapshot): void {
+	const hasProvider = typeof program.operator_provider === "string" && program.operator_provider.length > 0;
+	const hasModel = typeof program.operator_model === "string" && program.operator_model.length > 0;
+	if (hasProvider !== hasModel) {
+		throw new Error("heartbeat_program_operator_provider_model_pair_required");
+	}
+	if (program.operator_thinking && !hasProvider) {
+		throw new Error("heartbeat_program_operator_thinking_requires_provider_model");
+	}
 }
 
 export class HeartbeatProgramRegistry {
@@ -300,6 +347,12 @@ export class HeartbeatProgramRegistry {
 				prompt: program.prompt,
 				reason: heartbeatReason,
 				metadata: { ...program.metadata },
+				operatorProvider: program.operator_provider,
+				operatorModel: program.operator_model,
+				operatorThinking: program.operator_thinking,
+				contextSessionId: program.context_session_id,
+				contextSessionFile: program.context_session_file,
+				contextSessionDir: program.context_session_dir,
 				triggeredAtMs: nowMs,
 			});
 
@@ -396,6 +449,12 @@ export class HeartbeatProgramRegistry {
 		reason?: string;
 		enabled?: boolean;
 		metadata?: Record<string, unknown>;
+		operatorProvider?: string | null;
+		operatorModel?: string | null;
+		operatorThinking?: string | null;
+		contextSessionId?: string | null;
+		contextSessionFile?: string | null;
+		contextSessionDir?: string | null;
 	}): Promise<HeartbeatProgramSnapshot> {
 		await this.#ensureLoaded();
 		const title = opts.title.trim();
@@ -414,12 +473,19 @@ export class HeartbeatProgramRegistry {
 			),
 			reason: opts.reason?.trim() || "scheduled",
 			metadata: sanitizeMetadata(opts.metadata),
+			operator_provider: normalizeOptionalString(opts.operatorProvider),
+			operator_model: normalizeOptionalString(opts.operatorModel),
+			operator_thinking: normalizeOptionalString(opts.operatorThinking),
+			context_session_id: normalizeOptionalString(opts.contextSessionId),
+			context_session_file: normalizeOptionalString(opts.contextSessionFile),
+			context_session_dir: normalizeOptionalString(opts.contextSessionDir),
 			created_at_ms: nowMs,
 			updated_at_ms: nowMs,
 			last_triggered_at_ms: null,
 			last_result: null,
 			last_error: null,
 		};
+		validateOperatorRouting(program);
 		this.#programs.set(program.program_id, program);
 		this.#applySchedule(program);
 		await this.#persist();
@@ -444,6 +510,12 @@ export class HeartbeatProgramRegistry {
 		reason?: string;
 		enabled?: boolean;
 		metadata?: Record<string, unknown>;
+		operatorProvider?: string | null;
+		operatorModel?: string | null;
+		operatorThinking?: string | null;
+		contextSessionId?: string | null;
+		contextSessionFile?: string | null;
+		contextSessionDir?: string | null;
 	}): Promise<HeartbeatProgramOperationResult> {
 		await this.#ensureLoaded();
 		const program = this.#programs.get(opts.programId.trim());
@@ -472,6 +544,25 @@ export class HeartbeatProgramRegistry {
 		if (opts.metadata) {
 			program.metadata = sanitizeMetadata(opts.metadata);
 		}
+		if ("operatorProvider" in opts) {
+			program.operator_provider = normalizeOptionalString(opts.operatorProvider);
+		}
+		if ("operatorModel" in opts) {
+			program.operator_model = normalizeOptionalString(opts.operatorModel);
+		}
+		if ("operatorThinking" in opts) {
+			program.operator_thinking = normalizeOptionalString(opts.operatorThinking);
+		}
+		if ("contextSessionId" in opts) {
+			program.context_session_id = normalizeOptionalString(opts.contextSessionId);
+		}
+		if ("contextSessionFile" in opts) {
+			program.context_session_file = normalizeOptionalString(opts.contextSessionFile);
+		}
+		if ("contextSessionDir" in opts) {
+			program.context_session_dir = normalizeOptionalString(opts.contextSessionDir);
+		}
+		validateOperatorRouting(program);
 		const nowMs = Math.trunc(this.#nowMs());
 		program.updated_at_ms = nowMs;
 		this.#applySchedule(program);

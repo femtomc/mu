@@ -498,11 +498,29 @@ function renderHeartbeatProgramCompact(program: Record<string, unknown>): string
 	const everyMs = recordInt(program, "every_ms");
 	const reason = recordString(program, "reason") ?? "-";
 	const updated = recordInt(program, "updated_at_ms");
+	const operatorProvider = recordString(program, "operator_provider") ?? null;
+	const operatorModel = recordString(program, "operator_model") ?? null;
+	const operatorThinking = recordString(program, "operator_thinking") ?? null;
+	const contextSessionId = recordString(program, "context_session_id") ?? null;
+	const contextSessionFile = recordString(program, "context_session_file") ?? null;
+	const contextSessionDir = recordString(program, "context_session_dir") ?? null;
 	const lines = [
 		`Heartbeat ${id}`,
 		`title=${truncateInline(title, 120)}`,
 		`enabled=${enabled == null ? "-" : String(enabled)} every_ms=${everyMs ?? "-"} reason=${truncateInline(reason, 80)}`,
 	];
+	if (operatorProvider || operatorModel || operatorThinking) {
+		lines.push(
+			`model=${truncateInline(`${operatorProvider ?? "-"}/${operatorModel ?? "-"}`, 120)} thinking=${truncateInline(operatorThinking ?? "-", 40)}`,
+		);
+	}
+	if (contextSessionId || contextSessionFile || contextSessionDir) {
+		const parts: string[] = [];
+		if (contextSessionId) parts.push(`id=${truncateInline(contextSessionId, 80)}`);
+		if (contextSessionFile) parts.push(`file=${truncateInline(contextSessionFile, 80)}`);
+		if (contextSessionDir) parts.push(`dir=${truncateInline(contextSessionDir, 80)}`);
+		lines.push(`checkpoint=${parts.join(" ")}`);
+	}
 	if (prompt != null) {
 		lines.push(`prompt=${truncateInline(prompt, 140)}`);
 	}

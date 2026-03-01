@@ -59,6 +59,64 @@ describe("HeartbeatProgramRegistry", () => {
 		scheduler.stop();
 	});
 
+	test("dispatches per-program model routing and context checkpoint fields", async () => {
+		const store = new InMemoryJsonlStore<HeartbeatProgramSnapshot>([]);
+		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 10 });
+		const wakeCalls: Array<{
+			programId: string;
+			operatorProvider: string | null;
+			operatorModel: string | null;
+			operatorThinking: string | null;
+			contextSessionId: string | null;
+			contextSessionFile: string | null;
+			contextSessionDir: string | null;
+		}> = [];
+		const registry = new HeartbeatProgramRegistry({
+			repoRoot: "/repo",
+			heartbeatScheduler: scheduler,
+			store,
+			dispatchWake: async (opts) => {
+				wakeCalls.push({
+					programId: opts.programId,
+					operatorProvider: opts.operatorProvider,
+					operatorModel: opts.operatorModel,
+					operatorThinking: opts.operatorThinking,
+					contextSessionId: opts.contextSessionId,
+					contextSessionFile: opts.contextSessionFile,
+					contextSessionDir: opts.contextSessionDir,
+				});
+				return { status: "ok" };
+			},
+		});
+
+		const program = await registry.create({
+			title: "Model-routed wake pulse",
+			everyMs: 0,
+			operatorProvider: "openrouter",
+			operatorModel: "google/gemini-3.1-pro-preview",
+			operatorThinking: "high",
+			contextSessionId: "checkpoint-1",
+			contextSessionFile: "/tmp/operator-session.jsonl",
+			contextSessionDir: "/tmp",
+		});
+
+		const trigger = await registry.trigger({ programId: program.program_id, reason: "manual" });
+		expect(trigger.ok).toBe(true);
+		expect(wakeCalls).toHaveLength(1);
+		expect(wakeCalls[0]).toEqual({
+			programId: program.program_id,
+			operatorProvider: "openrouter",
+			operatorModel: "google/gemini-3.1-pro-preview",
+			operatorThinking: "high",
+			contextSessionId: "checkpoint-1",
+			contextSessionFile: "/tmp/operator-session.jsonl",
+			contextSessionDir: "/tmp",
+		});
+
+		registry.stop();
+		scheduler.stop();
+	});
+
 	test("coalesces concurrent trigger calls while wake dispatch is in flight", async () => {
 		const store = new InMemoryJsonlStore<HeartbeatProgramSnapshot>([]);
 		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 10 });
@@ -166,6 +224,12 @@ describe("HeartbeatProgramRegistry", () => {
 				every_ms: 40,
 				reason: "scheduled",
 				metadata: {},
+				operator_provider: null,
+				operator_model: null,
+				operator_thinking: null,
+				context_session_id: null,
+				context_session_file: null,
+				context_session_dir: null,
 				created_at_ms: Date.now(),
 				updated_at_ms: Date.now(),
 				last_triggered_at_ms: null,

@@ -31,18 +31,25 @@ export function createServerProgramCoordination(opts: {
 		heartbeatScheduler: opts.heartbeatScheduler,
 		dispatchWake: async (wakeOpts) => {
 			const prompt = wakeOpts.prompt && wakeOpts.prompt.trim().length > 0 ? wakeOpts.prompt : null;
+			const payload: Record<string, unknown> = {
+				wake_source: "heartbeat_program",
+				source_ts_ms: wakeOpts.triggeredAtMs,
+				program_id: wakeOpts.programId,
+				title: wakeOpts.title,
+				prompt,
+				reason: wakeOpts.reason,
+				metadata: wakeOpts.metadata,
+			};
+			if (wakeOpts.operatorProvider) payload.operator_provider = wakeOpts.operatorProvider;
+			if (wakeOpts.operatorModel) payload.operator_model = wakeOpts.operatorModel;
+			if (wakeOpts.operatorThinking) payload.operator_thinking = wakeOpts.operatorThinking;
+			if (wakeOpts.contextSessionId) payload.context_session_id = wakeOpts.contextSessionId;
+			if (wakeOpts.contextSessionFile) payload.context_session_file = wakeOpts.contextSessionFile;
+			if (wakeOpts.contextSessionDir) payload.context_session_dir = wakeOpts.contextSessionDir;
 			const wakeResult = await opts.emitOperatorWake({
 				dedupeKey: `heartbeat-program:${wakeOpts.programId}`,
 				message: prompt ?? `Heartbeat wake: ${wakeOpts.title}`,
-				payload: {
-					wake_source: "heartbeat_program",
-					source_ts_ms: wakeOpts.triggeredAtMs,
-					program_id: wakeOpts.programId,
-					title: wakeOpts.title,
-					prompt,
-					reason: wakeOpts.reason,
-					metadata: wakeOpts.metadata,
-				},
+				payload,
 			});
 			if (wakeResult.status === "coalesced") {
 				return { status: "coalesced", reason: wakeResult.reason };

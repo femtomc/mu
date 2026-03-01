@@ -223,12 +223,26 @@ test("mu heartbeats help surfaces telegram setup and subcommand guidance", async
 	expect(createHelp.stdout).toContain("mu heartbeats create - create a heartbeat program");
 	expect(createHelp.stdout).toContain("--prompt <text>");
 	expect(createHelp.stdout).toContain("--every-ms N");
+	expect(createHelp.stdout).toContain("--provider <id>");
+	expect(createHelp.stdout).toContain("--session-id <id>");
 	expect(createHelp.stdout).toContain("Telegram prerequisites:");
 
 	const listHelp = await run(["heartbeats", "list", "--help"], { cwd: dir });
 	expect(listHelp.exitCode).toBe(0);
 	expect(listHelp.stdout).toContain("--enabled true|false");
 	expect(listHelp.stdout).toContain("--limit N");
+});
+
+test("mu heartbeats create validates model routing flag combinations", async () => {
+	const dir = await mkTempRepo();
+
+	const providerOnly = await run(["heartbeats", "create", "--title", "HB", "--provider", "openrouter"], { cwd: dir });
+	expect(providerOnly.exitCode).toBe(1);
+	expect(providerOnly.stdout).toContain("--provider and --model must be provided together");
+
+	const thinkingOnly = await run(["heartbeats", "create", "--title", "HB", "--thinking", "high"], { cwd: dir });
+	expect(thinkingOnly.exitCode).toBe(1);
+	expect(thinkingOnly.stdout).toContain("--thinking requires --provider and --model");
 });
 
 test("mu command-group help is self-explanatory across events/cron/control/turn/replay", async () => {

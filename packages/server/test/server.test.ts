@@ -932,7 +932,7 @@ describe("mu-server", () => {
 	});
 
 	test("operator wake invokes autonomous wake turn path and emits deterministic decision telemetry", async () => {
-		const wakeTurns: Array<{ text: string; requestId?: string }> = [];
+		const wakeTurns: Array<{ text: string; requestId?: string; metadata?: Record<string, unknown> }> = [];
 		const wakeControlPlane: ControlPlaneHandle = {
 			activeAdapters: [],
 			handleWebhook: async () => null,
@@ -960,6 +960,10 @@ describe("mu-server", () => {
 					prompt: heartbeatPrompt,
 					every_ms: 0,
 					reason: "heartbeat-wake",
+					operator_provider: "openrouter",
+					operator_model: "google/gemini-3.1-pro-preview",
+					operator_thinking: "high",
+					context_session_file: ".mu/control-plane/operator-sessions/checkpoint-hb.jsonl",
 				}),
 			}),
 		);
@@ -1006,6 +1010,13 @@ describe("mu-server", () => {
 		expect(wakeTurn?.text).toContain("wake_source=heartbeat_program");
 		expect(wakeTurn?.text).toContain(`program_id=${heartbeatProgramId}`);
 		expect(wakeTurn?.text).toContain(heartbeatPrompt);
+		expect(wakeTurn?.metadata?.operator_provider).toBe("openrouter");
+		expect(wakeTurn?.metadata?.operator_model).toBe("google/gemini-3.1-pro-preview");
+		expect(wakeTurn?.metadata?.operator_thinking).toBe("high");
+		expect(wakeTurn?.metadata?.operator_session_id).toBe(`heartbeat-program:${heartbeatProgramId}`);
+		expect(wakeTurn?.metadata?.operator_session_file).toBe(
+			".mu/control-plane/operator-sessions/checkpoint-hb.jsonl",
+		);
 
 		expect(decisionPayload.dedupe_key).toBe(`heartbeat-program:${heartbeatProgramId}`);
 		expect(decisionPayload.wake_turn_outcome).toBe("triggered");

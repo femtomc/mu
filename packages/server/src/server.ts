@@ -307,16 +307,32 @@ function createServer(options: ServerOptions = {}) {
 					message: opts.message,
 					payload: opts.payload,
 				});
+				const operatorProvider = stringField(opts.payload, "operator_provider");
+				const operatorModel = stringField(opts.payload, "operator_model");
+				const operatorThinking = stringField(opts.payload, "operator_thinking");
+				const contextSessionId = stringField(opts.payload, "context_session_id");
+				const contextSessionFile = stringField(opts.payload, "context_session_file");
+				const contextSessionDir = stringField(opts.payload, "context_session_dir");
+				const defaultHeartbeatSessionId =
+					wakeSource === "heartbeat_program" && programId ? `heartbeat-program:${programId}` : null;
+				const operatorSessionId = contextSessionId ?? defaultHeartbeatSessionId;
+				const autonomousMetadata: Record<string, unknown> = {
+					wake_id: wakeId,
+					wake_source: wakeSource,
+					program_id: programId,
+					source_ts_ms: sourceTsMs,
+				};
+				if (operatorProvider) autonomousMetadata.operator_provider = operatorProvider;
+				if (operatorModel) autonomousMetadata.operator_model = operatorModel;
+				if (operatorThinking) autonomousMetadata.operator_thinking = operatorThinking;
+				if (operatorSessionId) autonomousMetadata.operator_session_id = operatorSessionId;
+				if (contextSessionFile) autonomousMetadata.operator_session_file = contextSessionFile;
+				if (contextSessionDir) autonomousMetadata.operator_session_dir = contextSessionDir;
 				const turnResult = await autonomousIngress({
 					text: ingressText,
 					repoRoot: context.repoRoot,
 					requestId: turnRequestId,
-					metadata: {
-						wake_id: wakeId,
-						wake_source: wakeSource,
-						program_id: programId,
-						source_ts_ms: sourceTsMs,
-					},
+					metadata: autonomousMetadata,
 				});
 				if (turnResult.kind === "noop" || turnResult.kind === "invalid") {
 					decision = {

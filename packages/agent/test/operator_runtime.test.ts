@@ -123,6 +123,37 @@ test("MessagingOperatorRuntime reuses persisted conversation session ids across 
 	expect(seenSessionIds).toEqual(["session-1", "session-1", "session-2"]);
 });
 
+test("MessagingOperatorRuntime honors autonomous operator_session_id overrides", async () => {
+	const seenSessionIds: string[] = [];
+	const backend: MessagingOperatorBackend = {
+		runTurn: async (input) => {
+			seenSessionIds.push(input.sessionId);
+			return { kind: "respond", message: "ok" };
+		},
+	};
+	let seq = 0;
+	const runtime = new MessagingOperatorRuntime({
+		backend,
+		sessionIdFactory: () => `session-${++seq}`,
+	});
+	try {
+		const autonomousInbound = mkInbound("chat-autonomous");
+		autonomousInbound.metadata = {
+			source: "autonomous_ingress",
+			operator_session_id: "heartbeat-program:hb-123",
+		};
+		const autonomous = await runtime.handleInbound({ inbound: autonomousInbound, binding: mkBinding() });
+		expect(autonomous.kind).toBe("response");
+		expect(autonomous.operatorSessionId).toBe("heartbeat-program:hb-123");
+
+		const normal = await runtime.handleInbound({ inbound: mkInbound("chat-autonomous"), binding: mkBinding() });
+		expect(normal.operatorSessionId).toBe("session-1");
+		expect(seenSessionIds).toEqual(["heartbeat-program:hb-123", "session-1"]);
+	} finally {
+		await runtime.stop();
+	}
+});
+
 test("MessagingOperatorRuntime forwards ui_docs from backend responses", async () => {
 	const uiDoc = mkUiDoc();
 	const runtime = new MessagingOperatorRuntime({

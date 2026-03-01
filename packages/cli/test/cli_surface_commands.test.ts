@@ -72,6 +72,14 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 				"Check queued runs and recover stuck work",
 				"--every-ms",
 				"15000",
+				"--provider",
+				"openrouter",
+				"--model",
+				"google/gemini-3.1-pro-preview",
+				"--thinking",
+				"high",
+				"--session-id",
+				"checkpoint-hb",
 			],
 			{
 				cwd: dir,
@@ -96,6 +104,19 @@ test("new CLI parity surfaces call dedicated server APIs for control-plane comma
 					(entry.body as Record<string, unknown> | null)?.prompt === "Check queued runs and recover stuck work",
 			),
 		).toBe(true);
+		expect(
+			seen.some((entry) => {
+				if (entry.path !== "/api/heartbeats/create") return false;
+				const body = entry.body as Record<string, unknown> | null;
+				return (
+					body?.operator_provider === "openrouter" &&
+					body?.operator_model === "google/gemini-3.1-pro-preview" &&
+					body?.operator_thinking === "high" &&
+					body?.context_session_id === "checkpoint-hb"
+				);
+			}),
+		).toBe(true);
+		
 		expect(seen.some((entry) => entry.path.startsWith("/api/context"))).toBe(false);
 		expect(seen.some((entry) => entry.path === "/api/query")).toBe(false);
 		expect(seen.some((entry) => entry.path === "/api/commands/submit")).toBe(false);

@@ -46,6 +46,8 @@ mu forum post topic -m "message"  # Post to forum
 mu exec "task..."          # One-shot operator prompt
 mu heartbeats --help        # Durable heartbeat automation programs
 mu heartbeats stats         # Heartbeat scheduler summary (total/enabled/armed)
+mu heartbeats create --title "Watchdog" --provider openrouter --model google/gemini-3.1-pro-preview --thinking high
+mu heartbeats update hb-123 --session-id checkpoint-hb-123 --session-file .mu/control-plane/operator-sessions/checkpoint.jsonl
 mu cron --help              # Durable cron automation programs
 ```
 
@@ -56,6 +58,12 @@ Use `--json` (optionally with `--pretty`) when you need full machine records.
 Use `mu exec` when you want a lightweight one-shot operator response.
 Use `mu heartbeats`/`mu cron` + `mu turn`/`mu session` for durable
 operator-centric automation loops.
+
+Heartbeat programs can now carry per-program model routing and context checkpoints:
+
+- `--provider/--model/--thinking` set the autonomous operator profile for that heartbeat.
+- `--session-id` pins heartbeat wakes to a stable autonomous session identity.
+- `--session-file` / `--session-dir` let heartbeats resume from explicit persisted checkpoints.
 
 Memory retrieval supports a local memory index:
 
