@@ -50,6 +50,7 @@ type RequestServerJsonFn<Ctx, Result> = <T>(opts: {
 	path: string;
 	body?: Record<string, unknown>;
 	recoveryCommand: string;
+	timeoutMs?: number;
 }) => Promise<{ ok: true; payload: T } | { ok: false; result: Result }>;
 
 export function statusCommandDeps() {

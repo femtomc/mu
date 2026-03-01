@@ -41,6 +41,7 @@ mu control config get --verbose  # Include defaults + descriptions
 mu issues list             # List all issues
 mu issues create "title"   # Create new issue
 mu issues ready            # Show ready leaf issues
+mu issues close <id> --allow-heartbeat-managed  # Override heartbeat ownership guardrails when needed
 mu forum post topic -m "message"  # Post to forum
 mu exec "task..."          # One-shot operator prompt
 mu heartbeats --help        # Durable heartbeat automation programs

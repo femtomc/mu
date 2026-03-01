@@ -505,6 +505,162 @@ test("memory index rebuild/status enables index-first query fallback when source
 	}
 });
 
+test("memory index rebuild tolerates repeated control-plane ids without UNIQUE constraint failures", async () => {
+	const dir = await mkTempRepo();
+	const storeDir = getStorePaths(dir).storeDir;
+	const cpDir = join(storeDir, "control-plane");
+
+	try {
+		await mkdir(cpDir, { recursive: true });
+		await writeFile(
+			join(cpDir, "commands.jsonl"),
+			[
+				{
+					kind: "command.lifecycle",
+					ts_ms: 1_700_001_000_000,
+					event_type: "command.state",
+					command: {
+						command_id: "cmd-dup",
+						command_text: "queue-dup-token command one",
+						state: "queued",
+						target_type: "operator_chat",
+						target_id: "autonomous",
+					},
+				},
+				{
+					kind: "command.lifecycle",
+					ts_ms: 1_700_001_000_010,
+					event_type: "command.state",
+					command: {
+						command_id: "cmd-dup",
+						command_text: "queue-dup-token command two",
+						state: "completed",
+						target_type: "operator_chat",
+						target_id: "autonomous",
+					},
+				},
+			]
+				.map((row) => JSON.stringify(row))
+				.join("\n") + "\n",
+			"utf8",
+		);
+
+		await writeFile(
+			join(cpDir, "outbox.jsonl"),
+			[
+				{
+					kind: "outbox.state",
+					ts_ms: 1_700_001_000_020,
+					record: {
+						outbox_id: "out-dup",
+						state: "queued",
+						updated_at_ms: 1_700_001_000_020,
+						attempt_count: 0,
+						max_attempts: 3,
+						envelope: {
+							kind: "operator.message",
+							body: "queue-dup-token outbox one",
+							channel: "telegram",
+							channel_tenant_id: "telegram-bot",
+							channel_conversation_id: "chat-1",
+							correlation: {
+								actor_binding_id: "binding-1",
+								operator_session_id: "session-1",
+							},
+						},
+					},
+				},
+				{
+					kind: "outbox.state",
+					ts_ms: 1_700_001_000_030,
+					record: {
+						outbox_id: "out-dup",
+						state: "delivered",
+						updated_at_ms: 1_700_001_000_030,
+						attempt_count: 1,
+						max_attempts: 3,
+						envelope: {
+							kind: "operator.message",
+							body: "queue-dup-token outbox two",
+							channel: "telegram",
+							channel_tenant_id: "telegram-bot",
+							channel_conversation_id: "chat-1",
+							correlation: {
+								actor_binding_id: "binding-1",
+								operator_session_id: "session-1",
+							},
+						},
+					},
+				},
+			]
+				.map((row) => JSON.stringify(row))
+				.join("\n") + "\n",
+			"utf8",
+		);
+
+		await writeFile(
+			join(cpDir, "telegram_ingress.jsonl"),
+			[
+				{
+					kind: "telegram.ingress.state",
+					ts_ms: 1_700_001_000_040,
+					record: {
+						ingress_id: "ingress-dup",
+						state: "received",
+						updated_at_ms: 1_700_001_000_040,
+						inbound: {
+							channel: "telegram",
+							channel_tenant_id: "telegram-bot",
+							channel_conversation_id: "chat-1",
+							actor_binding_id: "binding-1",
+							actor_id: "actor-1",
+							request_id: "req-1",
+							command_text: "queue-dup-token ingress one",
+						},
+					},
+				},
+				{
+					kind: "telegram.ingress.state",
+					ts_ms: 1_700_001_000_050,
+					record: {
+						ingress_id: "ingress-dup",
+						state: "completed",
+						updated_at_ms: 1_700_001_000_050,
+						inbound: {
+							channel: "telegram",
+							channel_tenant_id: "telegram-bot",
+							channel_conversation_id: "chat-1",
+							actor_binding_id: "binding-1",
+							actor_id: "actor-1",
+							request_id: "req-2",
+							command_text: "queue-dup-token ingress two",
+						},
+					},
+				},
+			]
+				.map((row) => JSON.stringify(row))
+				.join("\n") + "\n",
+			"utf8",
+		);
+
+		const rebuild = await run(
+			["memory", "index", "rebuild", "--sources", "cp_commands,cp_outbox,cp_telegram_ingress", "--json"],
+			{ cwd: dir },
+		);
+		expect(rebuild.exitCode).toBe(0);
+		const payload = JSON.parse(rebuild.stdout) as {
+			mode: string;
+			indexed_count: number;
+			source_count: number;
+		};
+		expect(payload.mode).toBe("index_rebuild");
+		expect(payload.indexed_count).toBeGreaterThanOrEqual(6);
+		expect(payload.source_count).toBeGreaterThanOrEqual(3);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("memory search/timeline/stats use direct CLI runtime even when legacy /api/context routes 404", async () => {
 	const dir = await mkTempRepo();
 	const seen: string[] = [];

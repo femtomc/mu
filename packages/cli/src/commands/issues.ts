@@ -1,5 +1,7 @@
 import type { Issue } from "@femtomc/mu-core";
+import { getStorePaths, readJsonl } from "@femtomc/mu-core/node";
 import type { IssueStore } from "@femtomc/mu-issue";
+import { join } from "node:path";
 
 export type IssueCommandRunResult = {
 	stdout: string;
@@ -9,6 +11,7 @@ export type IssueCommandRunResult = {
 
 export type IssueCommandCtx = {
 	store: IssueStore;
+	repoRoot?: string;
 };
 
 export type IssueCommandDeps = {
@@ -37,6 +40,211 @@ export type IssueCommandDeps = {
 		dep: { src: string; type: string; dst: string; ok?: boolean },
 	) => string;
 };
+
+const HEARTBEAT_MANAGED_OVERRIDE_FLAG = "--allow-heartbeat-managed";
+const HEARTBEAT_ROOT_PROMPT_RE = /\broot\s*:\s*(mu-[a-z0-9]+)/gi;
+const HEARTBEAT_ROOT_METADATA_KEYS = [
+	"root_issue_id",
+	"root_id",
+	"rootIssueId",
+	"rootId",
+	"managed_root_id",
+	"managed_root_ids",
+	"managedRootId",
+	"managedRootIds",
+] as const;
+
+type HeartbeatOwnershipProgram = {
+	programId: string;
+	rootId: string;
+};
+
+type HeartbeatOwnershipViolation = {
+	issueId: string;
+	rootId: string;
+	programId: string;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (typeof value !== "object" || value == null || Array.isArray(value)) {
+		return null;
+	}
+	return value as Record<string, unknown>;
+}
+
+function nonEmptyString(value: unknown): string | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeIssueId(value: string): string | null {
+	const normalized = value.trim();
+	if (!/^mu-[a-z0-9]+$/i.test(normalized)) {
+		return null;
+	}
+	return normalized;
+}
+
+function rootIdsFromUnknown(value: unknown): string[] {
+	if (typeof value === "string") {
+		const normalized = normalizeIssueId(value);
+		return normalized ? [normalized] : [];
+	}
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	const out: string[] = [];
+	for (const entry of value) {
+		const normalized = typeof entry === "string" ? normalizeIssueId(entry) : null;
+		if (normalized) {
+			out.push(normalized);
+		}
+	}
+	return out;
+}
+
+function rootIdsFromPrompt(prompt: string | null): string[] {
+	if (!prompt) {
+		return [];
+	}
+	const out: string[] = [];
+	for (const match of prompt.matchAll(HEARTBEAT_ROOT_PROMPT_RE)) {
+		const rootIdRaw = typeof match[1] === "string" ? match[1] : "";
+		const normalized = normalizeIssueId(rootIdRaw);
+		if (normalized) {
+			out.push(normalized);
+		}
+	}
+	return out;
+}
+
+async function readHeartbeatOwnershipPrograms(repoRoot: string): Promise<HeartbeatOwnershipProgram[]> {
+	const heartbeatsPath = join(getStorePaths(repoRoot).storeDir, "heartbeats.jsonl");
+	const rows = await readJsonl(heartbeatsPath).catch(() => [] as unknown[]);
+	const out: HeartbeatOwnershipProgram[] = [];
+	for (const rowRaw of rows) {
+		const row = asRecord(rowRaw);
+		if (!row || row.enabled === false) {
+			continue;
+		}
+		const programId = nonEmptyString(row.program_id);
+		if (!programId) {
+			continue;
+		}
+		const metadata = asRecord(row.metadata);
+		const rootIds = new Set<string>();
+		if (metadata) {
+			for (const key of HEARTBEAT_ROOT_METADATA_KEYS) {
+				for (const rootId of rootIdsFromUnknown(metadata[key])) {
+					rootIds.add(rootId);
+				}
+			}
+		}
+		const prompt = nonEmptyString(row.prompt);
+		for (const rootId of rootIdsFromPrompt(prompt)) {
+			rootIds.add(rootId);
+		}
+		for (const rootId of rootIds) {
+			out.push({ programId, rootId });
+		}
+	}
+	return out;
+}
+
+function heartbeatOwnershipFromEnvironment(): { wakeSource: string | null; programId: string | null } {
+	const wakeSource = nonEmptyString(process.env.MU_AUTONOMOUS_WAKE_SOURCE);
+	const programId = nonEmptyString(process.env.MU_AUTONOMOUS_PROGRAM_ID);
+	return {
+		wakeSource,
+		programId,
+	};
+}
+
+async function heartbeatOwnershipViolations(opts: {
+	ctx: IssueCommandCtx;
+	issueIds: readonly string[];
+}): Promise<HeartbeatOwnershipViolation[]> {
+	if (!opts.ctx.repoRoot) {
+		return [];
+	}
+	const programs = await readHeartbeatOwnershipPrograms(opts.ctx.repoRoot);
+	if (programs.length === 0) {
+		return [];
+	}
+	const uniqueIssueIds = [...new Set(opts.issueIds.map((id) => id.trim()).filter((id) => id.length > 0))];
+	if (uniqueIssueIds.length === 0) {
+		return [];
+	}
+	const owner = heartbeatOwnershipFromEnvironment();
+	const subtreeCache = new Map<string, Set<string>>();
+	const seen = new Set<string>();
+	const violations: HeartbeatOwnershipViolation[] = [];
+	for (const program of programs) {
+		if (owner.wakeSource === "heartbeat_program" && owner.programId === program.programId) {
+			continue;
+		}
+		let subtree = subtreeCache.get(program.rootId);
+		if (!subtree) {
+			const ids = await opts.ctx.store.subtree_ids(program.rootId).catch(() => [] as string[]);
+			subtree = new Set(ids);
+			subtreeCache.set(program.rootId, subtree);
+		}
+		for (const issueId of uniqueIssueIds) {
+			if (!subtree.has(issueId)) {
+				continue;
+			}
+			const key = `${issueId}\u0000${program.rootId}\u0000${program.programId}`;
+			if (seen.has(key)) {
+				continue;
+			}
+			seen.add(key);
+			violations.push({ issueId, rootId: program.rootId, programId: program.programId });
+		}
+	}
+	return violations;
+}
+
+async function maybeBlockHeartbeatManagedMutation(opts: {
+	ctx: IssueCommandCtx;
+	issueIds: readonly string[];
+	allowOverride: boolean;
+	pretty: boolean;
+	recoveryCommand: string;
+	jsonError: (msg: string, opts?: { pretty?: boolean; recovery?: readonly string[] }) => IssueCommandRunResult;
+}): Promise<IssueCommandRunResult | null> {
+	if (opts.allowOverride) {
+		return null;
+	}
+	const violations = await heartbeatOwnershipViolations({
+		ctx: opts.ctx,
+		issueIds: opts.issueIds,
+	});
+	if (violations.length === 0) {
+		return null;
+	}
+	const sample = violations.slice(0, 4).map((row) => `${row.issueId}=>${row.rootId}@${row.programId}`);
+	const blockedPrograms = [...new Set(violations.map((row) => row.programId))];
+	const recovery = [
+		`${opts.recoveryCommand} ${HEARTBEAT_MANAGED_OVERRIDE_FLAG}`,
+		...(blockedPrograms.length > 0 ? [`mu heartbeats disable ${blockedPrograms[0]}`] : []),
+		"mu heartbeats list --enabled true --json --pretty",
+	];
+	return opts.jsonError(
+		[
+			"heartbeat-managed issue mutation blocked",
+			`matches=${sample.join(",")}`,
+			`blocked_programs=${blockedPrograms.join(",")}`,
+			`override=${HEARTBEAT_MANAGED_OVERRIDE_FLAG}`,
+		].join(": "),
+		{
+			pretty: opts.pretty,
+			recovery,
+		},
+	);
+}
 
 function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps): {
 	cmdIssues: (argv: string[], ctx: Ctx) => Promise<IssueCommandRunResult>;
@@ -274,7 +482,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues create - create a new issue (auto-adds node:agent tag)",
 					"",
 					"Usage:",
-					"  mu issues create <title> [--body TEXT] [--parent ID] [--tag TAG] [--priority N] [--json] [--pretty]",
+					"  mu issues create <title> [--body TEXT] [--parent ID] [--tag TAG] [--priority N] [--allow-heartbeat-managed] [--json] [--pretty]",
 					"",
 					"Options:",
 					"  --body, -b <TEXT>                   Optional issue body",
@@ -282,6 +490,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"  --tag, -t <TAG>                     Repeatable custom tags",
 					"  --tags <CSV>                        Comma-separated custom tags",
 					"  --priority, -p <1..5>               Priority (1 highest urgency, default 3)",
+					"  --allow-heartbeat-managed           Override heartbeat ownership guardrails",
 					"  --json                              Emit full JSON record (default is compact ack)",
 					"  --pretty                            Pretty-print JSON result",
 					"",
@@ -293,7 +502,8 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			);
 		}
 
-		const title = argv[0];
+		const { present: allowHeartbeatManaged, rest: argvOwned } = popFlag(argv, HEARTBEAT_MANAGED_OVERRIDE_FLAG);
+		const title = argvOwned[0];
 		if (!title || title.startsWith("-")) {
 			return jsonError("missing title", {
 				pretty,
@@ -301,7 +511,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			});
 		}
 
-		const { value: body, rest: argv0 } = getFlagValue(argv.slice(1), "--body");
+		const { value: body, rest: argv0 } = getFlagValue(argvOwned.slice(1), "--body");
 		const { value: bodyShort, rest: argv1 } = getFlagValue(argv0, "-b");
 		const resolvedBody = body ?? bodyShort ?? "";
 
@@ -345,6 +555,20 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			parentId = resolved.issueId;
 		}
 
+		if (parentId) {
+			const blocked = await maybeBlockHeartbeatManagedMutation({
+				ctx,
+				issueIds: [parentId],
+				allowOverride: allowHeartbeatManaged,
+				pretty,
+				recoveryCommand: `mu issues create <title> --parent ${parentId}`,
+				jsonError,
+			});
+			if (blocked) {
+				return blocked;
+			}
+		}
+
 		let issue = await ctx.store.create(title, {
 			body: resolvedBody,
 			tags,
@@ -369,7 +593,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues update - patch issue fields and routing metadata",
 					"",
 					"Usage:",
-					"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--tags CSV] [--add-tag TAG] [--remove-tag TAG] [--json] [--pretty]",
+					"  mu issues update <id-or-prefix> [--title TEXT] [--body TEXT] [--status STATUS] [--outcome OUTCOME] [--priority N] [--tags CSV] [--add-tag TAG] [--remove-tag TAG] [--allow-heartbeat-managed] [--json] [--pretty]",
 					"",
 					"Options:",
 					"  --title <TEXT>                       Replace title",
@@ -380,6 +604,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"  --tags <CSV>                         Replace tags from comma-separated list",
 					"  --add-tag <TAG>                      Repeatable",
 					"  --remove-tag <TAG>                   Repeatable",
+					"  --allow-heartbeat-managed            Override heartbeat ownership guardrails",
 					"  --json                               Emit full JSON record (default is compact ack)",
 					"",
 					"Examples:",
@@ -406,7 +631,11 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		}
 
 		const argvRest = argv.slice(1);
-		const { value: title, rest: argv0 } = getFlagValue(argvRest, "--title");
+		const { present: allowHeartbeatManaged, rest: argvOwned } = popFlag(
+			argvRest,
+			HEARTBEAT_MANAGED_OVERRIDE_FLAG,
+		);
+		const { value: title, rest: argv0 } = getFlagValue(argvOwned, "--title");
 		const { value: body, rest: argv1 } = getFlagValue(argv0, "--body");
 		const { value: status, rest: argv2 } = getFlagValue(argv1, "--status");
 		const { value: outcome, rest: argv3 } = getFlagValue(argv2, "--outcome");
@@ -467,6 +696,18 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			});
 		}
 
+		const blocked = await maybeBlockHeartbeatManagedMutation({
+			ctx,
+			issueIds: [issueId],
+			allowOverride: allowHeartbeatManaged,
+			pretty,
+			recoveryCommand: `mu issues update ${issueId}`,
+			jsonError,
+		});
+		if (blocked) {
+			return blocked;
+		}
+
 		const updated = await ctx.store.update(issueId, fields);
 		if (jsonMode && !compact) {
 			return ok(jsonText(issueJson(updated), pretty));
@@ -481,7 +722,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues claim - mark an open issue as in_progress",
 					"",
 					"Usage:",
-					"  mu issues claim <id-or-prefix> [--json] [--pretty]",
+					"  mu issues claim <id-or-prefix> [--allow-heartbeat-managed] [--json] [--pretty]",
 					"",
 					"Typical operator sequence:",
 					"  mu issues ready --root <root-id>",
@@ -493,7 +734,11 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			);
 		}
 
-		const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+		const { present: allowHeartbeatManaged, rest: argvOwned } = popFlag(
+			argv.slice(1),
+			HEARTBEAT_MANAGED_OVERRIDE_FLAG,
+		);
+		const { present: jsonMode, rest: argv0 } = popFlag(argvOwned, "--json");
 		const { present: compact, rest } = popFlag(argv0, "--compact");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues claim --help"] });
@@ -515,6 +760,18 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			});
 		}
 
+		const blocked = await maybeBlockHeartbeatManagedMutation({
+			ctx,
+			issueIds: [issue.id],
+			allowOverride: allowHeartbeatManaged,
+			pretty,
+			recoveryCommand: `mu issues claim ${issue.id}`,
+			jsonError,
+		});
+		if (blocked) {
+			return blocked;
+		}
+
 		await ctx.store.claim(issue.id);
 		const claimed = (await ctx.store.get(issue.id)) ?? issue;
 		if (jsonMode && !compact) {
@@ -530,7 +787,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues open - reopen an issue and clear outcome",
 					"",
 					"Usage:",
-					"  mu issues open <id-or-prefix> [--json] [--pretty]",
+					"  mu issues open <id-or-prefix> [--allow-heartbeat-managed] [--json] [--pretty]",
 					"",
 					"Examples:",
 					"  mu issues open <id>",
@@ -541,7 +798,11 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			);
 		}
 
-		const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+		const { present: allowHeartbeatManaged, rest: argvOwned } = popFlag(
+			argv.slice(1),
+			HEARTBEAT_MANAGED_OVERRIDE_FLAG,
+		);
+		const { present: jsonMode, rest: argv0 } = popFlag(argvOwned, "--json");
 		const { present: compact, rest } = popFlag(argv0, "--compact");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues open --help"] });
@@ -555,6 +816,18 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		const issue = await ctx.store.get(resolved.issueId!);
 		if (!issue) {
 			return jsonError(`not found: ${argv[0]}`, { pretty, recovery: ["mu issues list --limit 20"] });
+		}
+
+		const blocked = await maybeBlockHeartbeatManagedMutation({
+			ctx,
+			issueIds: [issue.id],
+			allowOverride: allowHeartbeatManaged,
+			pretty,
+			recoveryCommand: `mu issues open ${issue.id}`,
+			jsonError,
+		});
+		if (blocked) {
+			return blocked;
 		}
 
 		const reopened = await ctx.store.update(issue.id, { status: "open", outcome: null });
@@ -571,11 +844,12 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues close - close an issue with an outcome",
 					"",
 					"Usage:",
-					"  mu issues close <id-or-prefix> [--outcome OUTCOME] [--json] [--pretty]",
+					"  mu issues close <id-or-prefix> [--outcome OUTCOME] [--allow-heartbeat-managed] [--json] [--pretty]",
 					"",
 					"Options:",
 					"  --outcome <success|failure|needs_work|expanded|skipped>",
 					"            Default: success",
+					"  --allow-heartbeat-managed  Override heartbeat ownership guardrails",
 					"  --json    Emit full JSON record (default is compact ack)",
 					"",
 					"Examples:",
@@ -587,7 +861,11 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		}
 
 		const issueRaw = argv[0]!;
-		const { present: jsonMode, rest: argv0 } = popFlag(argv.slice(1), "--json");
+		const { present: allowHeartbeatManaged, rest: argvOwned } = popFlag(
+			argv.slice(1),
+			HEARTBEAT_MANAGED_OVERRIDE_FLAG,
+		);
+		const { present: jsonMode, rest: argv0 } = popFlag(argvOwned, "--json");
 		const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
 		const { value: outcome, rest } = getFlagValue(argv1, "--outcome");
 		if (rest.length > 0) {
@@ -597,6 +875,18 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		const resolved = await resolveIssueId(ctx.store, issueRaw);
 		if (resolved.error) {
 			return { stdout: jsonText({ error: resolved.error }, pretty), stderr: "", exitCode: 1 };
+		}
+
+		const blocked = await maybeBlockHeartbeatManagedMutation({
+			ctx,
+			issueIds: [resolved.issueId!],
+			allowOverride: allowHeartbeatManaged,
+			pretty,
+			recoveryCommand: `mu issues close ${resolved.issueId!}`,
+			jsonError,
+		});
+		if (blocked) {
+			return blocked;
 		}
 
 		const closed = await ctx.store.close(resolved.issueId!, outcome ?? "success");
@@ -613,7 +903,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues dep - add dependency edge",
 					"",
 					"Usage:",
-					"  mu issues dep <src-id> <blocks|parent> <dst-id> [--json] [--pretty]",
+					"  mu issues dep <src-id> <blocks|parent> <dst-id> [--allow-heartbeat-managed] [--json] [--pretty]",
 					"",
 					"Edge types:",
 					"  <src> blocks <dst>     <dst> waits until <src> is closed",
@@ -629,7 +919,8 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			);
 		}
 
-		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+		const { present: allowHeartbeatManaged, rest: argvOwned } = popFlag(argv, HEARTBEAT_MANAGED_OVERRIDE_FLAG);
+		const { present: jsonMode, rest: argv0 } = popFlag(argvOwned, "--json");
 		const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
 		if (argv1.length < 3) {
 			return jsonError("usage: mu issues dep <src> <type> <dst>", {
@@ -661,6 +952,18 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			});
 		}
 
+		const blocked = await maybeBlockHeartbeatManagedMutation({
+			ctx,
+			issueIds: [src.issueId!, dst.issueId!],
+			allowOverride: allowHeartbeatManaged,
+			pretty,
+			recoveryCommand: `mu issues dep ${src.issueId!} ${depType} ${dst.issueId!}`,
+			jsonError,
+		});
+		if (blocked) {
+			return blocked;
+		}
+
 		await ctx.store.add_dep(src.issueId!, depType, dst.issueId!);
 		const payload = { ok: true, src: src.issueId!, type: depType, dst: dst.issueId! };
 		if (jsonMode && !compact) {
@@ -676,7 +979,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues undep - remove dependency edge",
 					"",
 					"Usage:",
-					"  mu issues undep <src-id> <blocks|parent> <dst-id> [--json] [--pretty]",
+					"  mu issues undep <src-id> <blocks|parent> <dst-id> [--allow-heartbeat-managed] [--json] [--pretty]",
 					"",
 					"Examples:",
 					"  mu issues undep <task-a> blocks <task-b>",
@@ -688,7 +991,8 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			);
 		}
 
-		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+		const { present: allowHeartbeatManaged, rest: argvOwned } = popFlag(argv, HEARTBEAT_MANAGED_OVERRIDE_FLAG);
+		const { present: jsonMode, rest: argv0 } = popFlag(argvOwned, "--json");
 		const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
 		if (argv1.length < 3) {
 			return jsonError("usage: mu issues undep <src> <type> <dst>", {
@@ -712,6 +1016,18 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		if (src.error) return { stdout: jsonText({ error: src.error }, pretty), stderr: "", exitCode: 1 };
 		const dst = await resolveIssueId(ctx.store, dstRaw!);
 		if (dst.error) return { stdout: jsonText({ error: dst.error }, pretty), stderr: "", exitCode: 1 };
+
+		const blocked = await maybeBlockHeartbeatManagedMutation({
+			ctx,
+			issueIds: [src.issueId!, dst.issueId!],
+			allowOverride: allowHeartbeatManaged,
+			pretty,
+			recoveryCommand: `mu issues undep ${src.issueId!} ${depType} ${dst.issueId!}`,
+			jsonError,
+		});
+		if (blocked) {
+			return blocked;
+		}
 
 		const removed = await ctx.store.remove_dep(src.issueId!, depType, dst.issueId!);
 		const payload = { ok: removed, src: src.issueId!, type: depType, dst: dst.issueId! };

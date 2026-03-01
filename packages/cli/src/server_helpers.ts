@@ -114,6 +114,7 @@ export async function requestServerJson<
 	path: string;
 	body?: Record<string, unknown>;
 	recoveryCommand: string;
+	timeoutMs?: number;
 	jsonError: (msg: string, opts?: { pretty?: boolean; recovery?: readonly string[] }) => RunResult;
 	describeError: (err: unknown) => string;
 }): Promise<{ ok: true; payload: T } | { ok: false; result: RunResult }> {
@@ -126,13 +127,17 @@ export async function requestServerJson<
 		return { ok: false, result: resolved };
 	}
 	const url = `${resolved.url}${opts.path}`;
+	const timeoutMs =
+		typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
+			? Math.max(0, Math.trunc(opts.timeoutMs))
+			: 10_000;
 	let response: Response;
 	try {
 		response = await fetch(url, {
 			method: opts.method ?? "GET",
 			headers: opts.body ? { "Content-Type": "application/json" } : undefined,
 			body: opts.body ? JSON.stringify(opts.body) : undefined,
-			signal: AbortSignal.timeout(10_000),
+			signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
 		});
 	} catch (err) {
 		return {

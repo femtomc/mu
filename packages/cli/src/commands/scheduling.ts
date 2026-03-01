@@ -23,10 +23,13 @@ export type SchedulingCommandDeps<Ctx> = {
 		path: string;
 		body?: Record<string, unknown>;
 		recoveryCommand: string;
+		timeoutMs?: number;
 	}) => Promise<{ ok: true; payload: T } | { ok: false; result: SchedulingCommandRunResult }>;
 	renderHeartbeatsPayloadCompact: (payload: Record<string, unknown>) => string;
 	renderCronPayloadCompact: (payload: Record<string, unknown>) => string;
 };
+
+const MANUAL_TRIGGER_TIMEOUT_MS = 10 * 60 * 1_000;
 
 function parseOptionalBoolean(value: string | null | undefined): boolean | null {
 	if (value == null) {
@@ -476,6 +479,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 			path: "/api/heartbeats/trigger",
 			body: { program_id: programId, reason: reason ?? null },
 			recoveryCommand: `mu heartbeats trigger ${programId}`,
+			timeoutMs: MANUAL_TRIGGER_TIMEOUT_MS,
 		});
 		if (!req.ok) {
 			return req.result;
@@ -971,6 +975,7 @@ function buildSchedulingHandlers<Ctx>(deps: SchedulingCommandDeps<Ctx>): {
 			path: "/api/cron/trigger",
 			body: { program_id: programId, reason: reason ?? null },
 			recoveryCommand: `mu cron trigger ${programId}`,
+			timeoutMs: MANUAL_TRIGGER_TIMEOUT_MS,
 		});
 		if (!req.ok) return req.result;
 		return ok(jsonText(req.payload, pretty));

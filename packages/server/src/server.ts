@@ -150,6 +150,21 @@ function extractWakeTurnReply(turnResult: CommandPipelineResult): string | null 
 	return compact.length > 0 ? compact : null;
 }
 
+function extractWakeTurnFailureCode(turnReply: string | null): string | null {
+	if (!turnReply) {
+		return null;
+	}
+	const normalized = turnReply.trim();
+	if (!normalized.toLowerCase().startsWith("i could not complete that turn safely.")) {
+		return null;
+	}
+	const codeMatch = normalized.match(/(?:^|\n)\s*Code:\s*([a-z0-9_]+)/i);
+	if (!codeMatch || typeof codeMatch[1] !== "string") {
+		return null;
+	}
+	return codeMatch[1].toLowerCase();
+}
+
 function buildWakeTurnIngressText(opts: {
 	wakeId: string;
 	message: string;
@@ -324,14 +339,26 @@ function createServer(options: ServerOptions = {}) {
 							error: null,
 						};
 					} else {
-						decision = {
-							outcome: "triggered",
-							reason: "turn_invoked",
-							turnRequestId,
-							turnResultKind: turnResult.kind,
-							turnReply,
-							error: null,
-						};
+						const failureCode = extractWakeTurnFailureCode(turnReply);
+						if (failureCode === "operator_busy") {
+							decision = {
+								outcome: "fallback",
+								reason: "operator_busy",
+								turnRequestId,
+								turnResultKind: turnResult.kind,
+								turnReply: null,
+								error: null,
+							};
+						} else {
+							decision = {
+								outcome: "triggered",
+								reason: "turn_invoked",
+								turnRequestId,
+								turnResultKind: turnResult.kind,
+								turnReply,
+								error: null,
+							};
+						}
 					}
 				}
 			} catch (err) {
@@ -368,7 +395,7 @@ function createServer(options: ServerOptions = {}) {
 		let notifyError: string | null = null;
 		let deliverySkippedReason: string | null = null;
 		if (!decision.turnReply) {
-			deliverySkippedReason = "no_turn_reply";
+			deliverySkippedReason = decision.reason === "operator_busy" ? "operator_busy" : "no_turn_reply";
 		} else if (typeof controlPlaneProxy.notifyOperators !== "function") {
 			deliverySkippedReason = "notify_operators_unavailable";
 		} else {
@@ -442,6 +469,9 @@ function createServer(options: ServerOptions = {}) {
 			},
 		});
 
+		if (decision.reason === "operator_busy") {
+			return { status: "coalesced", reason: decision.reason };
+		}
 		if (decision.outcome !== "triggered") {
 			return { status: "failed", reason: decision.reason };
 		}

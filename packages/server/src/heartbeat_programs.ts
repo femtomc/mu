@@ -163,6 +163,7 @@ export class HeartbeatProgramRegistry {
 	readonly #onLifecycleEvent: HeartbeatProgramRegistryOpts["onLifecycleEvent"];
 	readonly #nowMs: () => number;
 	readonly #programs = new Map<string, HeartbeatProgramSnapshot>();
+	readonly #inFlightTicks = new Map<string, Promise<HeartbeatRunResult>>();
 	#loaded: Promise<void> | null = null;
 
 	public constructor(opts: HeartbeatProgramRegistryOpts) {
@@ -259,6 +260,21 @@ export class HeartbeatProgramRegistry {
 	}
 
 	async #tickProgram(programId: string, reason?: string): Promise<HeartbeatRunResult> {
+		const inFlight = this.#inFlightTicks.get(programId);
+		if (inFlight) {
+			return { status: "skipped", reason: "coalesced" };
+		}
+
+		const run = this.#tickProgramUnlocked(programId, reason).finally(() => {
+			if (this.#inFlightTicks.get(programId) === run) {
+				this.#inFlightTicks.delete(programId);
+			}
+		});
+		this.#inFlightTicks.set(programId, run);
+		return await run;
+	}
+
+	async #tickProgramUnlocked(programId: string, reason?: string): Promise<HeartbeatRunResult> {
 		const program = this.#programs.get(programId);
 		if (!program) {
 			return { status: "skipped", reason: "not_found" };
@@ -526,6 +542,7 @@ export class HeartbeatProgramRegistry {
 		for (const program of this.#programs.values()) {
 			this.#heartbeatScheduler.unregister(this.#scheduleId(program.program_id));
 		}
+		this.#inFlightTicks.clear();
 		this.#programs.clear();
 	}
 }

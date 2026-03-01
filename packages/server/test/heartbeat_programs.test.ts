@@ -59,6 +59,52 @@ describe("HeartbeatProgramRegistry", () => {
 		scheduler.stop();
 	});
 
+	test("coalesces concurrent trigger calls while wake dispatch is in flight", async () => {
+		const store = new InMemoryJsonlStore<HeartbeatProgramSnapshot>([]);
+		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 10 });
+		let wakeCalls = 0;
+		let releaseWake!: () => void;
+		const wakeBlocked = new Promise<void>((resolve) => {
+			releaseWake = () => resolve();
+		});
+		const registry = new HeartbeatProgramRegistry({
+			repoRoot: "/repo",
+			heartbeatScheduler: scheduler,
+			store,
+			dispatchWake: async () => {
+				wakeCalls += 1;
+				await wakeBlocked;
+				return { status: "ok" };
+			},
+		});
+
+		const program = await registry.create({
+			title: "Wake pulse",
+			everyMs: 0,
+			reason: "scheduled",
+		});
+
+		const trigger1 = registry.trigger({ programId: program.program_id, reason: "manual" });
+		await waitFor(() => (wakeCalls === 1 ? true : null));
+
+		const trigger2 = await Promise.race([
+			registry.trigger({ programId: program.program_id, reason: "manual" }),
+			Bun.sleep(100).then(() => null),
+		]);
+		if (!trigger2) {
+			throw new Error("expected coalesced trigger to return without waiting for in-flight wake");
+		}
+		expect(trigger2.ok).toBe(true);
+		expect(wakeCalls).toBe(1);
+
+		releaseWake();
+		const trigger1Result = await trigger1;
+		expect(trigger1Result.ok).toBe(true);
+
+		registry.stop();
+		scheduler.stop();
+	});
+
 	test("scheduled programs tick automatically while enabled", async () => {
 		const store = new InMemoryJsonlStore<HeartbeatProgramSnapshot>([]);
 		const scheduler = new ActivityHeartbeatScheduler({ minIntervalMs: 10 });

@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@mariozechner/pi-coding-agent";
+import type { BashToolOptions } from "@mariozechner/pi-coding-agent";
 import { createMuResourceLoader, resolveModel } from "./backend.js";
 import { MU_DEFAULT_THEME_NAME, MU_DEFAULT_THEME_PATH } from "./ui_defaults.js";
 
@@ -19,6 +20,7 @@ export type CreateMuSessionOpts = {
 	thinking?: string;
 	extensionPaths?: string[];
 	session?: MuSessionPersistenceOpts;
+	bashToolOptions?: BashToolOptions;
 };
 
 export type MuSession = {
@@ -99,7 +101,7 @@ export async function createMuSession(opts: CreateMuSessionOpts): Promise<MuSess
 	await resourceLoader.reload();
 
 	const tools = [
-		createBashTool(opts.cwd),
+		createBashTool(opts.cwd, opts.bashToolOptions),
 		createReadTool(opts.cwd),
 		createWriteTool(opts.cwd),
 		createEditTool(opts.cwd),

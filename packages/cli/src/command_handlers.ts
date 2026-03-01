@@ -15,6 +15,7 @@ type RequestServerJsonFn = <T>(opts: {
 	path: string;
 	body?: Record<string, unknown>;
 	recoveryCommand: string;
+	timeoutMs?: number;
 }) => Promise<{ ok: true; payload: T } | { ok: false; result: RunResult }>;
 
 type CreateCommandHandlersDeps = {

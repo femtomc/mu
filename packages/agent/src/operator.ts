@@ -381,6 +381,33 @@ function nonEmptyString(value: unknown): string | null {
 	return trimmed.length > 0 ? trimmed : null;
 }
 
+function autonomousTurnEnvironment(metadata: Record<string, unknown>): Record<string, string> {
+	const source = nonEmptyString(metadata.source);
+	if (source !== "autonomous_ingress") {
+		return {};
+	}
+	const out: Record<string, string> = {
+		MU_AUTONOMOUS_INGRESS_SOURCE: source,
+	};
+	const wakeSource = nonEmptyString(metadata.wake_source);
+	const wakeId = nonEmptyString(metadata.wake_id);
+	const programId = nonEmptyString(metadata.program_id);
+	const sourceTsMs = metadata.source_ts_ms;
+	if (wakeSource) {
+		out.MU_AUTONOMOUS_WAKE_SOURCE = wakeSource;
+	}
+	if (wakeId) {
+		out.MU_AUTONOMOUS_WAKE_ID = wakeId;
+	}
+	if (programId) {
+		out.MU_AUTONOMOUS_PROGRAM_ID = programId;
+	}
+	if (typeof sourceTsMs === "number" && Number.isFinite(sourceTsMs)) {
+		out.MU_AUTONOMOUS_SOURCE_TS_MS = String(Math.trunc(sourceTsMs));
+	}
+	return out;
+}
+
 function isUiToolName(toolName: string): boolean {
 	const normalized = toolName.trim().toLowerCase();
 	return normalized === "mu_ui";
@@ -830,6 +857,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 	readonly #sessionDirForRepoRoot: (repoRoot: string) => string;
 	readonly #sessions = new Map<string, PiOperatorSessionRecord>();
 	readonly #activePromptCountsBySession = new Map<string, number>();
+	readonly #autonomousTurnEnvBySession = new Map<string, Record<string, string>>();
 
 	public constructor(opts: PiMessagingOperatorBackendOpts = {}) {
 		this.#provider = opts.provider;
@@ -859,6 +887,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		}
 		this.#sessions.delete(sessionId);
 		this.#activePromptCountsBySession.delete(sessionId);
+		this.#autonomousTurnEnvBySession.delete(sessionId);
 		try {
 			entry.session.dispose();
 		} catch {
@@ -920,6 +949,21 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			thinking: this.#thinking,
 			extensionPaths: this.#extensionPaths,
 			session: this.#sessionPersistence(repoRoot, sessionId),
+			bashToolOptions: {
+				spawnHook: (context) => {
+					const turnEnv = this.#autonomousTurnEnvBySession.get(sessionId);
+					if (!turnEnv || Object.keys(turnEnv).length === 0) {
+						return context;
+					}
+					return {
+						...context,
+						env: {
+							...context.env,
+							...turnEnv,
+						},
+					};
+				},
+			},
 		});
 
 		await session.bindExtensions({
@@ -1023,6 +1067,13 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		let capturedCommand: OperatorApprovedCommand | null = null;
 		let capturedUiDocs: UiDoc[] = [];
 
+		const turnEnv = autonomousTurnEnvironment(input.inbound.metadata);
+		if (Object.keys(turnEnv).length > 0) {
+			this.#autonomousTurnEnvBySession.set(input.sessionId, turnEnv);
+		} else {
+			this.#autonomousTurnEnvBySession.delete(input.sessionId);
+		}
+
 		const unsub = session.subscribe((event: any) => {
 			// Capture assistant text for fallback responses.
 			if (event?.type === "message_end" && event?.message?.role === "assistant") {
@@ -1103,6 +1154,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			throw err;
 		} finally {
 			this.#decrementActivePrompt(input.sessionId);
+			this.#autonomousTurnEnvBySession.delete(input.sessionId);
 			unsub();
 			sessionRecord.lastUsedAtMs = Math.trunc(this.#nowMs());
 		}

@@ -137,6 +137,7 @@ async function buildCommandHandlers() {
 		path: string;
 		body?: Record<string, unknown>;
 		recoveryCommand: string;
+		timeoutMs?: number;
 	}): Promise<{ ok: true; payload: T } | { ok: false; result: RunResult }> => {
 		return await requestServerJsonHelper<CliCtx, T, RunResult>({
 			...opts,

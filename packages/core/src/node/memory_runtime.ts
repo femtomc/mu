@@ -739,7 +739,7 @@ async function collectCommandJournal(repoRoot: string, path: string): Promise<Co
 			});
 			const eventType = nonEmptyString(rec.event_type) ?? "command.lifecycle";
 			pushItem(out, {
-				id: `cp_commands:lifecycle:${commandId ?? row.line}`,
+				id: `cp_commands:lifecycle:${commandId ?? "unknown"}:${row.line}`,
 				ts_ms: asInt(rec.ts_ms) ?? (command ? asInt(command.updated_at_ms) : null) ?? 0,
 				source_kind: "cp_commands",
 				source_path: normalizeRelative(repoRoot, path),
@@ -849,7 +849,7 @@ async function collectOutbox(repoRoot: string, path: string): Promise<ContextIte
 		const kind = envelope ? nonEmptyString(envelope.kind) : null;
 		const state = record ? nonEmptyString(record.state) : null;
 		pushItem(out, {
-			id: `cp_outbox:${outboxId ?? row.line}`,
+			id: `cp_outbox:${outboxId ?? "unknown"}:${row.line}`,
 			ts_ms: asInt(rec.ts_ms) ?? (record ? asInt(record.updated_at_ms) : null) ?? 0,
 			source_kind: "cp_outbox",
 			source_path: normalizeRelative(repoRoot, path),
@@ -988,7 +988,7 @@ async function collectTelegramIngress(repoRoot: string, path: string): Promise<C
 		const state = record ? nonEmptyString(record.state) : null;
 		const commandText = inbound ? nonEmptyString(inbound.command_text) : null;
 		pushItem(out, {
-			id: `cp_telegram_ingress:${ingressId ?? row.line}`,
+			id: `cp_telegram_ingress:${ingressId ?? "unknown"}:${row.line}`,
 			ts_ms: asInt(rec.ts_ms) ?? (record ? asInt(record.updated_at_ms) : null) ?? 0,
 			source_kind: "cp_telegram_ingress",
 			source_path: normalizeRelative(repoRoot, path),
@@ -1111,6 +1111,21 @@ function getControlPlaneMemoryPaths(repoRoot: string): ControlPlaneMemoryPaths {
 	};
 }
 
+function ensureUniqueContextItemIds(items: ContextItem[]): ContextItem[] {
+	const seen = new Map<string, number>();
+	return items.map((item) => {
+		const count = seen.get(item.id) ?? 0;
+		seen.set(item.id, count + 1);
+		if (count === 0) {
+			return item;
+		}
+		return {
+			...item,
+			id: `${item.id}:dup-${count + 1}`,
+		};
+	});
+}
+
 async function collectContextItems(repoRoot: string, requestedSources: Set<ContextSourceKind> | null): Promise<ContextItem[]> {
 	const include = (kind: ContextSourceKind): boolean => (requestedSources ? requestedSources.has(kind) : true);
 	const paths = getStorePaths(repoRoot);
@@ -1166,7 +1181,7 @@ async function collectContextItems(repoRoot: string, requestedSources: Set<Conte
 	}
 
 	const chunks = await Promise.all(tasks);
-	const items = chunks.flat();
+	const items = ensureUniqueContextItemIds(chunks.flat());
 	items.sort((a, b) => {
 		if (a.ts_ms !== b.ts_ms) {
 			return b.ts_ms - a.ts_ms;

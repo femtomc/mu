@@ -1346,6 +1346,99 @@ test("mu issues create outputs JSON and writes to store", async () => {
 	expect(forumText.includes(`"topic":"issue:${issue.id}"`)).toBe(true);
 });
 
+test("mu issues mutations are blocked for heartbeat-managed roots unless override is provided", async () => {
+	const dir = await mkTempRepo();
+	const root = JSON.parse((await run(["issues", "create", "Root", "--json"], { cwd: dir })).stdout) as {
+		id: string;
+	};
+	const child = JSON.parse((await run(["issues", "create", "Child", "--json"], { cwd: dir })).stdout) as {
+		id: string;
+	};
+	expect((await run(["issues", "dep", child.id, "parent", root.id], { cwd: dir })).exitCode).toBe(0);
+
+	await writeFile(
+		join(workspaceStoreDir(dir), "heartbeats.jsonl"),
+		`${JSON.stringify({
+			v: 1,
+			program_id: "hb-lock",
+			title: "Managed root heartbeat",
+			prompt: null,
+			enabled: true,
+			every_ms: 300000,
+			reason: "managed",
+			metadata: { root_issue_id: root.id },
+			created_at_ms: 1_700_000_100_000,
+			updated_at_ms: 1_700_000_100_000,
+			last_triggered_at_ms: null,
+			last_result: null,
+			last_error: null,
+		})}\n`,
+		"utf8",
+	);
+
+	const blocked = await run(["issues", "close", child.id, "--outcome", "success"], { cwd: dir });
+	expect(blocked.exitCode).toBe(1);
+	expect(blocked.stdout).toContain("heartbeat-managed issue mutation blocked");
+	expect(blocked.stdout).toContain("--allow-heartbeat-managed");
+
+	const allowed = await run(
+		["issues", "close", child.id, "--outcome", "success", "--allow-heartbeat-managed"],
+		{ cwd: dir },
+	);
+	expect(allowed.exitCode).toBe(0);
+});
+
+test("mu issues heartbeat ownership guard allows matching autonomous heartbeat program context", async () => {
+	const dir = await mkTempRepo();
+	const root = JSON.parse((await run(["issues", "create", "Root", "--json"], { cwd: dir })).stdout) as {
+		id: string;
+	};
+	const child = JSON.parse((await run(["issues", "create", "Child", "--json"], { cwd: dir })).stdout) as {
+		id: string;
+	};
+	expect((await run(["issues", "dep", child.id, "parent", root.id], { cwd: dir })).exitCode).toBe(0);
+
+	await writeFile(
+		join(workspaceStoreDir(dir), "heartbeats.jsonl"),
+		`${JSON.stringify({
+			v: 1,
+			program_id: "hb-lock",
+			title: "Managed root heartbeat",
+			prompt: null,
+			enabled: true,
+			every_ms: 300000,
+			reason: "managed",
+			metadata: { root_issue_id: root.id },
+			created_at_ms: 1_700_000_100_000,
+			updated_at_ms: 1_700_000_100_000,
+			last_triggered_at_ms: null,
+			last_result: null,
+			last_error: null,
+		})}\n`,
+		"utf8",
+	);
+
+	const prevWakeSource = process.env.MU_AUTONOMOUS_WAKE_SOURCE;
+	const prevProgramId = process.env.MU_AUTONOMOUS_PROGRAM_ID;
+	process.env.MU_AUTONOMOUS_WAKE_SOURCE = "heartbeat_program";
+	process.env.MU_AUTONOMOUS_PROGRAM_ID = "hb-lock";
+	try {
+		const allowed = await run(["issues", "close", child.id, "--outcome", "success"], { cwd: dir });
+		expect(allowed.exitCode).toBe(0);
+	} finally {
+		if (prevWakeSource == null) {
+			delete process.env.MU_AUTONOMOUS_WAKE_SOURCE;
+		} else {
+			process.env.MU_AUTONOMOUS_WAKE_SOURCE = prevWakeSource;
+		}
+		if (prevProgramId == null) {
+			delete process.env.MU_AUTONOMOUS_PROGRAM_ID;
+		} else {
+			process.env.MU_AUTONOMOUS_PROGRAM_ID = prevProgramId;
+		}
+	}
+});
+
 test("mu issue/forum/event read interfaces default to compact output with opt-in --json", async () => {
 	const dir = await mkTempRepo();
 	const created = await run(["issues", "create", "Compact defaults", "--json"], { cwd: dir });
