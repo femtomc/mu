@@ -38,6 +38,7 @@ mu control harness         # Compact harness adapter/provider/model snapshot
 mu control harness --verbose  # Expanded capability vectors
 mu control config get      # Compact typed workspace control-plane config
 mu control config get --verbose  # Include defaults + descriptions
+mu control ui-state list   # Inspect persisted UiDoc scope/revision snapshots
 mu issues list             # List all issues
 mu issues create "title"   # Create new issue
 mu issues ready            # Show ready leaf issues

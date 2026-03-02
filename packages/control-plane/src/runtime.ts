@@ -1,5 +1,7 @@
+import { join } from "node:path";
 import { type IdempotencyClaimDecision, type IdempotencyClaimRecord, IdempotencyLedger } from "./idempotency_ledger.js";
 import { type ControlPlanePaths, getControlPlanePaths } from "./paths.js";
+import { UiDocsStateStore } from "./ui_docs_state_store.js";
 import { WriterLock } from "./writer_lock.js";
 
 export type ControlPlaneRuntimeOpts = {
@@ -7,11 +9,13 @@ export type ControlPlaneRuntimeOpts = {
 	ownerId?: string;
 	nowMs?: () => number;
 	idempotency?: IdempotencyLedger;
+	uiDocsState?: UiDocsStateStore;
 };
 
 export class ControlPlaneRuntime {
 	public readonly paths: ControlPlanePaths;
 	public readonly idempotency: IdempotencyLedger;
+	public readonly uiDocsState: UiDocsStateStore;
 	readonly #ownerId: string | undefined;
 	readonly #nowMs: () => number;
 	#writerLock: WriterLock | null = null;
@@ -20,6 +24,7 @@ export class ControlPlaneRuntime {
 	public constructor(opts: ControlPlaneRuntimeOpts) {
 		this.paths = getControlPlanePaths(opts.repoRoot);
 		this.idempotency = opts.idempotency ?? new IdempotencyLedger(this.paths.idempotencyPath);
+		this.uiDocsState = opts.uiDocsState ?? new UiDocsStateStore(join(this.paths.controlPlaneDir, "ui_docs_state.jsonl"));
 		this.#ownerId = opts.ownerId;
 		this.#nowMs = opts.nowMs ?? Date.now;
 	}
@@ -34,6 +39,7 @@ export class ControlPlaneRuntime {
 			nowMs: Math.trunc(this.#nowMs()),
 		});
 		await this.idempotency.load();
+		await this.uiDocsState.load();
 		this.#started = true;
 	}
 

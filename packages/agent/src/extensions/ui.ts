@@ -2,6 +2,7 @@ import {
 	normalizeUiDocs,
 	parseUiDoc,
 	resolveUiStatusProfileName,
+	stableSerializeJson,
 	type UiAction,
 	type UiComponent,
 	type UiDoc,
@@ -17,6 +18,8 @@ const UI_PICKER_COMPONENTS_MAX = 8;
 const UI_PICKER_LIST_ITEMS_MAX = 4;
 const UI_PICKER_KEYVALUE_ROWS_MAX = 4;
 const UI_SESSION_KEY_FALLBACK = "__mu_ui_active_session__";
+const UI_STATE_CUSTOM_TYPE = "mu-ui-state/v1";
+const UI_STATE_SCHEMA_VERSION = 1;
 const UI_PROMPT_PREVIEW_MAX = 160;
 const UI_INTERACT_SHORTCUT_PRIMARY = "ctrl+shift+u";
 const UI_INTERACT_SHORTCUT_FALLBACK = "alt+u";
@@ -64,6 +67,14 @@ type UiAutoPromptRequest = {
 	actionId?: string;
 };
 
+type UiPersistedState = {
+	v: 1;
+	docs: UiDoc[];
+	pending_prompts: Array<{ kind: "action" | "review"; ui_id: string; action_id?: string }>;
+	prompted_revision_keys: string[];
+	awaiting_ui_ids: string[];
+};
+
 type UiState = {
 	docsById: Map<string, UiDoc>;
 	pendingPrompts: UiAutoPromptRequest[];
@@ -72,6 +83,7 @@ type UiState = {
 	interactionDepth: number;
 	lastStatusText: string | null;
 	lastWidgetSignature: string | null;
+	lastPersistSignature: string | null;
 };
 
 type SessionStateEntry = {
@@ -91,6 +103,7 @@ function createState(): UiState {
 		interactionDepth: 0,
 		lastStatusText: null,
 		lastWidgetSignature: null,
+		lastPersistSignature: null,
 	};
 }
 
@@ -467,6 +480,175 @@ function parseDocListInput(value: unknown): { ok: true; docs: UiDoc[] } | { ok: 
 		docs.push(parsed);
 	}
 	return { ok: true, docs: normalizeUiDocs(docs, { maxDocs: UI_DISPLAY_DOCS_MAX }) };
+}
+
+function normalizeStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	const out: string[] = [];
+	const seen = new Set<string>();
+	for (const entry of value) {
+		if (typeof entry !== "string") {
+			continue;
+		}
+		const trimmed = entry.trim();
+		if (!trimmed || seen.has(trimmed)) {
+			continue;
+		}
+		seen.add(trimmed);
+		out.push(trimmed);
+	}
+	return out;
+}
+
+function parsePersistedPendingPrompt(value: unknown): UiPersistedState["pending_prompts"][number] | null {
+	if (!isPlainObject(value)) {
+		return null;
+	}
+	const kind = value.kind === "action" || value.kind === "review" ? value.kind : null;
+	if (!kind) {
+		return null;
+	}
+	const uiIdRaw = typeof value.ui_id === "string" ? value.ui_id.trim() : "";
+	if (!uiIdRaw) {
+		return null;
+	}
+	const actionIdRaw = typeof value.action_id === "string" ? value.action_id.trim() : "";
+	if (kind === "review") {
+		return { kind, ui_id: uiIdRaw };
+	}
+	if (actionIdRaw) {
+		return { kind, ui_id: uiIdRaw, action_id: actionIdRaw };
+	}
+	return { kind, ui_id: uiIdRaw };
+}
+
+function parsePersistedUiState(value: unknown): UiPersistedState | null {
+	if (!isPlainObject(value)) {
+		return null;
+	}
+	if (value.v !== UI_STATE_SCHEMA_VERSION) {
+		return null;
+	}
+	const parsedDocs = parseDocListInput(value.docs);
+	if (!parsedDocs.ok) {
+		return null;
+	}
+	const pendingPrompts: UiPersistedState["pending_prompts"] = [];
+	const pendingRaw = Array.isArray(value.pending_prompts) ? value.pending_prompts : [];
+	for (const pending of pendingRaw) {
+		const parsed = parsePersistedPendingPrompt(pending);
+		if (parsed) {
+			pendingPrompts.push(parsed);
+		}
+	}
+	return {
+		v: 1,
+		docs: parsedDocs.docs,
+		pending_prompts: pendingPrompts,
+		prompted_revision_keys: normalizeStringArray(value.prompted_revision_keys),
+		awaiting_ui_ids: normalizeStringArray(value.awaiting_ui_ids),
+	};
+}
+
+function serializeUiState(state: UiState): UiPersistedState {
+	retainPromptedRevisionKeysForActiveDocs(state);
+	retainAwaitingUiIdsForActiveDocs(state);
+	retainPendingPromptsForActiveDocs(state);
+	const docs = activeDocs(state, UI_DISPLAY_DOCS_MAX);
+	return {
+		v: 1,
+		docs,
+		pending_prompts: state.pendingPrompts.map((pending) => ({
+			kind: pending.kind,
+			ui_id: pending.uiId,
+			...(pending.actionId ? { action_id: pending.actionId } : {}),
+		})),
+		prompted_revision_keys: [...state.promptedRevisionKeys].sort((left, right) => left.localeCompare(right)),
+		awaiting_ui_ids: [...state.awaitingUiIds].sort((left, right) => left.localeCompare(right)),
+	};
+}
+
+function uiStatePersistSignature(value: UiPersistedState): string {
+	return stableSerializeJson(value);
+}
+
+function persistUiStateSnapshot(pi: ExtensionAPI, state: UiState): void {
+	const snapshot = serializeUiState(state);
+	const signature = uiStatePersistSignature(snapshot);
+	if (state.lastPersistSignature === signature) {
+		return;
+	}
+	pi.appendEntry(UI_STATE_CUSTOM_TYPE, snapshot);
+	state.lastPersistSignature = signature;
+}
+
+function applyPersistedUiState(state: UiState, persisted: UiPersistedState): void {
+	state.docsById.clear();
+	state.pendingPrompts = [];
+	state.promptedRevisionKeys.clear();
+	state.awaitingUiIds.clear();
+	state.interactionDepth = 0;
+	state.lastStatusText = null;
+	state.lastWidgetSignature = null;
+
+	for (const doc of persisted.docs) {
+		state.docsById.set(doc.ui_id, doc);
+	}
+	for (const revisionKey of persisted.prompted_revision_keys) {
+		state.promptedRevisionKeys.add(revisionKey);
+	}
+	for (const uiId of persisted.awaiting_ui_ids) {
+		state.awaitingUiIds.add(uiId);
+	}
+	for (const pending of persisted.pending_prompts) {
+		enqueuePendingPrompt(state, {
+			kind: pending.kind,
+			uiId: pending.ui_id,
+			actionId: pending.action_id,
+		});
+	}
+
+	retainPromptedRevisionKeysForActiveDocs(state);
+	retainAwaitingUiIdsForActiveDocs(state);
+	retainPendingPromptsForActiveDocs(state);
+	state.lastPersistSignature = uiStatePersistSignature(serializeUiState(state));
+}
+
+function latestPersistedUiStateFromBranch(entries: unknown[]): UiPersistedState | null {
+	let latest: UiPersistedState | null = null;
+	for (const entry of entries) {
+		if (!isPlainObject(entry)) {
+			continue;
+		}
+		if (entry.type !== "custom" || entry.customType !== UI_STATE_CUSTOM_TYPE) {
+			continue;
+		}
+		const parsed = parsePersistedUiState(entry.data);
+		if (!parsed) {
+			continue;
+		}
+		latest = parsed;
+	}
+	return latest;
+}
+
+function restoreStateFromSessionBranch(ctx: ExtensionContext, key: string): UiState {
+	const manager = ctx.sessionManager as { getBranch?: () => unknown[] };
+	const branch = typeof manager.getBranch === "function" ? manager.getBranch() : [];
+	const restored = createState();
+	const persisted = latestPersistedUiStateFromBranch(branch);
+	if (persisted) {
+		applyPersistedUiState(restored, persisted);
+	}
+	const nowMs = Date.now();
+	pruneStaleStates(nowMs);
+	STATE_BY_SESSION.set(key, {
+		state: restored,
+		lastAccessMs: nowMs,
+	});
+	return restored;
 }
 
 function statusProfileWarningsExtraForDoc(doc: UiDoc): Record<string, unknown> {
@@ -1633,6 +1815,7 @@ export function uiExtension(pi: ExtensionAPI) {
 			removePendingPromptsForUiId(state, selectedDoc.ui_id);
 			retainAwaitingUiIdsForActiveDocs(state);
 			retainPendingPromptsForActiveDocs(state);
+			persistUiStateSnapshot(pi, state);
 			ctx.ui.notify(`Submitted prompt from ${selectedDoc.ui_id}/${selectedAction.id}.`, "info");
 		});
 
@@ -1713,17 +1896,41 @@ export function uiExtension(pi: ExtensionAPI) {
 			if (ctx.hasUI && result.ok && result.changedUiIds && result.changedUiIds.length > 0) {
 				armAutoPromptForUiDocs(state, result.changedUiIds);
 			}
+			const shouldPersistMutation =
+				result.ok &&
+				(result.action === "set" ||
+					result.action === "update" ||
+					result.action === "replace" ||
+					result.action === "remove" ||
+					result.action === "clear");
+			if (shouldPersistMutation) {
+				persistUiStateSnapshot(pi, state);
+			}
 			refreshUi(ctx);
 			return buildToolResult({ state, ...result });
 		},
 	});
 
-	pi.on("session_start", (_event, ctx) => {
+	const restoreAndRefresh = (ctx: ExtensionContext): void => {
+		const key = sessionKey(ctx);
+		restoreStateFromSessionBranch(ctx, key);
 		refreshUi(ctx);
+	};
+
+	pi.on("session_start", (_event, ctx) => {
+		restoreAndRefresh(ctx);
 	});
 
 	pi.on("session_switch", (_event, ctx) => {
-		refreshUi(ctx);
+		restoreAndRefresh(ctx);
+	});
+
+	pi.on("session_fork", (_event, ctx) => {
+		restoreAndRefresh(ctx);
+	});
+
+	pi.on("session_tree", (_event, ctx) => {
+		restoreAndRefresh(ctx);
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
@@ -1737,6 +1944,7 @@ export function uiExtension(pi: ExtensionAPI) {
 		if (!pending) {
 			return;
 		}
+		persistUiStateSnapshot(pi, state);
 		if (pending.kind === "action") {
 			ctx.ui.notify(
 				`Agent requested input via ${pending.uiId}. Submit now or press ${UI_INTERACT_SHORTCUT_HINT} later.`,

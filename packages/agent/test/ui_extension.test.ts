@@ -20,6 +20,7 @@ function createExtensionApiMock() {
 	const shortcuts = new Map<string, unknown>();
 	const eventHandlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
 	const sendUserMessageCalls: string[] = [];
+	const appendEntryCalls: Array<{ customType: string; data: unknown }> = [];
 	const api = {
 		registerTool(tool: RegisteredTool) {
 			tools.set(tool.name, tool);
@@ -40,11 +41,14 @@ function createExtensionApiMock() {
 			sendUserMessageCalls.push(message);
 			return Promise.resolve();
 		},
+		appendEntry(customType: string, data?: unknown) {
+			appendEntryCalls.push({ customType, data });
+		},
 	};
-	return { api, tools, commands, shortcuts, eventHandlers, sendUserMessageCalls };
+	return { api, tools, commands, shortcuts, eventHandlers, sendUserMessageCalls, appendEntryCalls };
 }
 
-function createToolContext(sessionId: string) {
+function createToolContext(sessionId: string, opts: { branchEntries?: unknown[] } = {}) {
 	const theme = {
 		fg: (tone: string, text: string) => `<${tone}>${text}</${tone}>`,
 	};
@@ -57,6 +61,7 @@ function createToolContext(sessionId: string) {
 		hasUI: true,
 		sessionManager: {
 			getSessionId: () => sessionId,
+			getBranch: () => opts.branchEntries ?? [],
 		},
 		__uiCapture: uiCapture,
 		ui: {
@@ -528,6 +533,79 @@ describe("uiExtension", () => {
 
 		const otherStatus = await tool.execute("call-3", { action: "status" }, undefined, undefined, otherSession);
 		expect(detailsOf(otherStatus).doc_count).toBe(0);
+	});
+
+	test("mu_ui persists deterministic session snapshots via custom entries", async () => {
+		const { api, tools, appendEntryCalls } = createExtensionApiMock();
+		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
+
+		const tool = tools.get("mu_ui");
+		if (!tool) {
+			throw new Error("mu_ui tool missing");
+		}
+
+		const ctx = createToolContext("session-persist");
+		const doc = mkUiDoc({ ui_id: "panel-persist", title: "Persisted panel" });
+		await tool.execute("call-1", { action: "set", doc }, undefined, undefined, ctx);
+		await tool.execute("call-2", { action: "status" }, undefined, undefined, ctx);
+		await tool.execute("call-3", { action: "clear" }, undefined, undefined, ctx);
+
+		expect(appendEntryCalls.length).toBe(2);
+		expect(appendEntryCalls[0]?.customType).toBe("mu-ui-state/v1");
+		const firstData = appendEntryCalls[0]?.data as { docs?: Array<{ ui_id?: string }> };
+		expect(firstData.docs?.[0]?.ui_id).toBe("panel-persist");
+		const clearData = appendEntryCalls[1]?.data as { docs?: unknown[] };
+		expect(clearData.docs).toEqual([]);
+	});
+
+	test("session_start restores latest persisted mu_ui snapshot from branch custom entries", async () => {
+		const { api, tools, eventHandlers } = createExtensionApiMock();
+		uiExtension(api as unknown as Parameters<typeof uiExtension>[0]);
+
+		const tool = tools.get("mu_ui");
+		if (!tool) {
+			throw new Error("mu_ui tool missing");
+		}
+		const sessionStartHandlers = eventHandlers.get("session_start") ?? [];
+		const sessionStartHandler = sessionStartHandlers[0];
+		if (typeof sessionStartHandler !== "function") {
+			throw new Error("session_start handler missing");
+		}
+
+		const oldDoc = mkUiDoc({ ui_id: "ui:old", title: "Old", revision: { id: "rev:old", version: 1 } });
+		const latestDoc = mkUiDoc({ ui_id: "ui:latest", title: "Latest", revision: { id: "rev:new", version: 2 } });
+		const ctx = createToolContext("session-restore", {
+			branchEntries: [
+				{ type: "custom", customType: "mu-ui-state/v1", data: { nope: true } },
+				{
+					type: "custom",
+					customType: "mu-ui-state/v1",
+					data: {
+						v: 1,
+						docs: [oldDoc],
+						pending_prompts: [],
+						prompted_revision_keys: [],
+						awaiting_ui_ids: [],
+					},
+				},
+				{
+					type: "custom",
+					customType: "mu-ui-state/v1",
+					data: {
+						v: 1,
+						docs: [latestDoc],
+						pending_prompts: [],
+						prompted_revision_keys: [],
+						awaiting_ui_ids: [],
+					},
+				},
+			],
+		});
+		await sessionStartHandler({ type: "session_start" }, ctx);
+
+		const status = await tool.execute("call-4", { action: "status" }, undefined, undefined, ctx);
+		expect(detailsOf(status).doc_count).toBe(1);
+		expect(detailsOf(status).ui_ids).toEqual(["ui:latest"]);
 	});
 
 	test("mu_ui set keeps highest revision when stale docs replay", async () => {

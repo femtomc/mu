@@ -4,6 +4,7 @@ import { allowsConversationalIngressForInbound } from "./ingress_mode_policy.js"
 import { type InboundEnvelope, InboundEnvelopeSchema } from "./models.js";
 import type { MessagingOperatorRuntimeLike } from "./operator_contract.js";
 import type { ControlPlaneRuntime } from "./runtime.js";
+import { uiDocsStateScopeForInbound, uiDocsStateWriterForInbound } from "./ui_docs_state_store.js";
 
 export type { CommandPipelineResult, ControlPlaneCommandPipelineOpts } from "./command_pipeline_types.js";
 import type { CommandPipelineResult, ControlPlaneCommandPipelineOpts } from "./command_pipeline_types.js";
@@ -103,6 +104,23 @@ export class ControlPlaneCommandPipeline {
 		return binding;
 	}
 
+	async #persistUiDocsState(inbound: InboundEnvelope, uiDocs: unknown): Promise<void> {
+		const docs = normalizeUiDocs(uiDocs, { maxDocs: COMMAND_PIPELINE_UI_DOCS_MAX });
+		if (docs.length === 0) {
+			return;
+		}
+		try {
+			await this.runtime.uiDocsState.upsert({
+				scope: uiDocsStateScopeForInbound(inbound),
+				docs,
+				writer: uiDocsStateWriterForInbound(inbound),
+				nowMs: Math.trunc(this.#nowMs()),
+			});
+		} catch {
+			// Keep UI state journaling best effort and non-fatal for command processing.
+		}
+	}
+
 	async #runOperatorTurn(inbound: InboundEnvelope, binding: IdentityBinding): Promise<CommandPipelineResult> {
 		if (!this.#operator) {
 			return { kind: "denied", reason: "operator_unavailable" };
@@ -127,23 +145,29 @@ export class ControlPlaneCommandPipeline {
 
 		const decision = await this.#operator.handleInbound({ inbound, binding });
 		switch (decision.kind) {
-			case "response":
+			case "response": {
+				const uiDocs = normalizedUiDocsForPipeline(decision.ui_docs);
+				await this.#persistUiDocsState(inbound, uiDocs);
 				return {
 					kind: "operator_response",
 					message: normalizeOperatorMessage(decision.message),
-					ui_docs: normalizedUiDocsForPipeline(decision.ui_docs),
+					ui_docs: uiDocs,
 				};
+			}
 			case "reject":
 				if (decision.reason === "operator_cancelled") {
 					return { kind: "noop", reason: "operator_cancelled" };
 				}
 				return { kind: "denied", reason: decision.reason };
-			case "command":
+			case "command": {
+				const uiDocs = normalizedUiDocsForPipeline(decision.ui_docs);
+				await this.#persistUiDocsState(inbound, uiDocs);
 				return {
 					kind: "operator_response",
 					message: normalizeOperatorMessage(decision.commandText),
-					ui_docs: normalizedUiDocsForPipeline(decision.ui_docs),
+					ui_docs: uiDocs,
 				};
+			}
 		}
 	}
 

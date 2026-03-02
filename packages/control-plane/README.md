@@ -258,6 +258,11 @@ Adapter UI affordances derive from canonical `ui_docs` (`UiDoc`) metadata propag
 pipeline. New renderer behavior should use the shared UI contract instead of introducing bespoke
 adapter-specific payload formats.
 
+`UiDocsStateStore` now journals latest UI-doc snapshots to
+`<workspace>/control-plane/ui_docs_state.jsonl` using scope+revision semantics (`session` or
+`conversation`). This enables durable resume and async multi-actor coordination without requiring
+live in-memory extension state.
+
 ## Messaging operator runtime
 
 `MessagingOperatorRuntime` (from `@femtomc/mu-agent`) is the user-facing runtime for conversational ingress.

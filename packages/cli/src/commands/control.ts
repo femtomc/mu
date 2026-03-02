@@ -179,6 +179,53 @@ function buildControlConfigKeySummary(spec: ControlConfigKeySpec): string {
 	}
 }
 
+function normalizeUiStateScopeKind(raw: string | null | undefined): "session" | "conversation" | null {
+	if (typeof raw !== "string") {
+		return null;
+	}
+	const normalized = raw.trim().toLowerCase();
+	if (normalized === "session" || normalized === "conversation") {
+		return normalized;
+	}
+	return null;
+}
+
+function normalizeUiStateScopeId(raw: string | null | undefined): string | null {
+	if (typeof raw !== "string") {
+		return null;
+	}
+	const trimmed = raw.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function isoForTsMs(value: number): string {
+	try {
+		return new Date(value).toISOString();
+	} catch {
+		return String(value);
+	}
+}
+
+function compactWriterSummary(writer: Record<string, unknown>): string {
+	const source = typeof writer.source === "string" && writer.source.trim().length > 0 ? writer.source.trim() : "unknown";
+	const requestId =
+		typeof writer.request_id === "string" && writer.request_id.trim().length > 0 ? writer.request_id.trim() : null;
+	const sessionId =
+		typeof writer.session_id === "string" && writer.session_id.trim().length > 0 ? writer.session_id.trim() : null;
+	const wakeId = typeof writer.wake_id === "string" && writer.wake_id.trim().length > 0 ? writer.wake_id.trim() : null;
+	const parts = [source];
+	if (sessionId) {
+		parts.push(`session=${sessionId}`);
+	}
+	if (wakeId) {
+		parts.push(`wake=${wakeId}`);
+	}
+	if (requestId) {
+		parts.push(`request=${requestId}`);
+	}
+	return parts.join(" ");
+}
+
 function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCommandDeps): {
 	cmdControl: (argv: string[], ctx: Ctx) => Promise<ControlCommandRunResult>;
 } {
@@ -218,6 +265,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"  harness            Show harness adapter/provider/model capabilities",
 					"  operator           Inspect/update operator model + thinking",
 					"  config             Inspect/update workspace control-plane config",
+					"  ui-state           Inspect persisted UiDoc scope/revision state",
 					"  reload             Trigger in-process control-plane reload",
 					"  update             Run update command then trigger reload",
 					"  diagnose-operator  Diagnose operator turn parsing/execution health",
@@ -231,6 +279,7 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"  mu control operator set <provider> <model> <thinking>",
 					"  mu control config get",
 					"  mu control config set control_plane.operator.enabled false",
+					"  mu control ui-state list",
 					"  mu control reload",
 					"",
 					"Run `mu control <subcommand> --help` for subcommand-specific usage.",
@@ -257,6 +306,8 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 				return await controlOperator(rest, ctx, pretty);
 			case "config":
 				return await controlConfig(rest, ctx, pretty);
+			case "ui-state":
+				return await controlUiState(rest, ctx, pretty);
 			case "reload":
 				return await controlReload(rest, ctx, pretty);
 			case "update":
@@ -1648,6 +1699,224 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		return jsonError(`unknown config subcommand: ${sub}`, {
 			pretty,
 			recovery: ["mu control config --help"],
+		});
+	}
+
+	async function controlUiState(argv: string[], ctx: Ctx, pretty: boolean): Promise<ControlCommandRunResult> {
+		if (hasHelpFlag(argv)) {
+			return ok(
+				[
+					"mu control ui-state - inspect persisted UiDoc scope/revision state",
+					"",
+					"Usage:",
+					"  mu control ui-state [list] [--kind session|conversation] [--limit N] [--json] [--pretty] [--verbose|--debug]",
+					"  mu control ui-state get <session|conversation> <scope-id> [--json] [--pretty] [--verbose|--debug]",
+					"  mu control ui-state get --kind <session|conversation> --id <scope-id> [--json] [--pretty] [--verbose|--debug]",
+					"",
+					"Notes:",
+					"  - Reads <store>/control-plane/ui_docs_state.jsonl",
+					"  - list defaults to compact output; use --verbose for ui_id + writer detail",
+					"",
+					"Examples:",
+					"  mu control ui-state",
+					"  mu control ui-state list --kind session --limit 50",
+					"  mu control ui-state get session heartbeat-program:hb-123",
+					"  mu control ui-state get --kind conversation --id slack:team:chan:binding",
+				].join("\n") + "\n",
+			);
+		}
+
+		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+		const { present: verbose, rest: argv1 } = popFlag(argv0, "--verbose");
+		const { present: debug, rest: argv2 } = popFlag(argv1, "--debug");
+		const showDetails = verbose || debug;
+
+		const firstToken = argv2[0] ?? null;
+		const implicitList = firstToken == null || firstToken.startsWith("--");
+		const sub = implicitList ? "list" : firstToken;
+		const args = implicitList ? argv2 : argv2.slice(1);
+
+		const { UiDocsStateStore, getControlPlanePaths } = await import("@femtomc/mu-control-plane");
+		const paths = getControlPlanePaths(ctx.repoRoot);
+		const statePath = join(paths.controlPlaneDir, "ui_docs_state.jsonl");
+		const store = new UiDocsStateStore(statePath);
+		await store.load();
+
+		if (sub === "list") {
+			const { value: kindRaw, rest: argv3 } = getFlagValue(args, "--kind");
+			const { value: limitRaw, rest } = getFlagValue(argv3, "--limit");
+			if (rest.length > 0) {
+				return jsonError(`unknown args: ${rest.join(" ")}`, {
+					pretty,
+					recovery: ["mu control ui-state --help"],
+				});
+			}
+
+			const kindFilter =
+				kindRaw == null ? null : normalizeUiStateScopeKind(kindRaw) ?? null;
+			if (kindRaw != null && !kindFilter) {
+				return jsonError(`invalid --kind: ${kindRaw} (session|conversation)`, {
+					pretty,
+					recovery: ["mu control ui-state list --kind session"],
+				});
+			}
+
+			const limit =
+				limitRaw == null ? 20 : ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 });
+			if (limit == null) {
+				return jsonError("limit must be an integer between 1 and 500", {
+					pretty,
+					recovery: ["mu control ui-state list --limit 20"],
+				});
+			}
+
+			const records = store.snapshot({ scopeKind: kindFilter ?? undefined, limit });
+			const payload = {
+				repo_root: ctx.repoRoot,
+				store_path: statePath,
+				action: "list",
+				filters: {
+					scope_kind: kindFilter,
+					limit,
+				},
+				count: records.length,
+				records,
+			};
+			if (jsonMode) {
+				return ok(jsonText(payload, pretty));
+			}
+
+			let out = `UI docs state (${records.length})\n`;
+			out += `Store: ${statePath}\n`;
+			if (kindFilter) {
+				out += `Filter: kind=${kindFilter}\n`;
+			}
+			if (records.length === 0) {
+				out += "No ui-state scopes found.\n";
+				return ok(out);
+			}
+
+			for (const record of records) {
+				out += `  ${isoForTsMs(record.updated_at_ms)} ${record.scope.kind}:${record.scope.id} rev=${record.rev} docs=${record.docs.length} writer=${compactWriterSummary(asRecord(record.writer) ?? {})}\n`;
+				if (showDetails) {
+					const uiIds = record.docs.map((doc) => doc.ui_id).join(", ");
+					if (uiIds.length > 0) {
+						out += `      ui_ids: ${uiIds}\n`;
+					}
+					const writer = asRecord(record.writer) ?? {};
+					const writerDetails = [
+						typeof writer.channel === "string" && writer.channel.length > 0 ? `channel=${writer.channel}` : null,
+						typeof writer.actor_binding_id === "string" && writer.actor_binding_id.length > 0
+							? `binding=${writer.actor_binding_id}`
+							: null,
+						typeof writer.program_id === "string" && writer.program_id.length > 0
+							? `program=${writer.program_id}`
+							: null,
+					]
+						.filter((entry): entry is string => entry != null)
+						.join(" ");
+					if (writerDetails.length > 0) {
+						out += `      writer: ${writerDetails}\n`;
+					}
+				}
+			}
+			if (!showDetails) {
+				out += "Use `mu control ui-state list --verbose` for ui_id + writer detail.\n";
+			}
+			return ok(out);
+		}
+
+		if (sub === "get") {
+			const { value: kindFlag, rest: argv3 } = getFlagValue(args, "--kind");
+			const { value: idFlag, rest } = getFlagValue(argv3, "--id");
+			const usingFlags = kindFlag != null || idFlag != null;
+			if (usingFlags && rest.length > 0) {
+				return jsonError("cannot mix positional scope args with --kind/--id", {
+					pretty,
+					recovery: ["mu control ui-state get --kind session --id <scope-id>"],
+				});
+			}
+
+			let kindRaw: string | null = null;
+			let scopeIdRaw: string | null = null;
+			if (usingFlags) {
+				if (!kindFlag || !idFlag) {
+					return jsonError("get requires both --kind and --id", {
+						pretty,
+						recovery: ["mu control ui-state get --kind session --id <scope-id>"],
+					});
+				}
+				kindRaw = kindFlag;
+				scopeIdRaw = idFlag;
+			} else {
+				if (rest.length !== 2) {
+					return jsonError("usage: mu control ui-state get <session|conversation> <scope-id>", {
+						pretty,
+						recovery: ["mu control ui-state --help"],
+					});
+				}
+				kindRaw = rest[0] ?? null;
+				scopeIdRaw = rest[1] ?? null;
+			}
+
+			const scopeKind = normalizeUiStateScopeKind(kindRaw);
+			if (!scopeKind) {
+				return jsonError(`invalid scope kind: ${kindRaw ?? "(missing)"} (session|conversation)`, {
+					pretty,
+					recovery: ["mu control ui-state get session <scope-id>"],
+				});
+			}
+			const scopeId = normalizeUiStateScopeId(scopeIdRaw);
+			if (!scopeId) {
+				return jsonError("missing scope id", {
+					pretty,
+					recovery: ["mu control ui-state get session <scope-id>"],
+				});
+			}
+
+			const record = store.get({ kind: scopeKind, id: scopeId });
+			if (!record) {
+				return jsonError(`ui-state scope not found: ${scopeKind}:${scopeId}`, {
+					pretty,
+					recovery: ["mu control ui-state list"],
+				});
+			}
+
+			const payload = {
+				repo_root: ctx.repoRoot,
+				store_path: statePath,
+				action: "get",
+				record,
+			};
+			if (jsonMode) {
+				return ok(jsonText(payload, pretty));
+			}
+
+			let out = `UI docs state scope: ${record.scope.kind}:${record.scope.id}\n`;
+			out += `Store: ${statePath}\n`;
+			out += `Updated: ${isoForTsMs(record.updated_at_ms)}\n`;
+			out += `Revision: ${record.rev}\n`;
+			out += `Docs: ${record.docs.length}\n`;
+			out += `Writer: ${compactWriterSummary(asRecord(record.writer) ?? {})}\n`;
+			if (showDetails) {
+				if (record.docs.length === 0) {
+					out += "\nDocs: (none)\n";
+				} else {
+					out += "\nDocs:\n";
+					for (const doc of record.docs) {
+						out += `  - ${doc.ui_id} rev=${doc.revision.version} title=${doc.title}\n`;
+						if (doc.summary && doc.summary.trim().length > 0) {
+							out += `      summary: ${doc.summary.trim()}\n`;
+						}
+					}
+				}
+			}
+			return ok(out);
+		}
+
+		return jsonError(`unknown ui-state subcommand: ${sub}`, {
+			pretty,
+			recovery: ["mu control ui-state --help"],
 		});
 	}
 

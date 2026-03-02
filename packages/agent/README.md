@@ -77,7 +77,7 @@ Current stack:
 
 - `brandingExtension` — mu compact header/footer branding + default theme
 - `eventLogExtension` — event tail + watch widget
-- `uiExtension` — programmable `UiDoc` surface (`/mu ui ...`, `mu_ui`)
+- `uiExtension` — programmable `UiDoc` surface (`/mu ui ...`, `mu_ui`) with session-resume persistence via `custom` entries (`mu-ui-state/v1`)
 
 Default operator UI theme is `mu-gruvbox-dark`.
 
