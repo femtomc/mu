@@ -19,7 +19,7 @@ export function mainHelp(): string {
 		`  ${dim("Work queue:")} ${cmd("mu issues ready --root <root-id> --pretty")}`,
 		`  ${dim("Memory:")}    ${cmd("mu memory search --query <text> --limit 20")}`,
 		`  ${dim("Index:")}     ${cmd("mu memory index status")} ${dim("/ ")} ${cmd("mu memory index rebuild")}`,
-		`  ${dim("Forensics:")} ${cmd("mu store tail events --limit 20")}`,
+		`  ${dim("Forensics:")} ${cmd("mu events list --limit 20")}`,
 		"",
 		h("Commands (grouped):"),
 		`  ${cmd("guide")}                                 ${dim("In-CLI guide")}`,

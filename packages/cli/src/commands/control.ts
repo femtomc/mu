@@ -206,6 +206,20 @@ function isoForTsMs(value: number): string {
 	}
 }
 
+function truncateInline(value: string, width: number): string {
+	if (width <= 0) {
+		return "";
+	}
+	const normalized = value.replace(/\s+/g, " ").trim();
+	if (normalized.length <= width) {
+		return normalized;
+	}
+	if (width === 1) {
+		return "…";
+	}
+	return `${normalized.slice(0, width - 1)}…`;
+}
+
 function compactWriterSummary(writer: Record<string, unknown>): string {
 	const source = typeof writer.source === "string" && writer.source.trim().length > 0 ? writer.source.trim() : "unknown";
 	const requestId =
@@ -789,18 +803,22 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"mu control identities - list identity bindings",
 					"",
 					"Usage:",
-					"  mu control identities [--all] [--pretty]",
+					"  mu control identities [--all] [--json] [--pretty]",
 					"",
-					"By default shows active bindings. Use --all to include inactive.",
+					"By default shows active bindings in compact table format.",
+					"Use --all to include inactive and --json for full machine records.",
 					"",
 					"Examples:",
 					"  mu control identities",
-					"  mu control identities --all --pretty",
+					"  mu control identities --all",
+					"  mu control identities --all --json --pretty",
 				].join("\n") + "\n",
 			);
 		}
 
-		const { present: all, rest } = popFlag(argv, "--all");
+		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
+		const { present: compact, rest: argv1 } = popFlag(argv0, "--compact");
+		const { present: all, rest } = popFlag(argv1, "--all");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu control identities --help"] });
 		}
@@ -811,7 +829,38 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		await store.load();
 
 		const bindings = store.listBindings({ includeInactive: all });
-		return ok(jsonText(bindings, pretty));
+		if (jsonMode && !compact) {
+			return ok(jsonText(bindings, pretty));
+		}
+
+		const summarizeScopes = (value: unknown): string => {
+			if (!Array.isArray(value)) {
+				return "-";
+			}
+			const scopes = value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+			if (scopes.length === 0) {
+				return "-";
+			}
+			if (scopes.length <= 2) {
+				return truncateInline(scopes.join(","), 32);
+			}
+			return truncateInline(`${scopes.slice(0, 2).join(",")} +${scopes.length - 2}`, 32);
+		};
+
+		const rows = [
+			`Identity bindings: ${bindings.length}${all ? " (include inactive)" : ""}`,
+			`${"BINDING".padEnd(14)} ${"CHANNEL".padEnd(9)} ${"TENANT".padEnd(14)} ${"ACTOR".padEnd(14)} ${"STATUS".padEnd(8)} SCOPES`,
+		];
+		if (bindings.length === 0) {
+			rows.push("(no bindings)");
+			return ok(`${rows.join("\n")}\n`);
+		}
+		for (const binding of bindings) {
+			rows.push(
+				`${truncateInline(String(binding.binding_id ?? "-"), 14).padEnd(14)} ${truncateInline(String(binding.channel ?? "-"), 9).padEnd(9)} ${truncateInline(String(binding.channel_tenant_id ?? "-"), 14).padEnd(14)} ${truncateInline(String(binding.channel_actor_id ?? "-"), 14).padEnd(14)} ${truncateInline(String(binding.status ?? "-"), 8).padEnd(8)} ${summarizeScopes((binding as Record<string, unknown>).scopes)}`,
+			);
+		}
+		return ok(`${rows.join("\n")}\n`);
 	}
 
 	async function controlStatus(argv: string[], ctx: Ctx, pretty: boolean): Promise<ControlCommandRunResult> {
@@ -1928,8 +1977,8 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 					"",
 					"Usage:",
 					"  mu control operator get [--json] [--pretty]",
-					"  mu control operator models [provider] [--json] [--pretty]",
-					"  mu control operator thinking [provider] [model] [--json] [--pretty]",
+					"  mu control operator models [provider] [--json] [--pretty] [--verbose|--debug]",
+					"  mu control operator thinking [provider] [model] [--json] [--pretty] [--verbose|--debug]",
 					"  mu control operator set <provider> <model> [thinking] [--json] [--pretty]",
 					"  mu control operator thinking-set <thinking> [--json] [--pretty]",
 					"",
@@ -1952,15 +2001,18 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 		}
 
 		const { present: jsonMode, rest: argv0 } = popFlag(argv, "--json");
-		if (argv0.length === 0) {
+		const { present: verbose, rest: argv1 } = popFlag(argv0, "--verbose");
+		const { present: debug, rest: argv2 } = popFlag(argv1, "--debug");
+		if (argv2.length === 0) {
 			return jsonError("missing operator subcommand", {
 				pretty,
 				recovery: ["mu control operator --help"],
 			});
 		}
 
-		const sub = argv0[0]!;
-		const args = argv0.slice(1);
+		const showDetails = verbose || debug;
+		const sub = argv2[0]!;
+		const args = argv2.slice(1);
 
 		const { readMuConfigFile, writeMuConfigFile, applyMuConfigPatch, getMuConfigPath } = await import(
 			"@femtomc/mu-server"
@@ -2056,11 +2108,16 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 						"mu control operator models - list provider model catalogs",
 						"",
 						"Usage:",
-						"  mu control operator models [provider] [--json] [--pretty]",
+						"  mu control operator models [provider] [--json] [--pretty] [--verbose|--debug]",
+						"",
+						"Notes:",
+						"  default text output is compact summary",
+						"  use --verbose/--debug for per-model rows",
 						"",
 						"Examples:",
 						"  mu control operator models",
 						"  mu control operator models anthropic",
+						"  mu control operator models openai-codex --verbose",
 						"  mu control operator models openai-codex --json --pretty",
 					].join("\n") + "\n",
 				);
@@ -2097,13 +2154,29 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 				return ok(jsonText(payload, pretty));
 			}
 
+			if (showDetails) {
+				let out = "Operator model catalog\n";
+				for (const provider of payload.providers) {
+					out += `\n${provider.provider} (${provider.authenticated ? "authenticated" : "not authenticated"})\n`;
+					for (const model of provider.models) {
+						out += `  - ${model.id} [api=${model.api}, reasoning=${model.reasoning ? "yes" : "no"}, xhigh=${model.xhigh ? "yes" : "no"}, ctx=${model.context_window}, max=${model.max_tokens}, input=${model.input.join(",")}]\n`;
+					}
+				}
+				return ok(out);
+			}
+
 			let out = "Operator model catalog\n";
 			for (const provider of payload.providers) {
-				out += `\n${provider.provider} (${provider.authenticated ? "authenticated" : "not authenticated"})\n`;
-				for (const model of provider.models) {
-					out += `  - ${model.id} [api=${model.api}, reasoning=${model.reasoning ? "yes" : "no"}, xhigh=${model.xhigh ? "yes" : "no"}, ctx=${model.context_window}, max=${model.max_tokens}, input=${model.input.join(",")}]\n`;
-				}
+				const apiFamilies = [...new Set(provider.models.map((model) => model.api))];
+				const reasoningCount = provider.models.filter((model) => model.reasoning).length;
+				const xhighCount = provider.models.filter((model) => model.xhigh).length;
+				const modelIds = provider.models.map((model) => model.id);
+				const shown = modelIds.slice(0, 12);
+				const hidden = Math.max(0, modelIds.length - shown.length);
+				out += `\n${provider.provider} (${provider.authenticated ? "authenticated" : "not authenticated"}) models=${provider.model_count} reasoning=${reasoningCount} xhigh=${xhighCount} apis=${apiFamilies.join(",") || "-"}\n`;
+				out += `  sample: ${shown.join(",") || "(none)"}${hidden > 0 ? `, +${hidden} more` : ""}\n`;
 			}
+			out += "\nUse --verbose for per-model capability rows or --json for full machine records.\n";
 			return ok(out);
 		}
 
@@ -2114,16 +2187,21 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 						"mu control operator thinking - show allowed thinking levels",
 						"",
 						"Usage:",
-						"  mu control operator thinking [provider] [model] [--json] [--pretty]",
+						"  mu control operator thinking [provider] [model] [--json] [--pretty] [--verbose|--debug]",
 						"",
 						"Modes:",
 						"  (no args)             Global thinking levels",
 						"  <provider>            Thinking levels by model for provider",
 						"  <provider> <model>    Thinking levels for one specific model",
 						"",
+						"Notes:",
+						"  provider-level output is compact by default",
+						"  use --verbose/--debug for full per-model rows",
+						"",
 						"Examples:",
 						"  mu control operator thinking",
 						"  mu control operator thinking anthropic",
+						"  mu control operator thinking anthropic --verbose",
 						"  mu control operator thinking openai-codex gpt-5.3-codex --json --pretty",
 					].join("\n") + "\n",
 				);
@@ -2163,10 +2241,23 @@ function buildControlHandlers<Ctx extends { repoRoot: string }>(deps: ControlCom
 				if (jsonMode) {
 					return ok(jsonText(payload, pretty));
 				}
-				let out = `Thinking levels for provider ${provider}\n`;
-				for (const model of payload.models) {
+				if (showDetails) {
+					let out = `Thinking levels for provider ${provider}\n`;
+					for (const model of payload.models) {
+						out += `  - ${model.id}: ${model.thinking_levels.join(", ")}\n`;
+					}
+					return ok(out);
+				}
+				const shown = payload.models.slice(0, 12);
+				const hidden = Math.max(0, payload.models.length - shown.length);
+				let out = `Thinking levels for provider ${provider} (${payload.models.length} model${payload.models.length === 1 ? "" : "s"})\n`;
+				for (const model of shown) {
 					out += `  - ${model.id}: ${model.thinking_levels.join(", ")}\n`;
 				}
+				if (hidden > 0) {
+					out += `  (+${hidden} more model${hidden === 1 ? "" : "s"})\n`;
+				}
+				out += "Use --verbose for full provider model-level thinking rows.\n";
 				return ok(out);
 			}
 

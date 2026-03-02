@@ -106,6 +106,26 @@ function summarizeBodySingleLine(body: string, width: number): string {
 	return truncateInline(`${base}${suffix}`, width + suffix.length);
 }
 
+function summarizeBodyPreview(body: string, opts: { maxLines?: number; maxLineWidth?: number } = {}): {
+	lines: string[];
+	extraLines: number;
+} {
+	const maxLines = opts.maxLines ?? 8;
+	const maxLineWidth = opts.maxLineWidth ?? 100;
+	const normalized = body.replaceAll("\r\n", "\n");
+	const rawLines = normalized.split("\n");
+	const lines = rawLines
+		.slice(0, maxLines)
+		.map((line) => {
+			const collapsed = line.replace(/\s+/g, " ").trim();
+			return collapsed.length > 0 ? truncateInline(collapsed, maxLineWidth) : "";
+		});
+	return {
+		lines,
+		extraLines: Math.max(0, rawLines.length - lines.length),
+	};
+}
+
 function summarizeTags(tags: readonly string[], width: number): string {
 	if (tags.length === 0) {
 		return "-";
@@ -146,8 +166,20 @@ export function renderIssueDetailCompact(issue: Issue): string {
 		}
 	}
 
-	lines.push("", "Body:");
-	lines.push(issue.body.length > 0 ? issue.body : "(empty)");
+	lines.push("", `Body preview (${issue.body.length} chars):`);
+	if (issue.body.length === 0) {
+		lines.push("(empty)");
+	} else {
+		const preview = summarizeBodyPreview(issue.body, { maxLines: 8, maxLineWidth: 100 });
+		for (const line of preview.lines) {
+			lines.push(line.length > 0 ? line : "");
+		}
+		if (preview.extraLines > 0) {
+			lines.push(`(+${preview.extraLines} more line${preview.extraLines === 1 ? "" : "s"})`);
+		}
+		lines.push(`Use --json for full body (${issue.body.length} chars).`);
+	}
+
 	return `${lines.join("\n")}\n`;
 }
 

@@ -32,6 +32,41 @@ export type StoreCommandCtx = {
 	};
 };
 
+function truncateInline(value: string, width: number): string {
+	if (width <= 0) {
+		return "";
+	}
+	const normalized = value.replace(/\s+/g, " ").trim();
+	if (normalized.length <= width) {
+		return normalized;
+	}
+	if (width === 1) {
+		return "…";
+	}
+	return `${normalized.slice(0, width - 1)}…`;
+}
+
+function renderCompactTailLines(opts: {
+	target: string;
+	total: number;
+	startLine: number;
+	lines: string[];
+}): string {
+	const rows = [
+		`Tail ${opts.target}: ${opts.lines.length} shown (total=${opts.total})`,
+		`${"LINE".padStart(6)} PREVIEW`,
+	];
+	if (opts.lines.length === 0) {
+		rows.push("(no rows)");
+		return `${rows.join("\n")}\n`;
+	}
+	for (let idx = 0; idx < opts.lines.length; idx += 1) {
+		const lineNo = String(opts.startLine + idx).padStart(6);
+		rows.push(`${lineNo} ${truncateInline(opts.lines[idx] ?? "", 220)}`);
+	}
+	return `${rows.join("\n")}\n`;
+}
+
 function buildStoreHandlers<Ctx extends StoreCommandCtx>(deps: StoreCommandDeps): {
 	cmdStore: (argv: string[], ctx: Ctx) => Promise<StoreCommandRunResult>;
 } {
@@ -131,6 +166,7 @@ function buildStoreHandlers<Ctx extends StoreCommandCtx>(deps: StoreCommandDeps)
 					"  mu store paths",
 					"  mu store ls --pretty",
 					"  mu store tail events --limit 20",
+					"  mu store tail cp_outbox --limit 20 --raw",
 					"  mu store tail cp_operator_turns --limit 30 --json --pretty",
 					"",
 					"Targets (for tail): issues, forum, events, cp_commands, cp_outbox, cp_identities,",
@@ -278,10 +314,15 @@ function buildStoreHandlers<Ctx extends StoreCommandCtx>(deps: StoreCommandDeps)
 					"mu store tail - show recent entries from a workspace-store file",
 					"",
 					"Usage:",
-					"  mu store tail <target> [--limit N] [--json] [--pretty]",
+					"  mu store tail <target> [--limit N] [--raw] [--json] [--pretty]",
+					"",
+					"Notes:",
+					"  text mode is compact-by-default (truncated previews)",
+					"  use --raw for full line/JSONL row output",
 					"",
 					"Examples:",
 					"  mu store tail events --limit 20",
+					"  mu store tail cp_outbox --limit 20 --raw",
 					"  mu store tail cp_commands --limit 50 --json --pretty",
 				].join("\n") + "\n",
 			);
@@ -289,14 +330,15 @@ function buildStoreHandlers<Ctx extends StoreCommandCtx>(deps: StoreCommandDeps)
 
 		const targetRaw = argv[0]!;
 		const { value: limitRaw, rest: argv0 } = getFlagValue(argv.slice(1), "--limit");
-		const { present: jsonMode, rest } = popFlag(argv0, "--json");
+		const { present: jsonMode, rest: argv1 } = popFlag(argv0, "--json");
+		const { present: rawMode, rest } = popFlag(argv1, "--raw");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu store tail --help"] });
 		}
 
-		const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 2000 }) : 20;
+		const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 }) : 20;
 		if (limit == null) {
-			return jsonError("limit must be an integer between 1 and 2000", {
+			return jsonError("limit must be an integer between 1 and 500", {
 				pretty,
 				recovery: ["mu store tail events --limit 20"],
 			});
@@ -340,8 +382,20 @@ function buildStoreHandlers<Ctx extends StoreCommandCtx>(deps: StoreCommandDeps)
 			if (jsonMode) {
 				return ok(jsonText(payload, pretty));
 			}
-			const rendered = tailRows.map((row) => JSON.stringify(row)).join("\n");
-			return ok(rendered.length > 0 ? `${rendered}\n` : "");
+			const rendered = tailRows.map((row) => JSON.stringify(row));
+			if (rawMode) {
+				const raw = rendered.join("\n");
+				return ok(raw.length > 0 ? `${raw}\n` : "");
+			}
+			const startLine = rows.length - tailRows.length + 1;
+			return ok(
+				renderCompactTailLines({
+					target: targetRaw,
+					total: rows.length,
+					startLine,
+					lines: rendered,
+				}),
+			);
 		}
 
 		const text = await Bun.file(targetAbs).text();
@@ -358,7 +412,18 @@ function buildStoreHandlers<Ctx extends StoreCommandCtx>(deps: StoreCommandDeps)
 		if (jsonMode) {
 			return ok(jsonText(payload, pretty));
 		}
-		return ok(tailLines.length > 0 ? `${tailLines.join("\n")}\n` : "");
+		if (rawMode) {
+			return ok(tailLines.length > 0 ? `${tailLines.join("\n")}\n` : "");
+		}
+		const startLine = normalized.length - tailLines.length + 1;
+		return ok(
+			renderCompactTailLines({
+				target: targetRaw,
+				total: normalized.length,
+				startLine,
+				lines: tailLines,
+			}),
+		);
 	}
 
 

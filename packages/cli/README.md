@@ -39,7 +39,7 @@ mu control harness --verbose  # Expanded capability vectors
 mu control config get      # Compact typed workspace control-plane config
 mu control config get --verbose  # Include defaults + descriptions
 mu control ui-state list   # Inspect persisted UiDoc scope/revision snapshots
-mu issues list             # List all issues
+mu issues list --limit 20  # List recent issues (use --all for unbounded)
 mu issues create "title"   # Create new issue
 mu issues ready            # Show ready leaf issues
 mu issues close <id> --allow-heartbeat-managed  # Override heartbeat ownership guardrails when needed
@@ -179,7 +179,8 @@ mu control config get
 mu control config get --verbose
 mu store paths --pretty
 mu control reload
-mu control identities --all --pretty
+mu control identities --all
+mu control identities --all --json --pretty
 ```
 
 For manual linking (Slack/Discord/Telegram):

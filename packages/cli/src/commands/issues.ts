@@ -357,20 +357,21 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues list - list issues with optional filters",
 					"",
 					"Usage:",
-					"  mu issues list [--status STATUS] [--tag TAG] [--root ID] [--limit N] [--json] [--pretty]",
+					"  mu issues list [--status STATUS] [--tag TAG] [--root ID] [--limit N|--all] [--json] [--pretty]",
 					"",
 					"Filters:",
 					"  --status <open|in_progress|closed>   Filter by status",
 					"  --tag <TAG>                          Repeatable; issue must contain all tags",
 					"  --root <id-or-prefix>                Restrict to a root issue subtree",
-					"  --limit <N>                          Return only the newest N entries (0 = unlimited)",
+					"  --limit <N>                          Return newest N entries (default: 20, max: 500)",
+					"  --all                                Return all matching rows (explicitly unbounded)",
 					"  --json                               Emit full JSON rows (default is compact table)",
 					"",
 					"Examples:",
 					"  mu issues list",
 					"  mu issues list --status open --limit 20",
 					"  mu issues list --root mu-abc123 --tag node:agent",
-					"  mu issues list --status open --limit 20 --json --pretty",
+					"  mu issues list --status open --all --json --pretty",
 				].join("\n") + "\n",
 			);
 		}
@@ -380,7 +381,8 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		const { value: rootRaw, rest: argv2 } = getFlagValue(argv1, "--root");
 		const { present: jsonMode, rest: argv3 } = popFlag(argv2, "--json");
 		const { present: compact, rest: argv4 } = popFlag(argv3, "--compact");
-		const { value: limitRaw, rest } = getFlagValue(argv4, "--limit");
+		const { value: limitRaw, rest: argv5 } = getFlagValue(argv4, "--limit");
+		const { present: allRows, rest } = popFlag(argv5, "--all");
 
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues list --help"] });
@@ -408,16 +410,26 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 			issues = issues.filter((i) => subtree.has(i.id));
 		}
 
-		let limit = 0;
-		if (limitRaw) {
-			const parsed = ensureInt(limitRaw, { name: "--limit", min: 0 });
-			if (parsed == null) {
-				return jsonError("limit must be an integer >= 0", { pretty, recovery: ["mu issues list --limit 20"] });
-			}
-			limit = parsed;
+		if (allRows && limitRaw != null) {
+			return jsonError("cannot combine --all with --limit", {
+				pretty,
+				recovery: ["mu issues list --all", "mu issues list --limit 20"],
+			});
 		}
 
-		if (limit > 0) {
+		const limit = allRows
+			? null
+			: limitRaw
+				? ensureInt(limitRaw, { name: "--limit", min: 1, max: 500 })
+				: 20;
+		if (!allRows && limit == null) {
+			return jsonError("--limit must be an integer between 1 and 500", {
+				pretty,
+				recovery: ["mu issues list --limit 20"],
+			});
+		}
+
+		if (limit != null) {
 			issues = issues.slice(-limit);
 		}
 
@@ -440,7 +452,7 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"Notes:",
 					"  Accepts full issue id or a unique prefix.",
 					"  If prefix is ambiguous, mu returns candidate ids.",
-					"  Default output is compact detail; use --json for full record.",
+					"  Default output is compact detail with body preview; use --json for full record/body.",
 					"",
 					"Examples:",
 					"  mu issues get mu-459fd648",
@@ -1081,13 +1093,14 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 					"mu issues ready - list open, unblocked, leaf issues tagged node:agent",
 					"",
 					"Usage:",
-					"  mu issues ready [--root ID] [--tag TAG] [--contains TEXT] [--limit N] [--json] [--pretty]",
+					"  mu issues ready [--root ID] [--tag TAG] [--contains TEXT] [--limit N|--all] [--json] [--pretty]",
 					"",
 					"Filters:",
 					"  --root <id-or-prefix>   Restrict to one root subtree",
 					"  --tag <TAG>             Repeatable extra tags (node:agent is always required)",
 					"  --contains <TEXT>       Case-insensitive title/body substring",
-					"  --limit <N>             Max rows (default: no explicit cap)",
+					"  --limit <N>             Max rows (default: 20, max: 200)",
+					"  --all                   Return all matching rows (explicitly unbounded)",
 					"  --json                  Emit full JSON rows (default is compact table)",
 					"",
 					"Examples:",
@@ -1107,13 +1120,25 @@ function buildIssueHandlers<Ctx extends IssueCommandCtx>(deps: IssueCommandDeps)
 		const { value: contains, rest: argv2 } = getFlagValue(argv1, "--contains");
 		const { present: jsonMode, rest: argv3 } = popFlag(argv2, "--json");
 		const { present: compact, rest: argv4 } = popFlag(argv3, "--compact");
-		const { value: limitRaw, rest } = getFlagValue(argv4, "--limit");
+		const { value: limitRaw, rest: argv5 } = getFlagValue(argv4, "--limit");
+		const { present: allRows, rest } = popFlag(argv5, "--all");
 		if (rest.length > 0) {
 			return jsonError(`unknown args: ${rest.join(" ")}`, { pretty, recovery: ["mu issues ready --help"] });
 		}
 
-		const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 200 }) : null;
-		if (limitRaw && limit == null) {
+		if (allRows && limitRaw != null) {
+			return jsonError("cannot combine --all with --limit", {
+				pretty,
+				recovery: ["mu issues ready --all", "mu issues ready --limit 20"],
+			});
+		}
+
+		const limit = allRows
+			? null
+			: limitRaw
+				? ensureInt(limitRaw, { name: "--limit", min: 1, max: 200 })
+				: 20;
+		if (!allRows && limit == null) {
 			return jsonError("--limit must be an integer between 1 and 200", {
 				pretty,
 				recovery: ["mu issues ready --limit 20"],

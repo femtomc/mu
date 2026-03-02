@@ -1856,3 +1856,217 @@ test("mu stop errors when no server is running", async () => {
 	expect(result.exitCode).toBe(1);
 	expect(result.stdout).toContain("no running server found");
 });
+
+test("mu issues list/ready defaults are bounded with explicit --all escape hatch", async () => {
+	const dir = await mkTempRepo();
+	try {
+		for (let idx = 0; idx < 35; idx += 1) {
+			const created = await run(["issues", "create", `Bounded issue ${idx}`], { cwd: dir });
+			expect(created.exitCode).toBe(0);
+		}
+
+		const listDefault = await run(["issues", "list", "--json"], { cwd: dir });
+		expect(listDefault.exitCode).toBe(0);
+		expect((JSON.parse(listDefault.stdout) as Array<{ id: string }>).length).toBe(20);
+
+		const listAll = await run(["issues", "list", "--json", "--all"], { cwd: dir });
+		expect(listAll.exitCode).toBe(0);
+		expect((JSON.parse(listAll.stdout) as Array<{ id: string }>).length).toBe(35);
+
+		const listConflict = await run(["issues", "list", "--all", "--limit", "5"], { cwd: dir });
+		expect(listConflict.exitCode).toBe(1);
+		expect(listConflict.stdout).toContain("cannot combine --all with --limit");
+
+		const readyDefault = await run(["issues", "ready", "--json"], { cwd: dir });
+		expect(readyDefault.exitCode).toBe(0);
+		expect((JSON.parse(readyDefault.stdout) as Array<{ id: string }>).length).toBe(20);
+
+		const readyAll = await run(["issues", "ready", "--json", "--all"], { cwd: dir });
+		expect(readyAll.exitCode).toBe(0);
+		expect((JSON.parse(readyAll.stdout) as Array<{ id: string }>).length).toBe(35);
+
+		const readyConflict = await run(["issues", "ready", "--all", "--limit", "5"], { cwd: dir });
+		expect(readyConflict.exitCode).toBe(1);
+		expect(readyConflict.stdout).toContain("cannot combine --all with --limit");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("mu forum read/topics defaults are bounded and topics supports --all", async () => {
+	const dir = await mkTempRepo();
+	try {
+		const topic = "issue:mu-bounded-forum";
+		for (let idx = 0; idx < 35; idx += 1) {
+			const posted = await run(["forum", "post", topic, "-m", `message ${idx}`], { cwd: dir });
+			expect(posted.exitCode).toBe(0);
+		}
+		for (let idx = 0; idx < 30; idx += 1) {
+			const posted = await run(["forum", "post", `topic:${idx}`, "-m", `topic msg ${idx}`], { cwd: dir });
+			expect(posted.exitCode).toBe(0);
+		}
+
+		const readDefault = await run(["forum", "read", topic, "--json"], { cwd: dir });
+		expect(readDefault.exitCode).toBe(0);
+		expect((JSON.parse(readDefault.stdout) as Array<{ topic: string }>).length).toBe(20);
+
+		const readMax = await run(["forum", "read", topic, "--limit", "200", "--json"], { cwd: dir });
+		expect(readMax.exitCode).toBe(0);
+		expect((JSON.parse(readMax.stdout) as Array<{ topic: string }>).length).toBe(35);
+
+		const readTooHigh = await run(["forum", "read", topic, "--limit", "201"], { cwd: dir });
+		expect(readTooHigh.exitCode).toBe(1);
+		expect(readTooHigh.stdout).toContain("limit must be an integer between 1 and 200");
+
+		const topicsDefault = await run(["forum", "topics", "--json"], { cwd: dir });
+		expect(topicsDefault.exitCode).toBe(0);
+		expect((JSON.parse(topicsDefault.stdout) as Array<{ topic: string }>).length).toBe(20);
+
+		const topicsAll = await run(["forum", "topics", "--json", "--all"], { cwd: dir });
+		expect(topicsAll.exitCode).toBe(0);
+		expect((JSON.parse(topicsAll.stdout) as Array<{ topic: string }>).length).toBeGreaterThanOrEqual(31);
+
+		const topicsConflict = await run(["forum", "topics", "--all", "--limit", "5"], { cwd: dir });
+		expect(topicsConflict.exitCode).toBe(1);
+		expect(topicsConflict.stdout).toContain("cannot combine --all with --limit");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("mu store tail defaults to compact previews and --raw returns exact rows", async () => {
+	const dir = await mkTempRepo();
+	const storeDir = workspaceStoreDir(dir);
+	const cpDir = join(storeDir, "control-plane");
+	await mkdir(cpDir, { recursive: true });
+	const uniqueSuffix = "UNIQUE_END_TOKEN_FOR_RAW";
+	await writeFile(
+		join(cpDir, "outbox.jsonl"),
+		`${JSON.stringify({ kind: "outbox.state", payload: { body: `${"x".repeat(280)}${uniqueSuffix}` } })}\n`,
+		"utf8",
+	);
+
+	try {
+		const compact = await run(["store", "tail", "cp_outbox", "--limit", "1"], { cwd: dir });
+		expect(compact.exitCode).toBe(0);
+		expect(compact.stdout).toContain("Tail cp_outbox:");
+		expect(compact.stdout).not.toContain(uniqueSuffix);
+
+		const raw = await run(["store", "tail", "cp_outbox", "--limit", "1", "--raw"], { cwd: dir });
+		expect(raw.exitCode).toBe(0);
+		expect(raw.stdout).toContain(uniqueSuffix);
+
+		const tooHighLimit = await run(["store", "tail", "cp_outbox", "--limit", "501"], { cwd: dir });
+		expect(tooHighLimit.exitCode).toBe(1);
+		expect(tooHighLimit.stdout).toContain("limit must be an integer between 1 and 500");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("mu replay is bounded by default and requires --all --raw for full dump", async () => {
+	const dir = await mkTempRepo();
+	const logsDir = join(workspaceStoreDir(dir), "logs", "mu-root-replay");
+	await mkdir(logsDir, { recursive: true });
+	const logPath = join(logsDir, "mu-issue-replay.jsonl");
+	const lines: string[] = [];
+	for (let idx = 0; idx < 120; idx += 1) {
+		lines.push(
+			JSON.stringify({
+				line: idx,
+				message: idx === 0 ? "FIRST_ONLY_REPLAY_TOKEN" : `entry-${idx}`,
+			}),
+		);
+	}
+	await writeFile(logPath, `${lines.join("\n")}\n`, "utf8");
+
+	try {
+		const preview = await run(["replay", logPath], { cwd: dir });
+		expect(preview.exitCode).toBe(0);
+		expect(preview.stdout).toContain("Replay");
+		expect(preview.stdout).not.toContain("FIRST_ONLY_REPLAY_TOKEN");
+
+		const rawTail = await run(["replay", logPath, "--raw"], { cwd: dir });
+		expect(rawTail.exitCode).toBe(0);
+		expect(rawTail.stdout).not.toContain("FIRST_ONLY_REPLAY_TOKEN");
+
+		const allWithoutRaw = await run(["replay", logPath, "--all"], { cwd: dir });
+		expect(allWithoutRaw.exitCode).toBe(1);
+		expect(allWithoutRaw.stdout).toContain("--all requires --raw");
+
+		const allRaw = await run(["replay", logPath, "--all", "--raw"], { cwd: dir });
+		expect(allRaw.exitCode).toBe(0);
+		expect(allRaw.stdout).toContain("FIRST_ONLY_REPLAY_TOKEN");
+		expect(allRaw.stdout.split("\n").length).toBeGreaterThanOrEqual(120);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("mu control identities defaults to compact table with opt-in --json", async () => {
+	const dir = await mkTempRepo();
+	try {
+		const linked = await run(
+			["control", "link", "--channel", "slack", "--actor-id", "U123", "--tenant-id", "T123"],
+			{ cwd: dir },
+		);
+		expect(linked.exitCode).toBe(0);
+
+		const compact = await run(["control", "identities"], { cwd: dir });
+		expect(compact.exitCode).toBe(0);
+		expect(compact.stdout).toContain("Identity bindings:");
+		expect(compact.stdout.trimStart().startsWith("[")).toBe(false);
+
+		const fullJson = await run(["control", "identities", "--json"], { cwd: dir });
+		expect(fullJson.exitCode).toBe(0);
+		const bindings = JSON.parse(fullJson.stdout) as Array<{ binding_id: string; channel: string }>;
+		expect(bindings.length).toBe(1);
+		expect(bindings[0]?.channel).toBe("slack");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("mu control operator models/thinking default to compact summaries and expand with --verbose", async () => {
+	const dir = await mkTempRepo();
+	try {
+		const catalogResult = await run(["control", "operator", "models", "--json"], { cwd: dir });
+		expect(catalogResult.exitCode).toBe(0);
+		const catalog = JSON.parse(catalogResult.stdout) as {
+			providers: Array<{ provider: string; models: Array<{ id: string }> }>;
+		};
+		const providerEntry = catalog.providers.find((entry) => entry.models.length > 0);
+		expect(providerEntry).toBeTruthy();
+		if (!providerEntry) {
+			throw new Error("expected at least one provider with models");
+		}
+
+		const modelsCompact = await run(["control", "operator", "models", providerEntry.provider], { cwd: dir });
+		expect(modelsCompact.exitCode).toBe(0);
+		expect(modelsCompact.stdout).toContain("sample:");
+		expect(modelsCompact.stdout).toContain("Use --verbose for per-model capability rows");
+
+		const modelsVerbose = await run(
+			["control", "operator", "models", providerEntry.provider, "--verbose"],
+			{ cwd: dir },
+		);
+		expect(modelsVerbose.exitCode).toBe(0);
+		expect(modelsVerbose.stdout).toContain("[api=");
+
+		const thinkingCompact = await run(["control", "operator", "thinking", providerEntry.provider], {
+			cwd: dir,
+		});
+		expect(thinkingCompact.exitCode).toBe(0);
+		expect(thinkingCompact.stdout).toContain("Use --verbose for full provider model-level thinking rows.");
+
+		const thinkingVerbose = await run(
+			["control", "operator", "thinking", providerEntry.provider, "--verbose"],
+			{ cwd: dir },
+		);
+		expect(thinkingVerbose.exitCode).toBe(0);
+		expect(thinkingVerbose.stdout).toContain(`Thinking levels for provider ${providerEntry.provider}`);
+		expect(thinkingVerbose.stdout).not.toContain("Use --verbose for full provider model-level thinking rows.");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});

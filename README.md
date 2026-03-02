@@ -88,7 +88,8 @@ Manage the control plane with:
 mu control status --pretty
 mu store paths --pretty
 mu control reload
-mu control identities --all --pretty
+mu control identities --all
+mu control identities --all --json --pretty
 ```
 
 *Detailed adapter internals are available in the [control-plane](packages/control-plane/README.md), [server](packages/server/README.md), and [neovim](packages/neovim/README.md) package docs.*

@@ -205,7 +205,9 @@ export function resumeCommandDeps(resolveIssueId: ResolveIssueIdFn) {
 export function replayCommandDeps() {
 	return {
 		hasHelpFlag,
+		popFlag,
 		getFlagValue,
+		ensureInt,
 		jsonError,
 		ok,
 		fileExists,

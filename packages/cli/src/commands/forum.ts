@@ -164,7 +164,7 @@ export async function cmdForum<Ctx extends ForumCommandCtx>(
 					"  mu forum read <topic> [--limit N] [--json] [--pretty]",
 					"",
 					"Options:",
-					"  --limit <N>    Number of messages to return (default: 50)",
+					"  --limit <N>    Number of messages to return (default: 20, max: 200)",
 					"  --json         Emit full JSON rows (default is compact list)",
 					"",
 					"Examples:",
@@ -183,9 +183,12 @@ export async function cmdForum<Ctx extends ForumCommandCtx>(
 			return jsonError(`unknown args: ${argv4.join(" ")}`, { pretty, recovery: ["mu forum read --help"] });
 		}
 
-		const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1 }) : 50;
+		const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 200 }) : 20;
 		if (limit == null) {
-			return jsonError("limit must be >= 1", { pretty, recovery: [`mu forum read ${topic} --limit 20`] });
+			return jsonError("limit must be an integer between 1 and 200", {
+				pretty,
+				recovery: [`mu forum read ${topic} --limit 20`],
+			});
 		}
 
 		const msgs = await ctx.forum.read(topic, limit);
@@ -202,11 +205,12 @@ export async function cmdForum<Ctx extends ForumCommandCtx>(
 					"mu forum topics - list active topics sorted by most recent message",
 					"",
 					"Usage:",
-					"  mu forum topics [--prefix PREFIX] [--limit N] [--json] [--pretty]",
+					"  mu forum topics [--prefix PREFIX] [--limit N|--all] [--json] [--pretty]",
 					"",
 					"Options:",
 					"  --prefix <PREFIX>   Restrict topics by prefix (e.g. issue:, research:)",
-					"  --limit <N>         Max topics returned (default: 100)",
+					"  --limit <N>         Max topics returned (default: 20, max: 200)",
+					"  --all               Return all matching topics (explicitly unbounded)",
 					"  --json              Emit full JSON rows (default is compact table)",
 					"",
 					"Examples:",
@@ -221,17 +225,28 @@ export async function cmdForum<Ctx extends ForumCommandCtx>(
 		const { value: limitRaw, rest: argv3 } = getFlagValue(argv2, "--limit");
 		const { present: jsonMode, rest: argv4 } = popFlag(argv3, "--json");
 		const { present: compact, rest: argv5 } = popFlag(argv4, "--compact");
-		if (argv5.length > 0) {
-			return jsonError(`unknown args: ${argv5.join(" ")}`, { pretty, recovery: ["mu forum topics --help"] });
+		const { present: allTopics, rest: argv6 } = popFlag(argv5, "--all");
+		if (argv6.length > 0) {
+			return jsonError(`unknown args: ${argv6.join(" ")}`, { pretty, recovery: ["mu forum topics --help"] });
 		}
 
-		const limit = limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1 }) : 100;
-		if (limit == null) {
-			return jsonError("limit must be >= 1", { pretty, recovery: ["mu forum topics --limit 20"] });
+		if (allTopics && limitRaw != null) {
+			return jsonError("cannot combine --all with --limit", {
+				pretty,
+				recovery: ["mu forum topics --all", "mu forum topics --limit 20"],
+			});
+		}
+
+		const limit = allTopics ? null : limitRaw ? ensureInt(limitRaw, { name: "--limit", min: 1, max: 200 }) : 20;
+		if (!allTopics && limit == null) {
+			return jsonError("limit must be an integer between 1 and 200", {
+				pretty,
+				recovery: ["mu forum topics --limit 20"],
+			});
 		}
 
 		let topics = await ctx.forum.topics(prefix ?? null);
-		if (limit > 0) {
+		if (limit != null) {
 			topics = topics.slice(0, limit);
 		}
 		if (!jsonMode || compact) {
