@@ -56,6 +56,7 @@ const LEGACY_TOP_LEVEL_STARTER_SKILL_DIRS = [
 	"setup-discord",
 	"setup-telegram",
 	"setup-neovim",
+	"writing",
 ] as const;
 
 const RETIRED_BUNDLED_SKILL_PATHS = [["subagents", "hud"]] as const;

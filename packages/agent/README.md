@@ -45,7 +45,7 @@ They are organized as category meta-skills plus subskills:
   - `setup-discord`
   - `setup-telegram`
   - `setup-neovim`
-- `writing`
+- `technical-writing`
 
 Starter skills are version-synced by CLI bootstrap. Initial bootstrap seeds missing
 skills; bundled-version changes refresh installed starter skill files.

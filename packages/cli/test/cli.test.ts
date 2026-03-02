@@ -35,7 +35,7 @@ const STARTER_SKILLS = [
 	{ name: "setup-discord", relPath: ["messaging", "setup-discord"] },
 	{ name: "setup-telegram", relPath: ["messaging", "setup-telegram"] },
 	{ name: "setup-neovim", relPath: ["messaging", "setup-neovim"] },
-	{ name: "writing", relPath: ["writing"] },
+	{ name: "technical-writing", relPath: ["technical-writing"] },
 ] as const;
 
 async function writeConfigWithOperatorDefaults(

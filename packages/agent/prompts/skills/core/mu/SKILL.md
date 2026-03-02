@@ -263,4 +263,4 @@ For wall-clock schedules (one-shot, interval, cron-expression), use `crons`.
   - **`setup-discord`**
   - **`setup-telegram`**
   - **`setup-neovim`**
-- Technical writing/docs polish: **`writing`**
+- Technical writing/docs polish: **`technical-writing`**
