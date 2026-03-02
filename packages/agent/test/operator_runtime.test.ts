@@ -256,6 +256,15 @@ test("JsonFileConversationSessionStore persists mappings across store instances"
 test("MessagingOperatorRuntime includes classified backend failure codes in fallback responses", async () => {
 	const scenarios = [
 		{ backendMessage: "pi operator timeout", expectedCode: "operator_timeout" },
+		{
+			backendMessage: "You have hit your ChatGPT usage limit (pro plan). Try again in ~3708 min.",
+			expectedCode: "operator_provider_usage_limit",
+		},
+		{
+			backendMessage:
+				'Codex error: {"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Your input exceeds the context window of this model. Please adjust your input and try again.","param":"input"},"sequence_number":2}',
+			expectedCode: "operator_provider_context_length_exceeded",
+		},
 		{ backendMessage: "operator_empty_response", expectedCode: "operator_empty_response" },
 		{
 			backendMessage:

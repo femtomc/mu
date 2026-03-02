@@ -1049,6 +1049,142 @@ describe("mu-server", () => {
 		expect(wakePayload.prompt).toBe(heartbeatPrompt);
 	});
 
+	test("operator wake fallback-coded responses mark heartbeat ticks failed", async () => {
+		const fallbackMessage = [
+			"I could not complete that turn safely.",
+			"Code: operator_provider_usage_limit",
+			"The configured operator provider rejected the turn due to usage or quota limits.",
+			"You can retry this request in plain conversational text.",
+		].join("\n");
+		const notifyCalls: Array<{ message: string; metadata: Record<string, unknown> | null }> = [];
+		const wakeControlPlane: ControlPlaneHandle = {
+			activeAdapters: [],
+			handleWebhook: async () => null,
+			submitAutonomousIngress: async () => ({ kind: "operator_response", message: fallbackMessage }),
+			notifyOperators: async (notifyOpts) => {
+				notifyCalls.push({
+					message: notifyOpts.message,
+					metadata:
+						notifyOpts.metadata && typeof notifyOpts.metadata === "object"
+							? (notifyOpts.metadata as Record<string, unknown>)
+							: null,
+				});
+				return { queued: 0, duplicate: 0, skipped: 0, decisions: [] };
+			},
+			stop: async () => {},
+		};
+		const wakeServer = await createServerForTest({
+			repoRoot: tempDir,
+			controlPlane: wakeControlPlane,
+			serverOptions: { operatorWakeCoalesceMs: 1_000 },
+		});
+
+		const heartbeatCreate = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/create", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Wake heartbeat",
+					every_ms: 0,
+					reason: "heartbeat-wake",
+				}),
+			}),
+		);
+		expect(heartbeatCreate.status).toBe(201);
+		const heartbeatPayload = (await heartbeatCreate.json()) as {
+			program: { program_id: string };
+		};
+		const heartbeatProgramId = heartbeatPayload.program.program_id;
+
+		const heartbeatTrigger = await wakeServer.fetch(
+			new Request("http://localhost/api/heartbeats/trigger", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ program_id: heartbeatProgramId, reason: "manual" }),
+			}),
+		);
+		expect(heartbeatTrigger.status).toBe(409);
+		const triggerPayload = (await heartbeatTrigger.json()) as {
+			ok: boolean;
+			reason: string;
+			program: { last_result: string | null; last_error: string | null };
+		};
+		expect(triggerPayload.ok).toBe(false);
+		expect(triggerPayload.reason).toBe("failed");
+		expect(triggerPayload.program.last_result).toBe("failed");
+		expect(triggerPayload.program.last_error).toBe("operator_provider_usage_limit");
+
+		const decisionPayload = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/control-plane/events?type=operator.wake.decision&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const match = events
+				.map((event) => event.payload ?? {})
+				.find((payload) => payload.program_id === heartbeatProgramId);
+			return match ?? null;
+		});
+		if (!decisionPayload) {
+			throw new Error("expected fallback wake decision payload");
+		}
+		expect(decisionPayload.wake_turn_outcome).toBe("fallback");
+		expect(decisionPayload.wake_turn_reason).toBe("operator_provider_usage_limit");
+		expect(decisionPayload.turn_reply_present).toBe(true);
+		expect(decisionPayload.wake_turn_error).toBe("operator_provider_usage_limit");
+
+		const wakePayload = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/control-plane/events?type=operator.wake&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const match = events
+				.map((event) => event.payload ?? {})
+				.find((payload) => payload.program_id === heartbeatProgramId);
+			return match ?? null;
+		});
+		if (!wakePayload) {
+			throw new Error("expected fallback wake payload");
+		}
+		expect(wakePayload.wake_turn_outcome).toBe("fallback");
+		expect(wakePayload.wake_turn_reason).toBe("operator_provider_usage_limit");
+		expect(typeof wakePayload.broadcast_message).toBe("string");
+		expect((wakePayload.broadcast_message as string).includes("Code: operator_provider_usage_limit")).toBe(true);
+
+		const tickPayload = await waitFor(async () => {
+			const response = await wakeServer.fetch(
+				new Request("http://localhost/api/control-plane/events?type=heartbeat_program.tick&limit=50"),
+			);
+			if (response.status !== 200) {
+				return null;
+			}
+			const events = (await response.json()) as Array<{ payload?: Record<string, unknown> }>;
+			const match = events
+				.map((event) => event.payload ?? {})
+				.find((payload) => payload.program_id === heartbeatProgramId);
+			return match ?? null;
+		});
+		if (!tickPayload) {
+			throw new Error("expected heartbeat tick payload");
+		}
+		expect(tickPayload.status).toBe("failed");
+		expect(tickPayload.reason).toBe("operator_provider_usage_limit");
+		expect((tickPayload.program as Record<string, unknown>).last_result).toBe("failed");
+		expect((tickPayload.program as Record<string, unknown>).last_error).toBe("operator_provider_usage_limit");
+
+		expect(notifyCalls).toHaveLength(1);
+		expect(notifyCalls[0]?.message).toBe(fallbackMessage);
+		expect(notifyCalls[0]?.metadata).toMatchObject({
+			wake_turn_outcome: "fallback",
+			wake_turn_reason: "operator_provider_usage_limit",
+		});
+	});
+
 	test("operator wake runs wake→turn→outbound exactly once under repeated wake triggers", async () => {
 		const wakeTurns: Array<{ text: string; requestId?: string }> = [];
 		const notifyCalls: Array<{

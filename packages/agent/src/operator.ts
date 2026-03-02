@@ -288,17 +288,49 @@ function defaultTurnId(): string {
 	return `turn-${crypto.randomUUID()}`;
 }
 
+function classifyProviderFailureCodeFromMessage(message: string | null): string | null {
+	if (!message) {
+		return null;
+	}
+	const normalized = message.trim().toLowerCase();
+	if (!normalized) {
+		return null;
+	}
+	if (
+		normalized.includes("chatgpt usage limit") ||
+		normalized.includes("usage limit") ||
+		normalized.includes("insufficient_quota") ||
+		normalized.includes("quota exceeded") ||
+		normalized.includes("billing hard limit")
+	) {
+		return "operator_provider_usage_limit";
+	}
+	if (
+		normalized.includes("context_length_exceeded") ||
+		normalized.includes("context window") ||
+		normalized.includes("maximum context length") ||
+		normalized.includes("input exceeds the context window")
+	) {
+		return "operator_provider_context_length_exceeded";
+	}
+	return null;
+}
+
 function buildOperatorFailureFallbackMessage(code: string): string {
 	const reasonLine =
 		code === "operator_timeout"
 			? "The operator turn exceeded the messaging timeout before a safe response was produced."
 			: code === "operator_busy"
 				? "Another operator turn is already in progress for this conversation."
-				: code === "operator_empty_response"
-					? "The operator completed without a usable response payload."
-					: code === "operator_cancelled"
-						? "The operator turn was cancelled before completion."
-						: "An internal operator runtime/formatting error interrupted the turn.";
+				: code === "operator_provider_usage_limit"
+					? "The configured operator provider rejected the turn due to usage or quota limits."
+					: code === "operator_provider_context_length_exceeded"
+						? "The configured operator provider rejected the turn because the context window was exceeded."
+						: code === "operator_empty_response"
+							? "The operator completed without a usable response payload."
+							: code === "operator_cancelled"
+								? "The operator turn was cancelled before completion."
+								: "An internal operator runtime/formatting error interrupted the turn.";
 	return [
 		"I could not complete that turn safely.",
 		`Code: ${code}`,
@@ -314,6 +346,16 @@ function classifyBackendFailureCode(err: unknown): string {
 	const message = err.message.trim().toLowerCase();
 	if (message.includes("pi operator timeout") || message.includes("operator timeout")) {
 		return "operator_timeout";
+	}
+	if (message.includes("operator_provider_usage_limit")) {
+		return "operator_provider_usage_limit";
+	}
+	if (message.includes("operator_provider_context_length_exceeded")) {
+		return "operator_provider_context_length_exceeded";
+	}
+	const providerFailureCode = classifyProviderFailureCodeFromMessage(message);
+	if (providerFailureCode) {
+		return providerFailureCode;
 	}
 	if (message.includes("operator_empty_response")) {
 		return "operator_empty_response";
@@ -1176,6 +1218,8 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		const session = sessionRecord.session;
 
 		let assistantText = "";
+		let assistantStopReason: string | null = null;
+		let assistantErrorMessage: string | null = null;
 		let capturedCommand: OperatorApprovedCommand | null = null;
 		let capturedUiDocs: UiDoc[] = [];
 
@@ -1190,6 +1234,8 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			// Capture assistant text for fallback responses.
 			if (event?.type === "message_end" && event?.message?.role === "assistant") {
 				const msg = event.message;
+				assistantStopReason = typeof msg.stopReason === "string" ? msg.stopReason.trim().toLowerCase() : null;
+				assistantErrorMessage = typeof msg.errorMessage === "string" ? msg.errorMessage.trim() : null;
 				if (typeof msg.text === "string") {
 					assistantText = msg.text;
 				} else if (typeof msg.content === "string") {
@@ -1254,6 +1300,8 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 				}
 				await session.agent.waitForIdle();
 				assistantText = "";
+				assistantStopReason = null;
+				assistantErrorMessage = null;
 				capturedCommand = null;
 				await promptOnce();
 			}
@@ -1261,7 +1309,7 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 			await this.#auditTurn(input, {
 				outcome: "error",
 				reason: err instanceof Error ? err.message : "operator_backend_error",
-				messagePreview: assistantText,
+				messagePreview: assistantText || assistantErrorMessage || undefined,
 			});
 			throw err;
 		} finally {
@@ -1288,11 +1336,15 @@ export class PiMessagingOperatorBackend implements MessagingOperatorBackend {
 		// Otherwise treat the assistant text as a plain response.
 		const message = assistantText.trim();
 		if (!message) {
+			const providerFailureCode = classifyProviderFailureCodeFromMessage(assistantErrorMessage);
+			const emptyResponseCode =
+				providerFailureCode ?? (assistantStopReason === "aborted" ? "operator_cancelled" : null) ?? "operator_empty_response";
 			await this.#auditTurn(input, {
 				outcome: "error",
-				reason: "operator_empty_response",
+				reason: emptyResponseCode,
+				messagePreview: assistantErrorMessage || undefined,
 			});
-			throw new Error("operator_empty_response");
+			throw new Error(emptyResponseCode);
 		}
 
 		const responseMessage = message.slice(0, OPERATOR_RESPONSE_MAX_CHARS);

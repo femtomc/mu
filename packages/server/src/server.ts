@@ -356,15 +356,26 @@ function createServer(options: ServerOptions = {}) {
 						};
 					} else {
 						const failureCode = extractWakeTurnFailureCode(turnReply);
-						if (failureCode === "operator_busy") {
-							decision = {
-								outcome: "fallback",
-								reason: "operator_busy",
-								turnRequestId,
-								turnResultKind: turnResult.kind,
-								turnReply: null,
-								error: null,
-							};
+						if (failureCode) {
+							if (failureCode === "operator_busy") {
+								decision = {
+									outcome: "fallback",
+									reason: "operator_busy",
+									turnRequestId,
+									turnResultKind: turnResult.kind,
+									turnReply: null,
+									error: null,
+								};
+							} else {
+								decision = {
+									outcome: "fallback",
+									reason: failureCode,
+									turnRequestId,
+									turnResultKind: turnResult.kind,
+									turnReply,
+									error: failureCode,
+								};
+							}
 						} else {
 							decision = {
 								outcome: "triggered",

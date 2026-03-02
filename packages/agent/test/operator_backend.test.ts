@@ -380,6 +380,63 @@ describe("PiMessagingOperatorBackend", () => {
 		expect(result).toEqual({ kind: "respond", message: "Here is some information for you." });
 	});
 
+	test("classifies provider error-only assistant payloads into explicit failure codes", async () => {
+		const scenarios = [
+			{
+				errorMessage: "You have hit your ChatGPT usage limit (pro plan). Try again in ~3708 min.",
+				expectedCode: "operator_provider_usage_limit",
+			},
+			{
+				errorMessage:
+					'Codex error: {"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Your input exceeds the context window of this model. Please adjust your input and try again.","param":"input"},"sequence_number":2}',
+				expectedCode: "operator_provider_context_length_exceeded",
+			},
+		] as const;
+
+		for (const [index, scenario] of scenarios.entries()) {
+			const listeners = new Set<(event: any) => void>();
+			const backend = new PiMessagingOperatorBackend({
+				sessionFactory: async () => ({
+					subscribe(listener) {
+						listeners.add(listener);
+						return () => {
+							listeners.delete(listener);
+						};
+					},
+					async prompt() {
+						for (const listener of listeners) {
+							listener({
+								type: "message_end",
+								message: {
+									role: "assistant",
+									content: [],
+									stopReason: "error",
+									errorMessage: scenario.errorMessage,
+								},
+							});
+						}
+					},
+					dispose() {},
+					async bindExtensions() {},
+					agent: {
+						async waitForIdle() {},
+					},
+				}),
+			});
+
+			await expect(
+				backend.runTurn(
+					mkInput({
+						sessionId: `session-provider-error-${index}`,
+						turnId: `turn-provider-error-${index}`,
+						commandText: "hello",
+					}),
+				),
+			).rejects.toThrow(scenario.expectedCode);
+			backend.dispose();
+		}
+	});
+
 	test("preserves medium-length responses above 2000 characters", async () => {
 		const long = "A".repeat(2_500);
 		const backend = new PiMessagingOperatorBackend({
