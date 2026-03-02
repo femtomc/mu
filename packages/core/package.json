@@ -1,34 +1,34 @@
 {
-	"name": "@femtomc/mu-core",
-	"version": "26.3.2",
-	"description": "Core primitives for mu: IDs, events, schemas, and persistence interfaces.",
-	"keywords": [
-		"mu",
-		"agent",
-		"core",
-		"events"
-	],
-	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"default": "./dist/index.js"
-		},
-		"./browser": {
-			"types": "./dist/browser/index.d.ts",
-			"default": "./dist/browser/index.js"
-		},
-		"./node": {
-			"types": "./dist/node/index.d.ts",
-			"default": "./dist/node/index.js"
-		}
-	},
-	"files": [
-		"dist/**"
-	],
-	"dependencies": {
-		"zod": "^4.1.9"
-	}
+  "name": "@femtomc/mu-core",
+  "version": "26.3.3",
+  "description": "Core primitives for mu: IDs, events, schemas, and persistence interfaces.",
+  "keywords": [
+    "mu",
+    "agent",
+    "core",
+    "events"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "default": "./dist/browser/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    }
+  },
+  "files": [
+    "dist/**"
+  ],
+  "dependencies": {
+    "zod": "^4.1.9"
+  }
 }
