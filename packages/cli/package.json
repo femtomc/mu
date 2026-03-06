@@ -1,6 +1,6 @@
 {
   "name": "@femtomc/mu",
-  "version": "26.3.6",
+  "version": "26.3.7",
   "description": "Personal assistant CLI for technical work.",
   "keywords": [
     "mu",
@@ -31,8 +31,8 @@
     "@femtomc/mu-forum": "workspace:*",
     "@femtomc/mu-issue": "workspace:*",
     "@femtomc/mu-server": "workspace:*",
-    "@mariozechner/pi-ai": "^0.54.2",
-    "@mariozechner/pi-coding-agent": "^0.54.2",
+    "@mariozechner/pi-ai": "^0.56.2",
+    "@mariozechner/pi-coding-agent": "^0.56.2",
     "chalk": "^5.6.2"
   }
 }
