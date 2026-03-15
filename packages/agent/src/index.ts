@@ -10,4 +10,6 @@ export * from "./extensions/index.js";
 export * from "./operator.js";
 export * from "./prompt.js";
 export * from "./session_factory.js";
+export * from "./session_projection.js";
+export * from "./session_service.js";
 export * from "./session_turn.js";

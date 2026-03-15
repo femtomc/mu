@@ -24,6 +24,7 @@ import {
 import { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 import { createProcessSessionLifecycle } from "./session_lifecycle.js";
 import { MemoryIndexMaintainer } from "./memory_index_maintainer.js";
+import { DaemonHostHealthReporter } from "./daemon_thin_host.js";
 import { createServerProgramCoordination } from "./server_program_coordination.js";
 import { createServerRequestHandler } from "./server_routing.js";
 import type { ServerRuntime } from "./server_runtime.js";
@@ -639,6 +640,8 @@ function createServer(options: ServerOptions = {}) {
 	});
 	memoryIndexMaintainer.start();
 
+	const hostHealthReporter = new DaemonHostHealthReporter();
+
 	const handleRequest = createServerRequestHandler({
 		context,
 		controlPlaneProxy,
@@ -650,6 +653,7 @@ function createServer(options: ServerOptions = {}) {
 		getControlPlaneStatus: reloadManager.getControlPlaneStatus,
 		describeError,
 		initiateShutdown: options.initiateShutdown,
+		hostHealthReporter,
 	});
 
 	const server = {

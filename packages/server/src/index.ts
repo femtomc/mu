@@ -64,3 +64,28 @@ export type {
 export { composeServerRuntime, createContext, createServerFromRuntime } from "./server.js";
 export type { ShellCommandResult, ShellCommandRunner } from "./session_lifecycle.js";
 export { createProcessSessionLifecycle } from "./session_lifecycle.js";
+export type {
+	DaemonCommandEnvelope,
+	DaemonCommandResponse,
+	DaemonEventEnvelope,
+	DaemonEventListener,
+	DaemonProjectionSnapshot,
+	DaemonSessionAdapterConfig,
+	DaemonSessionSnapshot,
+} from "./daemon_session_adapter.js";
+export { createDaemonSessionAdapter, DaemonSessionAdapter } from "./daemon_session_adapter.js";
+export type {
+	DaemonBoundaryDescriptor,
+	DaemonBoundaryValidationResult,
+	DaemonExtendedHealthStatus,
+	DaemonHostHealthStatus,
+	DaemonHostHealthReporterOpts,
+	DaemonHostResponsibilities,
+	SessionIsolationObservation,
+} from "./daemon_thin_host.js";
+export {
+	DAEMON_THIN_BOUNDARY,
+	DaemonHostHealthReporter,
+	observeSessionIsolation,
+	validateDaemonBoundary,
+} from "./daemon_thin_host.js";

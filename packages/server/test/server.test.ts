@@ -118,7 +118,11 @@ describe("mu-server", () => {
 	test("health check endpoint", async () => {
 		const response = await server.fetch(new Request("http://localhost/healthz"));
 		expect(response.status).toBe(200);
-		expect(await response.text()).toBe("ok");
+		const health = await response.json();
+		expect(health.ok).toBe(true);
+		expect(health.host.transport).toBe("http");
+		expect(health.boundary).toBeDefined();
+		expect(health.boundary.delegated.session_domain).toBe("syndicate_session_service");
 
 		const legacy = await server.fetch(new Request("http://localhost/health"));
 		expect(legacy.status).toBe(404);

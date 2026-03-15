@@ -9,6 +9,12 @@ import type {
 } from "./control_plane_contract.js";
 import { ActivityHeartbeatScheduler } from "./heartbeat_scheduler.js";
 import { createProcessSessionLifecycle } from "./session_lifecycle.js";
+import { type DaemonSessionAdapter, createDaemonSessionAdapter } from "./daemon_session_adapter.js";
+import {
+	DAEMON_THIN_BOUNDARY,
+	DaemonHostHealthReporter,
+	type DaemonBoundaryDescriptor,
+} from "./daemon_thin_host.js";
 
 type ConfigReader = (repoRoot: string) => Promise<MuConfig>;
 
@@ -20,12 +26,16 @@ export type ServerRuntimeOptions = {
 	config?: MuConfig;
 	configReader?: ConfigReader;
 	sessionLifecycle?: ControlPlaneSessionLifecycle;
+	/** Optional pre-created session adapter for Syndicate-delegated session domain. */
+	sessionAdapter?: DaemonSessionAdapter;
 };
 
 export type ServerRuntimeCapabilities = {
 	session_lifecycle_actions: readonly ControlPlaneSessionMutationAction[];
 	control_plane_bootstrapped: boolean;
 	control_plane_adapters: string[];
+	/** Daemon boundary descriptor: host-only vs delegated responsibilities. */
+	boundary: DaemonBoundaryDescriptor;
 };
 
 export type ServerRuntime = {
@@ -35,6 +45,10 @@ export type ServerRuntime = {
 	generationTelemetry: GenerationTelemetryRecorder;
 	sessionLifecycle: ControlPlaneSessionLifecycle;
 	controlPlane: ControlPlaneHandle | null;
+	/** Syndicate-delegated session adapter. Domain state lives here, not in daemon. */
+	sessionAdapter: DaemonSessionAdapter;
+	/** Host health reporter reading adapter-projected service state. */
+	hostHealthReporter: DaemonHostHealthReporter;
 	capabilities: ServerRuntimeCapabilities;
 };
 
@@ -43,6 +57,7 @@ function computeServerRuntimeCapabilities(controlPlane: ControlPlaneHandle | nul
 		session_lifecycle_actions: ["reload", "update"] as const,
 		control_plane_bootstrapped: controlPlane !== null,
 		control_plane_adapters: controlPlane?.activeAdapters.map((adapter) => adapter.name) ?? [],
+		boundary: DAEMON_THIN_BOUNDARY,
 	};
 }
 
@@ -53,6 +68,10 @@ export async function composeServerRuntime(options: ServerRuntimeOptions = {}): 
 	const heartbeatScheduler = options.heartbeatScheduler ?? new ActivityHeartbeatScheduler();
 	const generationTelemetry = options.generationTelemetry ?? new GenerationTelemetryRecorder();
 	const sessionLifecycle = options.sessionLifecycle ?? createProcessSessionLifecycle({ repoRoot });
+	const sessionAdapter = options.sessionAdapter ?? createDaemonSessionAdapter();
+	const hostHealthReporter = new DaemonHostHealthReporter({
+		sessionAdapter,
+	});
 	const controlPlane =
 		options.controlPlane !== undefined
 			? options.controlPlane
@@ -74,6 +93,8 @@ export async function composeServerRuntime(options: ServerRuntimeOptions = {}): 
 		generationTelemetry,
 		sessionLifecycle,
 		controlPlane,
+		sessionAdapter,
+		hostHealthReporter,
 		capabilities: computeServerRuntimeCapabilities(controlPlane),
 	};
 }

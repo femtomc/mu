@@ -49,10 +49,9 @@ export async function cmdLogin(argv: string[], deps: LoginCommandDeps): Promise<
 	}
 
 	const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
-	const { getOAuthProviders } = await import("@mariozechner/pi-ai");
 
 	const authStorage = AuthStorage.create();
-	const providers = getOAuthProviders();
+	const providers = authStorage.getOAuthProviders();
 
 	const { present: listMode, rest: argv0 } = popFlag(argv, "--list");
 	const { present: logoutMode, rest: argv1 } = popFlag(argv0, "--logout");

@@ -4,6 +4,7 @@ import { heartbeatRoutes } from "./api/heartbeats.js";
 import type { MuConfig } from "./config.js";
 import type { ControlPlaneHandle } from "./control_plane_contract.js";
 import type { CronProgramRegistry } from "./cron_programs.js";
+import type { DaemonHostHealthReporter } from "./daemon_thin_host.js";
 import type { HeartbeatProgramRegistry } from "./heartbeat_programs.js";
 import type { ServerContext } from "./server.js";
 
@@ -18,6 +19,8 @@ export type ServerRoutingDependencies = {
 	getControlPlaneStatus: () => unknown;
 	describeError: (error: unknown) => string;
 	initiateShutdown?: () => Promise<void>;
+	/** Host health reporter for adapter-projected service state. */
+	hostHealthReporter?: DaemonHostHealthReporter | null;
 };
 
 export function createServerRequestHandler(deps: ServerRoutingDependencies) {
@@ -36,7 +39,19 @@ export function createServerRequestHandler(deps: ServerRoutingDependencies) {
 		}
 
 		if (path === "/healthz") {
+			if (deps.hostHealthReporter) {
+				const health = deps.hostHealthReporter.health();
+				return Response.json(health, { status: health.ok ? 200 : 503, headers });
+			}
 			return new Response("ok", { status: 200, headers });
+		}
+
+		if (path === "/healthz/extended") {
+			if (deps.hostHealthReporter) {
+				const health = deps.hostHealthReporter.extendedHealth();
+				return Response.json(health, { status: health.ok ? 200 : 503, headers });
+			}
+			return Response.json({ error: "host health reporter not available" }, { status: 501, headers });
 		}
 
 		if (path === "/api/server/shutdown") {
